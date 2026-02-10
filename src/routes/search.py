@@ -5,6 +5,7 @@ Provides cross-entity search capabilities with relevance scoring.
 """
 
 from collections.abc import Mapping, Sequence
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -15,9 +16,18 @@ from src.application.search.search_service import (
     SearchResultType,
     UnifiedSearchService,
 )
+from src.application.services.membership_management_service import (
+    MembershipManagementService,
+)
 from src.database.session import get_session
+from src.domain.entities.user import User
 from src.infrastructure.dependency_injection.dependencies import (
     get_legacy_dependency_container,
+)
+from src.routes.auth import get_current_active_user
+from src.routes.research_spaces.dependencies import (
+    get_membership_service,
+    verify_space_membership,
 )
 from src.type_definitions.common import JSONObject
 
@@ -74,21 +84,33 @@ def get_search_service(db: Session = Depends(get_session)) -> "UnifiedSearchServ
     response_model=UnifiedSearchResponse,
 )
 async def unified_search(
+    space_id: UUID = Query(..., description="Research space scope"),
     query: str = Query(..., min_length=1, max_length=200, description="Search query"),
     entity_types: list[SearchEntity] | None = Query(
         None,
         description="Entity types to search (defaults to all)",
     ),
     limit: int = Query(20, ge=1, le=100, description="Maximum results per entity type"),
+    current_user: User = Depends(get_current_active_user),
+    membership_service: MembershipManagementService = Depends(get_membership_service),
+    session: Session = Depends(get_session),
     service: UnifiedSearchService = Depends(get_search_service),
 ) -> UnifiedSearchResponse:
     """
-    Perform unified search across genes, variants, phenotypes, and evidence.
+    Perform unified search across kernel entities/observations/relations.
 
     Returns results sorted by relevance score with metadata for each entity type.
     """
     try:
+        verify_space_membership(
+            space_id,
+            current_user.id,
+            membership_service,
+            session,
+            current_user.role,
+        )
         raw = service.search(
+            research_space_id=str(space_id),
             query=query,
             entity_types=entity_types,
             limit=limit,
@@ -147,10 +169,9 @@ async def search_suggestions(
         # For now, return basic suggestions from recent/popular searches
         # In a full implementation, this would use search analytics
         suggestions = [
-            f"{query} genes",
-            f"{query} variants",
-            f"{query} phenotypes",
-            f"{query} evidence",
+            f"{query} entities",
+            f"{query} observations",
+            f"{query} relations",
         ][:limit]
 
         return SearchSuggestionResponse(
@@ -171,6 +192,10 @@ async def search_suggestions(
     response_model=SearchStatisticsResponse,
 )
 async def search_statistics(
+    space_id: UUID = Query(..., description="Research space scope"),
+    current_user: User = Depends(get_current_active_user),
+    membership_service: MembershipManagementService = Depends(get_membership_service),
+    session: Session = Depends(get_session),
     service: UnifiedSearchService = Depends(get_search_service),
 ) -> SearchStatisticsResponse:
     """
@@ -179,24 +204,15 @@ async def search_statistics(
     Useful for understanding the scope of available data.
     """
     try:
-        # This would typically aggregate counts from all repositories
-        # For now, return placeholder stats
-        stats = {
-            "total_entities": {
-                "genes": 0,  # Would come from gene repository count
-                "variants": 0,  # Would come from variant repository count
-                "phenotypes": 0,  # Would come from phenotype repository count
-                "evidence": 0,  # Would come from evidence repository count
-            },
-            "searchable_fields": {
-                "genes": ["symbol", "name", "description"],
-                "variants": ["variant_id", "gene_symbol", "clinical_significance"],
-                "phenotypes": ["name", "hpo_id", "definition", "synonyms"],
-                "evidence": ["description", "summary", "evidence_type"],
-            },
-            "last_updated": None,  # Would track when data was last indexed
-        }
+        verify_space_membership(
+            space_id,
+            current_user.id,
+            membership_service,
+            session,
+            current_user.role,
+        )
 
+        stats = service.get_statistics(str(space_id))
         return _build_statistics_response(stats)
     except Exception as e:
         raise HTTPException(

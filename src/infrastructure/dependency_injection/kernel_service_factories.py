@@ -46,13 +46,16 @@ class KernelServiceFactoryMixin:
         from src.application.services.kernel import KernelObservationService
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyDictionaryRepository,
+            SqlAlchemyKernelEntityRepository,
             SqlAlchemyKernelObservationRepository,
         )
 
         observation_repo = SqlAlchemyKernelObservationRepository(session)
+        entity_repo = SqlAlchemyKernelEntityRepository(session)
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
         return KernelObservationService(
             observation_repo=observation_repo,
+            entity_repo=entity_repo,
             dictionary_repo=dictionary_repo,
         )
 

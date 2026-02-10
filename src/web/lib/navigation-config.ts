@@ -7,6 +7,9 @@ import {
   CloudDownload,
   ListChecks,
   Network,
+  BookOpen,
+  BarChart3,
+  Upload,
   Users,
   Settings,
   Plus,
@@ -62,6 +65,14 @@ export function buildDashboardNavItems(
       label: "Administration",
       items: [
         {
+          id: "admin-dictionary",
+          title: "Dictionary",
+          url: "/admin/dictionary",
+          icon: BookOpen,
+          isActive: pathname.startsWith("/admin/dictionary"),
+          allowedRoles: [UserRole.ADMIN],
+        },
+        {
           id: "admin-settings",
           title: "System Settings",
           url: "/system-settings",
@@ -88,6 +99,8 @@ export function buildSpaceNavItems(
 ): NavGroup[] {
   const isSpaceAdmin =
     userSpaceRole === MembershipRole.OWNER || userSpaceRole === MembershipRole.ADMIN
+  const canIngest =
+    userSpaceRole !== undefined && userSpaceRole !== MembershipRole.VIEWER
 
   const mainGroup: NavGroup = {
     label: "Space",
@@ -120,7 +133,24 @@ export function buildSpaceNavItems(
         icon: Network,
         isActive: pathname.startsWith(`/spaces/${spaceId}/knowledge-graph`),
       },
+      {
+        id: "observations",
+        title: "Observations",
+        url: `/spaces/${spaceId}/observations`,
+        icon: BarChart3,
+        isActive: pathname.startsWith(`/spaces/${spaceId}/observations`),
+      },
     ],
+  }
+
+  if (canIngest) {
+    mainGroup.items.push({
+      id: "ingest",
+      title: "Ingest",
+      url: `/spaces/${spaceId}/ingest`,
+      icon: Upload,
+      isActive: pathname.startsWith(`/spaces/${spaceId}/ingest`),
+    })
   }
 
   const groups: NavGroup[] = [mainGroup]

@@ -19,7 +19,7 @@ class ResolutionStrategy(Protocol):
         self,
         identifiers: JSONObject,
         entity_type: str,
-        study_id: str,
+        research_space_id: str,
     ) -> EntityModel | None:
         """Resolve an entity based on identifiers."""
         ...
@@ -37,7 +37,7 @@ class StrictMatchStrategy:
         self,
         identifiers: JSONObject,
         entity_type: str,
-        study_id: str,
+        research_space_id: str,
     ) -> EntityModel | None:
         # Use the repository's resolve method which handles identifier lookup
         # We assume 'identifiers' dictionary keys correspond to namespaces (e.g. 'mrn', 'hgnc_id')
@@ -47,7 +47,7 @@ class StrictMatchStrategy:
         string_identifiers = {k: str(v) for k, v in identifiers.items()}
 
         return self.entity_repo.resolve(
-            study_id=study_id,
+            research_space_id=research_space_id,
             entity_type=entity_type,
             identifiers=string_identifiers,
         )
@@ -65,13 +65,13 @@ class LookupStrategy:
         self,
         identifiers: JSONObject,
         entity_type: str,
-        study_id: str,
+        research_space_id: str,
     ) -> EntityModel | None:
         # For now, behaves like strict match on supported keys
         return StrictMatchStrategy(self.entity_repo).resolve(
             identifiers,
             entity_type,
-            study_id,
+            research_space_id,
         )
 
 
@@ -82,12 +82,14 @@ class FuzzyStrategy:
 
     def __init__(self, entity_repository: KernelEntityRepository) -> None:
         self.entity_repo = entity_repository
+        self._fallback = StrictMatchStrategy(entity_repository)
 
     def resolve(
         self,
-        _identifiers: JSONObject,
-        _entity_type: str,
-        _study_id: str,
+        identifiers: JSONObject,
+        entity_type: str,
+        research_space_id: str,
     ) -> EntityModel | None:
-        # Placeholder
-        return None
+        # Deterministic fallback: treat FUZZY as strict identifier matching until
+        # we add a proper fuzzy match strategy (e.g. trigram/pgvector).
+        return self._fallback.resolve(identifiers, entity_type, research_space_id)

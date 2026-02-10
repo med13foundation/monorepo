@@ -28,6 +28,7 @@
   {"variable_id": "VAR_PUBLICATION_TITLE", "synonym": "paper_title", "source": "manual"},
   {"variable_id": "VAR_PUBLICATION_YEAR", "synonym": "year", "source": "manual"},
   {"variable_id": "VAR_PUBLICATION_YEAR", "synonym": "pub_year", "source": "manual"},
+  {"variable_id": "VAR_ABSTRACT", "synonym": "abstract", "source": "manual"},
   {"variable_id": "VAR_ABSTRACT", "synonym": "abstract_text", "source": "manual"},
   {"variable_id": "VAR_JOURNAL_NAME", "synonym": "journal", "source": "manual"},
   {"variable_id": "VAR_DRUG_NAME", "synonym": "drug", "source": "manual"},

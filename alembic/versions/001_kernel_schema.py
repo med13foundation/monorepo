@@ -111,6 +111,12 @@ def upgrade() -> None:  # noqa: PLR0915
             nullable=False,
             server_default=sa.func.now(),
         ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
     )
     op.create_index("idx_sessions_user_status", "sessions", ["user_id", "status"])
     op.create_index("idx_sessions_expires_at", "sessions", ["expires_at"])
@@ -145,15 +151,8 @@ def upgrade() -> None:  # noqa: PLR0915
     # ── System Status (surviving table) ──
     op.create_table(
         "system_status",
-        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column(
-            "status",
-            sa.String(20),
-            nullable=False,
-            server_default="operational",
-        ),
-        sa.Column("message", sa.Text, nullable=True),
-        sa.Column("details", postgresql.JSONB, server_default="{}"),
+        sa.Column("key", sa.String(100), primary_key=True),
+        sa.Column("value", sa.JSON, nullable=False, server_default="{}"),
         sa.Column(
             "created_at",
             sa.TIMESTAMP(timezone=True),
@@ -165,6 +164,7 @@ def upgrade() -> None:  # noqa: PLR0915
             sa.TIMESTAMP(timezone=True),
             nullable=False,
             server_default=sa.func.now(),
+            onupdate=sa.func.now(),
         ),
     )
 
@@ -323,25 +323,31 @@ def upgrade() -> None:  # noqa: PLR0915
     # ══════════════════════════════════════════════════════════════
 
     op.create_table(
-        "studies",
+        "research_spaces",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("name", sa.String(200), nullable=False),
-        sa.Column("slug", sa.String(100), unique=True, nullable=False, index=True),
-        sa.Column("description", sa.Text, nullable=True),
+        sa.Column("slug", sa.String(50), unique=True, nullable=False, index=True),
+        sa.Column("name", sa.String(100), nullable=False),
+        sa.Column("description", sa.Text, nullable=False),
         sa.Column(
-            "domain_context",
-            sa.String(64),
-            nullable=False,
-            server_default="genomics",
-            index=True,
-        ),
-        sa.Column(
-            "created_by",
+            "owner_id",
             postgresql.UUID(as_uuid=True),
             sa.ForeignKey("users.id"),
             nullable=False,
+            index=True,
         ),
-        sa.Column("is_default", sa.Boolean, nullable=False, server_default="false"),
+        sa.Column(
+            "status",
+            sa.Enum(
+                "active",
+                "inactive",
+                "archived",
+                "suspended",
+                name="spacestatusenum",
+            ),
+            nullable=False,
+            server_default="active",
+            index=True,
+        ),
         sa.Column("settings", postgresql.JSONB, nullable=False, server_default="{}"),
         sa.Column("tags", postgresql.JSONB, nullable=False, server_default="[]"),
         sa.Column(
@@ -357,16 +363,17 @@ def upgrade() -> None:  # noqa: PLR0915
             server_default=sa.func.now(),
         ),
     )
-    op.create_index("idx_studies_owner", "studies", ["created_by"])
-    op.create_index("idx_studies_created_at", "studies", ["created_at"])
+    op.create_index("idx_research_spaces_owner", "research_spaces", ["owner_id"])
+    op.create_index("idx_research_spaces_status", "research_spaces", ["status"])
+    op.create_index("idx_research_spaces_created_at", "research_spaces", ["created_at"])
 
     op.create_table(
-        "study_memberships",
+        "research_space_memberships",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "study_id",
+            "space_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("studies.id", ondelete="CASCADE"),
+            sa.ForeignKey("research_spaces.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
@@ -375,7 +382,19 @@ def upgrade() -> None:  # noqa: PLR0915
             sa.ForeignKey("users.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("role", sa.String(32), nullable=False, server_default="member"),
+        sa.Column(
+            "role",
+            sa.Enum(
+                "owner",
+                "admin",
+                "curator",
+                "researcher",
+                "viewer",
+                name="membershiproleenum",
+            ),
+            nullable=False,
+            server_default="viewer",
+        ),
         sa.Column(
             "invited_by",
             postgresql.UUID(as_uuid=True),
@@ -398,13 +417,31 @@ def upgrade() -> None:  # noqa: PLR0915
             server_default=sa.func.now(),
         ),
     )
-    op.create_index("idx_study_memberships_study", "study_memberships", ["study_id"])
-    op.create_index("idx_study_memberships_user", "study_memberships", ["user_id"])
     op.create_index(
-        "idx_study_memberships_unique",
-        "study_memberships",
-        ["study_id", "user_id"],
+        "idx_memberships_space",
+        "research_space_memberships",
+        ["space_id"],
+    )
+    op.create_index(
+        "idx_memberships_user",
+        "research_space_memberships",
+        ["user_id"],
+    )
+    op.create_index(
+        "idx_memberships_space_user",
+        "research_space_memberships",
+        ["space_id", "user_id"],
         unique=True,
+    )
+    op.create_index(
+        "idx_memberships_invited_by",
+        "research_space_memberships",
+        ["invited_by"],
+    )
+    op.create_index(
+        "idx_memberships_pending",
+        "research_space_memberships",
+        ["user_id", "invited_at", "joined_at"],
     )
 
     # ── Entities (graph nodes) ──
@@ -412,9 +449,9 @@ def upgrade() -> None:  # noqa: PLR0915
         "entities",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "study_id",
+            "research_space_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("studies.id", ondelete="CASCADE"),
+            sa.ForeignKey("research_spaces.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("entity_type", sa.String(64), nullable=False, index=True),
@@ -438,7 +475,11 @@ def upgrade() -> None:  # noqa: PLR0915
             server_default=sa.func.now(),
         ),
     )
-    op.create_index("idx_entities_study_type", "entities", ["study_id", "entity_type"])
+    op.create_index(
+        "idx_entities_space_type",
+        "entities",
+        ["research_space_id", "entity_type"],
+    )
     op.create_index("idx_entities_created_at", "entities", ["created_at"])
 
     # ── Entity identifiers (PHI-isolated) ──
@@ -483,9 +524,9 @@ def upgrade() -> None:  # noqa: PLR0915
         "provenance",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "study_id",
+            "research_space_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("studies.id", ondelete="CASCADE"),
+            sa.ForeignKey("research_spaces.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("source_type", sa.String(64), nullable=False),
@@ -508,7 +549,7 @@ def upgrade() -> None:  # noqa: PLR0915
             server_default=sa.func.now(),
         ),
     )
-    op.create_index("idx_provenance_study", "provenance", ["study_id"])
+    op.create_index("idx_provenance_space", "provenance", ["research_space_id"])
     op.create_index("idx_provenance_source_type", "provenance", ["source_type"])
     op.create_index("idx_provenance_extraction", "provenance", ["extraction_run_id"])
 
@@ -517,9 +558,9 @@ def upgrade() -> None:  # noqa: PLR0915
         "observations",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "study_id",
+            "research_space_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("studies.id", ondelete="CASCADE"),
+            sa.ForeignKey("research_spaces.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
@@ -538,6 +579,7 @@ def upgrade() -> None:  # noqa: PLR0915
         sa.Column("value_text", sa.Text, nullable=True),
         sa.Column("value_date", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("value_coded", sa.String(255), nullable=True),
+        sa.Column("value_boolean", sa.Boolean, nullable=True),
         sa.Column("value_json", postgresql.JSONB, nullable=True),
         sa.Column("unit", sa.String(64), nullable=True),
         sa.Column("observed_at", sa.TIMESTAMP(timezone=True), nullable=True),
@@ -554,12 +596,23 @@ def upgrade() -> None:  # noqa: PLR0915
             nullable=False,
             server_default=sa.func.now(),
         ),
+        sa.CheckConstraint(
+            (
+                "(CASE WHEN value_numeric IS NOT NULL THEN 1 ELSE 0 END + "
+                "CASE WHEN value_text IS NOT NULL THEN 1 ELSE 0 END + "
+                "CASE WHEN value_date IS NOT NULL THEN 1 ELSE 0 END + "
+                "CASE WHEN value_coded IS NOT NULL THEN 1 ELSE 0 END + "
+                "CASE WHEN value_boolean IS NOT NULL THEN 1 ELSE 0 END + "
+                "CASE WHEN value_json IS NOT NULL THEN 1 ELSE 0 END) = 1"
+            ),
+            name="ck_observations_exactly_one_value",
+        ),
     )
     op.create_index("idx_obs_subject", "observations", ["subject_id"])
     op.create_index(
-        "idx_obs_study_variable",
+        "idx_obs_space_variable",
         "observations",
-        ["study_id", "variable_id"],
+        ["research_space_id", "variable_id"],
     )
     op.create_index(
         "idx_obs_subject_time",
@@ -573,9 +626,9 @@ def upgrade() -> None:  # noqa: PLR0915
         "relations",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "study_id",
+            "research_space_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("studies.id", ondelete="CASCADE"),
+            sa.ForeignKey("research_spaces.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
@@ -629,9 +682,9 @@ def upgrade() -> None:  # noqa: PLR0915
     op.create_index("idx_relations_source", "relations", ["source_id"])
     op.create_index("idx_relations_target", "relations", ["target_id"])
     op.create_index(
-        "idx_relations_study_type",
+        "idx_relations_space_type",
         "relations",
-        ["study_id", "relation_type"],
+        ["research_space_id", "relation_type"],
     )
     op.create_index("idx_relations_curation", "relations", ["curation_status"])
     op.create_index("idx_relations_provenance", "relations", ["provenance_id"])
@@ -726,28 +779,351 @@ def upgrade() -> None:  # noqa: PLR0915
         ),
     )
 
-    # ── User Data Sources (study-scoped via study_id) ──
+    # ── Source Catalog Entries (Data Discovery) ──
     op.create_table(
-        "user_data_sources",
-        sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
+        "source_catalog_entries",
+        sa.Column("id", sa.String(100), primary_key=True),
+        sa.Column("name", sa.String(200), nullable=False),
+        sa.Column("description", sa.Text, nullable=False),
+        sa.Column("category", sa.String(100), nullable=False, index=True),
+        sa.Column("subcategory", sa.String(100), nullable=True),
+        sa.Column("tags", postgresql.JSONB, nullable=False, server_default="[]"),
         sa.Column(
-            "study_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("studies.id", ondelete="CASCADE"),
+            "source_type",
+            sa.String(50),
             nullable=False,
-            index=True,
+            server_default="api",
+        ),
+        sa.Column("param_type", sa.String(50), nullable=False, index=True),
+        sa.Column("url_template", sa.Text, nullable=True),
+        sa.Column("data_format", sa.String(50), nullable=True),
+        sa.Column("api_endpoint", sa.Text, nullable=True),
+        sa.Column("is_active", sa.Boolean, nullable=False, server_default="true"),
+        sa.Column(
+            "requires_auth",
+            sa.Boolean,
+            nullable=False,
+            server_default="false",
+        ),
+        sa.Column("usage_count", sa.Integer, nullable=False, server_default="0"),
+        sa.Column("success_rate", sa.Float, nullable=False, server_default="0.0"),
+        sa.Column(
+            "query_capabilities",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="{}",
         ),
         sa.Column(
-            "template_id",
+            "source_template_id",
             postgresql.UUID(as_uuid=False),
-            sa.ForeignKey("source_templates.id"),
+            sa.ForeignKey("source_templates.id", ondelete="SET NULL"),
             nullable=True,
             index=True,
         ),
         sa.Column(
-            "created_by",
-            postgresql.UUID(as_uuid=False),
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
             nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+    )
+
+    # ── Data Source Activation Rules ──
+    op.create_table(
+        "data_source_activation_rules",
+        sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
+        sa.Column(
+            "catalog_entry_id",
+            sa.String(100),
+            sa.ForeignKey("source_catalog_entries.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+        sa.Column(
+            "scope",
+            sa.Enum(
+                "global",
+                "research_space",
+                name="activationscopeenum",
+            ),
+            nullable=False,
+            server_default="global",
+            index=True,
+        ),
+        sa.Column(
+            "research_space_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("research_spaces.id", ondelete="CASCADE"),
+            nullable=True,
+            index=True,
+        ),
+        sa.Column(
+            "permission_level",
+            sa.Enum(
+                "blocked",
+                "visible",
+                "available",
+                name="data_source_permission_level",
+            ),
+            nullable=False,
+            server_default="available",
+            index=True,
+        ),
+        sa.Column("is_active", sa.Boolean, nullable=False, server_default="true"),
+        sa.Column(
+            "updated_by",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.UniqueConstraint(
+            "catalog_entry_id",
+            "scope",
+            "research_space_id",
+            name="uq_data_source_activation_scope",
+        ),
+    )
+
+    # ── Data Discovery Sessions ──
+    op.create_table(
+        "data_discovery_sessions",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("owner_id", sa.String(36), nullable=False, index=True),
+        sa.Column(
+            "research_space_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("research_spaces.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+        sa.Column(
+            "name",
+            sa.String(200),
+            nullable=False,
+            server_default="Untitled Session",
+        ),
+        sa.Column("gene_symbol", sa.String(100), nullable=True),
+        sa.Column("search_term", sa.Text, nullable=True),
+        sa.Column(
+            "selected_sources",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="[]",
+        ),
+        sa.Column(
+            "tested_sources",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="[]",
+        ),
+        sa.Column(
+            "pubmed_search_config",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="{}",
+        ),
+        sa.Column("total_tests_run", sa.Integer, nullable=False, server_default="0"),
+        sa.Column("successful_tests", sa.Integer, nullable=False, server_default="0"),
+        sa.Column("is_active", sa.Boolean, nullable=False, server_default="true"),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "last_activity_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+    )
+
+    # ── Query Test Results ──
+    op.create_table(
+        "query_test_results",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column(
+            "session_id",
+            sa.String(36),
+            sa.ForeignKey("data_discovery_sessions.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+        sa.Column(
+            "catalog_entry_id",
+            sa.String(100),
+            sa.ForeignKey("source_catalog_entries.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+        sa.Column("status", sa.String(50), nullable=False, index=True),
+        sa.Column("gene_symbol", sa.String(100), nullable=True),
+        sa.Column("search_term", sa.Text, nullable=True),
+        sa.Column("response_data", postgresql.JSONB, nullable=True),
+        sa.Column("response_url", sa.Text, nullable=True),
+        sa.Column("error_message", sa.Text, nullable=True),
+        sa.Column(
+            "parameters_payload",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="{}",
+        ),
+        sa.Column("execution_time_ms", sa.Integer, nullable=True),
+        sa.Column("data_quality_score", sa.Float, nullable=True),
+        sa.Column(
+            "started_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+    )
+
+    # ── Discovery Presets ──
+    op.create_table(
+        "discovery_presets",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("owner_id", sa.String(36), nullable=False, index=True),
+        sa.Column(
+            "scope",
+            sa.Enum("user", "space", name="presetscopeenum"),
+            nullable=False,
+            server_default="user",
+        ),
+        sa.Column("provider", sa.String(50), nullable=False, index=True),
+        sa.Column("name", sa.String(200), nullable=False),
+        sa.Column("description", sa.Text, nullable=True),
+        sa.Column(
+            "parameters",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="{}",
+        ),
+        sa.Column(
+            "metadata_payload",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="{}",
+        ),
+        sa.Column(
+            "research_space_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("research_spaces.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+    )
+
+    # ── Discovery Search Jobs ──
+    op.create_table(
+        "discovery_search_jobs",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("owner_id", sa.String(36), nullable=False, index=True),
+        sa.Column(
+            "session_id",
+            sa.String(36),
+            sa.ForeignKey("data_discovery_sessions.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+        sa.Column("provider", sa.String(50), nullable=False, index=True),
+        sa.Column("status", sa.String(50), nullable=False, index=True),
+        sa.Column("query_preview", sa.Text, nullable=False),
+        sa.Column(
+            "parameters",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="{}",
+        ),
+        sa.Column("total_results", sa.Integer, nullable=False, server_default="0"),
+        sa.Column(
+            "result_payload",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="{}",
+        ),
+        sa.Column("error_message", sa.Text, nullable=True),
+        sa.Column("storage_key", sa.String(512), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+    )
+
+    # ── User Data Sources (space-scoped via research_space_id) ──
+    op.create_table(
+        "user_data_sources",
+        sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
+        sa.Column(
+            "owner_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+        sa.Column(
+            "research_space_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("research_spaces.id", ondelete="SET NULL"),
+            nullable=True,
             index=True,
         ),
         sa.Column("name", sa.String(200), nullable=False),
@@ -759,28 +1135,55 @@ def upgrade() -> None:  # noqa: PLR0915
                 "api",
                 "database",
                 "web_scraping",
-                "PUBMED",
+                "pubmed",
                 name="usersourcetypeenum",
             ),
             nullable=False,
+            index=True,
+        ),
+        sa.Column(
+            "template_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("source_templates.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+        sa.Column(
+            "configuration",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="{}",
         ),
         sa.Column(
             "status",
             sa.Enum(
+                "draft",
                 "active",
                 "inactive",
                 "error",
-                "pending",
+                "pending_review",
                 "archived",
                 name="sourcestatusenum",
             ),
             nullable=False,
-            server_default="pending",
+            server_default="draft",
+            index=True,
         ),
-        sa.Column("config_data", postgresql.JSONB, nullable=False, server_default="{}"),
-        sa.Column("metadata_payload", postgresql.JSONB, server_default="{}"),
+        sa.Column(
+            "ingestion_schedule",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="{}",
+        ),
+        sa.Column(
+            "quality_metrics",
+            postgresql.JSONB,
+            nullable=False,
+            server_default="{}",
+        ),
+        sa.Column("last_ingested_at", sa.String(30), nullable=True),
         sa.Column("tags", postgresql.JSONB, nullable=False, server_default="[]"),
-        sa.Column("last_sync_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("version", sa.String(20), nullable=False, server_default="1.0"),
         sa.Column(
             "created_at",
             sa.TIMESTAMP(timezone=True),
@@ -947,24 +1350,39 @@ def upgrade() -> None:  # noqa: PLR0915
         ),
     )
 
-    # ── Ingestion Jobs (study-scoped) ──
+    # ── Ingestion Jobs (Data Sources module) ──
     op.create_table(
         "ingestion_jobs",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
         sa.Column(
-            "study_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("studies.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-        ),
-        sa.Column(
-            "data_source_id",
+            "source_id",
             postgresql.UUID(as_uuid=False),
-            sa.ForeignKey("user_data_sources.id"),
+            sa.ForeignKey("user_data_sources.id", ondelete="CASCADE"),
             nullable=False,
             index=True,
         ),
+        sa.Column(
+            "trigger",
+            sa.Enum(
+                "manual",
+                "scheduled",
+                "api",
+                "webhook",
+                "retry",
+                name="ingestiontriggerenum",
+            ),
+            nullable=False,
+            server_default="manual",
+            index=True,
+        ),
+        sa.Column(
+            "triggered_by",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("users.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+        sa.Column("triggered_at", sa.String(30), nullable=False, index=True),
         sa.Column(
             "status",
             sa.Enum(
@@ -973,24 +1391,26 @@ def upgrade() -> None:  # noqa: PLR0915
                 "completed",
                 "failed",
                 "cancelled",
+                "partial",
                 name="ingestionstatusenum",
             ),
             nullable=False,
             server_default="pending",
+            index=True,
         ),
+        sa.Column("started_at", sa.String(30), nullable=True),
+        sa.Column("completed_at", sa.String(30), nullable=True),
+        sa.Column("metrics", postgresql.JSONB, nullable=False, server_default="{}"),
+        sa.Column("errors", postgresql.JSONB, nullable=False, server_default="[]"),
+        sa.Column("provenance", postgresql.JSONB, nullable=False, server_default="{}"),
         sa.Column(
-            "trigger",
-            sa.Enum("manual", "scheduled", "auto", name="ingestiontriggerenum"),
+            "job_metadata",
+            postgresql.JSONB,
             nullable=False,
-            server_default="manual",
+            server_default="{}",
         ),
-        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("records_processed", sa.Integer, server_default="0"),
-        sa.Column("records_failed", sa.Integer, server_default="0"),
-        sa.Column("error_message", sa.Text, nullable=True),
         sa.Column(
-            "metadata_payload",
+            "source_config_snapshot",
             postgresql.JSONB,
             nullable=False,
             server_default="{}",
@@ -1012,32 +1432,45 @@ def upgrade() -> None:  # noqa: PLR0915
 
 def downgrade() -> None:
     # Drop in reverse order of creation
-    op.drop_table("ingestion_jobs")
-    op.drop_table("storage_health_snapshots")
-    op.drop_table("storage_operations")
-    op.drop_table("storage_configurations")
-    op.drop_table("user_data_sources")
-    op.drop_table("source_templates")
-    op.drop_table("relations")
-    op.drop_table("observations")
-    op.drop_table("provenance")
-    op.drop_table("entity_identifiers")
-    op.drop_table("entities")
-    op.drop_table("study_memberships")
-    op.drop_table("studies")
-    op.drop_table("relation_constraints")
-    op.drop_table("entity_resolution_policies")
-    op.drop_table("transform_registry")
-    op.drop_table("variable_synonyms")
-    op.drop_table("variable_definitions")
-    op.drop_table("system_status")
-    op.drop_table("audit_logs")
-    op.drop_table("sessions")
-    op.drop_table("users")
+    # NOTE: This migration is iterated on frequently during the clean-sheet pivot.
+    # Use IF EXISTS to keep downgrade resilient when schema details change.
+    op.execute("DROP TABLE IF EXISTS ingestion_jobs CASCADE")
+    op.execute("DROP TABLE IF EXISTS storage_health_snapshots CASCADE")
+    op.execute("DROP TABLE IF EXISTS storage_operations CASCADE")
+    op.execute("DROP TABLE IF EXISTS storage_configurations CASCADE")
+    op.execute("DROP TABLE IF EXISTS user_data_sources CASCADE")
+    op.execute("DROP TABLE IF EXISTS discovery_search_jobs CASCADE")
+    op.execute("DROP TABLE IF EXISTS discovery_presets CASCADE")
+    op.execute("DROP TABLE IF EXISTS query_test_results CASCADE")
+    op.execute("DROP TABLE IF EXISTS data_discovery_sessions CASCADE")
+    op.execute("DROP TABLE IF EXISTS data_source_activation_rules CASCADE")
+    op.execute("DROP TABLE IF EXISTS source_catalog_entries CASCADE")
+    op.execute("DROP TABLE IF EXISTS source_templates CASCADE")
+    op.execute("DROP TABLE IF EXISTS relations CASCADE")
+    op.execute("DROP TABLE IF EXISTS observations CASCADE")
+    op.execute("DROP TABLE IF EXISTS provenance CASCADE")
+    op.execute("DROP TABLE IF EXISTS entity_identifiers CASCADE")
+    op.execute("DROP TABLE IF EXISTS entities CASCADE")
+    op.execute("DROP TABLE IF EXISTS research_space_memberships CASCADE")
+    op.execute("DROP TABLE IF EXISTS research_spaces CASCADE")
+    op.execute("DROP TABLE IF EXISTS relation_constraints CASCADE")
+    op.execute("DROP TABLE IF EXISTS entity_resolution_policies CASCADE")
+    op.execute("DROP TABLE IF EXISTS transform_registry CASCADE")
+    op.execute("DROP TABLE IF EXISTS variable_synonyms CASCADE")
+    op.execute("DROP TABLE IF EXISTS variable_definitions CASCADE")
+    op.execute("DROP TABLE IF EXISTS system_status CASCADE")
+    op.execute("DROP TABLE IF EXISTS audit_logs CASCADE")
+    op.execute("DROP TABLE IF EXISTS sessions CASCADE")
+    op.execute("DROP TABLE IF EXISTS users CASCADE")
     # Drop enums
     op.execute("DROP TYPE IF EXISTS userrole")
     op.execute("DROP TYPE IF EXISTS userstatus")
     op.execute("DROP TYPE IF EXISTS sessionstatus")
+    op.execute("DROP TYPE IF EXISTS membershiproleenum")
+    op.execute("DROP TYPE IF EXISTS spacestatusenum")
+    op.execute("DROP TYPE IF EXISTS activationscopeenum")
+    op.execute("DROP TYPE IF EXISTS data_source_permission_level")
+    op.execute("DROP TYPE IF EXISTS presetscopeenum")
     op.execute("DROP TYPE IF EXISTS templatecategoryenum")
     op.execute("DROP TYPE IF EXISTS sourcetypeenum")
     op.execute("DROP TYPE IF EXISTS usersourcetypeenum")

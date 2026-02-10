@@ -73,25 +73,46 @@ class ExactMapper:
 
     def _extract_subject_anchor(self, record: RawRecord) -> JSONObject:
         """Extract subject anchor from record data (e.g. MRN, Email)."""
-        # This implementation is a placeholder.
-        # In a real system, we might have a configured set of "anchor keys"
-        # or a dedicated SubjectMapper.
-        anchors = {}
+        # This implementation is intentionally simple and deterministic.
+        # Source-specific anchor extraction can evolve into dedicated mappers.
+        anchors: JSONObject = {}
+
+        record_type = record.metadata.get("type")
+        if isinstance(record_type, str) and record_type == "pubmed":
+            # Publications resolve by stable identifiers (pmid/doi) and optionally title.
+            for key in ["pmid", "doi", "title"]:
+                if key in record.data and record.data[key] is not None:
+                    anchors[key] = record.data[key]
+            return anchors
+
         # Common anchor keys
-        for key in ["mrn", "patient_id", "email", "hgnc_id", "gene_symbol"]:
-            if key in record.data:
+        for key in ["mrn", "issuer", "patient_id", "email", "hgnc_id", "gene_symbol"]:
+            if key in record.data and record.data[key] is not None:
                 anchors[key] = record.data[key]
         return anchors
 
     def _extract_timestamp(self, record: RawRecord) -> datetime | None:
         """Extract timestamp from record data."""
         # Check standard keys
-        for key in ["timestamp", "date", "created_at", "observed_at"]:
+        for key in [
+            "timestamp",
+            "date",
+            "created_at",
+            "observed_at",
+            "publication_date",
+        ]:
             if key in record.data:
                 val = record.data[key]
                 if isinstance(val, str):
                     try:
-                        return datetime.fromisoformat(val)
+                        dt = datetime.fromisoformat(val)
                     except ValueError:
                         continue
+
+                    # Normalize naive timestamps to UTC for TIMESTAMPTZ columns.
+                    if dt.tzinfo is None:
+                        from datetime import UTC
+
+                        dt = dt.replace(tzinfo=UTC)
+                    return dt
         return None

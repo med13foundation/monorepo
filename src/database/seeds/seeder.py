@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -90,12 +91,13 @@ def seed_variable_synonyms(session: Session) -> int:
 
     count = 0
     for row in rows:
+        synonym = str(row["synonym"]).lower()
         existing = session.execute(
             text(
                 "SELECT 1 FROM variable_synonyms "
                 "WHERE variable_id = :vid AND synonym = :syn",
             ),
-            {"vid": row["variable_id"], "syn": row["synonym"]},
+            {"vid": row["variable_id"], "syn": synonym},
         ).fetchone()
         if existing:
             continue
@@ -109,7 +111,7 @@ def seed_variable_synonyms(session: Session) -> int:
             ),
             {
                 "variable_id": row["variable_id"],
-                "synonym": row["synonym"],
+                "synonym": synonym,
                 "source": row.get("source"),
             },
         )
@@ -126,6 +128,7 @@ def seed_entity_resolution_policies(session: Session) -> int:
     if not rows:
         return 0
 
+    now = datetime.now(UTC)
     count = 0
     for row in rows:
         existing = session.execute(
@@ -140,10 +143,10 @@ def seed_entity_resolution_policies(session: Session) -> int:
                 """
                 INSERT INTO entity_resolution_policies
                     (entity_type, policy_strategy, required_anchors,
-                     auto_merge_threshold)
+                     auto_merge_threshold, created_at, updated_at)
                 VALUES
                     (:entity_type, :policy_strategy, :required_anchors,
-                     :auto_merge_threshold)
+                     :auto_merge_threshold, :created_at, :updated_at)
             """,
             ),
             {
@@ -151,6 +154,8 @@ def seed_entity_resolution_policies(session: Session) -> int:
                 "policy_strategy": row["policy_strategy"],
                 "required_anchors": json.dumps(row.get("required_anchors", [])),
                 "auto_merge_threshold": row.get("auto_merge_threshold", 1.0),
+                "created_at": now,
+                "updated_at": now,
             },
         )
         count += 1

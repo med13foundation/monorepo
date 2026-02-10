@@ -50,7 +50,7 @@ class KernelRelationService:
     def create_relation(  # noqa: PLR0913
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         source_id: str,
         relation_type: str,
         target_id: str,
@@ -76,6 +76,14 @@ class KernelRelationService:
         target = self._entities.get_by_id(target_id)
         if target is None:
             msg = f"Target entity {target_id} not found"
+            raise ValueError(msg)
+
+        # 1b. Enforce research-space isolation for graph edges
+        if str(source.research_space_id) != str(research_space_id):
+            msg = f"Source entity {source_id} is not in research space {research_space_id}"
+            raise ValueError(msg)
+        if str(target.research_space_id) != str(research_space_id):
+            msg = f"Target entity {target_id} is not in research space {research_space_id}"
             raise ValueError(msg)
 
         # 2. Check triple is allowed
@@ -105,7 +113,7 @@ class KernelRelationService:
             )
 
         return self._relations.create(
-            study_id=study_id,
+            research_space_id=research_space_id,
             source_id=source_id,
             relation_type=relation_type,
             target_id=target_id,
@@ -153,18 +161,50 @@ class KernelRelationService:
             relation_types=relation_types,
         )
 
-    def list_by_study(
+    def get_neighborhood_in_space(
         self,
-        study_id: str,
+        research_space_id: str,
+        entity_id: str,
+        *,
+        depth: int = 1,
+        relation_types: list[str] | None = None,
+    ) -> list[RelationModel]:
+        """
+        Graph traversal around an entity, restricted to a research space.
+
+        This protects against cross-space leakage if invalid relations exist.
+        """
+        entity = self._entities.get_by_id(entity_id)
+        if entity is None:
+            msg = f"Entity {entity_id} not found"
+            raise ValueError(msg)
+        if str(entity.research_space_id) != str(research_space_id):
+            msg = f"Entity {entity_id} is not in research space {research_space_id}"
+            raise ValueError(msg)
+
+        relations = self._relations.find_neighborhood(
+            entity_id,
+            depth=depth,
+            relation_types=relation_types,
+        )
+        return [
+            rel
+            for rel in relations
+            if str(rel.research_space_id) == str(research_space_id)
+        ]
+
+    def list_by_research_space(
+        self,
+        research_space_id: str,
         *,
         relation_type: str | None = None,
         curation_status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[RelationModel]:
-        """Paginated listing of relations in a study."""
-        return self._relations.find_by_study(
-            study_id,
+        """Paginated listing of relations in a research space."""
+        return self._relations.find_by_research_space(
+            research_space_id,
             relation_type=relation_type,
             curation_status=curation_status,
             limit=limit,

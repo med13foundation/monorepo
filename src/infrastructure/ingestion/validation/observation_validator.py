@@ -5,6 +5,7 @@ Observation validator for the ingestion pipeline.
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -47,14 +48,34 @@ class ObservationValidator:
     def _validate_value_type(
         self,
         value: IngestedValue,
-        _variable: VariableDefinitionModel,
+        variable: VariableDefinitionModel,
     ) -> bool:
-        # Basic type checks are done by ValueCaster, but we can double check
-        # or check specific requirements (e.g. non-null)
+        # ValueCaster should already cast based on dictionary definitions, but we
+        # validate again to ensure we never persist an invalid type.
+        if value is None:
+            return False
 
-        # Check if variable allows nulls?
-        # For observations, usually a value is required.
-        return value is not None
+        data_type = variable.data_type
+
+        is_valid = True
+        if data_type in ("INTEGER", "FLOAT"):
+            # bool is an int subclass; reject it explicitly.
+            is_valid = isinstance(value, int | float) and not isinstance(value, bool)
+        elif data_type == "BOOLEAN":
+            is_valid = isinstance(value, bool)
+        elif data_type in ("STRING", "CODED"):
+            is_valid = isinstance(value, str)
+        elif data_type == "DATE":
+            is_valid = isinstance(value, date | datetime)
+        elif data_type == "JSON":
+            # JSON values may be primitives, lists, or dicts; we rely on the mapper
+            # and dictionary for shape constraints.
+            is_valid = True
+        else:
+            # Unknown types are treated permissively for now.
+            is_valid = True
+
+        return is_valid
 
     def _validate_constraints(
         self,
@@ -87,10 +108,8 @@ class ObservationValidator:
                     return False
 
             # Handle enums for CODED/STRING
-            allowed_values: list[IngestedValue] | None = constraints.get(
-                "allowed_values",
-            )  # type: ignore[assignment]
-            if allowed_values and value not in allowed_values:
+            allowed_values_obj = constraints.get("allowed_values")
+            if isinstance(allowed_values_obj, list) and value not in allowed_values_obj:
                 return False
 
             # Handle regex pattern

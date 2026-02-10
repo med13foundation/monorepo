@@ -16,10 +16,58 @@ if TYPE_CHECKING:
 __all__ = [
     "collect_paginated",
     "copy_filters",
+    "get_entity_fields",
     "get_evidence_fields",
     "get_gene_fields",
+    "get_observation_fields",
     "get_phenotype_fields",
+    "get_relation_fields",
     "get_variants_fields",
+]
+
+_ENTITY_FIELDS = [
+    "id",
+    "research_space_id",
+    "entity_type",
+    "display_label",
+    "metadata_payload",
+    "created_at",
+    "updated_at",
+]
+
+_OBSERVATION_FIELDS = [
+    "id",
+    "research_space_id",
+    "subject_id",
+    "variable_id",
+    "value_numeric",
+    "value_text",
+    "value_date",
+    "value_coded",
+    "value_boolean",
+    "value_json",
+    "unit",
+    "observed_at",
+    "provenance_id",
+    "confidence",
+    "created_at",
+]
+
+_RELATION_FIELDS = [
+    "id",
+    "research_space_id",
+    "source_id",
+    "relation_type",
+    "target_id",
+    "confidence",
+    "evidence_summary",
+    "evidence_tier",
+    "curation_status",
+    "provenance_id",
+    "reviewed_by",
+    "reviewed_at",
+    "created_at",
+    "updated_at",
 ]
 
 _GENE_FIELDS = [
@@ -123,6 +171,10 @@ def copy_filters(filters: QueryFilters | None) -> QueryFilters:
     return clone_query_filters(filters) or {}
 
 
+def get_entity_fields() -> list[str]:
+    return list(_ENTITY_FIELDS)
+
+
 def get_gene_fields() -> list[str]:
     return list(_GENE_FIELDS)
 
@@ -137,3 +189,11 @@ def get_phenotype_fields() -> list[str]:
 
 def get_evidence_fields() -> list[str]:
     return list(_EVIDENCE_FIELDS)
+
+
+def get_observation_fields() -> list[str]:
+    return list(_OBSERVATION_FIELDS)
+
+
+def get_relation_fields() -> list[str]:
+    return list(_RELATION_FIELDS)

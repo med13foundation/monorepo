@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
+from sqlalchemy import insert as sa_insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
 from src.models.database.kernel.entities import EntityIdentifierModel, EntityModel
@@ -20,7 +22,13 @@ from src.models.database.kernel.entities import EntityIdentifierModel, EntityMod
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from src.type_definitions.common import JSONObject
+
 logger = logging.getLogger(__name__)
+
+
+def _as_uuid(value: str | UUID) -> UUID:
+    return value if isinstance(value, UUID) else UUID(str(value))
 
 
 class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
@@ -34,14 +42,14 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
     def create(
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         entity_type: str,
         display_label: str | None = None,
-        metadata: dict[str, object] | None = None,
+        metadata: JSONObject | None = None,
     ) -> EntityModel:
         entity = EntityModel(
-            id=str(uuid4()),
-            study_id=study_id,
+            id=uuid4(),
+            research_space_id=_as_uuid(research_space_id),
             entity_type=entity_type,
             display_label=display_label,
             metadata_payload=metadata or {},
@@ -51,11 +59,11 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         return entity
 
     def get_by_id(self, entity_id: str) -> EntityModel | None:
-        return self._session.get(EntityModel, entity_id)
+        return self._session.get(EntityModel, _as_uuid(entity_id))
 
     def find_by_type(
         self,
-        study_id: str,
+        research_space_id: str,
         entity_type: str,
         *,
         limit: int | None = None,
@@ -64,7 +72,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         stmt = (
             select(EntityModel)
             .where(
-                EntityModel.study_id == study_id,
+                EntityModel.research_space_id == _as_uuid(research_space_id),
                 EntityModel.entity_type == entity_type,
             )
             .order_by(EntityModel.created_at.desc())
@@ -75,27 +83,55 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             stmt = stmt.offset(offset)
         return list(self._session.scalars(stmt).all())
 
+    def find_by_research_space(
+        self,
+        research_space_id: str,
+        *,
+        entity_type: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[EntityModel]:
+        stmt = select(EntityModel).where(
+            EntityModel.research_space_id == _as_uuid(research_space_id),
+        )
+        if entity_type is not None:
+            stmt = stmt.where(EntityModel.entity_type == entity_type)
+        stmt = stmt.order_by(EntityModel.created_at.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        if offset is not None:
+            stmt = stmt.offset(offset)
+        return list(self._session.scalars(stmt).all())
+
     def search(
         self,
-        study_id: str,
+        research_space_id: str,
         query: str,
         *,
         entity_type: str | None = None,
         limit: int = 20,
     ) -> list[EntityModel]:
         stmt = select(EntityModel).where(
-            EntityModel.study_id == study_id,
+            EntityModel.research_space_id == _as_uuid(research_space_id),
             EntityModel.display_label.ilike(f"%{query}%"),
         )
         if entity_type is not None:
             stmt = stmt.where(EntityModel.entity_type == entity_type)
         return list(self._session.scalars(stmt.limit(limit)).all())
 
-    def count_by_type(self, study_id: str) -> dict[str, int]:
+    def count_by_type(self, research_space_id: str) -> dict[str, int]:
         rows = self._session.execute(
             select(EntityModel.entity_type, func.count())
-            .where(EntityModel.study_id == study_id)
+            .where(EntityModel.research_space_id == _as_uuid(research_space_id))
             .group_by(EntityModel.entity_type),
+        ).all()
+        return {row[0]: row[1] for row in rows}
+
+    def count_global_by_type(self) -> dict[str, int]:
+        rows = self._session.execute(
+            select(EntityModel.entity_type, func.count()).group_by(
+                EntityModel.entity_type,
+            ),
         ).all()
         return {row[0]: row[1] for row in rows}
 
@@ -117,25 +153,42 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         identifier_value: str,
         sensitivity: str = "INTERNAL",
     ) -> EntityIdentifierModel:
-        # Upsert — skip if already exists
-        stmt = (
-            pg_insert(EntityIdentifierModel)
-            .values(
-                entity_id=entity_id,
-                namespace=namespace,
-                identifier_value=identifier_value,
-                sensitivity=sensitivity,
+        # Upsert — skip if already exists.
+        #
+        # Use dialect-appropriate INSERT .. ON CONFLICT to keep the kernel
+        # repositories usable in SQLite-backed tests as well as Postgres.
+        bind = self._session.get_bind()
+        dialect_name = getattr(bind.dialect, "name", "")
+        values = {
+            "entity_id": _as_uuid(entity_id),
+            "namespace": namespace,
+            "identifier_value": identifier_value,
+            "sensitivity": sensitivity,
+        }
+        if dialect_name == "sqlite":
+            self._session.execute(
+                sqlite_insert(EntityIdentifierModel)
+                .values(**values)
+                .on_conflict_do_nothing(
+                    index_elements=["entity_id", "namespace", "identifier_value"],
+                ),
             )
-            .on_conflict_do_nothing(
-                index_elements=["entity_id", "namespace", "identifier_value"],
+        elif dialect_name == "postgresql":
+            self._session.execute(
+                pg_insert(EntityIdentifierModel)
+                .values(**values)
+                .on_conflict_do_nothing(
+                    index_elements=["entity_id", "namespace", "identifier_value"],
+                ),
             )
-        )
-        self._session.execute(stmt)
+        else:
+            # Fallback: attempt a plain insert and rely on the unique index to raise.
+            self._session.execute(sa_insert(EntityIdentifierModel).values(**values))
         self._session.flush()
 
         # Return the (possibly pre-existing) identifier row
         lookup = select(EntityIdentifierModel).where(
-            EntityIdentifierModel.entity_id == entity_id,
+            EntityIdentifierModel.entity_id == _as_uuid(entity_id),
             EntityIdentifierModel.namespace == namespace,
             EntityIdentifierModel.identifier_value == identifier_value,
         )
@@ -146,7 +199,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         *,
         namespace: str,
         identifier_value: str,
-        study_id: str | None = None,
+        research_space_id: str | None = None,
     ) -> EntityModel | None:
         stmt = (
             select(EntityModel)
@@ -156,8 +209,10 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
                 EntityIdentifierModel.identifier_value == identifier_value,
             )
         )
-        if study_id is not None:
-            stmt = stmt.where(EntityModel.study_id == study_id)
+        if research_space_id is not None:
+            stmt = stmt.where(
+                EntityModel.research_space_id == _as_uuid(research_space_id),
+            )
         return self._session.scalars(stmt).first()
 
     # ── Resolution ────────────────────────────────────────────────────
@@ -165,7 +220,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
     def resolve(
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         entity_type: str,
         identifiers: dict[str, str],
     ) -> EntityModel | None:
@@ -173,13 +228,13 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         Try to match an existing entity using its identifiers.
 
         For each namespace→value pair, check ``entity_identifiers``.
-        Return the first entity that matches within the study + type scope.
+        Return the first entity that matches within the research space + type scope.
         """
         for namespace, value in identifiers.items():
             entity = self.find_by_identifier(
                 namespace=namespace,
                 identifier_value=value,
-                study_id=study_id,
+                research_space_id=research_space_id,
             )
             if entity is not None and entity.entity_type == entity_type:
                 return entity

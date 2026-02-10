@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         ProvenanceRepository,
     )
     from src.models.database.kernel.provenance import ProvenanceModel
+    from src.type_definitions.common import JSONObject
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +34,18 @@ class ProvenanceService:
     def create_provenance(  # noqa: PLR0913
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         source_type: str,
         source_ref: str | None = None,
         extraction_run_id: str | None = None,
         mapping_method: str | None = None,
         mapping_confidence: float | None = None,
         agent_model: str | None = None,
-        raw_input: dict[str, object] | None = None,
+        raw_input: JSONObject | None = None,
     ) -> ProvenanceModel:
         """Create a provenance record for a data ingestion batch."""
         return self._provenance.create(
-            study_id=study_id,
+            research_space_id=research_space_id,
             source_type=source_type,
             source_ref=source_ref,
             extraction_run_id=extraction_run_id,
@@ -58,17 +59,17 @@ class ProvenanceService:
         """Retrieve a single provenance record."""
         return self._provenance.get_by_id(provenance_id)
 
-    def list_by_study(
+    def list_by_research_space(
         self,
-        study_id: str,
+        research_space_id: str,
         *,
         source_type: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[ProvenanceModel]:
-        """List provenance records for a study."""
-        return self._provenance.find_by_study(
-            study_id,
+        """List provenance records for a research space."""
+        return self._provenance.find_by_research_space(
+            research_space_id,
             source_type=source_type,
             limit=limit,
             offset=offset,

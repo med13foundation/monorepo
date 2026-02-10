@@ -30,7 +30,7 @@ class KernelRelationRepository(ABC):
     def create(  # noqa: PLR0913
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         source_id: str,
         relation_type: str,
         target_id: str,
@@ -86,16 +86,26 @@ class KernelRelationRepository(ABC):
         """
 
     @abstractmethod
-    def find_by_study(
+    def find_by_research_space(
         self,
-        study_id: str,
+        research_space_id: str,
         *,
         relation_type: str | None = None,
         curation_status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[RelationModel]:
-        """Paginated listing of relations in a study with optional filters."""
+        """Paginated listing of relations in a research space with optional filters."""
+
+    @abstractmethod
+    def search_by_text(
+        self,
+        research_space_id: str,
+        query: str,
+        *,
+        limit: int = 20,
+    ) -> list[RelationModel]:
+        """Search relations in a research space by relation type / evidence summary."""
 
     # ── Curation lifecycle ────────────────────────────────────────────
 
@@ -119,6 +129,10 @@ class KernelRelationRepository(ABC):
     @abstractmethod
     def delete_by_provenance(self, provenance_id: str) -> int:
         """Delete all relations linked to a provenance record. Returns count."""
+
+    @abstractmethod
+    def count_by_research_space(self, research_space_id: str) -> int:
+        """Count total relations in a research space."""
 
 
 __all__ = ["KernelRelationRepository"]

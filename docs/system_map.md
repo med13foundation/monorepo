@@ -20,6 +20,7 @@
     │   └── /admin/data-sources/templates/
     │       ├── / (Templates List)
     │       └── /[templateId] (Template Details)
+    │   └── /admin/dictionary (Kernel Dictionary Management)
     │
     └── 🏢 RESEARCH SPACES
         │
@@ -37,6 +38,10 @@
             │
             ├── 🕸️ knowledge-graph (Knowledge Graph Explorer)
             │
+            ├── 📈 observations (Observation Browser)
+            │
+            ├── 📥 ingest (Ingestion Runner)
+            │
             ├── 👥 members (Space Members Management)
             │
             └── ⚙️ settings (Space Configuration)
@@ -45,35 +50,41 @@
 ====================================
 
 🔐 Authentication & Users
-├── /api/auth/*
-├── /api/users/*
-└── /api/health
+├── /auth/*
+├── /users/*
+└── /health
 
-📊 Core Data
+📊 Core Data (Kernel-Backed)
 ├── /api/dashboard
-├── /api/genes
-├── /api/variants
-├── /api/phenotypes
-├── /api/evidence
-├── /api/search
-└── /api/export
+├── /search?space_id={spaceId} (entities/observations/relations)
+└── /export/{entities|observations|relations}?space_id={spaceId}
+
+🧠 Kernel (Space-Scoped Facts)
+└── /research-spaces/{spaceId}/
+    ├── entities (generic entity CRUD + resolution)
+    ├── observations (typed facts / EAV with strict validation)
+    ├── relations (graph edges with evidence + curation status)
+    ├── graph/export (NetworkX-style graph JSON export)
+    ├── graph/neighborhood/{entityId} (local neighborhood)
+    ├── provenance (provenance chain)
+    └── ingest (map → normalize → resolve → validate)
 
 🔍 Data Discovery (Space-Scoped)
-└── /api/research-spaces/{spaceId}/discovery/
+└── /research-spaces/{spaceId}/discovery/
     ├── catalog (Browse available sources)
     ├── sessions (Discovery session management)
     ├── presets (PubMed presets)
     └── defaults (Default parameters)
 
 🏢 Research Spaces
-├── /api/research-spaces/
+├── /research-spaces/
 │   ├── / (CRUD operations)
 │   ├── /members (Membership management)
 │   ├── /curation (Curation workflows)
 │   └── /data-sources (Space data sources)
 
 🛡️ Admin Routes
-├── /api/admin/
+├── /admin/
 │   ├── stats (System statistics)
 │   ├── system-status (System health)
 │   ├── catalog/ (Data catalog management)
@@ -82,13 +93,14 @@
 │   │   ├── /history (Ingestion history)
 │   │   ├── /scheduling (Schedule management)
 │   │   └── /listing (Data source listing)
+│   ├── dictionary/ (Kernel dictionary management)
 │   └── templates/ (Template management)
 │       ├── / (Template CRUD)
 │       └── /mutations (Template operations)
 
 💾 Storage & Infrastructure
-├── /api/admin/storage/configurations
-└── /api/resources
+├── /admin/storage/configurations
+└── /resources
 
 🎯 NAVIGATION FLOW
 =================

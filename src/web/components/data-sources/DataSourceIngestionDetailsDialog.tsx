@@ -15,7 +15,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { fetchIngestionJobHistoryAction } from '@/app/actions/data-sources'
-import { RecentExtractionsSection } from './RecentExtractionsSection'
 import { toast } from 'sonner'
 
 export type ManualIngestionSummary = {
@@ -214,8 +213,6 @@ export function DataSourceIngestionDetailsDialog({
               </div>
             )}
           </section>
-
-          <RecentExtractionsSection sourceId={source.id} open={open} />
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

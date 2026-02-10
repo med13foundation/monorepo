@@ -1,6 +1,8 @@
-# Kernel Database Models - Universal Study Graph Platform
-# These models implement the metadata-driven kernel schema
-# that replaces the old domain-specific entity tables.
+# Kernel Database Models - Metadata-Driven Graph Kernel
+#
+# NOTE: Workspace scoping is handled by the existing ResearchSpace models
+# (``src/models/database/research_space.py``). The kernel itself provides
+# dictionary + fact tables (entities/observations/relations/provenance).
 
 from .dictionary import (
     EntityResolutionPolicyModel,
@@ -13,7 +15,6 @@ from .entities import EntityIdentifierModel, EntityModel
 from .observations import ObservationModel
 from .provenance import ProvenanceModel
 from .relations import RelationModel
-from .study import StudyMembershipModel, StudyModel
 
 __all__ = [
     # Dictionary (Layer 1)
@@ -23,8 +24,6 @@ __all__ = [
     "EntityResolutionPolicyModel",
     "RelationConstraintModel",
     # Core Data (Layer 2)
-    "StudyModel",
-    "StudyMembershipModel",
     "EntityModel",
     "EntityIdentifierModel",
     "ObservationModel",

@@ -74,7 +74,7 @@ Represents the "Who" and "What" (Patient, Gene, Paper).
 ```sql
 CREATE TABLE entities (
     id UUID PRIMARY KEY,
-    study_id UUID NOT NULL,
+    research_space_id UUID NOT NULL,
     entity_type TEXT NOT NULL, -- FK to Dictionary
     created_at TIMESTAMPTZ DEFAULT NOW(),
     metadata JSONB -- Sparse data only (e.g. "website_url", "founding_year")
@@ -103,7 +103,7 @@ This solves the "Patient Weight over Time" problem. We use an EAV-like table bac
 ```sql
 CREATE TABLE observations (
     id UUID PRIMARY KEY,
-    study_id UUID NOT NULL,
+    research_space_id UUID NOT NULL,
     subject_id UUID REFERENCES entities(id), -- The Patient
     variable_id TEXT REFERENCES variable_definitions(id), -- "VAR_001" (Weight)
 
@@ -173,8 +173,9 @@ We move from "Parsing" to a **Map -> Normalize -> Resolve -> Validate** pipeline
 - **Encryption:** The `identifier_value` column is encrypted at rest and valid only for authorized sessions.
 - **Row-Level Security (RLS):**
 - Users have a `session_role`.
-- `observations` table policy: `SELECT * FROM observations WHERE study_id IN (user_studies)`.
-- `entity_identifiers` policy: `SELECT * FROM entity_identifiers WHERE study_id IN (user_studies) AND user_has_phi_access = true`.
+- Users have a `session_role`.
+- `entity_identifiers` policy: `SELECT * FROM entity_identifiers WHERE entity_id IN (SELECT id FROM entities WHERE research_space_id IN (user_research_spaces)) AND user_has_phi_access = true`.
+- `observations` table policy: `SELECT * FROM observations WHERE research_space_id IN (user_research_spaces)`.
 
 ### 3.2 Provenance
 

@@ -9,7 +9,7 @@ the raw unmapped input.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import Float, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.database.base import Base
+from src.type_definitions.common import JSONObject  # noqa: TC001
 
 
 class ProvenanceModel(Base):
@@ -29,17 +30,17 @@ class ProvenanceModel(Base):
 
     __tablename__ = "provenance"
 
-    id: Mapped[str] = mapped_column(
+    id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         primary_key=True,
         default=uuid4,
         doc="Unique provenance ID",
     )
-    study_id: Mapped[str] = mapped_column(
+    research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("studies.id", ondelete="CASCADE"),
+        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
-        doc="Owning study",
+        doc="Owning research space",
     )
     source_type: Mapped[str] = mapped_column(
         String(64),
@@ -51,7 +52,7 @@ class ProvenanceModel(Base):
         nullable=True,
         doc="File path, URL, or session ID",
     )
-    extraction_run_id: Mapped[str | None] = mapped_column(
+    extraction_run_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         nullable=True,
         doc="Link to ingestion job",
@@ -71,7 +72,7 @@ class ProvenanceModel(Base):
         nullable=True,
         doc="AI model used, e.g. gpt-5, rule-based",
     )
-    raw_input: Mapped[dict[str, object] | None] = mapped_column(
+    raw_input: Mapped[JSONObject | None] = mapped_column(
         JSONB,
         nullable=True,
         doc="Original unmapped data for reproducibility",
@@ -82,7 +83,7 @@ class ProvenanceModel(Base):
     )
 
     __table_args__ = (
-        Index("idx_provenance_study", "study_id"),
+        Index("idx_provenance_space", "research_space_id"),
         Index("idx_provenance_source_type", "source_type"),
         Index("idx_provenance_extraction", "extraction_run_id"),
         {"comment": "Data provenance chain for reproducibility"},

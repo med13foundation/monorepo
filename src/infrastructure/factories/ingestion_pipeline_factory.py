@@ -64,7 +64,11 @@ def create_ingestion_pipeline(session: Session) -> IngestionPipeline:
     validator = ObservationValidator(dictionary_repo)
 
     # Services
-    observation_service = KernelObservationService(observation_repo, dictionary_repo)
+    observation_service = KernelObservationService(
+        observation_repo,
+        entity_repo,
+        dictionary_repo,
+    )
     provenance_tracker = ProvenanceTracker(provenance_repo)
 
     return IngestionPipeline(

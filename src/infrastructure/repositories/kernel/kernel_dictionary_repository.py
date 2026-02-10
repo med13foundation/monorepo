@@ -25,6 +25,8 @@ from src.models.database.kernel.dictionary import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from src.type_definitions.common import JSONObject
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,7 +78,7 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         domain_context: str = "general",
         sensitivity: str = "INTERNAL",
         preferred_unit: str | None = None,
-        constraints: dict[str, object] | None = None,
+        constraints: JSONObject | None = None,
         description: str | None = None,
     ) -> VariableDefinitionModel:
         var = VariableDefinitionModel(

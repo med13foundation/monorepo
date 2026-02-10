@@ -57,17 +57,17 @@ def test_create_entity_no_resolution(mock_entity_repo, mock_dictionary_repo):
     service = KernelEntityService(mock_entity_repo, mock_dictionary_repo)
 
     # Setup
-    study_id = "study-123"
+    research_space_id = "space-123"
     mock_dictionary_repo.get_resolution_policy.return_value = None
     mock_entity_repo.create.return_value = EntityModel(
         id="ent-1",
-        study_id=study_id,
+        research_space_id=research_space_id,
         entity_type="GENE",
     )
 
     # Execute
     entity, created = service.create_or_resolve(
-        study_id=study_id,
+        research_space_id=research_space_id,
         entity_type="GENE",
         display_label="BRCA1",
     )
@@ -83,13 +83,13 @@ def test_create_entity_with_resolution_match(mock_entity_repo, mock_dictionary_r
     service = KernelEntityService(mock_entity_repo, mock_dictionary_repo)
 
     # Setup
-    study_id = "study-123"
+    research_space_id = "space-123"
     identifiers = {"hgnc": "1100"}
 
     # Mock lookup match
     existing_entity = EntityModel(
         id="existing-1",
-        study_id=study_id,
+        research_space_id=research_space_id,
         entity_type="GENE",
     )
 
@@ -102,7 +102,7 @@ def test_create_entity_with_resolution_match(mock_entity_repo, mock_dictionary_r
 
     # Execute
     entity, created = service.create_or_resolve(
-        study_id=study_id,
+        research_space_id=research_space_id,
         entity_type="GENE",
         identifiers=identifiers,
     )
@@ -117,16 +117,35 @@ def test_create_entity_with_resolution_match(mock_entity_repo, mock_dictionary_r
 # ── Kernel Observation Service Tests ──────────────────────────────────────────
 
 
-def test_record_observation_success(mock_observation_repo, mock_dictionary_repo):
-    service = KernelObservationService(mock_observation_repo, mock_dictionary_repo)
+def test_record_observation_success(
+    mock_observation_repo,
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelObservationService(
+        mock_observation_repo,
+        mock_entity_repo,
+        mock_dictionary_repo,
+    )
 
     # Setup
-    variable = VariableDefinitionModel(id="var-1", preferred_unit="mg")
+    mock_entity_repo.get_by_id.return_value = EntityModel(
+        id="subj-1",
+        research_space_id="space-1",
+        entity_type="GENE",
+    )
+    variable = VariableDefinitionModel(
+        id="var-1",
+        canonical_name="test_var",
+        display_name="Test Var",
+        data_type="FLOAT",
+        preferred_unit="mg",
+    )
     mock_dictionary_repo.get_variable.return_value = variable
 
     # Execute
     service.record_observation(
-        study_id="study-1",
+        research_space_id="space-1",
         subject_id="subj-1",
         variable_id="var-1",
         value_numeric=10.5,
@@ -142,27 +161,56 @@ def test_record_observation_success(mock_observation_repo, mock_dictionary_repo)
 
 def test_record_observation_unknown_variable(
     mock_observation_repo,
+    mock_entity_repo,
     mock_dictionary_repo,
 ):
-    service = KernelObservationService(mock_observation_repo, mock_dictionary_repo)
+    service = KernelObservationService(
+        mock_observation_repo,
+        mock_entity_repo,
+        mock_dictionary_repo,
+    )
 
     # Setup - variable not found
+    mock_entity_repo.get_by_id.return_value = EntityModel(
+        id="subj-1",
+        research_space_id="space-1",
+        entity_type="GENE",
+    )
     mock_dictionary_repo.get_variable.return_value = None
 
     # Execute & Verify
     with pytest.raises(ValueError, match="Unknown variable_id"):
         service.record_observation(
-            study_id="study-1",
+            research_space_id="space-1",
             subject_id="subj-1",
             variable_id="unknown-var",
         )
 
 
-def test_record_observation_unit_transform(mock_observation_repo, mock_dictionary_repo):
-    service = KernelObservationService(mock_observation_repo, mock_dictionary_repo)
+def test_record_observation_unit_transform(
+    mock_observation_repo,
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelObservationService(
+        mock_observation_repo,
+        mock_entity_repo,
+        mock_dictionary_repo,
+    )
 
     # Setup - variable prefers 'g', input 'mg'
-    variable = VariableDefinitionModel(id="var-weight", preferred_unit="g")
+    mock_entity_repo.get_by_id.return_value = EntityModel(
+        id="subj-1",
+        research_space_id="space-1",
+        entity_type="GENE",
+    )
+    variable = VariableDefinitionModel(
+        id="var-weight",
+        canonical_name="weight",
+        display_name="Weight",
+        data_type="FLOAT",
+        preferred_unit="g",
+    )
     mock_dictionary_repo.get_variable.return_value = variable
 
     transform = TransformRegistryModel(
@@ -174,7 +222,7 @@ def test_record_observation_unit_transform(mock_observation_repo, mock_dictionar
 
     # Execute
     service.record_observation(
-        study_id="study-1",
+        research_space_id="space-1",
         subject_id="subj-1",
         variable_id="var-weight",
         value_numeric=500,
@@ -206,14 +254,14 @@ def test_create_relation_success(
 
     # Setup
     mock_entity_repo.get_by_id.side_effect = [
-        EntityModel(id="src-1", entity_type="GENE"),
-        EntityModel(id="tgt-1", entity_type="DISEASE"),
+        EntityModel(id="src-1", research_space_id="space-1", entity_type="GENE"),
+        EntityModel(id="tgt-1", research_space_id="space-1", entity_type="DISEASE"),
     ]
     mock_dictionary_repo.is_triple_allowed.return_value = True
 
     # Execute
     service.create_relation(
-        study_id="study-1",
+        research_space_id="space-1",
         source_id="src-1",
         relation_type="ASSOCIATED_WITH",
         target_id="tgt-1",
@@ -237,8 +285,8 @@ def test_create_relation_constraint_violation(
 
     # Setup
     mock_entity_repo.get_by_id.side_effect = [
-        EntityModel(id="src-1", entity_type="GENE"),
-        EntityModel(id="tgt-1", entity_type="DISEASE"),
+        EntityModel(id="src-1", research_space_id="space-1", entity_type="GENE"),
+        EntityModel(id="tgt-1", research_space_id="space-1", entity_type="DISEASE"),
     ]
     # Constraint says NO
     mock_dictionary_repo.is_triple_allowed.return_value = False
@@ -246,7 +294,7 @@ def test_create_relation_constraint_violation(
     # Execute & Verify
     with pytest.raises(ValueError, match="not allowed by constraints"):
         service.create_relation(
-            study_id="study-1",
+            research_space_id="space-1",
             source_id="src-1",
             relation_type="BAD_RELATION",
             target_id="tgt-1",

@@ -56,12 +56,20 @@ class AnalysisServiceFactoryMixin:
         session: Session,
     ) -> BulkExportService:
         from src.application import export as export_module
+        from src.infrastructure.repositories.kernel.kernel_entity_repository import (
+            SqlAlchemyKernelEntityRepository,
+        )
+        from src.infrastructure.repositories.kernel.kernel_observation_repository import (
+            SqlAlchemyKernelObservationRepository,
+        )
+        from src.infrastructure.repositories.kernel.kernel_relation_repository import (
+            SqlAlchemyKernelRelationRepository,
+        )
 
         return export_module.BulkExportService(
-            gene_service=self.create_gene_application_service(session),
-            variant_service=self.create_variant_application_service(session),
-            phenotype_service=self.create_phenotype_application_service(session),
-            evidence_service=self.create_evidence_application_service(session),
+            entity_repo=SqlAlchemyKernelEntityRepository(session),
+            observation_repo=SqlAlchemyKernelObservationRepository(session),
+            relation_repo=SqlAlchemyKernelRelationRepository(session),
             storage_service=self.create_storage_configuration_service(session),
         )
 
@@ -70,28 +78,28 @@ class AnalysisServiceFactoryMixin:
         session: Session,
     ) -> UnifiedSearchService:
         from src.application import search as search_module
+        from src.infrastructure.repositories.kernel.kernel_entity_repository import (
+            SqlAlchemyKernelEntityRepository,
+        )
+        from src.infrastructure.repositories.kernel.kernel_observation_repository import (
+            SqlAlchemyKernelObservationRepository,
+        )
+        from src.infrastructure.repositories.kernel.kernel_relation_repository import (
+            SqlAlchemyKernelRelationRepository,
+        )
 
         return search_module.UnifiedSearchService(
-            gene_service=self.create_gene_application_service(session),
-            variant_service=self.create_variant_application_service(session),
-            phenotype_service=self.create_phenotype_application_service(session),
-            evidence_service=self.create_evidence_application_service(session),
+            entity_repo=SqlAlchemyKernelEntityRepository(session),
+            observation_repo=SqlAlchemyKernelObservationRepository(session),
+            relation_repo=SqlAlchemyKernelRelationRepository(session),
         )
 
     def create_dashboard_service(self, session: Session) -> DashboardService:
         from src.application.services import DashboardService
-        from src.infrastructure.repositories import (
-            SqlAlchemyEvidenceRepository,
-            SqlAlchemyGeneRepository,
-            SqlAlchemyPhenotypeRepository,
-            SqlAlchemyPublicationRepository,
-            SqlAlchemyVariantRepository,
+        from src.infrastructure.repositories.kernel.kernel_entity_repository import (
+            SqlAlchemyKernelEntityRepository,
         )
 
         return DashboardService(
-            gene_repository=SqlAlchemyGeneRepository(session),  # type: ignore[arg-type]
-            variant_repository=SqlAlchemyVariantRepository(session),  # type: ignore[arg-type]
-            phenotype_repository=SqlAlchemyPhenotypeRepository(session),  # type: ignore[arg-type]
-            evidence_repository=SqlAlchemyEvidenceRepository(session),  # type: ignore[arg-type]
-            publication_repository=SqlAlchemyPublicationRepository(session),  # type: ignore[arg-type]
+            entity_repository=SqlAlchemyKernelEntityRepository(session),
         )

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.models.database.kernel.entities import EntityIdentifierModel, EntityModel
+    from src.type_definitions.common import JSONObject
 
 
 class KernelEntityRepository(ABC):
@@ -28,12 +29,12 @@ class KernelEntityRepository(ABC):
     def create(
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         entity_type: str,
         display_label: str | None = None,
-        metadata: dict[str, object] | None = None,
+        metadata: JSONObject | None = None,
     ) -> EntityModel:
-        """Create a new entity in the given study."""
+        """Create a new entity in the given research space."""
 
     @abstractmethod
     def get_by_id(self, entity_id: str) -> EntityModel | None:
@@ -42,28 +43,43 @@ class KernelEntityRepository(ABC):
     @abstractmethod
     def find_by_type(
         self,
-        study_id: str,
+        research_space_id: str,
         entity_type: str,
         *,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[EntityModel]:
-        """List entities of a specific type within a study."""
+        """List entities of a specific type within a research space."""
+
+    @abstractmethod
+    def find_by_research_space(
+        self,
+        research_space_id: str,
+        *,
+        entity_type: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[EntityModel]:
+        """List entities within a research space, optionally filtered by entity type."""
 
     @abstractmethod
     def search(
         self,
-        study_id: str,
+        research_space_id: str,
         query: str,
         *,
         entity_type: str | None = None,
         limit: int = 20,
     ) -> list[EntityModel]:
-        """Full-text search on display_label within a study."""
+        """Full-text search on display_label within a research space."""
 
     @abstractmethod
-    def count_by_type(self, study_id: str) -> dict[str, int]:
-        """Return ``{entity_type: count}`` for all types in a study."""
+    def count_by_type(self, research_space_id: str) -> dict[str, int]:
+        """Return ``{entity_type: count}`` for all types in a research space."""
+
+    @abstractmethod
+    def count_global_by_type(self) -> dict[str, int]:
+        """Return ``{entity_type: count}`` across all research spaces."""
 
     @abstractmethod
     def delete(self, entity_id: str) -> bool:
@@ -88,7 +104,7 @@ class KernelEntityRepository(ABC):
         *,
         namespace: str,
         identifier_value: str,
-        study_id: str | None = None,
+        research_space_id: str | None = None,
     ) -> EntityModel | None:
         """Look up an entity by a specific namespace + value pair."""
 
@@ -98,7 +114,7 @@ class KernelEntityRepository(ABC):
     def resolve(
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         entity_type: str,
         identifiers: dict[str, str],
     ) -> EntityModel | None:

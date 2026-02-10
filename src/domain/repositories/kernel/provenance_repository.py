@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.models.database.kernel.provenance import ProvenanceModel
+    from src.type_definitions.common import JSONObject
 
 
 class ProvenanceRepository(ABC):
@@ -26,14 +27,14 @@ class ProvenanceRepository(ABC):
     def create(  # noqa: PLR0913
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         source_type: str,
         source_ref: str | None = None,
         extraction_run_id: str | None = None,
         mapping_method: str | None = None,
         mapping_confidence: float | None = None,
         agent_model: str | None = None,
-        raw_input: dict[str, object] | None = None,
+        raw_input: JSONObject | None = None,
     ) -> ProvenanceModel:
         """Create a provenance record for a data ingestion batch."""
 
@@ -42,15 +43,15 @@ class ProvenanceRepository(ABC):
         """Retrieve a single provenance record."""
 
     @abstractmethod
-    def find_by_study(
+    def find_by_research_space(
         self,
-        study_id: str,
+        research_space_id: str,
         *,
         source_type: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[ProvenanceModel]:
-        """List provenance records for a study, optionally filtered by source type."""
+        """List provenance records for a research space, optionally filtered by source type."""
 
     @abstractmethod
     def find_by_extraction_run(

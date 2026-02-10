@@ -1,5 +1,5 @@
 # MED13 Resource Library - SQLAlchemy Database Models
-# Universal Study Graph Platform — Kernel + Infrastructure models
+# Metadata-driven graph kernel + infrastructure models
 #
 # MIGRATION NOTE (2026-02-09): Old domain-specific models (Gene, Variant,
 # Phenotype, Evidence, Mechanism, etc.) have been replaced by the kernel
@@ -29,8 +29,6 @@ from .kernel import (
     ProvenanceModel,
     RelationConstraintModel,
     RelationModel,
-    StudyMembershipModel,
-    StudyModel,
     TransformRegistryModel,
     VariableDefinitionModel,
     VariableSynonymModel,
@@ -77,8 +75,6 @@ __all__ = [
     "EntityResolutionPolicyModel",
     "RelationConstraintModel",
     # Kernel: Data (Layer 2)
-    "StudyModel",
-    "StudyMembershipModel",
     "EntityModel",
     "EntityIdentifierModel",
     "ObservationModel",

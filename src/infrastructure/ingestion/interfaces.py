@@ -42,7 +42,7 @@ class Resolver(Protocol):
         self,
         anchor: JSONObject,
         entity_type: str,
-        study_id: str,
+        research_space_id: str,
     ) -> ResolvedEntity:
         """Resolve an entity anchor to a kernel entity."""
         ...

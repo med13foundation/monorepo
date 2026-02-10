@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Float, Index, String, Text
+from sqlalchemy import Float, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.database.base import Base
+from src.type_definitions.common import JSONObject  # noqa: TC001
 
 
 class VariableDefinitionModel(Base):
@@ -51,7 +52,7 @@ class VariableDefinitionModel(Base):
         nullable=True,
         doc="UCUM-standard preferred unit, e.g. mmHg",
     )
-    constraints: Mapped[dict[str, object]] = mapped_column(
+    constraints: Mapped[JSONObject] = mapped_column(
         JSONB,
         nullable=False,
         server_default="{}",
@@ -99,6 +100,7 @@ class VariableSynonymModel(Base):
     )
     variable_id: Mapped[str] = mapped_column(
         String(64),
+        ForeignKey("variable_definitions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
         doc="FK to variable_definitions.id",

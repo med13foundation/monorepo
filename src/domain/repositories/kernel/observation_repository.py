@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from src.models.database.kernel.observations import ObservationModel
+    from src.type_definitions.common import JSONValue
 
 
 class KernelObservationRepository(ABC):
@@ -30,14 +31,15 @@ class KernelObservationRepository(ABC):
     def create(  # noqa: PLR0913
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         subject_id: str,
         variable_id: str,
         value_numeric: float | None = None,
         value_text: str | None = None,
         value_date: datetime | None = None,
         value_coded: str | None = None,
-        value_json: dict[str, object] | None = None,
+        value_boolean: bool | None = None,
+        value_json: JSONValue | None = None,
         unit: str | None = None,
         observed_at: datetime | None = None,
         provenance_id: str | None = None,
@@ -77,23 +79,33 @@ class KernelObservationRepository(ABC):
     @abstractmethod
     def find_by_variable(
         self,
-        study_id: str,
+        research_space_id: str,
         variable_id: str,
         *,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[ObservationModel]:
-        """All observations for a given variable across all entities in a study."""
+        """All observations for a given variable across all entities in a research space."""
 
     @abstractmethod
-    def find_by_study(
+    def find_by_research_space(
         self,
-        study_id: str,
+        research_space_id: str,
         *,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[ObservationModel]:
-        """Paginated listing of all observations in a study."""
+        """Paginated listing of all observations in a research space."""
+
+    @abstractmethod
+    def search_by_text(
+        self,
+        research_space_id: str,
+        query: str,
+        *,
+        limit: int = 20,
+    ) -> list[ObservationModel]:
+        """Search observations in a research space by variable/value/unit text."""
 
     # ── Delete ────────────────────────────────────────────────────────
 
@@ -109,6 +121,10 @@ class KernelObservationRepository(ABC):
         Useful for rolling back an entire ingestion batch.
         Returns the number of deleted rows.
         """
+
+    @abstractmethod
+    def count_by_research_space(self, research_space_id: str) -> int:
+        """Count total observations in a research space."""
 
 
 __all__ = ["KernelObservationRepository"]

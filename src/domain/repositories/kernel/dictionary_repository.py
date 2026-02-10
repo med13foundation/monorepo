@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         TransformRegistryModel,
         VariableDefinitionModel,
     )
+    from src.type_definitions.common import JSONObject
 
 
 class DictionaryRepository(ABC):
@@ -66,7 +67,7 @@ class DictionaryRepository(ABC):
         domain_context: str = "general",
         sensitivity: str = "INTERNAL",
         preferred_unit: str | None = None,
-        constraints: dict[str, object] | None = None,
+        constraints: JSONObject | None = None,
         description: str | None = None,
     ) -> VariableDefinitionModel:
         """Create a new variable definition."""

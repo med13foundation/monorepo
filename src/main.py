@@ -33,19 +33,14 @@ from src.routes import (
     curation_router,
     dashboard_router,
     data_discovery_router,
-    evidence_router,
     export_router,
-    extractions_router,
-    genes_router,
     health_router,
-    phenotypes_router,
     research_space_discovery_router,
     research_spaces_router,
     resources_router,
     root_router,
     search_router,
     users_router,
-    variants_router,
 )
 
 
@@ -157,11 +152,6 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(root_router)
     app.include_router(resources_router)
-    app.include_router(genes_router)
-    app.include_router(variants_router)
-    app.include_router(phenotypes_router)
-    app.include_router(evidence_router)
-    app.include_router(extractions_router)
     app.include_router(search_router)
     app.include_router(export_router)
     app.include_router(dashboard_router)

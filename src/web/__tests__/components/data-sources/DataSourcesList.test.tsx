@@ -29,11 +29,6 @@ jest.mock('@/app/actions/data-sources', () => ({
   updateDataSourceAction: jest.fn(),
 }))
 
-jest.mock('@/app/actions/extractions', () => ({
-  fetchExtractionDocumentUrlAction: jest.fn(),
-  fetchRecentExtractionsAction: jest.fn(),
-}))
-
 jest.mock('@/components/data-discovery/DataDiscoveryContent', () => ({
   DataDiscoveryContent: ({ onComplete }: { onComplete?: () => void }) => (
     <div>

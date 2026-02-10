@@ -8,13 +8,7 @@ from typing import TYPE_CHECKING
 from src.models.api import ActivityFeedItem, DashboardSummary
 
 if TYPE_CHECKING:
-    from src.domain.repositories.evidence_repository import EvidenceRepository
-    from src.domain.repositories.gene_repository import GeneRepository
-    from src.domain.repositories.phenotype_repository import PhenotypeRepository
-    from src.domain.repositories.publication_repository import (
-        PublicationRepository,
-    )
-    from src.domain.repositories.variant_repository import VariantRepository
+    from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
 
 
 class DashboardService:
@@ -22,31 +16,17 @@ class DashboardService:
 
     def __init__(
         self,
-        gene_repository: GeneRepository,
-        variant_repository: VariantRepository,
-        phenotype_repository: PhenotypeRepository,
-        evidence_repository: EvidenceRepository,
-        publication_repository: PublicationRepository,
+        entity_repository: KernelEntityRepository,
     ) -> None:
-        self._gene_repository = gene_repository
-        self._variant_repository = variant_repository
-        self._phenotype_repository = phenotype_repository
-        self._evidence_repository = evidence_repository
-        self._publication_repository = publication_repository
+        self._entity_repository = entity_repository
 
     def get_summary(self) -> DashboardSummary:
-        """Return deterministic dashboard summary counts without mock heuristics."""
-        entity_counts = {
-            "genes": self._gene_repository.count(),
-            "variants": self._variant_repository.count(),
-            "phenotypes": self._phenotype_repository.count(),
-            "evidence": self._evidence_repository.count(),
-            "publications": self._publication_repository.count(),
-        }
-
+        """Return deterministic dashboard summary counts from kernel tables."""
+        entity_counts = self._entity_repository.count_global_by_type()
         total_items = sum(entity_counts.values())
 
-        # Until explicit status fields exist, treat all items as approved to avoid fabricating data.
+        # Until explicit status fields exist, treat all items as approved to avoid
+        # fabricating workflow states.
         return DashboardSummary(
             pending_count=0,
             approved_count=total_items,

@@ -14,11 +14,7 @@ from src.domain.services.pubmed_ingestion import PubMedGateway, PubMedIngestionS
 from src.domain.transform.transformers.pubmed_record_transformer import (
     PubMedRecordTransformer,
 )
-
-if TYPE_CHECKING:
-    from src.infrastructure.ingestion.pipeline import IngestionPipeline
-
-from src.infrastructure.ingestion.sources.pubmed import PubMedAdapter
+from src.type_definitions.ingestion import RawRecord as IngestionRawRecord
 from src.type_definitions.storage import StorageUseCase
 
 # Confidence threshold below which queries are logged as warnings
@@ -27,12 +23,16 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from src.application.services.ports.ingestion_pipeline_port import (
+        IngestionPipelinePort,
+    )
     from src.application.services.storage_configuration_service import (
         StorageConfigurationService,
     )
     from src.domain.agents.ports.query_agent_port import QueryAgentPort
     from src.domain.repositories import PublicationRepository, ResearchSpaceRepository
     from src.type_definitions.common import (
+        JSONObject,
         PublicationUpdate,
         RawRecord,
         SourceMetadata,
@@ -47,8 +47,7 @@ class PubMedIngestionService:
     def __init__(  # noqa: PLR0913
         self,
         gateway: PubMedGateway,
-        pipeline: IngestionPipeline,
-        adapter: PubMedAdapter | None = None,
+        pipeline: IngestionPipelinePort,
         publication_repository: (
             PublicationRepository | None
         ) = None,  # Optional/Deprecated
@@ -59,7 +58,6 @@ class PubMedIngestionService:
     ) -> None:
         self._gateway = gateway
         self._pipeline = pipeline
-        self._adapter = adapter or PubMedAdapter()
         self._publication_repository = publication_repository
         self._transformer = transformer or PubMedRecordTransformer()
         self._storage_service = storage_service
@@ -121,21 +119,27 @@ class PubMedIngestionService:
         if self._storage_service:
             await self._persist_raw_records(raw_records_data, source)
 
-        # USE NEW PIPELINE
-        # Convert to RawRecord
-        raw_records = self._adapter.to_raw_records(raw_records_data, str(source.id))
-
-        # Determine study_id (assuming research_space_id maps to study_id)
-        # Verify research_space_id is present, else use default or error?
-        # UserDataSource usually requires research_space_id.
-        study_id = (
-            str(source.research_space_id)
-            if source.research_space_id
-            else "unknown_study"
+        # Convert gateway JSON records to pipeline RawRecord contracts.
+        raw_records = self._to_pipeline_records(
+            raw_records_data,
+            original_source_id=str(source.id),
         )
 
-        # Run Pipeline
-        result = self._pipeline.run(raw_records, study_id=study_id)
+        observations_created = 0
+
+        # Run kernel pipeline only when the source is scoped to a research space.
+        # Some legacy workflows still create PubMed sources without a space.
+        if source.research_space_id is not None:
+            result = self._pipeline.run(
+                raw_records,
+                research_space_id=str(source.research_space_id),
+            )
+            observations_created = result.observations_created
+        else:
+            logger.warning(
+                "PubMed source %s has no research_space_id; skipping kernel pipeline",
+                source.id,
+            )
 
         # Map IngestResult to PubMedIngestionSummary
         # Note: PubMedIngestionSummary expects created_publication_ids (ints)
@@ -147,12 +151,45 @@ class PubMedIngestionService:
             source_id=source.id,
             fetched_records=len(raw_records),
             parsed_publications=len(raw_records),  # parsed = fetched
-            created_publications=result.observations_created,  # treating obs as created entities? Not quite 1:1
+            created_publications=observations_created,  # kernel observations created
             updated_publications=0,
             created_publication_ids=(),  # Pipeline uses UUIDs, Summary expects ints?
             updated_publication_ids=(),
             executed_query=config.query,
         )
+
+    def _to_pipeline_records(
+        self,
+        records: Iterable[JSONObject],
+        *,
+        original_source_id: str,
+    ) -> list[IngestionRawRecord]:
+        """
+        Adapt PubMed JSON records into the kernel ingestion pipeline record format.
+
+        This lives in the application layer (not infrastructure) because it is a
+        coordination concern: converting a gateway response into a pipeline input.
+        """
+        raw_records: list[IngestionRawRecord] = []
+        for record in records:
+            pmid = record.get("pmid")
+            record_id = pmid if isinstance(pmid, str) and pmid.strip() else str(uuid4())
+
+            raw_records.append(
+                IngestionRawRecord(
+                    source_id=record_id,
+                    data=record,
+                    metadata={
+                        "original_source_id": original_source_id,
+                        "type": "pubmed",
+                        "entity_type": "PUBLICATION",
+                        "pmid": record.get("pmid"),
+                        "doi": record.get("doi"),
+                    },
+                ),
+            )
+
+        return raw_records
 
     async def _persist_raw_records(
         self,

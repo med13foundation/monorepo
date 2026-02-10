@@ -23,7 +23,7 @@ class ProvenanceTracker:
 
     def track_ingestion(  # noqa: PLR0913
         self,
-        study_id: str,
+        research_space_id: str,
         source_type: str,
         source_ref: str | None = None,
         extraction_run_id: str | None = None,
@@ -37,13 +37,13 @@ class ProvenanceTracker:
         Returns the ID of the created record.
         """
         provenance = self.provenance_repo.create(
-            study_id=study_id,
+            research_space_id=research_space_id,
             source_type=source_type,
             source_ref=source_ref,
             extraction_run_id=extraction_run_id,
             mapping_method=mapping_method,
             mapping_confidence=mapping_confidence,
             agent_model=agent_model,
-            raw_input=raw_input,  # type: ignore[arg-type]
+            raw_input=raw_input,
         )
-        return provenance.id
+        return str(provenance.id)

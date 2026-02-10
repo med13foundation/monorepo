@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
@@ -18,7 +18,13 @@ from src.models.database.kernel.provenance import ProvenanceModel
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from src.type_definitions.common import JSONObject
+
 logger = logging.getLogger(__name__)
+
+
+def _as_uuid(value: str | UUID) -> UUID:
+    return value if isinstance(value, UUID) else UUID(str(value))
 
 
 class SqlAlchemyProvenanceRepository(ProvenanceRepository):
@@ -30,21 +36,23 @@ class SqlAlchemyProvenanceRepository(ProvenanceRepository):
     def create(  # noqa: PLR0913
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         source_type: str,
         source_ref: str | None = None,
         extraction_run_id: str | None = None,
         mapping_method: str | None = None,
         mapping_confidence: float | None = None,
         agent_model: str | None = None,
-        raw_input: dict[str, object] | None = None,
+        raw_input: JSONObject | None = None,
     ) -> ProvenanceModel:
         prov = ProvenanceModel(
-            id=str(uuid4()),
-            study_id=study_id,
+            id=uuid4(),
+            research_space_id=_as_uuid(research_space_id),
             source_type=source_type,
             source_ref=source_ref,
-            extraction_run_id=extraction_run_id,
+            extraction_run_id=(
+                _as_uuid(extraction_run_id) if extraction_run_id is not None else None
+            ),
             mapping_method=mapping_method,
             mapping_confidence=mapping_confidence,
             agent_model=agent_model,
@@ -55,11 +63,11 @@ class SqlAlchemyProvenanceRepository(ProvenanceRepository):
         return prov
 
     def get_by_id(self, provenance_id: str) -> ProvenanceModel | None:
-        return self._session.get(ProvenanceModel, provenance_id)
+        return self._session.get(ProvenanceModel, _as_uuid(provenance_id))
 
-    def find_by_study(
+    def find_by_research_space(
         self,
-        study_id: str,
+        research_space_id: str,
         *,
         source_type: str | None = None,
         limit: int | None = None,
@@ -67,7 +75,7 @@ class SqlAlchemyProvenanceRepository(ProvenanceRepository):
     ) -> list[ProvenanceModel]:
         stmt = (
             select(ProvenanceModel)
-            .where(ProvenanceModel.study_id == study_id)
+            .where(ProvenanceModel.research_space_id == _as_uuid(research_space_id))
             .order_by(ProvenanceModel.created_at.desc())
         )
         if source_type is not None:
@@ -84,7 +92,7 @@ class SqlAlchemyProvenanceRepository(ProvenanceRepository):
     ) -> list[ProvenanceModel]:
         stmt = (
             select(ProvenanceModel)
-            .where(ProvenanceModel.extraction_run_id == extraction_run_id)
+            .where(ProvenanceModel.extraction_run_id == _as_uuid(extraction_run_id))
             .order_by(ProvenanceModel.created_at.desc())
         )
         return list(self._session.scalars(stmt).all())

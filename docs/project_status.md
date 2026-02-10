@@ -1,10 +1,10 @@
 # MED13 Resource Library - Project Overview, Current Status, and Recommendations
 
-**Status date:** January 26, 2026
+**Status date:** February 10, 2026
 
 ## Purpose and scope
 
-The MED13 Resource Library is a biomedical data platform focused on MED13 genetic variants, phenotypes, and evidence. The platform targets researchers and administrators who need reliable, type-safe data management and discovery. The architecture follows Clean Architecture with a FastAPI backend and a Next.js admin interface.
+The MED13 Resource Library is a biomedical data platform for curated evidence, ingestion, and curation workflows. The current direction is a pivot away from hardcoded domain-specific entities (genes/variants/phenotypes/evidence tables) into a **metadata-driven kernel** (dictionary + entities + observations + relations), while preserving infrastructure (auth, DI, storage, Flujo, CI/CD) and the Next.js admin interface.
 
 This document summarizes the project based on repository documentation and highlights decision points, planned next steps, and recommendations to guide direction and resourcing.
 
@@ -19,10 +19,10 @@ This document summarizes the project based on repository documentation and highl
 
 ## Goals alignment (explicit)
 
-- Mechanistic reasoning is modeled as `Variant -> ProteinDomain -> Mechanism -> Phenotype`.
-- Hypotheses are human-verifiable; no automatic promotion to truth.
-- The graph is the system of record with provenance and curation status on edges.
-- Agent assistance is bounded, auditable, and cannot directly change validated data.
+- Mechanistic reasoning is represented in a **kernel graph** (typed entities + relations) with evidence and curation status.
+- Hypotheses remain human-verifiable; no automatic promotion to truth.
+- The graph is the system of record with provenance and reviewable edges.
+- Agent assistance is bounded, auditable, and cannot directly change curated/approved knowledge without governance.
 - Clinical and scientific credibility is enforced via audit logging and review workflows.
 
 ## Graph service strategy (explicit)
@@ -55,14 +55,21 @@ This document summarizes the project based on repository documentation and highl
 ### Backend and domain
 
 - Clean Architecture foundation is documented as complete and stable.
-- Domain entities and services exist for core biomedical data and data sources.
-- Data Sources module is documented as implemented across domain, application, infrastructure, and UI layers.
-- ResoGraph ontology is **partially implemented**: `Drug` and `Pathway` entities exist; `ProteinDomain` exists as a value object; **`Mechanism` and `StatementOfUnderstanding` are implemented with DB persistence and space-scoped API endpoints under `/research-spaces/{space_id}/mechanisms` and `/research-spaces/{space_id}/statements`, including promotion of well-supported statements into mechanisms**.
-- Variant/Phenotype **domain models** include structural + longitudinal fields, but **DB persistence/migrations** for these fields are not yet present.
+- Data Sources module is implemented across domain, application, infrastructure, and UI layers.
+- A consolidated kernel migration exists (`alembic/versions/001_kernel_schema.py`) creating:
+  - dictionary tables (`variable_definitions`, `variable_synonyms`, `transform_registry`, `entity_resolution_policies`, `relation_constraints`)
+  - fact tables (`entities`, `entity_identifiers`, `observations`, `relations`, `provenance`)
+  - workspace tables (`research_spaces`, `research_space_memberships`)
+- Kernel services and routes exist for space-scoped CRUD:
+  - `/research-spaces/{space_id}/entities`
+  - `/research-spaces/{space_id}/observations`
+  - `/research-spaces/{space_id}/relations`
+  - `/research-spaces/{space_id}/provenance`
+  - `/research-spaces/{space_id}/ingest`
+  - `/research-spaces/{space_id}/graph/export`
 - Authentication, authorization, rate limiting, and baseline audit logging are implemented.
-- API endpoints cover genes, variants, phenotypes, evidence, research spaces, and data source management.
-- Graph service, graph storage, and `/api/graph/*` endpoints are not implemented yet.
-- Flujo-based PubMed **query generation** is implemented; publications are queued and a rule-based extraction runner processes title/abstract text immediately after ingestion, persisting extraction outputs. Text payloads are stored in RAW_SOURCE storage with a document URL endpoint for retrieval (full-text ingestion + LLM extraction still pending).
+- Legacy entity-specific endpoints (`/genes`, `/variants`, `/phenotypes`, `/evidence`) are being retired in favor of kernel endpoints.
+- Flujo-based PubMed **query generation** remains implemented; PubMed ingestion writes extracted facts into the kernel (entities/observations/relations) with provenance.
 
 ### Frontend
 
@@ -70,8 +77,8 @@ This document summarizes the project based on repository documentation and highl
 - The frontend follows a server-orchestrated pattern with dumb client components and server actions.
 - Data discovery workflows are refactored to align with backend orchestration DTOs.
 - Design system and component library are in place (shadcn/ui with documented typography and theme choices).
-- Knowledge Graph UI exists as a space-scoped route; Statements of Understanding and mechanism management (with promotion flow) are available there, but graph explorer/visualization remains pending.
-- Data Sources UI surfaces recent extraction activity and provides a document open/copy flow for stored extraction payloads.
+- Knowledge Graph UI exists as a space-scoped route and now sources its data from kernel graph export endpoints.
+- Kernel workflows are represented in the UI via dictionary browsing/editing, ingestion, and observations pages (space-scoped).
 
 ### Infrastructure and operations
 

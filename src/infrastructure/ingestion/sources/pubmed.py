@@ -40,6 +40,7 @@ class PubMedAdapter:
                     metadata={
                         "original_source_id": source_id,
                         "type": "pubmed",
+                        "entity_type": "PUBLICATION",
                         "pmid": record.get("pmid"),
                         "doi": record.get("doi"),
                     },

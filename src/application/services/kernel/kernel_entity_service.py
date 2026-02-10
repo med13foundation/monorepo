@@ -2,7 +2,7 @@
 Kernel entity application service.
 
 Orchestrates entity creation with resolution-policy enforcement,
-identifier management, and study-scoped search.
+identifier management, and research-space-scoped search.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         EntityIdentifierModel,
         EntityModel,
     )
+    from src.type_definitions.common import JSONObject
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +46,11 @@ class KernelEntityService:
     def create_or_resolve(
         self,
         *,
-        study_id: str,
+        research_space_id: str,
         entity_type: str,
         identifiers: dict[str, str] | None = None,
         display_label: str | None = None,
-        metadata: dict[str, object] | None = None,
+        metadata: JSONObject | None = None,
     ) -> tuple[EntityModel, bool]:
         """
         Create an entity or return existing match.
@@ -61,22 +62,39 @@ class KernelEntityService:
         policy = self._dictionary.get_resolution_policy(entity_type)
 
         if policy and identifiers and policy.policy_strategy != "NONE":
-            existing = self._entities.resolve(
-                study_id=study_id,
-                entity_type=entity_type,
-                identifiers=identifiers,
+            required_anchors: list[str] = (
+                policy.required_anchors
+                if isinstance(policy.required_anchors, list)
+                else []
             )
-            if existing is not None:
-                logger.info(
-                    "Resolved %s to existing entity %s",
+            missing = [
+                anchor
+                for anchor in required_anchors
+                if anchor not in identifiers or not identifiers[anchor]
+            ]
+            if missing:
+                logger.warning(
+                    "Missing required anchors %s for %s; skipping resolution",
+                    missing,
                     entity_type,
-                    existing.id,
                 )
-                return existing, False
+            else:
+                existing = self._entities.resolve(
+                    research_space_id=research_space_id,
+                    entity_type=entity_type,
+                    identifiers=identifiers,
+                )
+                if existing is not None:
+                    logger.info(
+                        "Resolved %s to existing entity %s",
+                        entity_type,
+                        existing.id,
+                    )
+                    return existing, False
 
         # 2. Create new entity
         entity = self._entities.create(
-            study_id=study_id,
+            research_space_id=research_space_id,
             entity_type=entity_type,
             display_label=display_label,
             metadata=metadata,
@@ -86,7 +104,7 @@ class KernelEntityService:
         if identifiers:
             for namespace, value in identifiers.items():
                 self._entities.add_identifier(
-                    entity_id=entity.id,
+                    entity_id=str(entity.id),
                     namespace=namespace,
                     identifier_value=value,
                 )
@@ -120,15 +138,15 @@ class KernelEntityService:
 
     def list_by_type(
         self,
-        study_id: str,
+        research_space_id: str,
         entity_type: str,
         *,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[EntityModel]:
-        """List entities of a specific type in a study."""
+        """List entities of a specific type in a research space."""
         return self._entities.find_by_type(
-            study_id,
+            research_space_id,
             entity_type,
             limit=limit,
             offset=offset,
@@ -136,7 +154,7 @@ class KernelEntityService:
 
     def search(
         self,
-        study_id: str,
+        research_space_id: str,
         query: str,
         *,
         entity_type: str | None = None,
@@ -144,15 +162,15 @@ class KernelEntityService:
     ) -> list[EntityModel]:
         """Full-text search on entity display labels."""
         return self._entities.search(
-            study_id,
+            research_space_id,
             query,
             entity_type=entity_type,
             limit=limit,
         )
 
-    def get_study_summary(self, study_id: str) -> dict[str, int]:
-        """Return entity counts by type for a study."""
-        return self._entities.count_by_type(study_id)
+    def get_research_space_summary(self, research_space_id: str) -> dict[str, int]:
+        """Return entity counts by type for a research space."""
+        return self._entities.count_by_type(research_space_id)
 
     # ── Delete ────────────────────────────────────────────────────────
 

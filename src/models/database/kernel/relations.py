@@ -10,7 +10,7 @@ with evidence, curation status, and provenance.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import Float, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import TIMESTAMP
@@ -32,19 +32,19 @@ class RelationModel(Base):
 
     __tablename__ = "relations"
 
-    id: Mapped[str] = mapped_column(
+    id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         primary_key=True,
         default=uuid4,
         doc="Unique relation ID",
     )
-    study_id: Mapped[str] = mapped_column(
+    research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("studies.id", ondelete="CASCADE"),
+        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
-        doc="Owning study",
+        doc="Owning research space",
     )
-    source_id: Mapped[str] = mapped_column(
+    source_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("entities.id", ondelete="CASCADE"),
         nullable=False,
@@ -55,7 +55,7 @@ class RelationModel(Base):
         nullable=False,
         doc="Relationship type, e.g. CAUSES, ASSOCIATED_WITH",
     )
-    target_id: Mapped[str] = mapped_column(
+    target_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("entities.id", ondelete="CASCADE"),
         nullable=False,
@@ -89,7 +89,7 @@ class RelationModel(Base):
     )
 
     # Provenance
-    provenance_id: Mapped[str | None] = mapped_column(
+    provenance_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("provenance.id"),
         nullable=True,
@@ -97,7 +97,7 @@ class RelationModel(Base):
     )
 
     # Review tracking
-    reviewed_by: Mapped[str | None] = mapped_column(
+    reviewed_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("users.id"),
         nullable=True,
@@ -120,7 +120,7 @@ class RelationModel(Base):
     __table_args__ = (
         Index("idx_relations_source", "source_id"),
         Index("idx_relations_target", "target_id"),
-        Index("idx_relations_study_type", "study_id", "relation_type"),
+        Index("idx_relations_space_type", "research_space_id", "relation_type"),
         Index("idx_relations_curation", "curation_status"),
         Index("idx_relations_provenance", "provenance_id"),
         {"comment": "Graph edges with evidence and curation lifecycle"},

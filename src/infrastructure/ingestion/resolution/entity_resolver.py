@@ -50,7 +50,7 @@ class EntityResolver:
         self,
         anchor: JSONObject,
         entity_type: str,
-        study_id: str,
+        research_space_id: str,
     ) -> ResolvedEntity:
         """
         Resolve an entity anchor to a kernel entity.
@@ -72,13 +72,39 @@ class EntityResolver:
 
         strategy = self.strategies.get(strategy_name, self.strategies["STRICT_MATCH"])
 
-        existing_entity = strategy.resolve(anchor, entity_type, study_id)
+        required_anchors: list[str] = (
+            policy.required_anchors
+            if policy and isinstance(policy.required_anchors, list)
+            else []
+        )
+        missing_required = []
+        for anchor_key in required_anchors:
+            if anchor_key not in anchor:
+                missing_required.append(anchor_key)
+                continue
+            value = anchor[anchor_key]
+            if value is None:
+                missing_required.append(anchor_key)
+                continue
+            if isinstance(value, str) and not value.strip():
+                missing_required.append(anchor_key)
+
+        existing_entity = None
+        if missing_required:
+            logger.warning(
+                "Missing required anchors %s for %s; skipping resolution",
+                missing_required,
+                entity_type,
+            )
+        else:
+            existing_entity = strategy.resolve(anchor, entity_type, research_space_id)
 
         if existing_entity:
             return ResolvedEntity(
-                id=existing_entity.id,
+                id=str(existing_entity.id),
                 entity_type=existing_entity.entity_type,
                 display_label=existing_entity.display_label or "Unknown",
+                created=False,
             )
 
         # If not found, we generate a new ID and basic info
@@ -101,10 +127,10 @@ class EntityResolver:
         display_label = self._derive_label(anchor, entity_type)
 
         new_entity = self.entity_repo.create(
-            study_id=study_id,
+            research_space_id=research_space_id,
             entity_type=entity_type,
             display_label=display_label,
-            metadata=anchor,  # type: ignore[arg-type] # Store anchor as metadata
+            metadata=anchor,
         )
 
         # We should also add the identifiers from the anchor so it can be resolved next time
@@ -112,15 +138,16 @@ class EntityResolver:
             # Heuristic: verify if key look likes a namespace
             # For now add all anchor keys as identifiers
             self.entity_repo.add_identifier(
-                entity_id=new_entity.id,
+                entity_id=str(new_entity.id),
                 namespace=k,
                 identifier_value=str(v),
             )
 
         return ResolvedEntity(
-            id=new_entity.id,
+            id=str(new_entity.id),
             entity_type=new_entity.entity_type,
             display_label=new_entity.display_label or "New Entity",
+            created=True,
         )
 
     def _derive_label(self, anchor: JSONObject, entity_type: str) -> str:

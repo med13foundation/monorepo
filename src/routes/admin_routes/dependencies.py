@@ -20,7 +20,7 @@ from src.application.services import (
     SystemStatusService,
     TemplateManagementService,
 )
-from src.database.session import SessionLocal
+from src.database import session as session_module
 from src.domain.entities.data_discovery_session import SourceCatalogEntry
 from src.infrastructure.dependency_injection.container import container
 from src.infrastructure.repositories import (
@@ -37,7 +37,7 @@ SYSTEM_ACTOR_ID = DEFAULT_OWNER_ID
 
 def get_db_session() -> Session:
     """Create a bare SQLAlchemy session for admin services."""
-    return SessionLocal()
+    return session_module.SessionLocal()
 
 
 def get_system_status_service() -> SystemStatusService:

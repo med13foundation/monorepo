@@ -146,10 +146,9 @@ class TestBulkExportStorage:
     @pytest.fixture
     def export_service(self, mock_storage_service: Mock) -> BulkExportService:
         return BulkExportService(
-            gene_service=Mock(),
-            variant_service=Mock(),
-            phenotype_service=Mock(),
-            evidence_service=Mock(),
+            entity_repo=Mock(),
+            observation_repo=Mock(),
+            relation_repo=Mock(),
             storage_service=mock_storage_service,
         )
 
@@ -169,10 +168,12 @@ class TestBulkExportStorage:
             return_value=iter(['{"test": 1}']),
         )  # type: ignore[assignment]
         user_id = uuid4()
+        space_id = "space-1"
 
         # Act
         await export_service.export_to_storage(
-            entity_type="genes",
+            research_space_id=space_id,
+            entity_type="entities",
             export_format=ExportFormat.JSON,
             user_id=user_id,
         )
@@ -183,7 +184,7 @@ class TestBulkExportStorage:
         )
         mock_storage_service.record_store_operation.assert_called_once()
         kwargs = mock_storage_service.record_store_operation.call_args.kwargs
-        assert kwargs["key"].startswith("exports/genes/")
+        assert f"exports/research-spaces/{space_id}/entities/" in kwargs["key"]
         assert kwargs["content_type"] == "application/json"
         assert kwargs["user_id"] == user_id
 
@@ -196,9 +197,10 @@ class TestBulkExportStorage:
         mock_storage_service.resolve_backend_for_use_case.return_value = None
         with pytest.raises(ValueError, match="No storage backend configured"):
             await export_service.export_to_storage(
-                "genes",
-                ExportFormat.JSON,
-                uuid4(),
+                research_space_id="space-1",
+                entity_type="entities",
+                export_format=ExportFormat.JSON,
+                user_id=uuid4(),
             )
 
 

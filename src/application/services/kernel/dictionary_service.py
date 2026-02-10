@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         TransformRegistryModel,
         VariableDefinitionModel,
     )
+    from src.type_definitions.common import JSONObject
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,32 @@ class DictionaryService:
         to known variable definitions.
         """
         return self._dictionary.find_variable_by_synonym(synonym)
+
+    def create_variable(  # noqa: PLR0913
+        self,
+        *,
+        variable_id: str,
+        canonical_name: str,
+        display_name: str,
+        data_type: str,
+        domain_context: str = "general",
+        sensitivity: str = "INTERNAL",
+        preferred_unit: str | None = None,
+        constraints: JSONObject | None = None,
+        description: str | None = None,
+    ) -> VariableDefinitionModel:
+        """Create a new dictionary variable definition."""
+        return self._dictionary.create_variable(
+            variable_id=variable_id,
+            canonical_name=canonical_name,
+            display_name=display_name,
+            data_type=data_type,
+            domain_context=domain_context,
+            sensitivity=sensitivity,
+            preferred_unit=preferred_unit,
+            constraints=constraints,
+            description=description,
+        )
 
     # ── Relation constraint checks ────────────────────────────────────
 

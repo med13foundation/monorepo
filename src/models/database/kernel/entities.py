@@ -8,7 +8,7 @@ with a single generic entity table + identifier isolation.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.database.base import Base
+from src.type_definitions.common import JSONObject  # noqa: TC001
 
 
 class EntityModel(Base):
@@ -30,17 +31,17 @@ class EntityModel(Base):
 
     __tablename__ = "entities"
 
-    id: Mapped[str] = mapped_column(
+    id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         primary_key=True,
         default=uuid4,
         doc="Unique entity identifier",
     )
-    study_id: Mapped[str] = mapped_column(
+    research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("studies.id", ondelete="CASCADE"),
+        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
-        doc="Owning study",
+        doc="Owning research space",
     )
     entity_type: Mapped[str] = mapped_column(
         String(64),
@@ -53,7 +54,7 @@ class EntityModel(Base):
         nullable=True,
         doc="Human-readable label",
     )
-    metadata_payload: Mapped[dict[str, object]] = mapped_column(
+    metadata_payload: Mapped[JSONObject] = mapped_column(
         JSONB,
         nullable=False,
         server_default="{}",
@@ -70,7 +71,7 @@ class EntityModel(Base):
     )
 
     __table_args__ = (
-        Index("idx_entities_study_type", "study_id", "entity_type"),
+        Index("idx_entities_space_type", "research_space_id", "entity_type"),
         Index("idx_entities_created_at", "created_at"),
         {"comment": "Generic graph nodes (entities) for all domain types"},
     )
@@ -97,7 +98,7 @@ class EntityIdentifierModel(Base):
         primary_key=True,
         autoincrement=True,
     )
-    entity_id: Mapped[str] = mapped_column(
+    entity_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("entities.id", ondelete="CASCADE"),
         nullable=False,

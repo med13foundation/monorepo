@@ -9,8 +9,8 @@ import pytest
 from src.application.services.pubmed_ingestion_service import PubMedIngestionService
 from src.domain.entities.user_data_source import SourceType, UserDataSource
 from src.domain.services.pubmed_ingestion import PubMedGateway
-from src.infrastructure.ingestion.pipeline import IngestionPipeline, IngestResult
-from src.infrastructure.ingestion.sources.pubmed import PubMedAdapter
+from src.infrastructure.ingestion.pipeline import IngestionPipeline
+from src.type_definitions.ingestion import IngestResult
 
 
 @pytest.fixture
@@ -49,7 +49,6 @@ def service(mock_gateway, mock_pipeline):
     return PubMedIngestionService(
         gateway=mock_gateway,
         pipeline=mock_pipeline,
-        adapter=PubMedAdapter(),
         # Other deps can be None for this test as we mocking dependencies
     )
 
@@ -84,12 +83,12 @@ async def test_pubmed_ingestion_success(service, mock_gateway, mock_pipeline):
     call_args = mock_pipeline.run.call_args
     assert call_args is not None
     records = call_args[0][0]
-    study_id = call_args[1]["study_id"]
+    research_space_id = call_args[1]["research_space_id"]
 
     assert len(records) == 1
     assert records[0].source_id == "123456"
     assert records[0].data["pmid"] == "123456"
-    assert study_id == space_id
+    assert research_space_id == space_id
 
     # 3. Summary correct
     assert summary.fetched_records == 1
