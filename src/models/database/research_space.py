@@ -110,7 +110,7 @@ class ResearchSpaceModel(Base):
     )
 
     # Relationships
-    owner = relationship("UserModel", back_populates="owned_spaces")
+    owner = relationship("UserModel")
     memberships = relationship(
         "ResearchSpaceMembershipModel",
         back_populates="space",
@@ -218,12 +218,10 @@ class ResearchSpaceMembershipModel(Base):
     user = relationship(
         "UserModel",
         foreign_keys=[user_id],
-        back_populates="space_memberships",
     )
     inviter = relationship(
         "UserModel",
         foreign_keys=[invited_by],
-        back_populates="sent_invitations",
     )
 
     __table_args__ = (

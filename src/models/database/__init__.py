@@ -9,11 +9,17 @@
 from . import (
     audit,
     base,
+    data_discovery,
+    data_source_activation,
+    extraction_queue,
+    ingestion_job,
+    research_space,
     session,
     source_template,
     storage,
     system_status,
     user,
+    user_data_source,
 )
 from .kernel import (
     EntityIdentifierModel,
@@ -40,6 +46,18 @@ UserModel = user.UserModel
 SourceTemplateModel = source_template.SourceTemplateModel
 SourceTypeEnum = source_template.SourceTypeEnum
 TemplateCategory = source_template.TemplateCategoryEnum
+
+UserDataSourceModel = user_data_source.UserDataSourceModel
+DataSourceActivationModel = data_source_activation.DataSourceActivationModel
+IngestionJobModel = ingestion_job.IngestionJobModel
+ExtractionQueueItemModel = extraction_queue.ExtractionQueueItemModel
+
+ResearchSpaceModel = research_space.ResearchSpaceModel
+ResearchSpaceMembershipModel = research_space.ResearchSpaceMembershipModel
+MembershipRoleEnum = research_space.MembershipRoleEnum
+SpaceStatusEnum = research_space.SpaceStatusEnum
+
+SourceCatalogEntryModel = data_discovery.SourceCatalogEntryModel
 
 StorageConfigurationModel = storage.StorageConfigurationModel
 StorageHealthSnapshotModel = storage.StorageHealthSnapshotModel
@@ -81,4 +99,16 @@ __all__ = [
     "SystemStatusModel",
     "TemplateCategory",
     "UserModel",
+    # Restored Infrastructure
+    "UserDataSourceModel",
+    "DataSourceActivationModel",
+    "IngestionJobModel",
+    "ExtractionQueueItemModel",
+    # Restored ResearchSpace
+    "ResearchSpaceModel",
+    "ResearchSpaceMembershipModel",
+    "MembershipRoleEnum",
+    "SpaceStatusEnum",
+    # Restored DataDiscovery
+    "SourceCatalogEntryModel",
 ]

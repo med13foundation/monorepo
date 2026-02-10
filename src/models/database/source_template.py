@@ -5,7 +5,7 @@ from enum import Enum
 from sqlalchemy import JSON, Boolean, Float, Integer, String, Text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
@@ -125,8 +125,11 @@ class SourceTemplateModel(Base):
         default="1.0",
     )
 
-    # NOTE: `sources` relationship to UserDataSourceModel removed during
-    # kernel migration. Will be re-added in Phase 2 with kernel data sources.
+    # Relationships
+    sources = relationship(
+        "UserDataSourceModel",
+        back_populates="template",
+    )
 
     def __repr__(self) -> str:
         """String representation of the source template."""

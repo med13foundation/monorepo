@@ -46,6 +46,21 @@ os.environ.setdefault(
 )
 
 
+# ── SQLite Compatibility for Postgres Types ──
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.compiler import compiles
+
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(type_, compiler, **kw):
+    return "JSON"
+
+
+@compiles(UUID, "sqlite")
+def compile_uuid_sqlite(type_, compiler, **kw):
+    return "VARCHAR(36)"
+
+
 # Configure pytest-asyncio to use auto mode
 # With asyncio_mode = auto in pytest.ini, pytest-asyncio automatically
 # manages event loops, so we don't need an explicit event_loop fixture
@@ -141,7 +156,10 @@ def _propagate_session_local(session_module: ModuleType) -> None:
         "tests.e2e.test_auth_regression",
     ):
         if module_name not in sys.modules:
-            __import__(module_name)
+            try:
+                __import__(module_name)
+            except ImportError:
+                continue
         module = sys.modules.get(module_name)
         if module:
             module.SessionLocal = session_module.SessionLocal
