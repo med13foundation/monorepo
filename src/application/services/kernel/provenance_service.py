@@ -11,10 +11,10 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from src.domain.entities.kernel.provenance import KernelProvenanceRecord
     from src.domain.repositories.kernel.provenance_repository import (
         ProvenanceRepository,
     )
-    from src.models.database.kernel.provenance import ProvenanceModel
     from src.type_definitions.common import JSONObject
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class ProvenanceService:
         mapping_confidence: float | None = None,
         agent_model: str | None = None,
         raw_input: JSONObject | None = None,
-    ) -> ProvenanceModel:
+    ) -> KernelProvenanceRecord:
         """Create a provenance record for a data ingestion batch."""
         return self._provenance.create(
             research_space_id=research_space_id,
@@ -55,7 +55,7 @@ class ProvenanceService:
             raw_input=raw_input,
         )
 
-    def get_provenance(self, provenance_id: str) -> ProvenanceModel | None:
+    def get_provenance(self, provenance_id: str) -> KernelProvenanceRecord | None:
         """Retrieve a single provenance record."""
         return self._provenance.get_by_id(provenance_id)
 
@@ -66,7 +66,7 @@ class ProvenanceService:
         source_type: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ProvenanceModel]:
+    ) -> list[KernelProvenanceRecord]:
         """List provenance records for a research space."""
         return self._provenance.find_by_research_space(
             research_space_id,
@@ -78,7 +78,7 @@ class ProvenanceService:
     def find_by_extraction_run(
         self,
         extraction_run_id: str,
-    ) -> list[ProvenanceModel]:
+    ) -> list[KernelProvenanceRecord]:
         """Find provenance records for an extraction run."""
         return self._provenance.find_by_extraction_run(extraction_run_id)
 

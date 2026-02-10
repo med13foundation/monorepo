@@ -12,11 +12,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.models.database.kernel.dictionary import (
-        EntityResolutionPolicyModel,
-        RelationConstraintModel,
-        TransformRegistryModel,
-        VariableDefinitionModel,
+    from src.domain.entities.kernel.dictionary import (
+        EntityResolutionPolicy,
+        RelationConstraint,
+        TransformRegistry,
+        VariableDefinition,
     )
     from src.type_definitions.common import JSONObject
 
@@ -32,7 +32,7 @@ class DictionaryRepository(ABC):
     # ── Variable definitions ──────────────────────────────────────────
 
     @abstractmethod
-    def get_variable(self, variable_id: str) -> VariableDefinitionModel | None:
+    def get_variable(self, variable_id: str) -> VariableDefinition | None:
         """Retrieve a single variable definition by ID."""
 
     @abstractmethod
@@ -41,19 +41,19 @@ class DictionaryRepository(ABC):
         *,
         domain_context: str | None = None,
         data_type: str | None = None,
-    ) -> list[VariableDefinitionModel]:
+    ) -> list[VariableDefinition]:
         """List variable definitions, optionally filtered by domain and/or type."""
 
     @abstractmethod
     def find_variable_by_synonym(
         self,
         synonym: str,
-    ) -> VariableDefinitionModel | None:
+    ) -> VariableDefinition | None:
         """
         Resolve a field name to its canonical variable definition.
 
         Looks up the synonym in ``variable_synonyms`` and returns
-        the parent ``VariableDefinitionModel`` if found.
+        the parent ``VariableDefinition`` if found.
         """
 
     @abstractmethod
@@ -69,7 +69,7 @@ class DictionaryRepository(ABC):
         preferred_unit: str | None = None,
         constraints: JSONObject | None = None,
         description: str | None = None,
-    ) -> VariableDefinitionModel:
+    ) -> VariableDefinition:
         """Create a new variable definition."""
 
     # ── Entity resolution policies ────────────────────────────────────
@@ -78,11 +78,11 @@ class DictionaryRepository(ABC):
     def get_resolution_policy(
         self,
         entity_type: str,
-    ) -> EntityResolutionPolicyModel | None:
+    ) -> EntityResolutionPolicy | None:
         """Get the resolution policy for a given entity type."""
 
     @abstractmethod
-    def find_resolution_policies(self) -> list[EntityResolutionPolicyModel]:
+    def find_resolution_policies(self) -> list[EntityResolutionPolicy]:
         """List all entity resolution policies."""
 
     # ── Relation constraints ──────────────────────────────────────────
@@ -93,7 +93,7 @@ class DictionaryRepository(ABC):
         *,
         source_type: str | None = None,
         relation_type: str | None = None,
-    ) -> list[RelationConstraintModel]:
+    ) -> list[RelationConstraint]:
         """List relation constraints, optionally filtered."""
 
     @abstractmethod
@@ -121,7 +121,7 @@ class DictionaryRepository(ABC):
         self,
         input_unit: str,
         output_unit: str,
-    ) -> TransformRegistryModel | None:
+    ) -> TransformRegistry | None:
         """Find a unit transformation between input and output units."""
 
     @abstractmethod
@@ -129,7 +129,7 @@ class DictionaryRepository(ABC):
         self,
         *,
         status: str = "ACTIVE",
-    ) -> list[TransformRegistryModel]:
+    ) -> list[TransformRegistry]:
         """List all transforms, optionally filtered by status."""
 
 

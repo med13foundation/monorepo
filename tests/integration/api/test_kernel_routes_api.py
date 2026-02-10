@@ -22,6 +22,7 @@ from src.models.database.kernel.dictionary import (
 )
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
+from tests.db_reset import reset_database
 
 
 def _using_postgres() -> bool:
@@ -59,14 +60,14 @@ def _auth_headers(user: UserModel) -> dict[str, str]:
 
 @pytest.fixture(scope="function")
 def test_client(test_engine):
-    Base.metadata.drop_all(bind=test_engine)
-    Base.metadata.create_all(bind=test_engine)
+    db_engine = session_module.engine if _using_postgres() else test_engine
+    reset_database(db_engine, Base.metadata)
 
     app = create_app()
     client = TestClient(app)
     yield client
 
-    Base.metadata.drop_all(bind=test_engine)
+    reset_database(db_engine, Base.metadata)
 
 
 @pytest.fixture

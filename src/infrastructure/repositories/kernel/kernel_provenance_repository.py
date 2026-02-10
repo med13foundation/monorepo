@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
+from src.domain.entities.kernel.provenance import KernelProvenanceRecord
 from src.domain.repositories.kernel.provenance_repository import ProvenanceRepository
 from src.models.database.kernel.provenance import ProvenanceModel
 
@@ -44,7 +45,7 @@ class SqlAlchemyProvenanceRepository(ProvenanceRepository):
         mapping_confidence: float | None = None,
         agent_model: str | None = None,
         raw_input: JSONObject | None = None,
-    ) -> ProvenanceModel:
+    ) -> KernelProvenanceRecord:
         prov = ProvenanceModel(
             id=uuid4(),
             research_space_id=_as_uuid(research_space_id),
@@ -60,10 +61,13 @@ class SqlAlchemyProvenanceRepository(ProvenanceRepository):
         )
         self._session.add(prov)
         self._session.flush()
-        return prov
+        return KernelProvenanceRecord.model_validate(prov)
 
-    def get_by_id(self, provenance_id: str) -> ProvenanceModel | None:
-        return self._session.get(ProvenanceModel, _as_uuid(provenance_id))
+    def get_by_id(self, provenance_id: str) -> KernelProvenanceRecord | None:
+        model = self._session.get(ProvenanceModel, _as_uuid(provenance_id))
+        return (
+            KernelProvenanceRecord.model_validate(model) if model is not None else None
+        )
 
     def find_by_research_space(
         self,
@@ -72,7 +76,7 @@ class SqlAlchemyProvenanceRepository(ProvenanceRepository):
         source_type: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ProvenanceModel]:
+    ) -> list[KernelProvenanceRecord]:
         stmt = (
             select(ProvenanceModel)
             .where(ProvenanceModel.research_space_id == _as_uuid(research_space_id))
@@ -84,18 +88,24 @@ class SqlAlchemyProvenanceRepository(ProvenanceRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelProvenanceRecord.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def find_by_extraction_run(
         self,
         extraction_run_id: str,
-    ) -> list[ProvenanceModel]:
+    ) -> list[KernelProvenanceRecord]:
         stmt = (
             select(ProvenanceModel)
             .where(ProvenanceModel.extraction_run_id == _as_uuid(extraction_run_id))
             .order_by(ProvenanceModel.created_at.desc())
         )
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelProvenanceRecord.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
 
 __all__ = ["SqlAlchemyProvenanceRepository"]

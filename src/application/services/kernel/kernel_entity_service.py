@@ -11,15 +11,12 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from src.domain.entities.kernel.entities import KernelEntity, KernelEntityIdentifier
     from src.domain.repositories.kernel.dictionary_repository import (
         DictionaryRepository,
     )
     from src.domain.repositories.kernel.entity_repository import (
         KernelEntityRepository,
-    )
-    from src.models.database.kernel.entities import (
-        EntityIdentifierModel,
-        EntityModel,
     )
     from src.type_definitions.common import JSONObject
 
@@ -51,7 +48,7 @@ class KernelEntityService:
         identifiers: dict[str, str] | None = None,
         display_label: str | None = None,
         metadata: JSONObject | None = None,
-    ) -> tuple[EntityModel, bool]:
+    ) -> tuple[KernelEntity, bool]:
         """
         Create an entity or return existing match.
 
@@ -121,7 +118,7 @@ class KernelEntityService:
         namespace: str,
         identifier_value: str,
         sensitivity: str = "INTERNAL",
-    ) -> EntityIdentifierModel:
+    ) -> KernelEntityIdentifier:
         """Add an external identifier to an entity."""
         return self._entities.add_identifier(
             entity_id=entity_id,
@@ -132,9 +129,23 @@ class KernelEntityService:
 
     # ── Read operations ───────────────────────────────────────────────
 
-    def get_entity(self, entity_id: str) -> EntityModel | None:
+    def get_entity(self, entity_id: str) -> KernelEntity | None:
         """Retrieve a single entity."""
         return self._entities.get_by_id(entity_id)
+
+    def update_entity(
+        self,
+        entity_id: str,
+        *,
+        display_label: str | None = None,
+        metadata: JSONObject | None = None,
+    ) -> KernelEntity | None:
+        """Update an entity's display label and/or metadata."""
+        return self._entities.update(
+            entity_id,
+            display_label=display_label,
+            metadata=metadata,
+        )
 
     def list_by_type(
         self,
@@ -143,7 +154,7 @@ class KernelEntityService:
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[EntityModel]:
+    ) -> list[KernelEntity]:
         """List entities of a specific type in a research space."""
         return self._entities.find_by_type(
             research_space_id,
@@ -159,7 +170,7 @@ class KernelEntityService:
         *,
         entity_type: str | None = None,
         limit: int = 20,
-    ) -> list[EntityModel]:
+    ) -> list[KernelEntity]:
         """Full-text search on entity display labels."""
         return self._entities.search(
             research_space_id,

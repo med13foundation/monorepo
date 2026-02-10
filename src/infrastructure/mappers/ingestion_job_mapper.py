@@ -13,12 +13,12 @@ from src.domain.entities.ingestion_job import (
     IngestionTrigger,
     JobMetrics,
 )
+from src.domain.value_objects import Provenance
 from src.models.database.ingestion_job import (
     IngestionJobModel,
     IngestionStatusEnum,
     IngestionTriggerEnum,
 )
-from src.models.value_objects.provenance import Provenance
 
 if TYPE_CHECKING:
     from src.type_definitions.common import JSONObject

@@ -7,11 +7,11 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.models.database.kernel.dictionary import (
-    EntityResolutionPolicyModel,
-    RelationConstraintModel,
-    TransformRegistryModel,
-    VariableDefinitionModel,
+from src.domain.entities.kernel.dictionary import (
+    EntityResolutionPolicy,
+    RelationConstraint,
+    TransformRegistry,
+    VariableDefinition,
 )
 from src.type_definitions.common import JSONObject
 
@@ -71,7 +71,7 @@ class VariableDefinitionResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, model: VariableDefinitionModel) -> VariableDefinitionResponse:
+    def from_model(cls, model: VariableDefinition) -> VariableDefinitionResponse:
         return cls(
             id=str(model.id),
             canonical_name=str(model.canonical_name),
@@ -110,7 +110,7 @@ class TransformRegistryResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, model: TransformRegistryModel) -> TransformRegistryResponse:
+    def from_model(cls, model: TransformRegistry) -> TransformRegistryResponse:
         return cls(
             id=str(model.id),
             input_unit=str(model.input_unit),
@@ -146,7 +146,7 @@ class EntityResolutionPolicyResponse(BaseModel):
     @classmethod
     def from_model(
         cls,
-        model: EntityResolutionPolicyModel,
+        model: EntityResolutionPolicy,
     ) -> EntityResolutionPolicyResponse:
         anchors = (
             model.required_anchors if isinstance(model.required_anchors, list) else []
@@ -185,7 +185,7 @@ class RelationConstraintResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, model: RelationConstraintModel) -> RelationConstraintResponse:
+    def from_model(cls, model: RelationConstraint) -> RelationConstraintResponse:
         return cls(
             id=int(model.id),
             source_type=str(model.source_type),

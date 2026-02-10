@@ -11,14 +11,14 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from src.domain.entities.kernel.dictionary import (
+        EntityResolutionPolicy,
+        RelationConstraint,
+        TransformRegistry,
+        VariableDefinition,
+    )
     from src.domain.repositories.kernel.dictionary_repository import (
         DictionaryRepository,
-    )
-    from src.models.database.kernel.dictionary import (
-        EntityResolutionPolicyModel,
-        RelationConstraintModel,
-        TransformRegistryModel,
-        VariableDefinitionModel,
     )
     from src.type_definitions.common import JSONObject
 
@@ -38,7 +38,7 @@ class DictionaryService:
 
     # ── Variable operations ───────────────────────────────────────────
 
-    def get_variable(self, variable_id: str) -> VariableDefinitionModel | None:
+    def get_variable(self, variable_id: str) -> VariableDefinition | None:
         """Look up a variable definition by ID."""
         return self._dictionary.get_variable(variable_id)
 
@@ -47,14 +47,14 @@ class DictionaryService:
         *,
         domain_context: str | None = None,
         data_type: str | None = None,
-    ) -> list[VariableDefinitionModel]:
+    ) -> list[VariableDefinition]:
         """List variables, optionally filtered by domain and/or type."""
         return self._dictionary.find_variables(
             domain_context=domain_context,
             data_type=data_type,
         )
 
-    def resolve_synonym(self, synonym: str) -> VariableDefinitionModel | None:
+    def resolve_synonym(self, synonym: str) -> VariableDefinition | None:
         """
         Resolve a field name to its canonical variable.
 
@@ -75,7 +75,7 @@ class DictionaryService:
         preferred_unit: str | None = None,
         constraints: JSONObject | None = None,
         description: str | None = None,
-    ) -> VariableDefinitionModel:
+    ) -> VariableDefinition:
         """Create a new dictionary variable definition."""
         return self._dictionary.create_variable(
             variable_id=variable_id,
@@ -109,7 +109,7 @@ class DictionaryService:
         *,
         source_type: str | None = None,
         relation_type: str | None = None,
-    ) -> list[RelationConstraintModel]:
+    ) -> list[RelationConstraint]:
         """List constraints, optionally filtered."""
         return self._dictionary.get_constraints(
             source_type=source_type,
@@ -121,11 +121,11 @@ class DictionaryService:
     def get_resolution_policy(
         self,
         entity_type: str,
-    ) -> EntityResolutionPolicyModel | None:
+    ) -> EntityResolutionPolicy | None:
         """Get the dedup strategy for an entity type."""
         return self._dictionary.get_resolution_policy(entity_type)
 
-    def list_resolution_policies(self) -> list[EntityResolutionPolicyModel]:
+    def list_resolution_policies(self) -> list[EntityResolutionPolicy]:
         """List all entity resolution policies."""
         return self._dictionary.find_resolution_policies()
 
@@ -135,7 +135,7 @@ class DictionaryService:
         self,
         input_unit: str,
         output_unit: str,
-    ) -> TransformRegistryModel | None:
+    ) -> TransformRegistry | None:
         """Find a unit transformation."""
         return self._dictionary.get_transform(input_unit, output_unit)
 
@@ -143,7 +143,7 @@ class DictionaryService:
         self,
         *,
         status: str = "ACTIVE",
-    ) -> list[TransformRegistryModel]:
+    ) -> list[TransformRegistry]:
         """List all transforms."""
         return self._dictionary.find_transforms(status=status)
 

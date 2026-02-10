@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
+    from src.domain.entities.kernel.observations import KernelObservation
     from src.domain.repositories.kernel.dictionary_repository import (
         DictionaryRepository,
     )
@@ -19,7 +20,6 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.observation_repository import (
         KernelObservationRepository,
     )
-    from src.models.database.kernel.observations import ObservationModel
     from src.type_definitions.common import JSONValue
 
 logger = logging.getLogger(__name__)
@@ -220,7 +220,7 @@ class KernelObservationService:
         observed_at: datetime | None = None,
         provenance_id: str | None = None,
         confidence: float = 1.0,
-    ) -> ObservationModel:
+    ) -> KernelObservation:
         """
         Record a single observation with validation.
 
@@ -319,7 +319,7 @@ class KernelObservationService:
         observed_at: datetime | None = None,
         provenance_id: str | None = None,
         confidence: float = 1.0,
-    ) -> ObservationModel:
+    ) -> KernelObservation:
         """
         Record an observation by providing a single value.
 
@@ -362,7 +362,7 @@ class KernelObservationService:
 
     # ── Read ──────────────────────────────────────────────────────────
 
-    def get_observation(self, observation_id: str) -> ObservationModel | None:
+    def get_observation(self, observation_id: str) -> KernelObservation | None:
         """Retrieve a single observation."""
         return self._observations.get_by_id(observation_id)
 
@@ -373,7 +373,7 @@ class KernelObservationService:
         variable_id: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ObservationModel]:
+    ) -> list[KernelObservation]:
         """All observations for a given entity."""
         return self._observations.find_by_subject(
             subject_id,
@@ -388,7 +388,7 @@ class KernelObservationService:
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ObservationModel]:
+    ) -> list[KernelObservation]:
         """Paginated listing of all observations in a research space."""
         return self._observations.find_by_research_space(
             research_space_id,

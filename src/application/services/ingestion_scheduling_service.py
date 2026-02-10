@@ -19,12 +19,8 @@ from src.application.services.pubmed_discovery_service import (
 )
 from src.domain.entities import ingestion_job, user_data_source
 from src.domain.services.storage_providers import StorageOperationError
-from src.models.value_objects.provenance import (
-    DataSource as ProvenanceSource,
-)
-from src.models.value_objects.provenance import (
-    Provenance,
-)
+from src.domain.value_objects.provenance import DataSource as ProvenanceSource
+from src.domain.value_objects.provenance import Provenance
 from src.type_definitions.storage import StorageOperationRecord, StorageUseCase
 
 if TYPE_CHECKING:
@@ -268,7 +264,7 @@ class IngestionSchedulingService:
                 source_version=None,
                 source_url=None,
                 acquired_by="ingestion-scheduler",
-                processing_steps=["scheduled_ingestion"],
+                processing_steps=("scheduled_ingestion",),
                 quality_score=None,
             ),
             metadata={},

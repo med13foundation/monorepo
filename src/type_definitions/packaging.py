@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, NotRequired, TypedDict
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from datetime import datetime
 
-    from src.models.value_objects.provenance import Provenance
+    from src.domain.value_objects.provenance import Provenance
     from src.type_definitions.common import JSONObject
 
 

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from src.models.database.kernel.observations import ObservationModel
+    from src.domain.entities.kernel.observations import KernelObservation
     from src.type_definitions.common import JSONValue
 
 
@@ -44,7 +44,7 @@ class KernelObservationRepository(ABC):
         observed_at: datetime | None = None,
         provenance_id: str | None = None,
         confidence: float = 1.0,
-    ) -> ObservationModel:
+    ) -> KernelObservation:
         """Create a single observation with the appropriate value slot."""
 
     @abstractmethod
@@ -62,7 +62,7 @@ class KernelObservationRepository(ABC):
     # ── Read ──────────────────────────────────────────────────────────
 
     @abstractmethod
-    def get_by_id(self, observation_id: str) -> ObservationModel | None:
+    def get_by_id(self, observation_id: str) -> KernelObservation | None:
         """Retrieve a single observation by primary key."""
 
     @abstractmethod
@@ -73,7 +73,7 @@ class KernelObservationRepository(ABC):
         variable_id: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ObservationModel]:
+    ) -> list[KernelObservation]:
         """All observations for a given entity, optionally filtered by variable."""
 
     @abstractmethod
@@ -84,7 +84,7 @@ class KernelObservationRepository(ABC):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ObservationModel]:
+    ) -> list[KernelObservation]:
         """All observations for a given variable across all entities in a research space."""
 
     @abstractmethod
@@ -94,7 +94,7 @@ class KernelObservationRepository(ABC):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ObservationModel]:
+    ) -> list[KernelObservation]:
         """Paginated listing of all observations in a research space."""
 
     @abstractmethod
@@ -104,7 +104,7 @@ class KernelObservationRepository(ABC):
         query: str,
         *,
         limit: int = 20,
-    ) -> list[ObservationModel]:
+    ) -> list[KernelObservation]:
         """Search observations in a research space by variable/value/unit text."""
 
     # ── Delete ────────────────────────────────────────────────────────

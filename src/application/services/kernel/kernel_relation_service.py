@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from src.domain.entities.kernel.relations import KernelRelation
     from src.domain.repositories.kernel.dictionary_repository import (
         DictionaryRepository,
     )
@@ -22,7 +23,6 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
-    from src.models.database.kernel.relations import RelationModel
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class KernelRelationService:
         evidence_summary: str | None = None,
         evidence_tier: str | None = None,
         provenance_id: str | None = None,
-    ) -> RelationModel:
+    ) -> KernelRelation:
         """
         Create a relation with constraint validation.
 
@@ -132,7 +132,7 @@ class KernelRelationService:
         curation_status: str,
         reviewed_by: str,
         reviewed_at: datetime | None = None,
-    ) -> RelationModel:
+    ) -> KernelRelation:
         """Update the curation status of a relation."""
         return self._relations.update_curation(
             relation_id,
@@ -143,7 +143,7 @@ class KernelRelationService:
 
     # ── Read operations ───────────────────────────────────────────────
 
-    def get_relation(self, relation_id: str) -> RelationModel | None:
+    def get_relation(self, relation_id: str) -> KernelRelation | None:
         """Retrieve a single relation."""
         return self._relations.get_by_id(relation_id)
 
@@ -153,7 +153,7 @@ class KernelRelationService:
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
-    ) -> list[RelationModel]:
+    ) -> list[KernelRelation]:
         """Graph traversal around an entity."""
         return self._relations.find_neighborhood(
             entity_id,
@@ -168,7 +168,7 @@ class KernelRelationService:
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
-    ) -> list[RelationModel]:
+    ) -> list[KernelRelation]:
         """
         Graph traversal around an entity, restricted to a research space.
 
@@ -201,7 +201,7 @@ class KernelRelationService:
         curation_status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[RelationModel]:
+    ) -> list[KernelRelation]:
         """Paginated listing of relations in a research space."""
         return self._relations.find_by_research_space(
             research_space_id,

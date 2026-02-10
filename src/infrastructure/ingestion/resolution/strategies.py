@@ -7,8 +7,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from src.domain.entities.kernel.entities import KernelEntity
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
-    from src.models.database.kernel.entities import EntityModel
     from src.type_definitions.common import JSONObject
 
 
@@ -20,7 +20,7 @@ class ResolutionStrategy(Protocol):
         identifiers: JSONObject,
         entity_type: str,
         research_space_id: str,
-    ) -> EntityModel | None:
+    ) -> KernelEntity | None:
         """Resolve an entity based on identifiers."""
         ...
 
@@ -38,7 +38,7 @@ class StrictMatchStrategy:
         identifiers: JSONObject,
         entity_type: str,
         research_space_id: str,
-    ) -> EntityModel | None:
+    ) -> KernelEntity | None:
         # Use the repository's resolve method which handles identifier lookup
         # We assume 'identifiers' dictionary keys correspond to namespaces (e.g. 'mrn', 'hgnc_id')
         # and values are the identifier strings.
@@ -66,7 +66,7 @@ class LookupStrategy:
         identifiers: JSONObject,
         entity_type: str,
         research_space_id: str,
-    ) -> EntityModel | None:
+    ) -> KernelEntity | None:
         # For now, behaves like strict match on supported keys
         return StrictMatchStrategy(self.entity_repo).resolve(
             identifiers,
@@ -89,7 +89,7 @@ class FuzzyStrategy:
         identifiers: JSONObject,
         entity_type: str,
         research_space_id: str,
-    ) -> EntityModel | None:
+    ) -> KernelEntity | None:
         # Deterministic fallback: treat FUZZY as strict identifier matching until
         # we add a proper fuzzy match strategy (e.g. trigram/pgvector).
         return self._fallback.resolve(identifiers, entity_type, research_space_id)

@@ -4,7 +4,6 @@ import os
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
-from sqlalchemy import text
 
 from src.application.services.authorization_service import AuthorizationError
 from src.database.seed import DEFAULT_RESEARCH_SPACE_ID
@@ -15,17 +14,14 @@ from src.infrastructure.security.password_hasher import PasswordHasher
 from src.main import create_app
 from src.middleware import jwt_auth as jwt_auth_module
 from src.models.database import Base
-from src.models.database.data_discovery import (
-    DataDiscoverySessionModel,
-    DiscoverySearchJobModel,
-    QueryTestResultModel,
-)
+from src.models.database.data_discovery import DataDiscoverySessionModel
 from src.models.database.research_space import (
     ResearchSpaceModel,
     SpaceStatusEnum,
 )
 from src.models.database.user import UserModel
 from src.routes.auth import get_current_active_user
+from tests.db_reset import reset_database
 
 
 def test_curation_submit_requires_jwt_even_with_api_key() -> None:
@@ -51,17 +47,8 @@ def test_data_discovery_rejects_foreign_session_access() -> None:
     """
     Verify researchers cannot read sessions owned by another user.
     """
-    with engine.begin() as connection:
-        if connection.dialect.name == "postgresql":
-            connection.execute(
-                text("DROP TYPE IF EXISTS data_source_permission_level CASCADE"),
-            )
-    Base.metadata.create_all(bind=engine)
+    reset_database(engine, Base.metadata)
     session = SessionLocal()
-    session.query(QueryTestResultModel).delete()
-    session.query(DiscoverySearchJobModel).delete()
-    session.query(DataDiscoverySessionModel).delete()
-    session.commit()
 
     owner_id = uuid4()
     other_user_id = uuid4()

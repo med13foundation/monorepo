@@ -16,9 +16,9 @@ from src.domain.entities.ingestion_job import (
     IngestionTrigger,
     JobMetrics,
 )
+from src.domain.value_objects.provenance import DataSource, Provenance
 from src.infrastructure.repositories import SqlAlchemyIngestionJobRepository
 from src.models.database import Base, UserDataSourceModel
-from src.models.value_objects.provenance import DataSource, Provenance
 
 
 @pytest.fixture

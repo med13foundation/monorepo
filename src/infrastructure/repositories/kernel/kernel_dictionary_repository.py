@@ -13,6 +13,12 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, select
 
+from src.domain.entities.kernel.dictionary import (
+    EntityResolutionPolicy,
+    RelationConstraint,
+    TransformRegistry,
+    VariableDefinition,
+)
 from src.domain.repositories.kernel.dictionary_repository import DictionaryRepository
 from src.models.database.kernel.dictionary import (
     EntityResolutionPolicyModel,
@@ -38,15 +44,16 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
 
     # ── Variable definitions ──────────────────────────────────────────
 
-    def get_variable(self, variable_id: str) -> VariableDefinitionModel | None:
-        return self._session.get(VariableDefinitionModel, variable_id)
+    def get_variable(self, variable_id: str) -> VariableDefinition | None:
+        model = self._session.get(VariableDefinitionModel, variable_id)
+        return VariableDefinition.model_validate(model) if model is not None else None
 
     def find_variables(
         self,
         *,
         domain_context: str | None = None,
         data_type: str | None = None,
-    ) -> list[VariableDefinitionModel]:
+    ) -> list[VariableDefinition]:
         stmt = select(VariableDefinitionModel)
         if domain_context is not None:
             stmt = stmt.where(
@@ -55,18 +62,22 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         if data_type is not None:
             stmt = stmt.where(VariableDefinitionModel.data_type == data_type)
         stmt = stmt.order_by(VariableDefinitionModel.canonical_name)
-        return list(self._session.scalars(stmt).all())
+        return [
+            VariableDefinition.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def find_variable_by_synonym(
         self,
         synonym: str,
-    ) -> VariableDefinitionModel | None:
+    ) -> VariableDefinition | None:
         stmt = (
             select(VariableDefinitionModel)
             .join(VariableSynonymModel)
             .where(VariableSynonymModel.synonym == synonym.lower())
         )
-        return self._session.scalars(stmt).first()
+        model = self._session.scalars(stmt).first()
+        return VariableDefinition.model_validate(model) if model is not None else None
 
     def create_variable(  # noqa: PLR0913
         self,
@@ -80,7 +91,7 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         preferred_unit: str | None = None,
         constraints: JSONObject | None = None,
         description: str | None = None,
-    ) -> VariableDefinitionModel:
+    ) -> VariableDefinition:
         var = VariableDefinitionModel(
             id=variable_id,
             canonical_name=canonical_name,
@@ -94,24 +105,26 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         )
         self._session.add(var)
         self._session.flush()
-        return var
+        return VariableDefinition.model_validate(var)
 
     # ── Entity resolution policies ────────────────────────────────────
 
     def get_resolution_policy(
         self,
         entity_type: str,
-    ) -> EntityResolutionPolicyModel | None:
-        return self._session.get(EntityResolutionPolicyModel, entity_type)
-
-    def find_resolution_policies(self) -> list[EntityResolutionPolicyModel]:
-        return list(
-            self._session.scalars(
-                select(EntityResolutionPolicyModel).order_by(
-                    EntityResolutionPolicyModel.entity_type,
-                ),
-            ).all(),
+    ) -> EntityResolutionPolicy | None:
+        model = self._session.get(EntityResolutionPolicyModel, entity_type)
+        return (
+            EntityResolutionPolicy.model_validate(model) if model is not None else None
         )
+
+    def find_resolution_policies(self) -> list[EntityResolutionPolicy]:
+        models = self._session.scalars(
+            select(EntityResolutionPolicyModel).order_by(
+                EntityResolutionPolicyModel.entity_type,
+            ),
+        ).all()
+        return [EntityResolutionPolicy.model_validate(model) for model in models]
 
     # ── Relation constraints ──────────────────────────────────────────
 
@@ -120,13 +133,16 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         *,
         source_type: str | None = None,
         relation_type: str | None = None,
-    ) -> list[RelationConstraintModel]:
+    ) -> list[RelationConstraint]:
         stmt = select(RelationConstraintModel)
         if source_type is not None:
             stmt = stmt.where(RelationConstraintModel.source_type == source_type)
         if relation_type is not None:
             stmt = stmt.where(RelationConstraintModel.relation_type == relation_type)
-        return list(self._session.scalars(stmt).all())
+        return [
+            RelationConstraint.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def is_triple_allowed(
         self,
@@ -169,7 +185,7 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         self,
         input_unit: str,
         output_unit: str,
-    ) -> TransformRegistryModel | None:
+    ) -> TransformRegistry | None:
         stmt = select(TransformRegistryModel).where(
             and_(
                 TransformRegistryModel.input_unit == input_unit,
@@ -177,17 +193,21 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
                 TransformRegistryModel.status == "ACTIVE",
             ),
         )
-        return self._session.scalars(stmt).first()
+        model = self._session.scalars(stmt).first()
+        return TransformRegistry.model_validate(model) if model is not None else None
 
     def find_transforms(
         self,
         *,
         status: str = "ACTIVE",
-    ) -> list[TransformRegistryModel]:
+    ) -> list[TransformRegistry]:
         stmt = select(TransformRegistryModel).where(
             TransformRegistryModel.status == status,
         )
-        return list(self._session.scalars(stmt).all())
+        return [
+            TransformRegistry.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
 
 __all__ = ["SqlAlchemyDictionaryRepository"]

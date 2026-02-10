@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.models.database.kernel.provenance import ProvenanceModel
+    from src.domain.entities.kernel.provenance import KernelProvenanceRecord
     from src.type_definitions.common import JSONObject
 
 
@@ -35,11 +35,11 @@ class ProvenanceRepository(ABC):
         mapping_confidence: float | None = None,
         agent_model: str | None = None,
         raw_input: JSONObject | None = None,
-    ) -> ProvenanceModel:
+    ) -> KernelProvenanceRecord:
         """Create a provenance record for a data ingestion batch."""
 
     @abstractmethod
-    def get_by_id(self, provenance_id: str) -> ProvenanceModel | None:
+    def get_by_id(self, provenance_id: str) -> KernelProvenanceRecord | None:
         """Retrieve a single provenance record."""
 
     @abstractmethod
@@ -50,14 +50,14 @@ class ProvenanceRepository(ABC):
         source_type: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ProvenanceModel]:
+    ) -> list[KernelProvenanceRecord]:
         """List provenance records for a research space, optionally filtered by source type."""
 
     @abstractmethod
     def find_by_extraction_run(
         self,
         extraction_run_id: str,
-    ) -> list[ProvenanceModel]:
+    ) -> list[KernelProvenanceRecord]:
         """Find all provenance records for a given extraction/ingestion run."""
 
 

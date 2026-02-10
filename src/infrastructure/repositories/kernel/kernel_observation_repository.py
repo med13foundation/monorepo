@@ -15,6 +15,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, or_, select
 from sqlalchemy.engine import CursorResult
 
+from src.domain.entities.kernel.observations import KernelObservation
 from src.domain.repositories.kernel.observation_repository import (
     KernelObservationRepository,
 )
@@ -58,7 +59,7 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
         observed_at: datetime | None = None,
         provenance_id: str | None = None,
         confidence: float = 1.0,
-    ) -> ObservationModel:
+    ) -> KernelObservation:
         obs = ObservationModel(
             id=uuid4(),
             research_space_id=_as_uuid(research_space_id),
@@ -79,7 +80,7 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
         )
         self._session.add(obs)
         self._session.flush()
-        return obs
+        return KernelObservation.model_validate(obs)
 
     def create_batch(
         self,
@@ -109,8 +110,9 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
 
     # ── Read ──────────────────────────────────────────────────────────
 
-    def get_by_id(self, observation_id: str) -> ObservationModel | None:
-        return self._session.get(ObservationModel, _as_uuid(observation_id))
+    def get_by_id(self, observation_id: str) -> KernelObservation | None:
+        model = self._session.get(ObservationModel, _as_uuid(observation_id))
+        return KernelObservation.model_validate(model) if model is not None else None
 
     def find_by_subject(
         self,
@@ -119,7 +121,7 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
         variable_id: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ObservationModel]:
+    ) -> list[KernelObservation]:
         stmt = select(ObservationModel).where(
             ObservationModel.subject_id == _as_uuid(subject_id),
         )
@@ -130,7 +132,10 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelObservation.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def find_by_variable(
         self,
@@ -139,7 +144,7 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ObservationModel]:
+    ) -> list[KernelObservation]:
         stmt = (
             select(ObservationModel)
             .where(
@@ -152,7 +157,10 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelObservation.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def find_by_research_space(
         self,
@@ -160,7 +168,7 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[ObservationModel]:
+    ) -> list[KernelObservation]:
         stmt = (
             select(ObservationModel)
             .where(ObservationModel.research_space_id == _as_uuid(research_space_id))
@@ -170,7 +178,10 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelObservation.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def search_by_text(
         self,
@@ -178,7 +189,7 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
         query: str,
         *,
         limit: int = 20,
-    ) -> list[ObservationModel]:
+    ) -> list[KernelObservation]:
         stmt = select(ObservationModel).where(
             ObservationModel.research_space_id == _as_uuid(research_space_id),
             or_(
@@ -189,15 +200,18 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
             ),
         )
         stmt = stmt.order_by(ObservationModel.created_at.desc()).limit(limit)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelObservation.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     # ── Delete ────────────────────────────────────────────────────────
 
     def delete(self, observation_id: str) -> bool:
-        obs = self.get_by_id(observation_id)
-        if obs is None:
+        obs_model = self._session.get(ObservationModel, _as_uuid(observation_id))
+        if obs_model is None:
             return False
-        self._session.delete(obs)
+        self._session.delete(obs_model)
         self._session.flush()
         return True
 

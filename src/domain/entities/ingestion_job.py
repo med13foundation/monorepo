@@ -11,7 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.models.value_objects import Provenance
+from src.domain.value_objects import Provenance
 from src.type_definitions.common import JSONObject
 
 

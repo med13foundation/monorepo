@@ -16,6 +16,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, or_, select
 from sqlalchemy.engine import CursorResult
 
+from src.domain.entities.kernel.relations import KernelRelation
 from src.domain.repositories.kernel.relation_repository import KernelRelationRepository
 from src.models.database.kernel.relations import RelationModel
 
@@ -49,7 +50,7 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         evidence_tier: str | None = None,
         curation_status: str = "DRAFT",
         provenance_id: str | None = None,
-    ) -> RelationModel:
+    ) -> KernelRelation:
         relation = RelationModel(
             id=uuid4(),
             research_space_id=_as_uuid(research_space_id),
@@ -66,12 +67,13 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         )
         self._session.add(relation)
         self._session.flush()
-        return relation
+        return KernelRelation.model_validate(relation)
 
     # ── Read ──────────────────────────────────────────────────────────
 
-    def get_by_id(self, relation_id: str) -> RelationModel | None:
-        return self._session.get(RelationModel, _as_uuid(relation_id))
+    def get_by_id(self, relation_id: str) -> KernelRelation | None:
+        model = self._session.get(RelationModel, _as_uuid(relation_id))
+        return KernelRelation.model_validate(model) if model is not None else None
 
     def find_by_source(
         self,
@@ -80,7 +82,7 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         relation_type: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[RelationModel]:
+    ) -> list[KernelRelation]:
         stmt = select(RelationModel).where(
             RelationModel.source_id == _as_uuid(source_id),
         )
@@ -91,7 +93,10 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelRelation.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def find_by_target(
         self,
@@ -100,7 +105,7 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         relation_type: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[RelationModel]:
+    ) -> list[KernelRelation]:
         stmt = select(RelationModel).where(
             RelationModel.target_id == _as_uuid(target_id),
         )
@@ -111,7 +116,10 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelRelation.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def find_neighborhood(
         self,
@@ -119,7 +127,7 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
-    ) -> list[RelationModel]:
+    ) -> list[KernelRelation]:
         """
         Multi-hop neighborhood traversal.
 
@@ -165,7 +173,7 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
             if rel_id not in seen:
                 seen.add(rel_id)
                 unique.append(rel)
-        return unique
+        return [KernelRelation.model_validate(model) for model in unique]
 
     def find_by_research_space(
         self,
@@ -175,7 +183,7 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         curation_status: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[RelationModel]:
+    ) -> list[KernelRelation]:
         stmt = select(RelationModel).where(
             RelationModel.research_space_id == _as_uuid(research_space_id),
         )
@@ -188,7 +196,10 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelRelation.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def search_by_text(
         self,
@@ -196,7 +207,7 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         query: str,
         *,
         limit: int = 20,
-    ) -> list[RelationModel]:
+    ) -> list[KernelRelation]:
         stmt = select(RelationModel).where(
             RelationModel.research_space_id == _as_uuid(research_space_id),
             or_(
@@ -206,7 +217,10 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
             ),
         )
         stmt = stmt.order_by(RelationModel.created_at.desc()).limit(limit)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelRelation.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     # ── Curation lifecycle ────────────────────────────────────────────
 
@@ -217,24 +231,24 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         curation_status: str,
         reviewed_by: str,
         reviewed_at: datetime | None = None,
-    ) -> RelationModel:
-        relation = self._session.get(RelationModel, _as_uuid(relation_id))
-        if relation is None:
+    ) -> KernelRelation:
+        relation_model = self._session.get(RelationModel, _as_uuid(relation_id))
+        if relation_model is None:
             msg = f"Relation {relation_id} not found"
             raise ValueError(msg)
-        relation.curation_status = curation_status
-        relation.reviewed_by = _as_uuid(reviewed_by)
-        relation.reviewed_at = reviewed_at or datetime.now(UTC)
+        relation_model.curation_status = curation_status
+        relation_model.reviewed_by = _as_uuid(reviewed_by)
+        relation_model.reviewed_at = reviewed_at or datetime.now(UTC)
         self._session.flush()
-        return relation
+        return KernelRelation.model_validate(relation_model)
 
     # ── Delete ────────────────────────────────────────────────────────
 
     def delete(self, relation_id: str) -> bool:
-        relation = self.get_by_id(relation_id)
-        if relation is None:
+        relation_model = self._session.get(RelationModel, _as_uuid(relation_id))
+        if relation_model is None:
             return False
-        self._session.delete(relation)
+        self._session.delete(relation_model)
         self._session.flush()
         return True
 

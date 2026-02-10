@@ -16,6 +16,7 @@ from sqlalchemy import insert as sa_insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from src.domain.entities.kernel.entities import KernelEntity, KernelEntityIdentifier
 from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
 from src.models.database.kernel.entities import EntityIdentifierModel, EntityModel
 
@@ -46,7 +47,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         entity_type: str,
         display_label: str | None = None,
         metadata: JSONObject | None = None,
-    ) -> EntityModel:
+    ) -> KernelEntity:
         entity = EntityModel(
             id=uuid4(),
             research_space_id=_as_uuid(research_space_id),
@@ -56,10 +57,33 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         )
         self._session.add(entity)
         self._session.flush()
-        return entity
+        return KernelEntity.model_validate(entity)
 
-    def get_by_id(self, entity_id: str) -> EntityModel | None:
-        return self._session.get(EntityModel, _as_uuid(entity_id))
+    def get_by_id(self, entity_id: str) -> KernelEntity | None:
+        model = self._session.get(EntityModel, _as_uuid(entity_id))
+        return KernelEntity.model_validate(model) if model is not None else None
+
+    def update(
+        self,
+        entity_id: str,
+        *,
+        display_label: str | None = None,
+        metadata: JSONObject | None = None,
+    ) -> KernelEntity | None:
+        entity_model = self._session.get(EntityModel, _as_uuid(entity_id))
+        if entity_model is None:
+            return None
+
+        if display_label is not None:
+            entity_model.display_label = display_label
+
+        if metadata is not None:
+            merged = dict(entity_model.metadata_payload or {})
+            merged.update(metadata)
+            entity_model.metadata_payload = merged
+
+        self._session.flush()
+        return KernelEntity.model_validate(entity_model)
 
     def find_by_type(
         self,
@@ -68,7 +92,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[EntityModel]:
+    ) -> list[KernelEntity]:
         stmt = (
             select(EntityModel)
             .where(
@@ -81,7 +105,10 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelEntity.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def find_by_research_space(
         self,
@@ -90,7 +117,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         entity_type: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[EntityModel]:
+    ) -> list[KernelEntity]:
         stmt = select(EntityModel).where(
             EntityModel.research_space_id == _as_uuid(research_space_id),
         )
@@ -101,7 +128,10 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return list(self._session.scalars(stmt).all())
+        return [
+            KernelEntity.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def search(
         self,
@@ -110,14 +140,17 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         *,
         entity_type: str | None = None,
         limit: int = 20,
-    ) -> list[EntityModel]:
+    ) -> list[KernelEntity]:
         stmt = select(EntityModel).where(
             EntityModel.research_space_id == _as_uuid(research_space_id),
             EntityModel.display_label.ilike(f"%{query}%"),
         )
         if entity_type is not None:
             stmt = stmt.where(EntityModel.entity_type == entity_type)
-        return list(self._session.scalars(stmt.limit(limit)).all())
+        return [
+            KernelEntity.model_validate(model)
+            for model in self._session.scalars(stmt.limit(limit)).all()
+        ]
 
     def count_by_type(self, research_space_id: str) -> dict[str, int]:
         rows = self._session.execute(
@@ -136,10 +169,10 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         return {row[0]: row[1] for row in rows}
 
     def delete(self, entity_id: str) -> bool:
-        entity = self.get_by_id(entity_id)
-        if entity is None:
+        entity_model = self._session.get(EntityModel, _as_uuid(entity_id))
+        if entity_model is None:
             return False
-        self._session.delete(entity)
+        self._session.delete(entity_model)
         self._session.flush()
         return True
 
@@ -152,7 +185,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         namespace: str,
         identifier_value: str,
         sensitivity: str = "INTERNAL",
-    ) -> EntityIdentifierModel:
+    ) -> KernelEntityIdentifier:
         # Upsert — skip if already exists.
         #
         # Use dialect-appropriate INSERT .. ON CONFLICT to keep the kernel
@@ -192,7 +225,8 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             EntityIdentifierModel.namespace == namespace,
             EntityIdentifierModel.identifier_value == identifier_value,
         )
-        return self._session.scalars(lookup).one()
+        model = self._session.scalars(lookup).one()
+        return KernelEntityIdentifier.model_validate(model)
 
     def find_by_identifier(
         self,
@@ -200,7 +234,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         namespace: str,
         identifier_value: str,
         research_space_id: str | None = None,
-    ) -> EntityModel | None:
+    ) -> KernelEntity | None:
         stmt = (
             select(EntityModel)
             .join(EntityIdentifierModel)
@@ -213,7 +247,8 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             stmt = stmt.where(
                 EntityModel.research_space_id == _as_uuid(research_space_id),
             )
-        return self._session.scalars(stmt).first()
+        model = self._session.scalars(stmt).first()
+        return KernelEntity.model_validate(model) if model is not None else None
 
     # ── Resolution ────────────────────────────────────────────────────
 
@@ -223,7 +258,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         research_space_id: str,
         entity_type: str,
         identifiers: dict[str, str],
-    ) -> EntityModel | None:
+    ) -> KernelEntity | None:
         """
         Try to match an existing entity using its identifiers.
 

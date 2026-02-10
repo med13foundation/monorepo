@@ -7,10 +7,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.models.database.kernel.entities import EntityModel
-from src.models.database.kernel.observations import ObservationModel
-from src.models.database.kernel.provenance import ProvenanceModel
-from src.models.database.kernel.relations import RelationModel
+from src.domain.entities.kernel.entities import KernelEntity
+from src.domain.entities.kernel.observations import KernelObservation
+from src.domain.entities.kernel.provenance import KernelProvenanceRecord
+from src.domain.entities.kernel.relations import KernelRelation
 from src.type_definitions.common import JSONObject, JSONValue
 
 
@@ -59,10 +59,10 @@ class KernelEntityResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, model: EntityModel) -> KernelEntityResponse:
+    def from_model(cls, model: KernelEntity) -> KernelEntityResponse:
         entity_id = _to_uuid(model.id)
         space_id = _to_uuid(model.research_space_id)
-        metadata_payload = model.metadata_payload or {}
+        metadata_payload = model.metadata or {}
         return cls(
             id=entity_id,
             research_space_id=space_id,
@@ -135,7 +135,7 @@ class KernelObservationResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, model: ObservationModel) -> KernelObservationResponse:
+    def from_model(cls, model: KernelObservation) -> KernelObservationResponse:
         value_numeric_raw = model.value_numeric
         value_numeric = (
             float(value_numeric_raw) if value_numeric_raw is not None else None
@@ -224,7 +224,7 @@ class KernelRelationResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, model: RelationModel) -> KernelRelationResponse:
+    def from_model(cls, model: KernelRelation) -> KernelRelationResponse:
         provenance_id_raw = model.provenance_id
         reviewed_by_raw = model.reviewed_by
         return cls(
@@ -278,7 +278,7 @@ class KernelProvenanceResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, model: ProvenanceModel) -> KernelProvenanceResponse:
+    def from_model(cls, model: KernelProvenanceRecord) -> KernelProvenanceResponse:
         extraction_run_id_raw = model.extraction_run_id
         return cls(
             id=_to_uuid(model.id),

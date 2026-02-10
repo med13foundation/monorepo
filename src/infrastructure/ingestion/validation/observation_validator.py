@@ -12,10 +12,10 @@ if TYPE_CHECKING:
     from src.infrastructure.ingestion.types import IngestedValue, NormalizedObservation
 
 if TYPE_CHECKING:
+    from src.domain.entities.kernel.dictionary import VariableDefinition
     from src.domain.repositories.kernel.dictionary_repository import (
         DictionaryRepository,
     )
-    from src.models.database.kernel.dictionary import VariableDefinitionModel
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class ObservationValidator:
     def _validate_value_type(
         self,
         value: IngestedValue,
-        variable: VariableDefinitionModel,
+        variable: VariableDefinition,
     ) -> bool:
         # ValueCaster should already cast based on dictionary definitions, but we
         # validate again to ensure we never persist an invalid type.
@@ -80,7 +80,7 @@ class ObservationValidator:
     def _validate_constraints(
         self,
         value: IngestedValue,
-        variable: VariableDefinitionModel,
+        variable: VariableDefinition,
     ) -> bool:
         constraints = variable.constraints
         if not constraints:

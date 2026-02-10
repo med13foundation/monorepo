@@ -7,14 +7,14 @@ Provides cross-entity search capabilities with relevance scoring and filtering.
 import logging
 from enum import Enum
 
+from src.domain.entities.kernel.entities import KernelEntity
+from src.domain.entities.kernel.observations import KernelObservation
+from src.domain.entities.kernel.relations import KernelRelation
 from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
 from src.domain.repositories.kernel.observation_repository import (
     KernelObservationRepository,
 )
 from src.domain.repositories.kernel.relation_repository import KernelRelationRepository
-from src.models.database.kernel.entities import EntityModel
-from src.models.database.kernel.observations import ObservationModel
-from src.models.database.kernel.relations import RelationModel
 from src.type_definitions.common import JSONObject, QueryFilters, clone_query_filters
 
 
@@ -208,7 +208,7 @@ class UnifiedSearchService:
                     metadata={
                         "entity_type": entity.entity_type,
                         "display_label": entity.display_label or "",
-                        "metadata": entity.metadata_payload or {},
+                        "metadata": dict(entity.metadata),
                     },
                 ),
             )
@@ -307,7 +307,7 @@ class UnifiedSearchService:
 
         return results
 
-    def _calculate_entity_relevance(self, query: str, entity: EntityModel) -> float:
+    def _calculate_entity_relevance(self, query: str, entity: KernelEntity) -> float:
         """Calculate relevance score for entity search result."""
         query_lower = query.lower()
         score = 0.0
@@ -325,7 +325,7 @@ class UnifiedSearchService:
     def _calculate_observation_relevance(
         self,
         query: str,
-        obs: ObservationModel,
+        obs: KernelObservation,
     ) -> float:
         """Calculate relevance score for observation search result."""
         query_lower = query.lower()
@@ -349,7 +349,7 @@ class UnifiedSearchService:
 
         return min(score, 1.0)
 
-    def _calculate_relation_relevance(self, query: str, rel: RelationModel) -> float:
+    def _calculate_relation_relevance(self, query: str, rel: KernelRelation) -> float:
         """Calculate relevance score for relation search result."""
         query_lower = query.lower()
         score = 0.0
@@ -406,7 +406,7 @@ class UnifiedSearchService:
         }
 
     @staticmethod
-    def _format_observation_value(obs: ObservationModel) -> str:
+    def _format_observation_value(obs: KernelObservation) -> str:
         rendered: str | None = None
 
         if obs.value_text is not None:

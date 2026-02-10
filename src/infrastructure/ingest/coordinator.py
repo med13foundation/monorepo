@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 
-from src.models.value_objects import DataSource, Provenance
+from src.domain.value_objects import DataSource, Provenance
 from src.type_definitions.common import JSONObject, JSONValue
 
 from .base_ingestor import (
@@ -220,7 +220,7 @@ class IngestionCoordinator:
                 source_url=None,
                 acquired_at=datetime.now(UTC),
                 acquired_by="MED13-Resource-Library-Coordinator",
-                processing_steps=[f"Failed ingestion: {e!s}"],
+                processing_steps=(f"Failed ingestion: {e!s}",),
                 validation_status="failed",
                 quality_score=0.0,
             )

@@ -8,12 +8,12 @@ from unittest.mock import patch
 import pytest
 from httpx import Response
 
+from src.domain.value_objects import Provenance
 from src.infrastructure.ingest.base_ingestor import IngestionStatus
 from src.infrastructure.ingest.clinvar_ingestor import ClinVarIngestor
 from src.infrastructure.ingest.hpo_ingestor import HPOIngestor
 from src.infrastructure.ingest.pubmed_ingestor import PubMedIngestor
 from src.infrastructure.ingest.uniprot_ingestor import UniProtIngestor
-from src.models.value_objects import Provenance
 
 
 class TestClinVarIngestor:

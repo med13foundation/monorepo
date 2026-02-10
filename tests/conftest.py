@@ -264,7 +264,7 @@ def sample_provenance():
     """Provide sample provenance data for testing."""
     from datetime import UTC, datetime
 
-    from src.models.value_objects.provenance import DataSource, Provenance
+    from src.domain.value_objects.provenance import DataSource, Provenance
 
     return Provenance(
         source=DataSource.CLINVAR,

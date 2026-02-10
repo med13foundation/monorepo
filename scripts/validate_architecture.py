@@ -58,6 +58,7 @@ LAYER_BOUNDARIES = {
         "forbidden_imports": [
             "src.infrastructure",
             "src.routes",
+            "src.models",  # Domain owns business concepts; models are outer-layer schemas/ORM.
             "src.models.database",  # Domain should use entities, not DB models
         ],
         "allowed_imports": [
@@ -517,21 +518,45 @@ class ArchitectureValidator:
 
         layer_config = LAYER_BOUNDARIES[layer]
 
-        # Check imports
+        def _matches_forbidden_prefix(module_name: str, forbidden_prefix: str) -> bool:
+            """Return True if module_name is (or is within) forbidden_prefix."""
+            if module_name == forbidden_prefix:
+                return True
+            return module_name.startswith(f"{forbidden_prefix}.")
+
+        # Normalise forbidden prefixes so we catch both absolute imports (src.*)
+        # and occasional relative/short imports (infrastructure.*).
+        forbidden_prefixes: list[str] = []
+        for forbidden in layer_config.get("forbidden_imports", []):
+            forbidden_prefixes.append(forbidden)
+            if forbidden.startswith("src."):
+                forbidden_prefixes.append(forbidden.removeprefix("src."))
+
+        # Check imports (both `from x import y` and `import x`).
         for node in ast.walk(tree):
+            imported_modules: list[tuple[str, int]] = []
             if isinstance(node, ast.ImportFrom) and node.module:
-                # Check for forbidden imports
-                for forbidden in layer_config.get("forbidden_imports", []):
-                    if node.module.startswith(forbidden.replace("src.", "")):
+                imported_modules.append((node.module, node.lineno))
+            elif isinstance(node, ast.Import):
+                imported_modules.extend(
+                    (alias.name, node.lineno) for alias in node.names
+                )
+            else:
+                continue
+
+            for module_name, lineno in imported_modules:
+                for forbidden in forbidden_prefixes:
+                    if _matches_forbidden_prefix(module_name, forbidden):
                         self.result.violations.append(
                             Violation(
                                 file_path=file_path,
-                                line_number=node.lineno,
+                                line_number=lineno,
                                 violation_type="layer_violation",
                                 message=(
                                     f"Layer violation: {layer} layer imports from "
-                                    f"{forbidden}. This violates Clean Architecture "
-                                    "dependency inversion principle."
+                                    f"{module_name} (forbidden prefix: {forbidden}). "
+                                    "This violates Clean Architecture dependency inversion "
+                                    "principle."
                                 ),
                                 severity="error",
                             ),

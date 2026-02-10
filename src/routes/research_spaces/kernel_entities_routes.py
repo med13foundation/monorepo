@@ -213,13 +213,19 @@ def update_kernel_entity(
         )
 
     try:
-        if request.display_label is not None:
-            entity.display_label = request.display_label
-
-        if request.metadata is not None:
-            merged = dict(entity.metadata_payload or {})
-            merged.update(request.metadata)
-            entity.metadata_payload = merged
+        updated_entity = entity
+        if request.display_label is not None or request.metadata is not None:
+            maybe_updated = service.update_entity(
+                str(entity_id),
+                display_label=request.display_label,
+                metadata=request.metadata,
+            )
+            if maybe_updated is None:
+                raise HTTPException(
+                    status_code=HTTP_404_NOT_FOUND,
+                    detail="Entity not found",
+                )
+            updated_entity = maybe_updated
 
         if request.identifiers:
             for namespace, value in request.identifiers.items():
@@ -230,7 +236,10 @@ def update_kernel_entity(
                 )
 
         session.commit()
-        return KernelEntityResponse.from_model(entity)
+        return KernelEntityResponse.from_model(updated_entity)
+    except HTTPException:
+        session.rollback()
+        raise
     except IntegrityError as e:
         session.rollback()
         raise HTTPException(

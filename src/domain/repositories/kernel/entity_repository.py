@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.models.database.kernel.entities import EntityIdentifierModel, EntityModel
+    from src.domain.entities.kernel.entities import KernelEntity, KernelEntityIdentifier
     from src.type_definitions.common import JSONObject
 
 
@@ -33,12 +33,32 @@ class KernelEntityRepository(ABC):
         entity_type: str,
         display_label: str | None = None,
         metadata: JSONObject | None = None,
-    ) -> EntityModel:
+    ) -> KernelEntity:
         """Create a new entity in the given research space."""
 
     @abstractmethod
-    def get_by_id(self, entity_id: str) -> EntityModel | None:
+    def get_by_id(self, entity_id: str) -> KernelEntity | None:
         """Retrieve a single entity by primary key."""
+
+    @abstractmethod
+    def update(
+        self,
+        entity_id: str,
+        *,
+        display_label: str | None = None,
+        metadata: JSONObject | None = None,
+    ) -> KernelEntity | None:
+        """
+        Update an entity's display label and/or metadata.
+
+        Args:
+            entity_id: Entity primary key.
+            display_label: New display label (None means no change).
+            metadata: Metadata patch to merge into existing metadata (None means no change).
+
+        Returns:
+            Updated entity, or None if the entity does not exist.
+        """
 
     @abstractmethod
     def find_by_type(
@@ -48,7 +68,7 @@ class KernelEntityRepository(ABC):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[EntityModel]:
+    ) -> list[KernelEntity]:
         """List entities of a specific type within a research space."""
 
     @abstractmethod
@@ -59,7 +79,7 @@ class KernelEntityRepository(ABC):
         entity_type: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> list[EntityModel]:
+    ) -> list[KernelEntity]:
         """List entities within a research space, optionally filtered by entity type."""
 
     @abstractmethod
@@ -70,7 +90,7 @@ class KernelEntityRepository(ABC):
         *,
         entity_type: str | None = None,
         limit: int = 20,
-    ) -> list[EntityModel]:
+    ) -> list[KernelEntity]:
         """Full-text search on display_label within a research space."""
 
     @abstractmethod
@@ -95,7 +115,7 @@ class KernelEntityRepository(ABC):
         namespace: str,
         identifier_value: str,
         sensitivity: str = "INTERNAL",
-    ) -> EntityIdentifierModel:
+    ) -> KernelEntityIdentifier:
         """Attach an external identifier (HGNC, DOI, MRN, etc.) to an entity."""
 
     @abstractmethod
@@ -105,7 +125,7 @@ class KernelEntityRepository(ABC):
         namespace: str,
         identifier_value: str,
         research_space_id: str | None = None,
-    ) -> EntityModel | None:
+    ) -> KernelEntity | None:
         """Look up an entity by a specific namespace + value pair."""
 
     # ── Resolution ────────────────────────────────────────────────────
@@ -117,7 +137,7 @@ class KernelEntityRepository(ABC):
         research_space_id: str,
         entity_type: str,
         identifiers: dict[str, str],
-    ) -> EntityModel | None:
+    ) -> KernelEntity | None:
         """
         Attempt to find an existing entity matching the given identifiers.
 
