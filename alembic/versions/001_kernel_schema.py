@@ -221,6 +221,18 @@ def upgrade() -> None:  # noqa: PLR0915
         ),
         sa.Column("synonym", sa.String(255), nullable=False),
         sa.Column("source", sa.String(64), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
     )
     op.create_index(
         "idx_synonym_variable_unique",
@@ -506,6 +518,12 @@ def upgrade() -> None:  # noqa: PLR0915
             nullable=False,
             server_default=sa.func.now(),
         ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
     )
     op.create_index(
         "idx_identifier_lookup",
@@ -592,6 +610,12 @@ def upgrade() -> None:  # noqa: PLR0915
         sa.Column("confidence", sa.Float, nullable=False, server_default="1.0"),
         sa.Column(
             "created_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
             sa.TIMESTAMP(timezone=True),
             nullable=False,
             server_default=sa.func.now(),

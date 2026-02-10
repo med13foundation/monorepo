@@ -60,15 +60,26 @@ class SourceTemplateModel(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     category: Mapped[TemplateCategoryEnum] = mapped_column(
-        SQLEnum(TemplateCategoryEnum),
+        SQLEnum(
+            TemplateCategoryEnum,
+            name="templatecategoryenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         default=TemplateCategoryEnum.OTHER,
+        server_default=TemplateCategoryEnum.OTHER.value,
         index=True,
     )
 
     # Template definition
     source_type: Mapped[SourceTypeEnum] = mapped_column(
-        SQLEnum(SourceTypeEnum),
+        SQLEnum(
+            SourceTypeEnum,
+            name="sourcetypeenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         index=True,
     )

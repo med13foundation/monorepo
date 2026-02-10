@@ -75,7 +75,12 @@ class UserDataSourceModel(Base):
 
     # Configuration
     source_type: Mapped[SourceTypeEnum] = mapped_column(
-        SQLEnum(SourceTypeEnum),
+        SQLEnum(
+            SourceTypeEnum,
+            name="usersourcetypeenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         index=True,
     )
@@ -93,9 +98,15 @@ class UserDataSourceModel(Base):
 
     # Status and lifecycle
     status: Mapped[SourceStatusEnum] = mapped_column(
-        SQLEnum(SourceStatusEnum),
+        SQLEnum(
+            SourceStatusEnum,
+            name="sourcestatusenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         default=SourceStatusEnum.DRAFT,
+        server_default=SourceStatusEnum.DRAFT.value,
         index=True,
     )
     ingestion_schedule: Mapped[JSONObject] = mapped_column(

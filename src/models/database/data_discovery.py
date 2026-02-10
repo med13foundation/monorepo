@@ -264,9 +264,15 @@ class DiscoveryPresetModel(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     scope: Mapped[PresetScopeEnum] = mapped_column(
-        SQLEnum(PresetScopeEnum),
+        SQLEnum(
+            PresetScopeEnum,
+            name="presetscopeenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         default=PresetScopeEnum.USER,
+        server_default=PresetScopeEnum.USER.value,
     )
     provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)

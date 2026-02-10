@@ -62,8 +62,15 @@ class IngestionJobModel(Base):
 
     # Execution details
     trigger: Mapped[IngestionTriggerEnum] = mapped_column(
-        SQLEnum(IngestionTriggerEnum),
+        SQLEnum(
+            IngestionTriggerEnum,
+            name="ingestiontriggerenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
+        default=IngestionTriggerEnum.MANUAL,
+        server_default=IngestionTriggerEnum.MANUAL.value,
     )
     triggered_by: Mapped[str | None] = mapped_column(
         PGUUID(as_uuid=False),
@@ -74,9 +81,15 @@ class IngestionJobModel(Base):
 
     # Status and progress
     status: Mapped[IngestionStatusEnum] = mapped_column(
-        SQLEnum(IngestionStatusEnum),
+        SQLEnum(
+            IngestionStatusEnum,
+            name="ingestionstatusenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         default=IngestionStatusEnum.PENDING,
+        server_default=IngestionStatusEnum.PENDING.value,
         index=True,
     )
     started_at: Mapped[str | None] = mapped_column(String(30), nullable=True)

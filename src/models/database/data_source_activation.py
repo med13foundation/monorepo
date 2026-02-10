@@ -54,8 +54,15 @@ class DataSourceActivationModel(Base):
         index=True,
     )
     scope: Mapped[ActivationScopeEnum] = mapped_column(
-        SQLEnum(ActivationScopeEnum),
+        SQLEnum(
+            ActivationScopeEnum,
+            name="activationscopeenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
+        default=ActivationScopeEnum.GLOBAL,
+        server_default=ActivationScopeEnum.GLOBAL.value,
         index=True,
     )
     research_space_id: Mapped[str | None] = mapped_column(
