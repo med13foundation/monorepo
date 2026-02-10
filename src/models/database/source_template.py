@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, Boolean, Float, Integer, String, Text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
 from .base import Base
-
-if TYPE_CHECKING:
-    from .user_data_source import UserDataSourceModel
 
 # SQLAlchemy model for reusable data source templates.
 
@@ -129,11 +125,8 @@ class SourceTemplateModel(Base):
         default="1.0",
     )
 
-    # Relationships
-    sources: Mapped[list[UserDataSourceModel]] = relationship(
-        "UserDataSourceModel",
-        back_populates="template",
-    )
+    # NOTE: `sources` relationship to UserDataSourceModel removed during
+    # kernel migration. Will be re-added in Phase 2 with kernel data sources.
 
     def __repr__(self) -> str:
         """String representation of the source template."""

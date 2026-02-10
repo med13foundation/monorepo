@@ -1,69 +1,41 @@
 # MED13 Resource Library - SQLAlchemy Database Models
-# Strongly typed database entities with relationships and constraints
+# Universal Study Graph Platform — Kernel + Infrastructure models
+#
+# MIGRATION NOTE (2026-02-09): Old domain-specific models (Gene, Variant,
+# Phenotype, Evidence, Mechanism, etc.) have been replaced by the kernel
+# schema: Entity, Observation, Relation, Provenance + Dictionary tables.
+# Surviving infrastructure models are preserved below.
 
 from . import (
     audit,
     base,
-    data_discovery,
-    data_source_activation,
-    evidence,
-    extraction_queue,
-    gene,
-    ingestion_job,
-    mechanism,
-    phenotype,
-    publication,
-    publication_extraction,
-    research_space,
-    review,
+    session,
     source_template,
     storage,
     system_status,
     user,
-    user_data_source,
-    variant,
+)
+from .kernel import (
+    EntityIdentifierModel,
+    EntityModel,
+    EntityResolutionPolicyModel,
+    ObservationModel,
+    ProvenanceModel,
+    RelationConstraintModel,
+    RelationModel,
+    StudyMembershipModel,
+    StudyModel,
+    TransformRegistryModel,
+    VariableDefinitionModel,
+    VariableSynonymModel,
 )
 
+# ── Surviving infrastructure models ──
 AuditLog = audit.AuditLog
 Base = base.Base
-
-DataDiscoverySessionModel = data_discovery.DataDiscoverySessionModel
-QueryTestResultModel = data_discovery.QueryTestResultModel
-SourceCatalogEntryModel = data_discovery.SourceCatalogEntryModel
-
-ActivationScopeEnum = data_source_activation.ActivationScopeEnum
-DataSourceActivationModel = data_source_activation.DataSourceActivationModel
-
-EvidenceLevel = evidence.EvidenceLevel
-EvidenceModel = evidence.EvidenceModel
-EvidenceType = evidence.EvidenceType
-
-ExtractionQueueItemModel = extraction_queue.ExtractionQueueItemModel
-ExtractionStatusEnum = extraction_queue.ExtractionStatusEnum
-
-GeneModel = gene.GeneModel
-GeneType = gene.GeneType
-
-IngestionJobModel = ingestion_job.IngestionJobModel
-IngestionStatus = ingestion_job.IngestionStatusEnum
-IngestionTrigger = ingestion_job.IngestionTriggerEnum
-
-PhenotypeCategory = phenotype.PhenotypeCategory
-PhenotypeModel = phenotype.PhenotypeModel
-
-MechanismModel = mechanism.MechanismModel
-
-PublicationModel = publication.PublicationModel
-PublicationType = publication.PublicationType
-PublicationExtractionModel = publication_extraction.PublicationExtractionModel
-ExtractionOutcomeEnum = publication_extraction.ExtractionOutcomeEnum
-
-MembershipRoleEnum = research_space.MembershipRoleEnum
-ResearchSpaceMembershipModel = research_space.ResearchSpaceMembershipModel
-ResearchSpaceModel = research_space.ResearchSpaceModel
-SpaceStatusEnum = research_space.SpaceStatusEnum
-
-ReviewRecord = review.ReviewRecord
+SessionModel = session.SessionModel
+SystemStatusModel = system_status.SystemStatusModel
+UserModel = user.UserModel
 
 SourceTemplateModel = source_template.SourceTemplateModel
 SourceTypeEnum = source_template.SourceTypeEnum
@@ -77,49 +49,27 @@ StorageOperationStatusEnum = storage.StorageOperationStatusEnum
 StorageOperationTypeEnum = storage.StorageOperationTypeEnum
 StorageProviderEnum = storage.StorageProviderEnum
 
-SystemStatusModel = system_status.SystemStatusModel
-
-UserModel = user.UserModel
-
-SourceStatus = user_data_source.SourceStatusEnum
-SourceType = user_data_source.SourceTypeEnum
-UserDataSourceModel = user_data_source.UserDataSourceModel
-
-ClinicalSignificance = variant.ClinicalSignificance
-VariantModel = variant.VariantModel
-VariantType = variant.VariantType
-
 __all__ = [
-    "AuditLog",
+    # Base
     "Base",
-    "ClinicalSignificance",
-    "DataDiscoverySessionModel",
-    "EvidenceLevel",
-    "EvidenceModel",
-    "EvidenceType",
-    "ExtractionQueueItemModel",
-    "ExtractionStatusEnum",
-    "GeneModel",
-    "GeneType",
-    "IngestionJobModel",
-    "IngestionStatus",
-    "IngestionTrigger",
-    "MembershipRoleEnum",
-    "MechanismModel",
-    "PhenotypeCategory",
-    "PhenotypeModel",
-    "PublicationModel",
-    "PublicationType",
-    "PublicationExtractionModel",
-    "ExtractionOutcomeEnum",
-    "QueryTestResultModel",
-    "ResearchSpaceMembershipModel",
-    "ResearchSpaceModel",
-    "ReviewRecord",
-    "SourceCatalogEntryModel",
-    "SourceStatus",
+    # Kernel: Dictionary (Layer 1)
+    "VariableDefinitionModel",
+    "VariableSynonymModel",
+    "TransformRegistryModel",
+    "EntityResolutionPolicyModel",
+    "RelationConstraintModel",
+    # Kernel: Data (Layer 2)
+    "StudyModel",
+    "StudyMembershipModel",
+    "EntityModel",
+    "EntityIdentifierModel",
+    "ObservationModel",
+    "RelationModel",
+    "ProvenanceModel",
+    # Surviving infrastructure
+    "AuditLog",
+    "SessionModel",
     "SourceTemplateModel",
-    "SourceType",
     "SourceTypeEnum",
     "StorageConfigurationModel",
     "StorageHealthSnapshotModel",
@@ -129,12 +79,6 @@ __all__ = [
     "StorageOperationTypeEnum",
     "StorageProviderEnum",
     "SystemStatusModel",
-    "SpaceStatusEnum",
     "TemplateCategory",
-    "UserDataSourceModel",
     "UserModel",
-    "VariantModel",
-    "VariantType",
-    "DataSourceActivationModel",
-    "ActivationScopeEnum",
 ]

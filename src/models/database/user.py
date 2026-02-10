@@ -136,22 +136,22 @@ class UserModel(Base):
     )
 
     # Relationships
-    owned_spaces = relationship(
-        "ResearchSpaceModel",
+    owned_studies = relationship(
+        "StudyModel",
         back_populates="owner",
-        foreign_keys="ResearchSpaceModel.owner_id",
+        foreign_keys="StudyModel.created_by",
         cascade="all, delete-orphan",
     )
-    space_memberships = relationship(
-        "ResearchSpaceMembershipModel",
+    study_memberships = relationship(
+        "StudyMembershipModel",
         back_populates="user",
-        foreign_keys="ResearchSpaceMembershipModel.user_id",
+        foreign_keys="StudyMembershipModel.user_id",
         cascade="all, delete-orphan",
     )
-    sent_invitations = relationship(
-        "ResearchSpaceMembershipModel",
+    sent_study_invitations = relationship(
+        "StudyMembershipModel",
         back_populates="inviter",
-        foreign_keys="ResearchSpaceMembershipModel.invited_by",
+        foreign_keys="StudyMembershipModel.invited_by",
     )
 
     __table_args__ = (
