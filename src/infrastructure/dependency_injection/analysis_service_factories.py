@@ -13,11 +13,7 @@ if TYPE_CHECKING:
     from src.application.search import UnifiedSearchService
     from src.application.services import (
         DashboardService,
-        EvidenceApplicationService,
-        GeneApplicationService,
-        PhenotypeApplicationService,
         StorageConfigurationService,
-        VariantApplicationService,
     )
 
 
@@ -25,26 +21,6 @@ class AnalysisServiceFactoryMixin:
     """Provides factory methods for analysis and reporting application services."""
 
     if TYPE_CHECKING:
-
-        def create_gene_application_service(
-            self,
-            session: Session,
-        ) -> GeneApplicationService: ...
-
-        def create_variant_application_service(
-            self,
-            session: Session,
-        ) -> VariantApplicationService: ...
-
-        def create_phenotype_application_service(
-            self,
-            session: Session,
-        ) -> PhenotypeApplicationService: ...
-
-        def create_evidence_application_service(
-            self,
-            session: Session,
-        ) -> EvidenceApplicationService: ...
 
         def create_storage_configuration_service(
             self,

@@ -136,14 +136,6 @@ class ResearchSpaceModel(Base):
         "UserDataSourceModel",
         back_populates="research_space",
     )
-    mechanisms = relationship(
-        "MechanismModel",
-        back_populates="research_space",
-    )
-    statements = relationship(
-        "StatementModel",
-        back_populates="research_space",
-    )
 
     __table_args__ = (
         Index("idx_research_spaces_owner", "owner_id"),

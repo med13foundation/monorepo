@@ -17,14 +17,10 @@ from . import (
     data_source_ai_test_service,
     data_source_authorization_service,
     discovery_configuration_service,
-    evidence_service,
     extraction_queue_service,
     extraction_runner_service,
-    gene_service,
     ingestion_scheduling_service,
-    mechanism_service,
     membership_management_service,
-    phenotype_service,
     publication_extraction_service,
     publication_service,
     pubmed_discovery_service,
@@ -32,7 +28,6 @@ from . import (
     pubmed_query_builder,
     source_management_service,
     space_data_discovery_service,
-    statement_service,
     storage_configuration_requests,
     storage_configuration_service,
     storage_configuration_validator,
@@ -40,7 +35,6 @@ from . import (
     system_status_service,
     template_management_service,
     user_management_service,
-    variant_service,
 )
 
 AuthenticationService = authentication_service.AuthenticationService
@@ -65,18 +59,15 @@ DataSourcePermission = data_source_authorization_service.DataSourcePermission
 DiscoveryConfigurationService = (
     discovery_configuration_service.DiscoveryConfigurationService
 )
-EvidenceApplicationService = evidence_service.EvidenceApplicationService
+
 ExtractionEnqueueSummary = extraction_queue_service.ExtractionEnqueueSummary
 ExtractionQueueService = extraction_queue_service.ExtractionQueueService
 ExtractionRunSummary = extraction_runner_service.ExtractionRunSummary
 ExtractionRunnerService = extraction_runner_service.ExtractionRunnerService
-GeneApplicationService = gene_service.GeneApplicationService
+
 IngestionSchedulingService = ingestion_scheduling_service.IngestionSchedulingService
 IngestionSchedulingOptions = ingestion_scheduling_service.IngestionSchedulingOptions
-PhenotypeApplicationService = phenotype_service.PhenotypeApplicationService
-MechanismApplicationService = mechanism_service.MechanismApplicationService
 MembershipManagementService = membership_management_service.MembershipManagementService
-StatementApplicationService = statement_service.StatementApplicationService
 PublicationApplicationService = publication_service.PublicationApplicationService
 PublicationExtractionListResult = (
     publication_extraction_service.PublicationExtractionListResult
@@ -100,7 +91,7 @@ StorageOperationCoordinator = storage_operation_coordinator.StorageOperationCoor
 SystemStatusService = system_status_service.SystemStatusService
 TemplateManagementService = template_management_service.TemplateManagementService
 UserManagementService = user_management_service.UserManagementService
-VariantApplicationService = variant_service.VariantApplicationService
+
 
 CreateSourceRequest = source_management_service.CreateSourceRequest
 UpdateSourceRequest = source_management_service.UpdateSourceRequest
@@ -132,18 +123,13 @@ __all__ = [
     "DataSourceAvailabilitySummary",
     "DataSourcePermission",
     "DiscoveryConfigurationService",
-    "EvidenceApplicationService",
     "ExtractionEnqueueSummary",
     "ExtractionQueueService",
     "ExtractionRunSummary",
     "ExtractionRunnerService",
-    "GeneApplicationService",
     "IngestionSchedulingService",
     "IngestionSchedulingOptions",
-    "MechanismApplicationService",
     "MembershipManagementService",
-    "StatementApplicationService",
-    "PhenotypeApplicationService",
     "PubMedDiscoveryService",
     "PubMedIngestionService",
     "PubMedQueryBuilder",
@@ -166,5 +152,4 @@ __all__ = [
     "UpdateTemplateRequest",
     "UserManagementService",
     "UserRole",
-    "VariantApplicationService",
 ]

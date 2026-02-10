@@ -4,16 +4,12 @@ Database representation of scientific publications and citations.
 """
 
 from datetime import date
-from typing import TYPE_CHECKING
 
 from sqlalchemy import Date, Float, Integer, String, Text
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
-
-if TYPE_CHECKING:
-    from .evidence import EvidenceModel
 
 
 class PublicationType(SQLEnum):
@@ -92,8 +88,5 @@ class PublicationModel(Base):
     # Full text access
     full_text_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     open_access: Mapped[bool] = mapped_column(default=False, nullable=False)
-
-    # Relationships
-    evidence: Mapped[list["EvidenceModel"]] = relationship(back_populates="publication")
 
     __table_args__ = {"sqlite_autoincrement": True}  # noqa: RUF012

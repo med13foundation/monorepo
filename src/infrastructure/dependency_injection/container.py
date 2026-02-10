@@ -20,11 +20,6 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from src.application import services as app_services
-from src.domain.services import (
-    EvidenceDomainService,
-    GeneDomainService,
-    VariantDomainService,
-)
 from src.infrastructure import observability, storage
 from src.infrastructure.dependency_injection.db_utils import (
     SessionLocal,
@@ -113,10 +108,6 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         self._user_management_service: app_services.UserManagementService | None = None
         self._user_management_service_loop: asyncio.AbstractEventLoop | None = None
 
-        # Initialize Legacy domain services (pure business logic, no dependencies)
-        self._gene_domain_service: GeneDomainService | None = None
-        self._variant_domain_service: VariantDomainService | None = None
-        self._evidence_domain_service: EvidenceDomainService | None = None
         self._storage_plugin_registry = storage.initialize_storage_plugins()
         self._storage_metrics_recorder = (
             observability.logging_metrics_recorder.LoggingStorageMetricsRecorder()
@@ -199,21 +190,6 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         return self._user_management_service
 
     # LEGACY SYSTEM METHODS (Sync SQLAlchemy for backward compatibility)
-
-    def get_gene_domain_service(self) -> GeneDomainService:
-        if self._gene_domain_service is None:
-            self._gene_domain_service = GeneDomainService()
-        return self._gene_domain_service
-
-    def get_variant_domain_service(self) -> VariantDomainService:
-        if self._variant_domain_service is None:
-            self._variant_domain_service = VariantDomainService()
-        return self._variant_domain_service
-
-    def get_evidence_domain_service(self) -> EvidenceDomainService:
-        if self._evidence_domain_service is None:
-            self._evidence_domain_service = EvidenceDomainService()
-        return self._evidence_domain_service
 
     # LEGACY APPLICATION SERVICES
 

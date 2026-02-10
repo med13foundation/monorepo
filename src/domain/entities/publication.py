@@ -5,7 +5,6 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from src.domain.entities.evidence import Evidence  # noqa: TC001
 from src.domain.value_objects.identifiers import PublicationIdentifier  # noqa: TC001
 
 
@@ -61,7 +60,7 @@ class Publication(BaseModel):
     relevance_score: int | None = None
     full_text_url: str | None = None
     open_access: bool = False
-    evidence: list[Evidence] = Field(default_factory=list)
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     id: int | None = None
@@ -130,10 +129,6 @@ class Publication(BaseModel):
         if cleaned not in self.keywords:
             self.keywords = (*self.keywords, cleaned)
             self._touch()
-
-    def add_evidence(self, evidence: Evidence) -> None:
-        self.evidence.append(evidence)
-        self._touch()
 
     def record_citations(self, citation_count: int) -> None:
         if citation_count < 0:

@@ -5,25 +5,6 @@ These entities represent the core business objects and their relationships.
 """
 
 from . import data_source_configs, ingestion_job, publication, user_data_source
-from .biomedical import (
-    Drug,
-    DrugApprovalStatus,
-    Evidence,
-    ExtractionOutcome,
-    ExtractionTextSource,
-    Gene,
-    InSilicoScores,
-    LongitudinalObservation,
-    Mechanism,
-    Pathway,
-    Phenotype,
-    ProteinStructuralAnnotation,
-    Publication,
-    PublicationExtraction,
-    StatementOfUnderstanding,
-    TherapeuticModality,
-    Variant,
-)
 from .data_discovery import (
     AdvancedQueryParameters,
     DataDiscoverySession,
@@ -63,6 +44,12 @@ from .data_sources import (
     UserDataSource,
     ValidationRule,
 )
+from .publication import Publication
+from .publication_extraction import (
+    ExtractionOutcome,
+    ExtractionTextSource,
+    PublicationExtraction,
+)
 
 __all__ = [
     "AdvancedQueryParameters",
@@ -71,26 +58,16 @@ __all__ = [
     "DataSourceActivation",
     "DiscoverySearchJob",
     "DiscoverySearchStatus",
-    "Drug",
-    "DrugApprovalStatus",
-    "Evidence",
     "ExtractionOutcome",
     "ExtractionQueueItem",
     "ExtractionStatus",
     "ExtractionTextSource",
-    "Gene",
     "IngestionError",
     "IngestionJob",
     "IngestionSchedule",
     "IngestionStatus",
     "IngestionTrigger",
-    "InSilicoScores",
     "JobMetrics",
-    "LongitudinalObservation",
-    "Mechanism",
-    "Pathway",
-    "Phenotype",
-    "ProteinStructuralAnnotation",
     "Publication",
     "PublicationExtraction",
     "PubMedSortOption",
@@ -99,7 +76,6 @@ __all__ = [
     "QueryParameterType",
     "QueryParameters",
     "QueryTestResult",
-    "StatementOfUnderstanding",
     "SourceCatalogEntry",
     "SourceConfiguration",
     "SourceStatus",
@@ -113,10 +89,8 @@ __all__ = [
     "TemplateCategory",
     "TemplateUIConfig",
     "TestResultStatus",
-    "TherapeuticModality",
     "UserDataSource",
     "ValidationRule",
-    "Variant",
     "data_source_configs",
     "ingestion_job",
     "publication",

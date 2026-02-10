@@ -10,9 +10,6 @@ from src.domain.agents.models import ModelCapability
 from src.infrastructure.dependency_injection.analysis_service_factories import (
     AnalysisServiceFactoryMixin,
 )
-from src.infrastructure.dependency_injection.biomedical_service_factories import (
-    BiomedicalServiceFactoryMixin,
-)
 from src.infrastructure.dependency_injection.curation_service_factories import (
     CurationServiceFactoryMixin,
 )
@@ -33,7 +30,6 @@ if TYPE_CHECKING:
 
 class ApplicationServiceFactoryMixin(
     AnalysisServiceFactoryMixin,
-    BiomedicalServiceFactoryMixin,
     CurationServiceFactoryMixin,
     DiscoveryServiceFactoryMixin,
     KernelServiceFactoryMixin,

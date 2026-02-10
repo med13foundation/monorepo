@@ -1,15 +1,5 @@
 """Repository adapters for infrastructure layer."""
 
-from .biomedical import (
-    SqlAlchemyEvidenceRepository,
-    SqlAlchemyGeneRepository,
-    SqlAlchemyMechanismRepository,
-    SqlAlchemyPhenotypeRepository,
-    SqlAlchemyPublicationExtractionRepository,
-    SqlAlchemyPublicationRepository,
-    SqlAlchemyStatementRepository,
-    SqlAlchemyVariantRepository,
-)
 from .core import (
     SqlAlchemyDataSourceActivationRepository,
     SqlAlchemyExtractionQueueRepository,
@@ -30,6 +20,8 @@ from .data_discovery import (
     SQLAlchemyQueryTestResultRepository,
     SQLAlchemySourceCatalogRepository,
 )
+from .publication_extraction_repository import SqlAlchemyPublicationExtractionRepository
+from .publication_repository import SqlAlchemyPublicationRepository
 
 __all__ = [
     "SQLAlchemyDataDiscoverySessionRepository",
@@ -38,15 +30,10 @@ __all__ = [
     "SQLAlchemyQueryTestResultRepository",
     "SQLAlchemySourceCatalogRepository",
     "SqlAlchemyDataSourceActivationRepository",
-    "SqlAlchemyEvidenceRepository",
     "SqlAlchemyExtractionQueueRepository",
-    "SqlAlchemyGeneRepository",
     "SqlAlchemyIngestionJobRepository",
-    "SqlAlchemyMechanismRepository",
-    "SqlAlchemyPhenotypeRepository",
     "SqlAlchemyPublicationExtractionRepository",
     "SqlAlchemyPublicationRepository",
-    "SqlAlchemyStatementRepository",
     "SqlAlchemyResearchSpaceRepository",
     "SqlAlchemySourceTemplateRepository",
     "SqlAlchemySessionRepository",
@@ -55,5 +42,4 @@ __all__ = [
     "SqlAlchemySystemStatusRepository",
     "SqlAlchemyUserDataSourceRepository",
     "SqlAlchemyUserRepository",
-    "SqlAlchemyVariantRepository",
 ]

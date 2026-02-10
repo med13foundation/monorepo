@@ -6,19 +6,15 @@ It also includes an explicit phase to unify terminology and naming to **`researc
 
 ## Current Repo State (Reality Check)
 
-As of **2026-02-10**, parts of Phase 1-2 already exist in this repo:
+As of **2026-02-10**, the core kernel migration (Phases 0-3) is **COMPLETE**.
 
-- Alembic has a consolidated kernel migration: `alembic/versions/001_kernel_schema.py`
-- Kernel SQLAlchemy models exist: `src/models/database/kernel/`
-- Kernel repositories exist: `src/infrastructure/repositories/kernel/`
-- Kernel application services exist: `src/application/services/kernel/`
-- Dictionary seed files + seeder exist: `src/database/seeds/`
-- Phase 3 ingestion baseline is in place for PubMed:
-  - PubMed records resolve a single `PUBLICATION` entity per record (PMID/DOI/title anchors)
-  - Observations are written via `KernelObservationService.record_observation_value(...)`
-  - Postgres integration test: `tests/integration/test_kernel_pubmed_ingestion_end_to_end.py`
+- **Schema:** Kernel tables (`entities`, `observations`, `relations`) + dictionary tables (`variable_definitions`, etc.) are deployed via `001_kernel_schema.py`.
+- **Services:** All kernel services (`kernel_entity_service.py`, `kernel_observation_service.py`, `kernel_relation_service.py`, `dictionary_service.py`) are implemented and active.
+- **Ingestion:** The full "Map -> Normalize -> Resolve -> Validate" pipeline is implemented in `src/infrastructure/ingestion/`.
+- **Legacy Cleanup:** All legacy domain entities (`gene.py`, `variant.py`, etc.) and their repositories/services have been **deleted**.
+- **Renaming:** `research_space` is now the canonical term across DB and backend code.
 
-So the work is not "start from zero"; it's "finish integration + remove legacy domain paths + make naming consistent".
+Work is now focused on **Phase 4 (Routes)**, **Phase 5 (Frontend)**, and **Phase 6 (Final Verification)**.
 
 ## Guiding Principles
 
@@ -29,24 +25,24 @@ So the work is not "start from zero"; it's "finish integration + remove legacy d
 5. Frontend adapts last; route URLs can remain stable while internal names change
 6. Strict type safety remains mandatory (no `Any` in domain/application layers)
 
-## Phase 0: Quality Gates + Type Safety (Week 0-1)
+## Phase 0: Quality Gates + Type Safety (Week 0-1) — [COMPLETED]
 
 **Goal:** Stabilize before accelerating. Keep MyPy strict green while pivoting.
 
 Work:
 
-1. Make `make type-check` pass (MyPy strict).
-2. Remove `Any` from ingestion contracts and plugin interfaces by using existing JSON types:
-   - Use `JSONValue` / `JSONObject` from `src/type_definitions/common.py`
-   - For arrays: `list[JSONValue]` (not `list[Any]`)
-3. Fix DI factory typing mismatches (ensure repositories implement their domain interfaces).
-4. Add a small kernel smoke test suite early so we can delete legacy tests confidently later.
+- [x] Make `make type-check` pass (MyPy strict).
+- [x] Remove `Any` from ingestion contracts and plugin interfaces by using existing JSON types:
+  - Use `JSONValue` / `JSONObject` from `src/type_definitions/common.py`
+  - For arrays: `list[JSONValue]` (not `list[Any]`)
+- [x] Fix DI factory typing mismatches (ensure repositories implement their domain interfaces).
+- [x] Add a small kernel smoke test suite early so we can delete legacy tests confidently later.
 
 Deliverable:
 
 - `make all` passes (format, lint, type-check, tests).
 
-## Phase 1: Kernel Schema + Dictionary Seeds (Week 1-2)
+## Phase 1: Kernel Schema + Dictionary Seeds (Week 1-2) — [COMPLETED]
 
 **Goal:** A working kernel schema plus seeded dictionary data.
 
@@ -58,15 +54,15 @@ Work:
    - workspace table (`research_spaces`) and memberships (`research_space_memberships`)
 2. Seed the dictionary from `src/database/seeds/` using the seeder module.
 3. Add minimum DB constraints required to keep kernel data safe:
-   - observations: "exactly one value_* populated" (DB constraint or application validation; decide explicitly)
+   - observations: "exactly one value\_\* populated" (DB constraint or application validation; decide explicitly)
    - relations: uniqueness/duplicate policy (optional; decide based on use cases)
 
 Deliverable:
 
-- `alembic upgrade head` creates kernel tables
-- dictionary seeding runs and populates expected rows
+- [x] `alembic upgrade head` creates kernel tables
+- [x] dictionary seeding runs and populates expected rows
 
-## Phase 1.5 (NEW): Rename Everything To `research_space` (Week 2)
+## Phase 1.5 (NEW): Rename Everything To `research_space` (Week 2) — [COMPLETED]
 
 **Goal:** Eliminate long-term dual terminology (`study` vs `research_space`). After this phase:
 
@@ -78,11 +74,11 @@ Deliverable:
 
 Because this is a clean-sheet database, the simplest path is:
 
-1. Update `alembic/versions/001_kernel_schema.py` to create **`research_spaces`** instead of `studies`.
-2. Rename kernel membership table to **`research_space_memberships`**.
-3. Rename all foreign keys/columns across kernel + infra tables:
-   - `study_id` -> `research_space_id` in: `entities`, `observations`, `relations`, `provenance`, `user_data_sources`, `ingestion_jobs`, etc.
-4. Update indexes to match renamed columns (e.g., `idx_entities_space_type`, `idx_obs_space_variable`).
+- [x] Update `alembic/versions/001_kernel_schema.py` to create **`research_spaces`** instead of `studies`.
+- [x] Rename kernel membership table to **`research_space_memberships`**.
+- [x] Rename all foreign keys/columns across kernel + infra tables:
+  - `study_id` -> `research_space_id` in: `entities`, `observations`, `relations`, `provenance`, `user_data_sources`, `ingestion_jobs`, etc.
+- [x] Update indexes to match renamed columns (e.g., `idx_entities_space_type`, `idx_obs_space_variable`).
 
 Deliverable:
 
@@ -92,9 +88,9 @@ Deliverable:
 
 Work:
 
-1. Replace `StudyModel` / `StudyMembershipModel` with `ResearchSpaceModel` / `ResearchSpaceMembershipModel` (kernel equivalents).
-2. Update ORM relationships from `UserModel` to owned spaces + memberships.
-3. Update all kernel models that reference `study_id` to use `research_space_id`.
+- [x] Replace `StudyModel` / `StudyMembershipModel` with `ResearchSpaceModel` / `ResearchSpaceMembershipModel` (kernel equivalents).
+- [x] Update ORM relationships from `UserModel` to owned spaces + memberships.
+- [x] Update all kernel models that reference `study_id` to use `research_space_id`.
 
 Deliverable:
 
@@ -104,12 +100,12 @@ Deliverable:
 
 Work:
 
-1. Rename repository/service method parameters:
-   - `study_id` -> `research_space_id`
-2. Ensure request context / auth scoping uses the renamed identifier everywhere.
-3. Add a temporary compatibility layer only if needed:
-   - accept `study_id` in some call sites but route it internally to `research_space_id`
-   - remove compatibility once routes are migrated
+- [x] Rename repository/service method parameters:
+  - `study_id` -> `research_space_id`
+- [x] Ensure request context / auth scoping uses the renamed identifier everywhere.
+- [x] Add a temporary compatibility layer only if needed:
+  - accept `study_id` in some call sites but route it internally to `research_space_id`
+  - remove compatibility once routes are migrated
 
 Deliverable:
 
@@ -119,43 +115,43 @@ Deliverable:
 
 Work:
 
-1. Keep external URLs stable where possible:
-   - recommend continuing with `/spaces/{spaceId}` in Next.js
-   - backend path params can be named `{research_space_id}` even if the URL remains `/spaces/`
-2. Update OpenAPI schema + TS types generation to reflect `research_space_id`.
+- [x] Keep external URLs stable where possible:
+  - recommend continuing with `/spaces/{spaceId}` in Next.js
+  - backend path params can be named `{research_space_id}` even if the URL remains `/spaces/`
+- [x] Update OpenAPI schema + TS types generation to reflect `research_space_id`.
 
 Deliverable:
 
 - Frontend builds and runs without needing a user-facing URL rename.
 
-## Phase 2: Kernel Backend Services (Week 2-4)
+## Phase 2: Kernel Backend Services (Week 2-4) — [COMPLETED]
 
 **Goal:** Generic CRUD and governance in the application layer.
 
 Work:
 
-1. Complete and harden:
-   - `DictionaryService`
-   - `KernelEntityService` (resolution-policy enforcement)
-   - `KernelObservationService` (type/unit/constraint validation)
-   - `KernelRelationService` (triple constraints + evidence requirements + curation workflow)
-2. Ensure unit normalization is executed via the transform registry (no LLM codegen).
-3. Ensure provenance is created for all ingestion writes.
+- [x] Complete and harden:
+  - `DictionaryService`
+  - `KernelEntityService` (resolution-policy enforcement)
+  - `KernelObservationService` (type/unit/constraint validation)
+  - `KernelRelationService` (triple constraints + evidence requirements + curation workflow)
+- [x] Ensure unit normalization is executed via the transform registry (no LLM codegen).
+- [x] Ensure provenance is created for all ingestion writes.
 
 Deliverable:
 
 - We can create/search entities, record observations, create relations with constraint checks.
 
-## Phase 3: Ingestion Pipeline Integration (Week 4-7)
+## Phase 3: Ingestion Pipeline Integration (Week 4-7) — [COMPLETED]
 
 **Goal:** Map -> Normalize -> Resolve -> Validate pipeline writing kernel facts.
 
 Work:
 
-1. Implement a pipeline API that is safe and typed end-to-end.
-2. Start with deterministic mapping (synonyms / exact match), ship it, then add:
-   - vector search (pgvector) as a fast-follow
-   - LLM "judge" only for ambiguous cases, with a "needs review" fallback path
+- [x] Implement a pipeline API that is safe and typed end-to-end.
+- [x] Start with deterministic mapping (synonyms / exact match), ship it, then add:
+  - vector search (pgvector) as a fast-follow
+  - LLM "judge" only for ambiguous cases, with a "needs review" fallback path
 
 ### Type-Safe Plugin Contract (No `Any`)
 
@@ -183,51 +179,51 @@ Deliverable:
 
 - Ingest a small "clean" dataset into kernel tables with provenance + normalized units.
 
-## Phase 4: Routes + API Adaptation (Week 7-9)
+## Phase 4: Routes + API Adaptation (Week 7-9) — [~85% COMPLETE]
 
 **Goal:** Replace entity-specific endpoints with generic kernel endpoints while keeping auth and route structure.
 
 Work:
 
-1. Introduce kernel endpoints:
-   - dictionary (admin)
-   - entities
-   - observations
-   - relations
-   - provenance
-2. Keep legacy endpoints temporarily only if needed for frontend transition.
+- [x] Introduce kernel endpoints:
+  - dictionary (admin)
+  - entities
+  - observations
+  - relations
+  - provenance
+- [x] Keep legacy endpoints temporarily only if needed for frontend transition.
 
 Deliverable:
 
 - The Next.js app can fetch "space-scoped" entities/observations/relations from kernel endpoints.
 
-## Phase 5: Frontend Adaptation (Week 9-11)
+## Phase 5: Frontend Adaptation (Week 9-11) — [~60% COMPLETE]
 
 **Goal:** Update API hooks + response types while keeping page structure.
 
 Work:
 
-1. Update hooks to use kernel endpoints and `research_space_id`.
-2. Add:
-   - dictionary management (admin)
-   - observations view
-   - ingestion page (upload + map preview + run)
+- [x] Update hooks to use kernel endpoints and `research_space_id`.
+- [ ] Add:
+  - [x] dictionary management (admin)
+  - [x] observations view
+  - [x] ingestion page (upload + map preview + run)
 
 Deliverable:
 
 - Admin UI supports kernel workflows (dictionary editing + ingestion + curation).
 
-## Phase 6: Cleanup + Verification (Week 11-12)
+## Phase 6: Cleanup + Verification (Week 11-12) — [~80% COMPLETE]
 
 Work:
 
-1. Delete legacy domain entities / services / repositories that are fully superseded.
-2. Rewrite tests to target kernel services + kernel routes.
-3. Manual verification smoke tests:
-   - create space
-   - add data source
-   - ingest
-   - see graph + curation updates
+- [x] Delete legacy domain entities / services / repositories that are fully superseded.
+- [ ] Rewrite tests to target kernel services + kernel routes.
+- [ ] Manual verification smoke tests:
+  - create space
+  - add data source
+  - ingest
+  - see graph + curation updates
 
 Deliverable:
 
@@ -236,9 +232,9 @@ Deliverable:
 
 ## Risks + Mitigations (Highlights)
 
-| Risk | Mitigation |
-|---|---|
-| Terminology churn (`study` vs `research_space`) | Phase 1.5 executes early; enforce a single canonical name in code + DB |
-| Pipeline scope creep | Ship deterministic mapping first; add vector/LLM as fast-follows |
-| Kernel EAV validation gaps | Decide enforcement layer (DB constraints vs app validation) and test it |
-| Type-safety regression during big refactor | Phase 0 gate: MyPy strict + tests green before deleting old modules |
+| Risk                                            | Mitigation                                                                           |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Terminology churn (`study` vs `research_space`) | **[RESOLVED]** Phase 1.5 executed early; enforced single canonical name in code + DB |
+| Pipeline scope creep                            | **[MANAGED]** Shipped deterministic mapping first; vector/LLM are fast-follows       |
+| Kernel EAV validation gaps                      | **[ADDRESSED]** Enforced via `KernelObservationService` application logic            |
+| Type-safety regression during big refactor      | **[PREVENTED]** Phase 0 gate passed: MyPy strict + tests green before deleting       |
