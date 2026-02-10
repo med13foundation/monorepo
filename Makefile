@@ -174,8 +174,8 @@ test: ## Run all tests (excluding heavy performance tests)
 ifeq ($(POSTGRES_ACTIVE),)
 	$(USE_PYTHON) -m pytest -m "not performance"
 else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest -m "not performance")
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py -m "not performance")
 endif
 
 test-performance: ## Run performance tests
@@ -183,8 +183,8 @@ test-performance: ## Run performance tests
 ifeq ($(POSTGRES_ACTIVE),)
 	$(USE_PYTHON) -m pytest tests/performance
 else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest tests/performance)
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py tests/performance)
 endif
 
 test-contract: ## Run API contract tests
@@ -192,8 +192,8 @@ test-contract: ## Run API contract tests
 ifeq ($(POSTGRES_ACTIVE),)
 	$(USE_PYTHON) -m pytest tests/security/test_schemathesis_contracts.py
 else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest tests/security/test_schemathesis_contracts.py)
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py tests/security/test_schemathesis_contracts.py)
 endif
 
 test-architecture: ## Run architectural compliance tests (type_examples.md pattern validation)
@@ -201,8 +201,8 @@ test-architecture: ## Run architectural compliance tests (type_examples.md patte
 ifeq ($(POSTGRES_ACTIVE),)
 	$(USE_PYTHON) -m pytest tests/unit/architecture/test_architectural_compliance.py -v -m architecture
 else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest tests/unit/architecture/test_architectural_compliance.py -v -m architecture)
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py tests/unit/architecture/test_architectural_compliance.py -v -m architecture)
 endif
 
 test-flujo-architecture: ## Run Flujo AI agent architecture compliance tests
@@ -233,8 +233,8 @@ test-verbose: ## Run tests with verbose output
 ifeq ($(POSTGRES_ACTIVE),)
 	$(USE_PYTHON) -m pytest -v --tb=short
 else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest -v --tb=short)
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py -v --tb=short)
 endif
 
 test-cov: ## Run tests with coverage report
@@ -242,8 +242,8 @@ test-cov: ## Run tests with coverage report
 ifeq ($(POSTGRES_ACTIVE),)
 	$(USE_PYTHON) -m pytest --cov=src --cov-report=html --cov-report=term-missing
 else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest --cov=src --cov-report=html --cov-report=term-missing)
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py --cov=src --cov-report=html --cov-report=term-missing)
 endif
 
 test-watch: ## Run tests in watch mode
@@ -251,8 +251,8 @@ test-watch: ## Run tests in watch mode
 ifeq ($(POSTGRES_ACTIVE),)
 	$(USE_PYTHON) -m pytest-watch
 else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest-watch)
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 MED13_TEST_RUNNER=pytest-watch $(USE_PYTHON) scripts/run_isolated_postgres_tests.py)
 endif
 
 # Code Quality
