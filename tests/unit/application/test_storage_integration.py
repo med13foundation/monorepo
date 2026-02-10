@@ -86,6 +86,7 @@ class TestPubMedIngestionStorage:
             gateway=mock_gateway,
             publication_repository=mock_repo,
             storage_service=mock_storage_service,
+            pipeline=Mock(),
         )
         source = UserDataSource(
             id=uuid4(),
@@ -127,6 +128,7 @@ class TestPubMedIngestionStorage:
             gateway=mock_gateway,
             publication_repository=mock_repo,
             storage_service=None,
+            pipeline=Mock(),
         )
         source = UserDataSource(
             id=uuid4(),

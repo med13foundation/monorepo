@@ -67,6 +67,10 @@ class SourceConfiguration(BaseModel):
         None,
         description="Data format (json, csv, xml, etc.)",
     )
+    query: str | None = Field(
+        default=None,
+        description="Search query for the source (e.g. PubMed query)",
+    )
 
     # Authentication
     auth_type: str | None = Field(None, description="Authentication method")

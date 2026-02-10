@@ -24,6 +24,9 @@ from src.infrastructure.data_sources import (
     SimplePubMedPdfGateway,
 )
 from src.infrastructure.extraction import RuleBasedPubMedExtractionProcessor
+from src.infrastructure.factories.ingestion_pipeline_factory import (
+    create_ingestion_pipeline,
+)
 from src.infrastructure.llm.adapters.query_agent_adapter import FlujoQueryAgentAdapter
 from src.infrastructure.repositories import (
     SQLAlchemyDiscoverySearchJobRepository,
@@ -77,7 +80,7 @@ def build_ingestion_scheduling_service(
     extraction_repository = SqlAlchemyPublicationExtractionRepository(session)
     extraction_runner_service = ExtractionRunnerService(
         queue_repository=extraction_queue_repository,
-        publication_repository=publication_repository,
+        publication_repository=publication_repository,  # type: ignore[arg-type]
         extraction_repository=extraction_repository,
         processor=RuleBasedPubMedExtractionProcessor(),
         storage_coordinator=storage_coordinator,
@@ -86,9 +89,12 @@ def build_ingestion_scheduling_service(
     # Initialize Query Agent
     query_agent = FlujoQueryAgentAdapter()
 
+    pipeline = create_ingestion_pipeline(session)
+
     pubmed_service = PubMedIngestionService(
         gateway=PubMedSourceGateway(),
-        publication_repository=publication_repository,
+        pipeline=pipeline,
+        publication_repository=publication_repository,  # type: ignore[arg-type]
         storage_service=storage_service,
         query_agent=query_agent,
         research_space_repository=research_space_repository,

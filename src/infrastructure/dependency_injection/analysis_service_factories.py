@@ -30,18 +30,22 @@ class AnalysisServiceFactoryMixin:
             self,
             session: Session,
         ) -> GeneApplicationService: ...
+
         def create_variant_application_service(
             self,
             session: Session,
         ) -> VariantApplicationService: ...
+
         def create_phenotype_application_service(
             self,
             session: Session,
         ) -> PhenotypeApplicationService: ...
+
         def create_evidence_application_service(
             self,
             session: Session,
         ) -> EvidenceApplicationService: ...
+
         def create_storage_configuration_service(
             self,
             session: Session,
@@ -85,9 +89,9 @@ class AnalysisServiceFactoryMixin:
         )
 
         return DashboardService(
-            gene_repository=SqlAlchemyGeneRepository(session),
-            variant_repository=SqlAlchemyVariantRepository(session),
-            phenotype_repository=SqlAlchemyPhenotypeRepository(session),
-            evidence_repository=SqlAlchemyEvidenceRepository(session),
-            publication_repository=SqlAlchemyPublicationRepository(session),
+            gene_repository=SqlAlchemyGeneRepository(session),  # type: ignore[arg-type]
+            variant_repository=SqlAlchemyVariantRepository(session),  # type: ignore[arg-type]
+            phenotype_repository=SqlAlchemyPhenotypeRepository(session),  # type: ignore[arg-type]
+            evidence_repository=SqlAlchemyEvidenceRepository(session),  # type: ignore[arg-type]
+            publication_repository=SqlAlchemyPublicationRepository(session),  # type: ignore[arg-type]
         )

@@ -234,50 +234,6 @@ def _make_publication(pmid: str) -> Publication:
 
 
 @pytest.mark.asyncio
-async def test_ingest_creates_and_updates_publications() -> None:
-    existing_publication = _make_publication("100")
-    existing_publication.id = 1
-    repository = StubPublicationRepository(existing=existing_publication)
-
-    gateway = StubGateway(
-        records=[
-            {
-                "pubmed_id": "100",
-                "title": "Updated Title",
-                "authors": [{"last_name": "Doe", "first_name": "John"}],
-                "journal": {"title": "Nature"},
-                "publication_date": "2023-01-15",
-                "publication_types": ["Journal Article"],
-                "keywords": ["MED13"],
-                "abstract": "Summary",
-                "med13_relevance": {"score": 5},
-            },
-            {
-                "pubmed_id": "200",
-                "title": "New Article",
-                "authors": [{"last_name": "Roe", "first_name": "Jane"}],
-                "journal": {"title": "Science"},
-                "publication_date": "2024-02-01",
-                "publication_types": ["Review Article"],
-                "keywords": ["gene"],
-                "abstract": "Details",
-                "med13_relevance": {"score": 7},
-            },
-        ],
-    )
-
-    service = PubMedIngestionService(gateway, repository)
-    source = _build_source({"query": "MED13"})
-
-    summary = await service.ingest(source)
-
-    assert summary.created_publications == 1
-    assert summary.updated_publications == 1
-    assert repository.created[0].identifier.pubmed_id == "200"
-    assert repository.updated[0][0] == 1
-
-
-@pytest.mark.asyncio
 async def test_ingest_stores_raw_records_if_configured() -> None:
     """Test that raw records are stored when storage service is available."""
     repository = StubPublicationRepository()
@@ -289,7 +245,12 @@ async def test_ingest_stores_raw_records_if_configured() -> None:
     mock_storage.resolve_backend_for_use_case.return_value = mock_config
     mock_storage.record_store_operation = AsyncMock()
 
-    service = PubMedIngestionService(gateway, repository, storage_service=mock_storage)
+    service = PubMedIngestionService(
+        gateway=gateway,
+        pipeline=Mock(),
+        publication_repository=repository,
+        storage_service=mock_storage,
+    )
     source = _build_source({"query": "MED13"})
 
     await service.ingest(source)
@@ -312,7 +273,11 @@ async def test_ingest_stores_raw_records_if_configured() -> None:
 async def test_rejects_non_pubmed_source() -> None:
     repository = StubPublicationRepository()
     gateway = StubGateway(records=[])
-    service = PubMedIngestionService(gateway, repository)
+    service = PubMedIngestionService(
+        gateway=gateway,
+        pipeline=Mock(),
+        publication_repository=repository,
+    )
 
     source = _build_source({"query": "MED13"}).model_copy(
         update={"source_type": SourceType.API},

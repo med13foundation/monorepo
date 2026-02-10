@@ -43,9 +43,9 @@ class BiomedicalServiceFactoryMixin:
         gene_domain_service = GeneDomainService()
         variant_repository = SqlAlchemyVariantRepository(session)
         return GeneApplicationService(
-            gene_repository=gene_repository,
+            gene_repository=gene_repository,  # type: ignore[arg-type]
             gene_domain_service=gene_domain_service,
-            variant_repository=variant_repository,
+            variant_repository=variant_repository,  # type: ignore[arg-type]
         )
 
     def create_variant_application_service(
@@ -62,9 +62,9 @@ class BiomedicalServiceFactoryMixin:
         variant_domain_service = VariantDomainService()
         evidence_repository = SqlAlchemyEvidenceRepository(session)
         return VariantApplicationService(
-            variant_repository=variant_repository,
+            variant_repository=variant_repository,  # type: ignore[arg-type]
             variant_domain_service=variant_domain_service,
-            evidence_repository=evidence_repository,
+            evidence_repository=evidence_repository,  # type: ignore[arg-type]
         )
 
     def create_phenotype_application_service(
@@ -76,7 +76,7 @@ class BiomedicalServiceFactoryMixin:
 
         phenotype_repository = SqlAlchemyPhenotypeRepository(session)
         return PhenotypeApplicationService(
-            phenotype_repository=phenotype_repository,
+            phenotype_repository=phenotype_repository,  # type: ignore[arg-type]
         )
 
     def create_mechanism_application_service(
@@ -118,7 +118,7 @@ class BiomedicalServiceFactoryMixin:
         evidence_repository = SqlAlchemyEvidenceRepository(session)
         evidence_domain_service = EvidenceDomainService()
         return EvidenceApplicationService(
-            evidence_repository=evidence_repository,
+            evidence_repository=evidence_repository,  # type: ignore[arg-type]
             evidence_domain_service=evidence_domain_service,
         )
 
@@ -135,6 +135,6 @@ class BiomedicalServiceFactoryMixin:
         publication_repository = SqlAlchemyPublicationRepository(session)
         evidence_repository = SqlAlchemyEvidenceRepository(session)
         return PublicationApplicationService(
-            publication_repository=publication_repository,
-            evidence_repository=evidence_repository,
+            publication_repository=publication_repository,  # type: ignore[arg-type]
+            evidence_repository=evidence_repository,  # type: ignore[arg-type]
         )

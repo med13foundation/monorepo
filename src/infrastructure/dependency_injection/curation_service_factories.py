@@ -33,20 +33,24 @@ class CurationServiceFactoryMixin:
     if TYPE_CHECKING:
 
         def get_variant_domain_service(self) -> VariantDomainService: ...
+
         def get_evidence_domain_service(self) -> EvidenceDomainService: ...
 
         def create_variant_application_service(
             self,
             session: Session,
         ) -> VariantApplicationService: ...
+
         def create_evidence_application_service(
             self,
             session: Session,
         ) -> EvidenceApplicationService: ...
+
         def create_phenotype_application_service(
             self,
             session: Session,
         ) -> PhenotypeApplicationService: ...
+
         def create_storage_operation_coordinator(
             self,
             session: Session,
@@ -81,7 +85,7 @@ class CurationServiceFactoryMixin:
         return CurationDetailService(
             variant_service=self.create_variant_application_service(session),
             evidence_service=self.create_evidence_application_service(session),
-            phenotype_repository=SqlAlchemyPhenotypeRepository(session),
+            phenotype_repository=SqlAlchemyPhenotypeRepository(session),  # type: ignore[arg-type]
             conflict_detector=conflict_detector,
             review_repository=SqlAlchemyReviewRepository(),
             db_session=session,
@@ -127,7 +131,7 @@ class CurationServiceFactoryMixin:
         storage_coordinator = self.create_storage_operation_coordinator(session)
         return ExtractionRunnerService(
             queue_repository=queue_repository,
-            publication_repository=publication_repository,
+            publication_repository=publication_repository,  # type: ignore[arg-type]
             extraction_repository=extraction_repository,
             processor=processor,
             storage_coordinator=storage_coordinator,

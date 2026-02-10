@@ -12,7 +12,9 @@ from types import ModuleType
 
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
 
@@ -44,11 +46,6 @@ os.environ.setdefault(
     "MED13_DEV_JWT_SECRET",
     "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz",
 )
-
-
-# ── SQLite Compatibility for Postgres Types ──
-from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.ext.compiler import compiles
 
 
 @compiles(JSONB, "sqlite")

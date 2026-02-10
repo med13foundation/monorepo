@@ -17,19 +17,22 @@ from sqlalchemy import text
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from src.type_definitions.common import JSONObject
+
 logger = logging.getLogger(__name__)
 
 SEEDS_DIR = Path(__file__).parent
 
 
-def _load_json(filename: str) -> list[dict]:
+def _load_json(filename: str) -> list[JSONObject]:
     """Load a JSON seed file from the seeds directory."""
     path = SEEDS_DIR / filename
     if not path.exists():
         logger.warning("Seed file not found: %s", path)
         return []
     with path.open() as f:
-        return json.load(f)
+        data: list[JSONObject] = json.load(f)
+        return data
 
 
 def seed_variable_definitions(session: Session) -> int:
@@ -222,12 +225,11 @@ def seed_all(session: Session) -> dict[str, int]:
 if __name__ == "__main__":
     import sys
 
-    from src.database.session import get_engine, get_session_factory
+    from src.database.session import SessionLocal
 
     logging.basicConfig(level=logging.INFO)
 
-    engine = get_engine()
-    SessionFactory = get_session_factory(engine)
+    SessionFactory = SessionLocal
 
     with SessionFactory() as session:
         results = seed_all(session)
