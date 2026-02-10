@@ -111,6 +111,20 @@ class PhenotypeApplicationService:
             normalized_filters,
         )
 
+    def get_phenotypes_by_ids(
+        self,
+        phenotype_ids: list[int],
+        filters: Mapping[str, FilterValue] | QueryFilters | None = None,
+    ) -> list[Phenotype]:
+        """Return phenotypes for the given IDs with optional filters."""
+        if not phenotype_ids:
+            return []
+        normalized_filters = self._normalize_filters(filters)
+        return self._phenotype_repository.find_by_ids(
+            phenotype_ids,
+            normalized_filters,
+        )
+
     def list_phenotypes(
         self,
         page: int,

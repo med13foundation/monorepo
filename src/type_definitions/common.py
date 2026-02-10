@@ -84,8 +84,23 @@ class MechanismUpdate(TypedDict, total=False):
     evidence_tier: str
     confidence_score: float
     source: str
+    lifecycle_state: str
     protein_domains: list[JSONObject]
     phenotype_ids: list[int]
+
+
+class StatementUpdate(TypedDict, total=False):
+    """Type-safe statement update parameters."""
+
+    title: str
+    summary: str
+    evidence_tier: str
+    confidence_score: float
+    status: str
+    source: str
+    protein_domains: list[JSONObject]
+    phenotype_ids: list[int]
+    promoted_mechanism_id: int | None
 
 
 class EvidenceUpdate(TypedDict, total=False):

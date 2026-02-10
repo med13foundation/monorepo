@@ -37,6 +37,7 @@ from .gene import (
 )
 from .mechanism import (
     MechanismCreate,
+    MechanismLifecycleState,
     MechanismList,
     MechanismResponse,
     MechanismUpdate,
@@ -67,6 +68,13 @@ from .publication_extraction import (
     ExtractionOutcome,
     PublicationExtractionDocumentResponse,
     PublicationExtractionResponse,
+)
+from .statement import (
+    StatementCreate,
+    StatementList,
+    StatementResponse,
+    StatementStatus,
+    StatementUpdate,
 )
 from .variant import (
     ClinicalSignificance,
@@ -120,6 +128,7 @@ __all__ = [
     "PublicationType",
     "PublicationUpdate",
     "MechanismCreate",
+    "MechanismLifecycleState",
     "MechanismList",
     "MechanismResponse",
     "MechanismUpdate",
@@ -128,6 +137,11 @@ __all__ = [
     "ExtractionFactResponse",
     "ExtractionOutcome",
     "PublicationSummary",
+    "StatementCreate",
+    "StatementList",
+    "StatementResponse",
+    "StatementStatus",
+    "StatementUpdate",
     "VariantCreate",
     "VariantList",
     "VariantResponse",

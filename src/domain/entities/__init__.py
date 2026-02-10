@@ -4,81 +4,78 @@ Domain entities for MED13 Resource Library.
 These entities represent the core business objects and their relationships.
 """
 
-# Data Discovery entities
-from .data_discovery_parameters import (
+from . import data_source_configs, ingestion_job, publication, user_data_source
+from .biomedical import (
+    Drug,
+    DrugApprovalStatus,
+    Evidence,
+    ExtractionOutcome,
+    ExtractionTextSource,
+    Gene,
+    InSilicoScores,
+    LongitudinalObservation,
+    Mechanism,
+    Pathway,
+    Phenotype,
+    ProteinStructuralAnnotation,
+    Publication,
+    PublicationExtraction,
+    StatementOfUnderstanding,
+    TherapeuticModality,
+    Variant,
+)
+from .data_discovery import (
     AdvancedQueryParameters,
+    DataDiscoverySession,
+    DiscoverySearchJob,
+    DiscoverySearchStatus,
     PubMedSortOption,
     QueryParameterCapabilities,
     QueryParameters,
     QueryParameterType,
-    TestResultStatus,
-)
-from .data_discovery_session import (
-    DataDiscoverySession,
     QueryTestResult,
     SourceCatalogEntry,
+    TestResultStatus,
 )
-from .data_source_activation import (
+from .data_sources import (
     ActivationScope,
     DataSourceActivation,
-)
-from .discovery_search_job import (
-    DiscoverySearchJob,
-    DiscoverySearchStatus,
-)
-from .drug import Drug, DrugApprovalStatus, TherapeuticModality
-from .evidence import Evidence
-from .extraction_queue_item import ExtractionQueueItem, ExtractionStatus
-from .gene import Gene
-
-# Data Sources module entities
-from .ingestion_job import (
+    ExtractionQueueItem,
+    ExtractionStatus,
     IngestionError,
     IngestionJob,
+    IngestionSchedule,
     IngestionStatus,
     IngestionTrigger,
     JobMetrics,
-)
-from .mechanism import Mechanism
-from .pathway import Pathway
-from .phenotype import LongitudinalObservation, Phenotype
-from .publication import Publication
-from .publication_extraction import (
-    ExtractionOutcome,
-    ExtractionTextSource,
-    PublicationExtraction,
-)
-from .source_template import (
+    QualityMetrics,
+    SourceConfiguration,
+    SourceStatus,
     SourceTemplate,
-    TemplateCategory,
-    TemplateUIConfig,
-    ValidationRule,
-)
-from .storage_configuration import (
+    SourceType,
     StorageConfiguration,
     StorageHealthSnapshot,
     StorageOperation,
     StorageProviderMetadata,
     StorageProviderTestResult,
-)
-from .user_data_source import (
-    IngestionSchedule,
-    QualityMetrics,
-    SourceConfiguration,
-    SourceStatus,
-    SourceType,
+    TemplateCategory,
+    TemplateUIConfig,
     UserDataSource,
+    ValidationRule,
 )
-from .variant import InSilicoScores, ProteinStructuralAnnotation, Variant
 
 __all__ = [
     "AdvancedQueryParameters",
+    "ActivationScope",
     "DataDiscoverySession",
+    "DataSourceActivation",
+    "DiscoverySearchJob",
+    "DiscoverySearchStatus",
     "Drug",
     "DrugApprovalStatus",
     "Evidence",
-    "ExtractionQueueItem",
     "ExtractionOutcome",
+    "ExtractionQueueItem",
     "ExtractionStatus",
     "ExtractionTextSource",
     "Gene",
@@ -102,11 +99,17 @@ __all__ = [
     "QueryParameterType",
     "QueryParameters",
     "QueryTestResult",
+    "StatementOfUnderstanding",
     "SourceCatalogEntry",
     "SourceConfiguration",
     "SourceStatus",
     "SourceTemplate",
     "SourceType",
+    "StorageConfiguration",
+    "StorageHealthSnapshot",
+    "StorageOperation",
+    "StorageProviderMetadata",
+    "StorageProviderTestResult",
     "TemplateCategory",
     "TemplateUIConfig",
     "TestResultStatus",
@@ -114,13 +117,8 @@ __all__ = [
     "UserDataSource",
     "ValidationRule",
     "Variant",
-    "ActivationScope",
-    "DataSourceActivation",
-    "StorageConfiguration",
-    "StorageHealthSnapshot",
-    "StorageOperation",
-    "StorageProviderMetadata",
-    "StorageProviderTestResult",
-    "DiscoverySearchJob",
-    "DiscoverySearchStatus",
+    "data_source_configs",
+    "ingestion_job",
+    "publication",
+    "user_data_source",
 ]

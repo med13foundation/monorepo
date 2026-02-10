@@ -11,10 +11,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
 from .mechanism import mechanism_phenotypes
+from .statement import statement_phenotypes
 
 if TYPE_CHECKING:
     from .evidence import EvidenceModel
     from .mechanism import MechanismModel
+    from .statement import StatementModel
 
 
 class PhenotypeCategory(SQLEnum):
@@ -86,6 +88,10 @@ class PhenotypeModel(Base):
     evidence: Mapped[list["EvidenceModel"]] = relationship(back_populates="phenotype")
     mechanisms: Mapped[list["MechanismModel"]] = relationship(
         secondary=mechanism_phenotypes,
+        back_populates="phenotypes",
+    )
+    statements: Mapped[list["StatementModel"]] = relationship(
+        secondary=statement_phenotypes,
         back_populates="phenotypes",
     )
 

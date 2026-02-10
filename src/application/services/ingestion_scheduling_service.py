@@ -28,10 +28,8 @@ from src.models.value_objects.provenance import (
 from src.type_definitions.storage import StorageOperationRecord, StorageUseCase
 
 if TYPE_CHECKING:
-    from src.application.services.extraction_queue_service import (
+    from src.application.services import (
         ExtractionQueueService,
-    )
-    from src.application.services.extraction_runner_service import (
         ExtractionRunnerService,
     )
     from src.application.services.ports.scheduler_port import (
@@ -46,13 +44,25 @@ if TYPE_CHECKING:
     from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
     from src.type_definitions.common import JSONObject
 
+
+@dataclass(frozen=True)
+class IngestionSchedulingOptions:
+    storage_operation_repository: (
+        storage_repository.StorageOperationRepository | None
+    ) = None
+    pubmed_discovery_service: PubMedDiscoveryService | None = None
+    extraction_queue_service: ExtractionQueueService | None = None
+    extraction_runner_service: ExtractionRunnerService | None = None
+    retry_batch_size: int = 25
+
+
 logger = logging.getLogger(__name__)
 
 
 class IngestionSchedulingService:
     """Coordinates scheduler registration and execution of ingestion jobs."""
 
-    def __init__(  # noqa: PLR0913 - scheduler wiring requires explicit dependencies
+    def __init__(
         self,
         scheduler: SchedulerPort,
         source_repository: user_data_source_repository.UserDataSourceRepository,
@@ -64,23 +74,20 @@ class IngestionSchedulingService:
                 Awaitable[PubMedIngestionSummary],
             ],
         ],
-        storage_operation_repository: (
-            storage_repository.StorageOperationRepository | None
-        ) = None,
-        pubmed_discovery_service: PubMedDiscoveryService | None = None,
-        extraction_queue_service: ExtractionQueueService | None = None,
-        extraction_runner_service: ExtractionRunnerService | None = None,
-        retry_batch_size: int = 25,
+        options: IngestionSchedulingOptions | None = None,
     ) -> None:
+        resolved_options = options or IngestionSchedulingOptions()
         self._scheduler = scheduler
         self._source_repository = source_repository
         self._job_repository = job_repository
         self._ingestion_services = dict(ingestion_services)
-        self._storage_operation_repository = storage_operation_repository
-        self._pubmed_discovery_service = pubmed_discovery_service
-        self._extraction_queue_service = extraction_queue_service
-        self._extraction_runner_service = extraction_runner_service
-        self._retry_batch_size = max(retry_batch_size, 1)
+        self._storage_operation_repository = (
+            resolved_options.storage_operation_repository
+        )
+        self._pubmed_discovery_service = resolved_options.pubmed_discovery_service
+        self._extraction_queue_service = resolved_options.extraction_queue_service
+        self._extraction_runner_service = resolved_options.extraction_runner_service
+        self._retry_batch_size = max(resolved_options.retry_batch_size, 1)
 
     async def schedule_source(self, source_id: UUID) -> ScheduledJob:
         """Register a source with the scheduler backend."""

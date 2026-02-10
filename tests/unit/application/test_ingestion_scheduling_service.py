@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from src.application.services.ingestion_scheduling_service import (
+    IngestionSchedulingOptions,
     IngestionSchedulingService,
 )
 from src.application.services.pubmed_discovery_service import (
@@ -557,8 +558,10 @@ async def test_run_due_jobs_retries_failed_pdf_downloads() -> None:
         ),
         job_repository=StubJobRepository(),
         ingestion_services={},
-        storage_operation_repository=storage_repo,
-        pubmed_discovery_service=discovery_service,
+        options=IngestionSchedulingOptions(
+            storage_operation_repository=storage_repo,
+            pubmed_discovery_service=discovery_service,
+        ),
     )
 
     await service.run_due_jobs()
@@ -598,8 +601,10 @@ async def test_retry_skips_when_article_already_stored() -> None:
         ),
         job_repository=StubJobRepository(),
         ingestion_services={},
-        storage_operation_repository=storage_repo,
-        pubmed_discovery_service=discovery_service,
+        options=IngestionSchedulingOptions(
+            storage_operation_repository=storage_repo,
+            pubmed_discovery_service=discovery_service,
+        ),
     )
 
     await service.run_due_jobs()

@@ -5,7 +5,17 @@ Database representation of mechanistic nodes with phenotype links.
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Column, Float, ForeignKey, String, Table, Text
+from sqlalchemy import (
+    JSON,
+    Column,
+    Float,
+    ForeignKey,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.type_definitions.common import JSONObject  # noqa: TC001
@@ -14,6 +24,7 @@ from .base import Base
 
 if TYPE_CHECKING:
     from .phenotype import PhenotypeModel
+    from .research_space import ResearchSpaceModel
 
 
 mechanism_phenotypes = Table(
@@ -40,10 +51,15 @@ class MechanismModel(Base):
     __tablename__ = "mechanisms"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    research_space_id: Mapped[str] = mapped_column(
+        PGUUID(as_uuid=False),
+        ForeignKey("research_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     name: Mapped[str] = mapped_column(
         String(200),
-        unique=True,
         nullable=False,
         index=True,
     )
@@ -51,6 +67,11 @@ class MechanismModel(Base):
     evidence_tier: Mapped[str] = mapped_column(
         String(20),
         default="supporting",
+        nullable=False,
+    )
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(20),
+        default="draft",
         nullable=False,
     )
     confidence_score: Mapped[float] = mapped_column(
@@ -74,8 +95,19 @@ class MechanismModel(Base):
         secondary=mechanism_phenotypes,
         back_populates="mechanisms",
     )
+    research_space: Mapped["ResearchSpaceModel"] = relationship(
+        "ResearchSpaceModel",
+        back_populates="mechanisms",
+    )
 
-    __table_args__ = {"sqlite_autoincrement": True}  # noqa: RUF012
+    __table_args__ = (
+        UniqueConstraint(
+            "research_space_id",
+            "name",
+            name="uq_mechanisms_space_name",
+        ),
+        {"sqlite_autoincrement": True},
+    )  # noqa: RUF012
 
 
 __all__ = ["MechanismModel", "mechanism_phenotypes"]

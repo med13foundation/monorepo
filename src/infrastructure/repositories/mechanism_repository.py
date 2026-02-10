@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import asc, desc, func, or_, select
+from sqlalchemy import Select, asc, desc, func, or_, select
 
 from src.domain.repositories.mechanism_repository import (
     MechanismRepository as MechanismRepositoryInterface,
@@ -15,6 +15,8 @@ from src.models.database.mechanism import MechanismModel
 from src.models.database.phenotype import PhenotypeModel
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from uuid import UUID
+
     from sqlalchemy.orm import Session
 
     from src.domain.entities.mechanism import Mechanism
@@ -53,8 +55,11 @@ class SqlAlchemyMechanismRepository(MechanismRepositoryInterface):
     def get_by_id(self, mechanism_id: int) -> Mechanism | None:
         return self._to_domain(self.session.get(MechanismModel, mechanism_id))
 
-    def find_by_name(self, name: str) -> Mechanism | None:
-        stmt = select(MechanismModel).where(MechanismModel.name == name)
+    def find_by_name(self, name: str, *, research_space_id: UUID) -> Mechanism | None:
+        stmt = select(MechanismModel).where(
+            MechanismModel.name == name,
+            MechanismModel.research_space_id == str(research_space_id),
+        )
         return self._to_domain(self.session.execute(stmt).scalar_one_or_none())
 
     def find_all(
@@ -103,8 +108,6 @@ class SqlAlchemyMechanismRepository(MechanismRepositoryInterface):
         limit: int = 10,
         filters: QueryFilters | None = None,
     ) -> list[Mechanism]:
-        if filters:
-            _ = dict(filters)
         pattern = f"%{query}%"
         stmt = (
             select(MechanismModel)
@@ -116,6 +119,7 @@ class SqlAlchemyMechanismRepository(MechanismRepositoryInterface):
             )
             .limit(limit)
         )
+        stmt = self._apply_filters(stmt, filters)
         return self._to_domain_sequence(list(self.session.execute(stmt).scalars()))
 
     def paginate_mechanisms(
@@ -127,11 +131,7 @@ class SqlAlchemyMechanismRepository(MechanismRepositoryInterface):
         filters: QueryFilters | None = None,
     ) -> tuple[list[Mechanism], int]:
         stmt = select(MechanismModel)
-        if filters:
-            for field, value in filters.items():
-                column = getattr(MechanismModel, field, None)
-                if column is not None and value is not None:
-                    stmt = stmt.where(column == value)
+        stmt = self._apply_filters(stmt, filters)
 
         sort_column = getattr(MechanismModel, sort_by, MechanismModel.name)
         order_fn = desc if sort_order.lower() == "desc" else asc
@@ -171,6 +171,8 @@ class SqlAlchemyMechanismRepository(MechanismRepositoryInterface):
             model.confidence_score = updates["confidence_score"]
         if "source" in updates:
             model.source = updates["source"]
+        if "lifecycle_state" in updates:
+            model.lifecycle_state = updates["lifecycle_state"]
         if "protein_domains" in updates:
             model.protein_domains = self._normalize_domains(updates["protein_domains"])
         if "phenotype_ids" in updates:
@@ -197,6 +199,20 @@ class SqlAlchemyMechanismRepository(MechanismRepositoryInterface):
             domain = ProteinDomain.model_validate(raw)
             domains.append(domain.model_dump())
         return domains
+
+    def _apply_filters(
+        self,
+        stmt: Select[tuple[MechanismModel]],
+        filters: QueryFilters | None,
+    ) -> Select[tuple[MechanismModel]]:
+        if not filters:
+            return stmt
+        for field, value in filters.items():
+            column = getattr(MechanismModel, field, None)
+            if column is not None and value is not None:
+                filter_value = str(value) if field == "research_space_id" else value
+                stmt = stmt.where(column == filter_value)
+        return stmt
 
 
 __all__ = ["SqlAlchemyMechanismRepository"]

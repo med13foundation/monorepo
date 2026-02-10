@@ -6,6 +6,12 @@ export type EvidenceTier =
   | 'weak'
   | 'disproven'
 
+export type MechanismLifecycleState =
+  | 'draft'
+  | 'reviewed'
+  | 'canonical'
+  | 'deprecated'
+
 export type ProteinDomainType =
   | 'structural'
   | 'functional'
@@ -36,6 +42,7 @@ export interface Mechanism {
   evidence_tier: EvidenceTier
   confidence_score: number
   source: string
+  lifecycle_state: MechanismLifecycleState
   protein_domains: ProteinDomainPayload[]
   phenotype_ids: number[]
   phenotype_count: number
@@ -45,10 +52,11 @@ export interface Mechanism {
 
 export interface MechanismCreateRequest {
   name: string
-  description?: string | null
+  description: string
   evidence_tier: EvidenceTier
   confidence_score: number
   source: string
+  lifecycle_state?: MechanismLifecycleState
   protein_domains: ProteinDomainPayload[]
   phenotype_ids: number[]
 }
@@ -59,6 +67,7 @@ export interface MechanismUpdateRequest {
   evidence_tier?: EvidenceTier | null
   confidence_score?: number | null
   source?: string | null
+  lifecycle_state?: MechanismLifecycleState | null
   protein_domains?: ProteinDomainPayload[] | null
   phenotype_ids?: number[] | null
 }

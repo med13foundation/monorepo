@@ -22,6 +22,8 @@ WEB_LOG := logs/web.log
 WEB_PID_FILE_ABS := $(abspath $(WEB_PID_FILE))
 WEB_LOG_ABS := $(abspath $(WEB_LOG))
 NEXT_DEV_ENV := NEXTAUTH_SECRET=med13-resource-library-nextauth-secret-key-for-development-2024-secure-random-string NEXTAUTH_URL=http://localhost:3000 NEXT_PUBLIC_API_URL=http://localhost:8080
+NEXTAUTH_URL ?= http://localhost:3000
+NEXT_BUILD_ENV := NEXTAUTH_URL=$(NEXTAUTH_URL)
 
 ADMIN_PASSWORD_EFFECTIVE := $(strip $(or $(ADMIN_PASSWORD),$(MED13_ADMIN_PASSWORD)))
 
@@ -739,7 +741,7 @@ web-install: ## Install Next.js dependencies
 	cd src/web && npm install
 
 web-build: ## Build Next.js admin interface
-	cd src/web && npm run build
+	cd src/web && $(NEXT_BUILD_ENV) npm run build
 
 web-clean: ## Remove Next.js build artifacts
 	rm -rf src/web/.next

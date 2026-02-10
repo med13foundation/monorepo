@@ -1,6 +1,6 @@
 # MED13 Resource Library - Project Overview, Current Status, and Recommendations
 
-**Status date:** January 25, 2026
+**Status date:** January 26, 2026
 
 ## Purpose and scope
 
@@ -57,7 +57,7 @@ This document summarizes the project based on repository documentation and highl
 - Clean Architecture foundation is documented as complete and stable.
 - Domain entities and services exist for core biomedical data and data sources.
 - Data Sources module is documented as implemented across domain, application, infrastructure, and UI layers.
-- ResoGraph ontology is **partially implemented**: `Drug` and `Pathway` entities exist; `ProteinDomain` exists as a value object; **`Mechanism` is implemented with DB persistence and `/mechanisms` API endpoints**.
+- ResoGraph ontology is **partially implemented**: `Drug` and `Pathway` entities exist; `ProteinDomain` exists as a value object; **`Mechanism` and `StatementOfUnderstanding` are implemented with DB persistence and space-scoped API endpoints under `/research-spaces/{space_id}/mechanisms` and `/research-spaces/{space_id}/statements`, including promotion of well-supported statements into mechanisms**.
 - Variant/Phenotype **domain models** include structural + longitudinal fields, but **DB persistence/migrations** for these fields are not yet present.
 - Authentication, authorization, rate limiting, and baseline audit logging are implemented.
 - API endpoints cover genes, variants, phenotypes, evidence, research spaces, and data source management.
@@ -70,7 +70,7 @@ This document summarizes the project based on repository documentation and highl
 - The frontend follows a server-orchestrated pattern with dumb client components and server actions.
 - Data discovery workflows are refactored to align with backend orchestration DTOs.
 - Design system and component library are in place (shadcn/ui with documented typography and theme choices).
-- Knowledge Graph UI exists as a placeholder route; no graph explorer/visualization yet.
+- Knowledge Graph UI exists as a space-scoped route; Statements of Understanding and mechanism management (with promotion flow) are available there, but graph explorer/visualization remains pending.
 - Data Sources UI surfaces recent extraction activity and provides a document open/copy flow for stored extraction payloads.
 
 ### Infrastructure and operations
@@ -93,10 +93,10 @@ This document summarizes the project based on repository documentation and highl
 
 ### Translational AI Platform plan (docs/plan.md)
 
-- Sprint 1 (Ontology): **Partially complete.** Drug/Pathway/ProteinDomain + Mechanism are implemented; Variant + Phenotype domain schemas are enriched, but DB persistence is pending.
+- Sprint 1 (Ontology): **Partially complete.** Drug/Pathway/ProteinDomain + Mechanism + Statements of Understanding are implemented; Variant + Phenotype domain schemas are enriched, but DB persistence is pending.
 - Sprint 2 (Atlas ingestion): **Partially complete.** PubMed ingestion + rule-based title/abstract extraction pipeline is in place with stored payloads and document URLs. UniProt domain extraction, full-text ingestion, and LLM extraction are pending.
 - Sprint 3 (Graph core): **Not started.** GraphService, graph storage, and graph endpoints are pending.
-- Sprint 4 (UI and public): **Not started.** UI has a placeholder Knowledge Graph route only.
+- Sprint 4 (UI and public): **Partially started.** Statements + mechanisms UI (with promotion flow) are integrated; graph explorer and public-facing features are pending.
 
 ### Future optional TypeDB plan (docs/world_model/TypeDb_plan.md)
 

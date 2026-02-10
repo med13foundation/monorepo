@@ -7,14 +7,13 @@ Represents mechanistic nodes that connect protein domains to phenotypes.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from uuid import UUID  # noqa: TC003
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.domain.value_objects.confidence import EvidenceLevel
-
-if TYPE_CHECKING:
-    from src.domain.value_objects.protein_structure import ProteinDomain
+from src.domain.value_objects.mechanism_lifecycle import MechanismLifecycleState
+from src.domain.value_objects.protein_structure import ProteinDomain  # noqa: TC001
 
 
 class Mechanism(BaseModel):
@@ -22,11 +21,13 @@ class Mechanism(BaseModel):
     Represents a biological mechanism used for mechanistic reasoning.
     """
 
+    research_space_id: UUID
     name: str
     description: str | None = None
     evidence_tier: EvidenceLevel = EvidenceLevel.SUPPORTING
     confidence_score: float = 0.5
     source: str = "manual_curation"
+    lifecycle_state: MechanismLifecycleState = MechanismLifecycleState.DRAFT
 
     # Structural context
     protein_domains: list[ProteinDomain] = Field(default_factory=list)
@@ -48,6 +49,16 @@ class Mechanism(BaseModel):
     def _validate_confidence(cls, value: float) -> float:
         if not 0.0 <= value <= 1.0:
             msg = "confidence_score must be between 0.0 and 1.0"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not value.strip():
+            msg = "Mechanism description cannot be empty"
             raise ValueError(msg)
         return value
 

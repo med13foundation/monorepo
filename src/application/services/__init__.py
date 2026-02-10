@@ -23,6 +23,7 @@ from . import (
     gene_service,
     ingestion_scheduling_service,
     mechanism_service,
+    membership_management_service,
     phenotype_service,
     publication_extraction_service,
     publication_service,
@@ -31,6 +32,7 @@ from . import (
     pubmed_query_builder,
     source_management_service,
     space_data_discovery_service,
+    statement_service,
     storage_configuration_requests,
     storage_configuration_service,
     storage_configuration_validator,
@@ -70,8 +72,11 @@ ExtractionRunSummary = extraction_runner_service.ExtractionRunSummary
 ExtractionRunnerService = extraction_runner_service.ExtractionRunnerService
 GeneApplicationService = gene_service.GeneApplicationService
 IngestionSchedulingService = ingestion_scheduling_service.IngestionSchedulingService
+IngestionSchedulingOptions = ingestion_scheduling_service.IngestionSchedulingOptions
 PhenotypeApplicationService = phenotype_service.PhenotypeApplicationService
 MechanismApplicationService = mechanism_service.MechanismApplicationService
+MembershipManagementService = membership_management_service.MembershipManagementService
+StatementApplicationService = statement_service.StatementApplicationService
 PublicationApplicationService = publication_service.PublicationApplicationService
 PublicationExtractionListResult = (
     publication_extraction_service.PublicationExtractionListResult
@@ -134,7 +139,10 @@ __all__ = [
     "ExtractionRunnerService",
     "GeneApplicationService",
     "IngestionSchedulingService",
+    "IngestionSchedulingOptions",
     "MechanismApplicationService",
+    "MembershipManagementService",
+    "StatementApplicationService",
     "PhenotypeApplicationService",
     "PubMedDiscoveryService",
     "PubMedIngestionService",

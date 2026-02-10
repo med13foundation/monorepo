@@ -11,7 +11,6 @@ from . import (
     extractions,
     genes,
     health,
-    mechanisms,
     phenotypes,
     research_space_discovery,
     research_spaces,
@@ -32,7 +31,6 @@ extractions_router = extractions.router
 export_router = export.router
 genes_router = genes.router
 health_router = health.router
-mechanisms_router = mechanisms.router
 phenotypes_router = phenotypes.router
 research_space_discovery_router = research_space_discovery.router
 research_spaces_router = research_spaces.research_spaces_router
@@ -53,7 +51,6 @@ __all__ = [
     "export_router",
     "genes_router",
     "health_router",
-    "mechanisms_router",
     "phenotypes_router",
     "research_space_discovery_router",
     "research_spaces_router",

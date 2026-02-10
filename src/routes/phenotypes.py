@@ -36,7 +36,7 @@ class PhenotypeListParams(BaseModel):
     per_page: int = Field(20, ge=1, le=100, description="Items per page")
     search: str | None = Field(
         None,
-        description="Search by HPO term, name, or synonyms",
+        description="Search by HPO ID, term, name, synonyms, or definition",
     )
     sort_by: str = Field("name", description="Sort field")
     sort_order: str = Field("asc", pattern="^(asc|desc)$", description="Sort order")
@@ -322,7 +322,7 @@ async def search_phenotypes(
     service: "PhenotypeApplicationService" = Depends(get_phenotype_service),
 ) -> PhenotypeSearchResult:
     """
-    Search phenotypes by name, HPO term, or synonyms.
+    Search phenotypes by name, HPO ID, HPO term, synonyms, or definition.
     """
     try:
         filters = {"category": category} if category else {}

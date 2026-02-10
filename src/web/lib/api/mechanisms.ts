@@ -15,6 +15,7 @@ export interface MechanismListParams {
 }
 
 export async function fetchMechanisms(
+  spaceId: string,
   params: MechanismListParams = {},
   token?: string,
 ): Promise<PaginatedResponse<Mechanism>> {
@@ -33,20 +34,22 @@ export async function fetchMechanisms(
     },
   }
 
-  return apiGet<PaginatedResponse<Mechanism>>('/mechanisms', options)
+  return apiGet<PaginatedResponse<Mechanism>>(`/research-spaces/${spaceId}/mechanisms`, options)
 }
 
 export async function createMechanism(
+  spaceId: string,
   payload: MechanismCreateRequest,
   token?: string,
 ): Promise<Mechanism> {
   if (!token) {
     throw new Error('Authentication token is required for createMechanism')
   }
-  return apiPost<Mechanism>('/mechanisms', payload, { token })
+  return apiPost<Mechanism>(`/research-spaces/${spaceId}/mechanisms`, payload, { token })
 }
 
 export async function updateMechanism(
+  spaceId: string,
   mechanismId: number,
   payload: MechanismUpdateRequest,
   token?: string,
@@ -54,15 +57,23 @@ export async function updateMechanism(
   if (!token) {
     throw new Error('Authentication token is required for updateMechanism')
   }
-  return apiPut<Mechanism>(`/mechanisms/${mechanismId}`, payload, { token })
+  return apiPut<Mechanism>(
+    `/research-spaces/${spaceId}/mechanisms/${mechanismId}`,
+    payload,
+    { token },
+  )
 }
 
 export async function deleteMechanism(
+  spaceId: string,
   mechanismId: number,
   token?: string,
 ): Promise<{ message: string }> {
   if (!token) {
     throw new Error('Authentication token is required for deleteMechanism')
   }
-  return apiDelete<{ message: string }>(`/mechanisms/${mechanismId}`, { token })
+  return apiDelete<{ message: string }>(
+    `/research-spaces/${spaceId}/mechanisms/${mechanismId}`,
+    { token },
+  )
 }

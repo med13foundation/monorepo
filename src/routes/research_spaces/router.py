@@ -31,8 +31,11 @@ research_spaces_router = APIRouter(
 from . import (  # noqa: E402,F401
     curation_routes,
     data_source_routes,
+    mechanism_routes,
     membership_routes,
+    phenotype_routes,
     space_routes,
+    statement_routes,
 )
 
 __all__ = ["research_spaces_router"]

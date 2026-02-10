@@ -8,9 +8,11 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from src.application.services.ports.extraction_processor_port import (
+    ExtractionProcessorPort,
+    ExtractionProcessorResult,
     ExtractionTextPayload,
 )
 from src.domain.entities.publication_extraction import (
@@ -21,24 +23,15 @@ from src.domain.entities.publication_extraction import (
 from src.type_definitions.storage import StorageUseCase
 
 if TYPE_CHECKING:
-    from uuid import UUID
-
-    from src.application.services.ports.extraction_processor_port import (
-        ExtractionProcessorPort,
-        ExtractionProcessorResult,
-    )
     from src.application.services.storage_operation_coordinator import (
         StorageOperationCoordinator,
     )
-    from src.domain.entities.extraction_queue_item import ExtractionQueueItem
-    from src.domain.entities.publication import Publication
-    from src.domain.repositories.extraction_queue_repository import (
+    from src.domain.entities import ExtractionQueueItem, Publication
+    from src.domain.repositories import (
         ExtractionQueueRepository,
-    )
-    from src.domain.repositories.publication_extraction_repository import (
         PublicationExtractionRepository,
+        PublicationRepository,
     )
-    from src.domain.repositories.publication_repository import PublicationRepository
     from src.type_definitions.common import JSONObject, PublicationExtractionUpdate
 
 

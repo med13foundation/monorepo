@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import asc, func, or_, select
+from sqlalchemy import Select, asc, func, or_, select
 
 from src.domain.entities.phenotype import PhenotypeCategory
 from src.domain.repositories.phenotype_repository import (
@@ -12,6 +12,8 @@ from src.domain.repositories.phenotype_repository import (
 )
 from src.infrastructure.mappers.phenotype_mapper import PhenotypeMapper
 from src.models.database import EvidenceModel, PhenotypeModel, VariantModel
+from src.models.database.mechanism import MechanismModel, mechanism_phenotypes
+from src.models.database.statement import StatementModel, statement_phenotypes
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from sqlalchemy.orm import Session
@@ -95,20 +97,18 @@ class SqlAlchemyPhenotypeRepository(PhenotypeRepositoryInterface):
         limit: int = 20,
         filters: QueryFilters | None = None,
     ) -> list[Phenotype]:
-        if filters:
-            _ = dict(filters)
         pattern = f"%{query}%"
-        stmt = (
-            select(PhenotypeModel)
-            .where(
-                or_(
-                    PhenotypeModel.name.ilike(pattern),
-                    PhenotypeModel.definition.ilike(pattern),
-                    PhenotypeModel.synonyms.ilike(pattern),
-                ),
-            )
-            .limit(limit)
+        stmt = select(PhenotypeModel).where(
+            or_(
+                PhenotypeModel.name.ilike(pattern),
+                PhenotypeModel.hpo_id.ilike(pattern),
+                PhenotypeModel.hpo_term.ilike(pattern),
+                PhenotypeModel.definition.ilike(pattern),
+                PhenotypeModel.synonyms.ilike(pattern),
+            ),
         )
+        stmt = self._apply_filters(stmt, filters)
+        stmt = stmt.limit(limit)
         return self._to_domain_sequence(list(self.session.execute(stmt).scalars()))
 
     def get_phenotype_statistics(self) -> dict[str, int | float | bool | str | None]:
@@ -146,6 +146,17 @@ class SqlAlchemyPhenotypeRepository(PhenotypeRepositoryInterface):
             stmt = stmt.offset(offset)
         if limit:
             stmt = stmt.limit(limit)
+        return self._to_domain_sequence(list(self.session.execute(stmt).scalars()))
+
+    def find_by_ids(
+        self,
+        phenotype_ids: list[int],
+        filters: QueryFilters | None = None,
+    ) -> list[Phenotype]:
+        if not phenotype_ids:
+            return []
+        stmt = select(PhenotypeModel).where(PhenotypeModel.id.in_(phenotype_ids))
+        stmt = self._apply_filters(stmt, filters)
         return self._to_domain_sequence(list(self.session.execute(stmt).scalars()))
 
     def find_by_criteria(self, spec: QuerySpecification) -> list[Phenotype]:
@@ -200,11 +211,7 @@ class SqlAlchemyPhenotypeRepository(PhenotypeRepositoryInterface):
         filters: QueryFilters | None = None,
     ) -> tuple[list[Phenotype], int]:
         stmt = select(PhenotypeModel)
-        if filters:
-            for field, value in filters.items():
-                column = getattr(PhenotypeModel, field, None)
-                if column is not None and value is not None:
-                    stmt = stmt.where(column == value)
+        stmt = self._apply_filters(stmt, filters)
         sortable = {
             "name": PhenotypeModel.name,
             "category": PhenotypeModel.category,
@@ -239,6 +246,48 @@ class SqlAlchemyPhenotypeRepository(PhenotypeRepositoryInterface):
         updates: PhenotypeUpdate,
     ) -> Phenotype:
         return self.update(phenotype_id, updates)
+
+    def _apply_filters(
+        self,
+        stmt: Select[tuple[PhenotypeModel]],
+        filters: QueryFilters | None,
+    ) -> Select[tuple[PhenotypeModel]]:
+        if not filters:
+            return stmt
+        research_space_id = filters.get("research_space_id")
+        if research_space_id:
+            stmt = self._apply_research_space_filter(stmt, str(research_space_id))
+        for field, value in filters.items():
+            if field == "research_space_id":
+                continue
+            column = getattr(PhenotypeModel, field, None)
+            if column is not None and value is not None:
+                stmt = stmt.where(column == value)
+        return stmt
+
+    def _apply_research_space_filter(
+        self,
+        stmt: Select[tuple[PhenotypeModel]],
+        research_space_id: str,
+    ) -> Select[tuple[PhenotypeModel]]:
+        mechanism_ids = (
+            select(mechanism_phenotypes.c.phenotype_id)
+            .join(
+                MechanismModel,
+                mechanism_phenotypes.c.mechanism_id == MechanismModel.id,
+            )
+            .where(MechanismModel.research_space_id == research_space_id)
+        )
+        statement_ids = (
+            select(statement_phenotypes.c.phenotype_id)
+            .join(
+                StatementModel,
+                statement_phenotypes.c.statement_id == StatementModel.id,
+            )
+            .where(StatementModel.research_space_id == research_space_id)
+        )
+        scoped_ids = mechanism_ids.union(statement_ids)
+        return stmt.where(PhenotypeModel.id.in_(scoped_ids))
 
 
 __all__ = ["SqlAlchemyPhenotypeRepository"]

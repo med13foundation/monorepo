@@ -3,6 +3,7 @@ Unit tests for new ontology entities (Drug, Pathway) and enhanced Variant/Phenot
 """
 
 from datetime import date
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -11,6 +12,7 @@ from src.domain.entities.drug import Drug, DrugApprovalStatus, TherapeuticModali
 from src.domain.entities.mechanism import Mechanism
 from src.domain.entities.pathway import Pathway
 from src.domain.entities.phenotype import LongitudinalObservation, Phenotype
+from src.domain.entities.statement import StatementOfUnderstanding
 from src.domain.entities.variant import (
     InSilicoScores,
     ProteinStructuralAnnotation,
@@ -18,7 +20,9 @@ from src.domain.entities.variant import (
 )
 from src.domain.value_objects.confidence import EvidenceLevel
 from src.domain.value_objects.identifiers import PhenotypeIdentifier, VariantIdentifier
+from src.domain.value_objects.mechanism_lifecycle import MechanismLifecycleState
 from src.domain.value_objects.protein_structure import Coordinates3D, ProteinDomain
+from src.domain.value_objects.statement_status import StatementStatus
 
 
 class TestDrugEntity:
@@ -131,27 +135,69 @@ class TestMechanismEntity:
             end_residue=50,
         )
         mechanism = Mechanism(
+            research_space_id=uuid4(),
             name="Mediator complex disruption",
+            description="Disrupts mediator complex stability leading to phenotype.",
             evidence_tier=EvidenceLevel.STRONG,
             confidence_score=0.8,
+            lifecycle_state=MechanismLifecycleState.REVIEWED,
             protein_domains=[domain],
             phenotype_ids=[1, 2],
         )
         assert mechanism.name == "Mediator complex disruption"
         assert mechanism.evidence_tier == EvidenceLevel.STRONG
         assert mechanism.confidence_score == 0.8
+        assert mechanism.lifecycle_state == MechanismLifecycleState.REVIEWED
         assert mechanism.protein_domains[0].name == "Mediator binding"
         assert mechanism.phenotype_ids == [1, 2]
 
     def test_invalid_confidence_score(self) -> None:
         with pytest.raises(ValidationError):
             Mechanism(
+                research_space_id=uuid4(),
                 name="Invalid confidence",
                 confidence_score=1.5,
+                description="Placeholder description.",
+                phenotype_ids=[1],
             )
 
     def test_empty_name_rejected(self) -> None:
         with pytest.raises(ValidationError):
             Mechanism(
+                research_space_id=uuid4(),
                 name="  ",
+                description="Placeholder description.",
+                phenotype_ids=[1],
+            )
+
+
+class TestStatementEntity:
+    def test_create_valid_statement(self) -> None:
+        statement = StatementOfUnderstanding(
+            research_space_id=uuid4(),
+            title="Mediator complex destabilization",
+            summary="Evidence indicates mediator complex instability drives phenotype.",
+            evidence_tier=EvidenceLevel.MODERATE,
+            confidence_score=0.7,
+            status=StatementStatus.WELL_SUPPORTED,
+            phenotype_ids=[1],
+        )
+        assert statement.title == "Mediator complex destabilization"
+        assert statement.status == StatementStatus.WELL_SUPPORTED
+        assert statement.evidence_tier == EvidenceLevel.MODERATE
+
+    def test_invalid_statement_title(self) -> None:
+        with pytest.raises(ValidationError):
+            StatementOfUnderstanding(
+                research_space_id=uuid4(),
+                title=" ",
+                summary="Valid summary",
+            )
+
+    def test_invalid_statement_summary(self) -> None:
+        with pytest.raises(ValidationError):
+            StatementOfUnderstanding(
+                research_space_id=uuid4(),
+                title="Valid title",
+                summary=" ",
             )

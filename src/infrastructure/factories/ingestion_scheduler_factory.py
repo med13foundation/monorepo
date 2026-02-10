@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from src.application.services import (
     ExtractionQueueService,
     ExtractionRunnerService,
+    IngestionSchedulingOptions,
     IngestionSchedulingService,
     PubMedDiscoveryService,
     PubMedIngestionService,
@@ -114,10 +115,12 @@ def build_ingestion_scheduling_service(
         source_repository=user_source_repository,
         job_repository=job_repository,
         ingestion_services=ingestion_services,
-        storage_operation_repository=storage_operation_repository,
-        pubmed_discovery_service=pubmed_discovery_service,
-        extraction_queue_service=extraction_queue_service,
-        extraction_runner_service=extraction_runner_service,
+        options=IngestionSchedulingOptions(
+            storage_operation_repository=storage_operation_repository,
+            pubmed_discovery_service=pubmed_discovery_service,
+            extraction_queue_service=extraction_queue_service,
+            extraction_runner_service=extraction_runner_service,
+        ),
     )
 
 

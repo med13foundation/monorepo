@@ -17,17 +17,18 @@ type ActionResult<T> =
   | { success: true; data: T }
   | { success: false; error: string }
 
-function revalidateMechanisms() {
-  revalidatePath('/system-settings')
+function revalidateMechanisms(spaceId: string) {
+  revalidatePath(`/spaces/${spaceId}/knowledge-graph`)
 }
 
 export async function createMechanismAction(
+  spaceId: string,
   payload: MechanismCreateRequest,
 ): Promise<ActionResult<Mechanism>> {
   try {
     const token = await requireAccessToken()
-    const response = await createMechanism(payload, token)
-    revalidateMechanisms()
+    const response = await createMechanism(spaceId, payload, token)
+    revalidateMechanisms(spaceId)
     return { success: true, data: response }
   } catch (error: unknown) {
     if (process.env.NODE_ENV !== 'test') {
@@ -41,13 +42,14 @@ export async function createMechanismAction(
 }
 
 export async function updateMechanismAction(
+  spaceId: string,
   mechanismId: number,
   payload: MechanismUpdateRequest,
 ): Promise<ActionResult<Mechanism>> {
   try {
     const token = await requireAccessToken()
-    const response = await updateMechanism(mechanismId, payload, token)
-    revalidateMechanisms()
+    const response = await updateMechanism(spaceId, mechanismId, payload, token)
+    revalidateMechanisms(spaceId)
     return { success: true, data: response }
   } catch (error: unknown) {
     if (process.env.NODE_ENV !== 'test') {
@@ -61,12 +63,13 @@ export async function updateMechanismAction(
 }
 
 export async function deleteMechanismAction(
+  spaceId: string,
   mechanismId: number,
 ): Promise<ActionResult<{ message: string }>> {
   try {
     const token = await requireAccessToken()
-    const response = await deleteMechanism(mechanismId, token)
-    revalidateMechanisms()
+    const response = await deleteMechanism(spaceId, mechanismId, token)
+    revalidateMechanisms(spaceId)
     return { success: true, data: response }
   } catch (error: unknown) {
     if (process.env.NODE_ENV !== 'test') {

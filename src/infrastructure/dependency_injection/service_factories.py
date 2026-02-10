@@ -31,6 +31,7 @@ from src.application.services import (
     PubMedDiscoveryService,
     PubMedQueryBuilder,
     SourceManagementService,
+    StatementApplicationService,
     StorageConfigurationService,
     StorageOperationCoordinator,
     SystemStatusService,
@@ -65,6 +66,7 @@ from src.infrastructure.repositories import (
     SQLAlchemyQueryTestResultRepository,
     SQLAlchemySourceCatalogRepository,
     SqlAlchemySourceTemplateRepository,
+    SqlAlchemyStatementRepository,
     SqlAlchemyStorageConfigurationRepository,
     SqlAlchemyStorageOperationRepository,
     SqlAlchemyUserDataSourceRepository,
@@ -138,6 +140,17 @@ class ApplicationServiceFactoryMixin:
     ) -> MechanismApplicationService:
         mechanism_repository = SqlAlchemyMechanismRepository(session)
         return MechanismApplicationService(
+            mechanism_repository=mechanism_repository,
+        )
+
+    def create_statement_application_service(
+        self,
+        session: Session,
+    ) -> StatementApplicationService:
+        statement_repository = SqlAlchemyStatementRepository(session)
+        mechanism_repository = SqlAlchemyMechanismRepository(session)
+        return StatementApplicationService(
+            statement_repository=statement_repository,
             mechanism_repository=mechanism_repository,
         )
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from src.domain.entities.mechanism import Mechanism
 from src.domain.value_objects.confidence import EvidenceLevel
+from src.domain.value_objects.mechanism_lifecycle import MechanismLifecycleState
 from src.domain.value_objects.protein_structure import ProteinDomain
 from src.models.database.mechanism import MechanismModel
 
@@ -21,6 +23,7 @@ class MechanismMapper:
         ]
         phenotype_ids = [phenotype.id for phenotype in model.phenotypes]
         return Mechanism(
+            research_space_id=UUID(str(model.research_space_id)),
             name=model.name,
             description=model.description,
             evidence_tier=MechanismMapper._normalize_evidence_tier(
@@ -28,6 +31,9 @@ class MechanismMapper:
             ),
             confidence_score=model.confidence_score,
             source=model.source,
+            lifecycle_state=MechanismMapper._normalize_lifecycle_state(
+                model.lifecycle_state,
+            ),
             protein_domains=protein_domains,
             phenotype_ids=phenotype_ids,
             created_at=model.created_at,
@@ -41,6 +47,7 @@ class MechanismMapper:
         model: MechanismModel | None = None,
     ) -> MechanismModel:
         target = model or MechanismModel()
+        target.research_space_id = str(entity.research_space_id)
         target.name = entity.name
         target.description = entity.description
         target.evidence_tier = MechanismMapper._evidence_tier_value(
@@ -48,6 +55,9 @@ class MechanismMapper:
         )
         target.confidence_score = entity.confidence_score
         target.source = entity.source
+        target.lifecycle_state = MechanismMapper._lifecycle_state_value(
+            entity.lifecycle_state,
+        )
         target.protein_domains = [
             domain.model_dump() for domain in entity.protein_domains
         ]
@@ -71,6 +81,21 @@ class MechanismMapper:
     @staticmethod
     def _evidence_tier_value(value: EvidenceLevel | str) -> str:
         if isinstance(value, EvidenceLevel):
+            return value.value
+        return str(value)
+
+    @staticmethod
+    def _normalize_lifecycle_state(value: str | None) -> MechanismLifecycleState:
+        if not value:
+            return MechanismLifecycleState.DRAFT
+        try:
+            return MechanismLifecycleState(value)
+        except ValueError:
+            return MechanismLifecycleState.DRAFT
+
+    @staticmethod
+    def _lifecycle_state_value(value: MechanismLifecycleState | str) -> str:
+        if isinstance(value, MechanismLifecycleState):
             return value.value
         return str(value)
 

@@ -54,6 +54,14 @@ class PhenotypeRepository(Repository[Phenotype, int, PhenotypeUpdate]):
         """Search phenotypes with optional filters."""
 
     @abstractmethod
+    def find_by_ids(
+        self,
+        phenotype_ids: list[int],
+        filters: QueryFilters | None = None,
+    ) -> list[Phenotype]:
+        """Find phenotypes by ID list with optional filters."""
+
+    @abstractmethod
     def paginate_phenotypes(
         self,
         page: int,

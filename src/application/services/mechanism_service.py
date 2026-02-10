@@ -1,10 +1,12 @@
 """Application-level orchestration for mechanism workflows."""
 
 from collections.abc import Mapping
+from uuid import UUID
 
 from src.domain.entities.mechanism import Mechanism
 from src.domain.repositories.mechanism_repository import MechanismRepository
 from src.domain.value_objects.confidence import EvidenceLevel
+from src.domain.value_objects.mechanism_lifecycle import MechanismLifecycleState
 from src.domain.value_objects.protein_structure import ProteinDomain
 from src.type_definitions.common import FilterValue, MechanismUpdate, QueryFilters
 
@@ -21,24 +23,34 @@ class MechanismApplicationService:
         self,
         name: str,
         *,
+        research_space_id: UUID,
         description: str | None = None,
         evidence_tier: EvidenceLevel = EvidenceLevel.SUPPORTING,
         confidence_score: float = 0.5,
         source: str = "manual_curation",
+        lifecycle_state: MechanismLifecycleState = MechanismLifecycleState.DRAFT,
         protein_domains: list[ProteinDomain] | None = None,
         phenotype_ids: list[int] | None = None,
     ) -> Mechanism:
         """
         Create a new mechanism.
         """
+        if description is None or not description.strip():
+            msg = "Mechanism description is required"
+            raise ValueError(msg)
+        if not phenotype_ids:
+            msg = "At least one phenotype is required"
+            raise ValueError(msg)
         mechanism = Mechanism(
+            research_space_id=research_space_id,
             name=name,
             description=description,
             evidence_tier=evidence_tier,
             confidence_score=confidence_score,
             source=source,
+            lifecycle_state=lifecycle_state,
             protein_domains=protein_domains or [],
-            phenotype_ids=phenotype_ids or [],
+            phenotype_ids=phenotype_ids,
         )
         return self._mechanism_repository.create(mechanism)
 
@@ -46,9 +58,17 @@ class MechanismApplicationService:
         """Retrieve a mechanism by its database ID."""
         return self._mechanism_repository.get_by_id(mechanism_id)
 
-    def get_mechanism_by_name(self, name: str) -> Mechanism | None:
-        """Find a mechanism by name."""
-        return self._mechanism_repository.find_by_name(name)
+    def get_mechanism_by_name(
+        self,
+        name: str,
+        *,
+        research_space_id: UUID,
+    ) -> Mechanism | None:
+        """Find a mechanism by name within a research space."""
+        return self._mechanism_repository.find_by_name(
+            name,
+            research_space_id=research_space_id,
+        )
 
     def search_mechanisms(
         self,
@@ -90,6 +110,14 @@ class MechanismApplicationService:
         """Update mechanism fields."""
         if not updates:
             msg = "No mechanism updates provided"
+            raise ValueError(msg)
+        if "description" in updates:
+            description = updates["description"]
+            if description is None or not str(description).strip():
+                msg = "Mechanism description is required"
+                raise ValueError(msg)
+        if "phenotype_ids" in updates and not updates["phenotype_ids"]:
+            msg = "At least one phenotype is required"
             raise ValueError(msg)
         return self._mechanism_repository.update_mechanism(
             mechanism_id,
