@@ -3,6 +3,56 @@
 
 // Learn more: https://github.com/testing-library/jest-dom
 import '@testing-library/jest-dom'
+import { TextDecoder, TextEncoder } from 'util'
+
+if (!global.TextEncoder) {
+  global.TextEncoder = TextEncoder
+}
+
+if (!global.TextDecoder) {
+  global.TextDecoder = TextDecoder
+}
+
+if (!global.Headers) {
+  global.Headers = class Headers {
+    constructor(init = {}) {
+      this.map = new Map(Object.entries(init))
+    }
+
+    append(name, value) {
+      this.map.set(name.toLowerCase(), String(value))
+    }
+
+    get(name) {
+      return this.map.get(name.toLowerCase()) ?? null
+    }
+  }
+}
+
+if (!global.Request) {
+  global.Request = class Request {
+    constructor(input, init = {}) {
+      this.url = typeof input === 'string' ? input : input?.url ?? ''
+      this.method = init.method ?? 'GET'
+      this.headers = new global.Headers(init.headers ?? {})
+    }
+  }
+}
+
+if (!global.Response) {
+  global.Response = class Response {
+    constructor(body = null, init = {}) {
+      this.body = body
+      this.status = init.status ?? 200
+      this.headers = new global.Headers(init.headers ?? {})
+      this.ok = this.status >= 200 && this.status < 300
+    }
+  }
+}
+
+if (!global.fetch) {
+  global.fetch = jest.fn(async () => new global.Response(null))
+}
 
 // Mock Next.js router
 jest.mock('next/navigation', () => ({
