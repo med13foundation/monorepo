@@ -129,6 +129,7 @@ jobs:
           image-ref: med13-resource-library:test
           format: table
           ignore-unfixed: true
+          trivyignores: .trivyignore
           exit-code: 1
 
   deploy-staging:

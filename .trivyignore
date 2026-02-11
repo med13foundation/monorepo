@@ -1,0 +1,4 @@
+# flujo 0.6.4 pins pydantic-ai<1.26.0, so this CVE cannot be remediated
+# without upgrading Flujo itself. Track Flujo updates and remove this ignore
+# once a compatible fixed pydantic-ai release is available.
+CVE-2026-25580
