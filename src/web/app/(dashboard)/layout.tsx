@@ -10,9 +10,9 @@ import type { ResearchSpaceMembership } from '@/types/research-space'
 
 type DashboardLayoutProps = {
   children: React.ReactNode
-  params?: {
+  params?: Promise<{
     spaceId?: string
-  }
+  }>
 }
 
 function isValidUuid(value: string): boolean {
@@ -20,6 +20,7 @@ function isValidUuid(value: string): boolean {
 }
 
 export default async function DashboardLayout({ children, params }: DashboardLayoutProps) {
+  const resolvedParams = params ? await params : undefined
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
   const expiresAt = session?.user?.expires_at
@@ -40,8 +41,8 @@ export default async function DashboardLayout({ children, params }: DashboardLay
       initialSpaces = response.spaces
       initialTotal = response.total
       const spaceIdFromParams =
-        typeof params?.spaceId === 'string' && isValidUuid(params.spaceId)
-          ? params.spaceId
+        typeof resolvedParams?.spaceId === 'string' && isValidUuid(resolvedParams.spaceId)
+          ? resolvedParams.spaceId
           : null
       initialSpaceId = spaceIdFromParams ?? initialSpaces[0]?.id ?? null
 

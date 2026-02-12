@@ -23,11 +23,13 @@ function parseIntParam(value: string | undefined, fallback: number): number {
 }
 
 interface SpaceObservationsPageProps {
-  params: { spaceId: string }
-  searchParams?: SearchParams
+  params: Promise<{ spaceId: string }>
+  searchParams?: Promise<SearchParams>
 }
 
 export default async function SpaceObservationsPage({ params, searchParams }: SpaceObservationsPageProps) {
+  const { spaceId } = await params
+  const resolvedSearchParams = searchParams ? await searchParams : undefined
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 
@@ -35,17 +37,17 @@ export default async function SpaceObservationsPage({ params, searchParams }: Sp
     redirect('/auth/login?error=SessionExpired')
   }
 
-  const subjectId = firstString(searchParams?.subject_id)
-  const variableId = firstString(searchParams?.variable_id)
-  const offset = parseIntParam(firstString(searchParams?.offset), 0)
-  const limit = Math.min(parseIntParam(firstString(searchParams?.limit), 50), 200)
+  const subjectId = firstString(resolvedSearchParams?.subject_id)
+  const variableId = firstString(resolvedSearchParams?.variable_id)
+  const offset = parseIntParam(firstString(resolvedSearchParams?.offset), 0)
+  const limit = Math.min(parseIntParam(firstString(resolvedSearchParams?.limit), 50), 200)
 
   let observations: KernelObservationListResponse | null = null
   let observationsError: string | null = null
 
   try {
     observations = await fetchKernelObservations(
-      params.spaceId,
+      spaceId,
       {
         ...(subjectId ? { subject_id: subjectId } : {}),
         ...(variableId ? { variable_id: variableId } : {}),
@@ -62,7 +64,7 @@ export default async function SpaceObservationsPage({ params, searchParams }: Sp
 
   return (
     <SpaceObservationsClient
-      spaceId={params.spaceId}
+      spaceId={spaceId}
       observations={observations}
       observationsError={observationsError}
       filters={{

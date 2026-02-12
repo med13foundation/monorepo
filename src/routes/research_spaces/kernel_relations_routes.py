@@ -52,6 +52,7 @@ from .router import (
 )
 def list_kernel_relations(
     space_id: UUID,
+    *,
     relation_type: str | None = Query(None),
     curation_status: str | None = Query(None),
     offset: int = Query(0, ge=0),
@@ -235,6 +236,7 @@ def export_kernel_graph(
 def get_kernel_neighborhood(
     space_id: UUID,
     entity_id: UUID,
+    *,
     depth: int = Query(1, ge=1, le=3),
     current_user: User = Depends(get_current_active_user),
     membership_service: MembershipManagementService = Depends(get_membership_service),

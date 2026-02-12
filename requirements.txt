@@ -25,9 +25,10 @@ numpy>=1.26.0
 defusedxml>=0.7.0
 
 # Utilities
-python-multipart>=0.0.6
+python-multipart>=0.0.22
 pyyaml>=6.0.0
 bcrypt>=4.1.0
+cryptography>=46.0.5
 jsonschema>=4.20.0
 aiohttp>=3.13.3
 anyio>=4.0.0
@@ -39,7 +40,9 @@ psutil>=5.9.0
 filelock>=3.20.3
 pyasn1>=0.6.2
 flujo>=0.6.4
-protobuf>=6.33.2
+protobuf>=6.33.5
+pillow>=12.1.1
+griffe<2
 
 # Google Cloud (uncomment when gcloud SDK is set up)
 # google-cloud-secret-manager>=2.16.0

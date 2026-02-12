@@ -13,15 +13,23 @@ from fastapi.testclient import TestClient
 
 from src.database import session as session_module
 from src.domain.entities.user import UserRole
+from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
 from src.infrastructure.security.jwt_provider import JWTProvider
 from src.main import create_app
 from src.models.database.base import Base
 from src.models.database.kernel.dictionary import (
     RelationConstraintModel,
-    VariableSynonymModel,
 )
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
+from src.models.database.user_data_source import (
+    SourceStatusEnum,
+    SourceTypeEnum,
+    UserDataSourceModel,
+)
+from src.routes.research_spaces.dependencies import (
+    get_ingestion_scheduling_service_for_space,
+)
 from tests.db_reset import reset_database
 
 
@@ -281,79 +289,116 @@ def test_kernel_entity_observation_relation_flow(
     assert curate.json()["curation_status"] == "APPROVED"
 
 
-def test_kernel_ingest_endpoint_creates_entity_and_observation(
+def test_space_ingest_runs_only_configured_active_sources(
     test_client,
     db_session,
-    admin_user,
     researcher_user,
     space,
 ):
-    # 1) Create a variable and synonym mapping for ingestion
-    resp = test_client.post(
-        "/admin/dictionary/variables",
-        headers=_auth_headers(admin_user),
-        json={
-            "id": "VAR_INGEST_NOTE",
-            "canonical_name": "ingest_note",
-            "display_name": "Ingest Note",
-            "data_type": "STRING",
-            "domain_context": "general",
-            "sensitivity": "INTERNAL",
-            "preferred_unit": None,
-            "constraints": {},
-            "description": "Variable used by ingest endpoint test",
-        },
+    class FakeIngestionSchedulingService:
+        async def trigger_ingestion(self, source_id: UUID) -> PubMedIngestionSummary:
+            return PubMedIngestionSummary(
+                source_id=source_id,
+                fetched_records=4,
+                parsed_publications=4,
+                created_publications=3,
+                updated_publications=1,
+                executed_query="MED13[Title/Abstract]",
+            )
+
+    test_client.app.dependency_overrides[get_ingestion_scheduling_service_for_space] = (
+        lambda: FakeIngestionSchedulingService()
     )
-    assert resp.status_code == 201, resp.text
 
-    with _session_for_api(db_session) as session:
-        session.add(
-            VariableSynonymModel(
-                variable_id="VAR_INGEST_NOTE",
-                synonym="note",
-                source="test",
-            ),
-        )
-        session.commit()
-
-    # 2) Ingest a record that contains an anchor + mapped field
-    headers = _auth_headers(researcher_user)
-    ingest = test_client.post(
-        f"/research-spaces/{space.id}/ingest",
-        headers=headers,
-        json={
-            "entity_type": "GENE",
-            "records": [
-                {
-                    "source_id": "row-1",
-                    "data": {"gene_symbol": "MED13", "note": "hello kernel ingest"},
-                    "metadata": {},
+    try:
+        headers = _auth_headers(researcher_user)
+        source_id = str(uuid4())
+        with _session_for_api(db_session) as session:
+            source = UserDataSourceModel(
+                id=source_id,
+                owner_id=str(researcher_user.id),
+                research_space_id=str(space.id),
+                name="PubMed source",
+                description="Configured for ingest",
+                source_type=SourceTypeEnum.PUBMED,
+                status=SourceStatusEnum.ACTIVE,
+                template_id=None,
+                configuration={
+                    "metadata": {"query": "MED13"},
+                    "requests_per_minute": 10,
                 },
-            ],
-        },
-    )
-    assert ingest.status_code == 201, ingest.text
-    payload = ingest.json()
-    assert payload["success"] is True
-    assert payload["entities_created"] == 1
-    assert payload["observations_created"] == 1
+                ingestion_schedule={
+                    "enabled": True,
+                    "frequency": "daily",
+                    "start_time": None,
+                    "timezone": "UTC",
+                    "cron_expression": None,
+                    "backend_job_id": None,
+                    "next_run_at": None,
+                    "last_run_at": None,
+                },
+                quality_metrics={},
+                tags=[],
+                version="1.0",
+            )
+            session.add(source)
+            session.commit()
 
-    # 3) Verify the created entity is visible in the kernel entity API
-    entities = test_client.get(
-        f"/research-spaces/{space.id}/entities",
-        headers=headers,
-        params={"type": "GENE"},
-    )
-    assert entities.status_code == 200, entities.text
-    assert entities.json()["total"] == 1
+        run_one = test_client.post(
+            f"/research-spaces/{space.id}/ingest/sources/{source_id}/run",
+            headers=headers,
+        )
+        assert run_one.status_code == 200, run_one.text
+        run_one_payload = run_one.json()
+        assert run_one_payload["status"] == "completed"
+        assert run_one_payload["source_id"] == source_id
+        assert run_one_payload["created_publications"] == 3
 
-    # 4) Verify the observation is visible in the kernel observations API
-    observations = test_client.get(
-        f"/research-spaces/{space.id}/observations",
+        run_all = test_client.post(
+            f"/research-spaces/{space.id}/ingest/run",
+            headers=headers,
+        )
+        assert run_all.status_code == 200, run_all.text
+        run_all_payload = run_all.json()
+        assert run_all_payload["total_sources"] == 1
+        assert run_all_payload["active_sources"] == 1
+        assert run_all_payload["runnable_sources"] == 1
+        assert run_all_payload["completed_sources"] == 1
+        assert run_all_payload["skipped_sources"] == 0
+        assert run_all_payload["failed_sources"] == 0
+        assert run_all_payload["runs"][0]["source_id"] == source_id
+        assert run_all_payload["runs"][0]["status"] == "completed"
+    finally:
+        test_client.app.dependency_overrides.pop(
+            get_ingestion_scheduling_service_for_space,
+            None,
+        )
+
+
+def test_space_curation_stats_and_queue_are_available(
+    test_client,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    stats_response = test_client.get(
+        f"/research-spaces/{space.id}/curation/stats",
         headers=headers,
     )
-    assert observations.status_code == 200, observations.text
-    obs_payload = observations.json()
-    assert obs_payload["total"] == 1
-    assert obs_payload["observations"][0]["variable_id"] == "VAR_INGEST_NOTE"
-    assert obs_payload["observations"][0]["value_text"] == "hello kernel ingest"
+    assert stats_response.status_code == 200, stats_response.text
+    stats_payload = stats_response.json()
+    assert stats_payload["total"] == 0
+    assert stats_payload["pending"] == 0
+    assert stats_payload["approved"] == 0
+    assert stats_payload["rejected"] == 0
+
+    queue_response = test_client.get(
+        f"/research-spaces/{space.id}/curation/queue",
+        headers=headers,
+        params={"limit": 5},
+    )
+    assert queue_response.status_code == 200, queue_response.text
+    queue_payload = queue_response.json()
+    assert queue_payload["total"] == 0
+    assert queue_payload["items"] == []

@@ -127,10 +127,18 @@ class IngestionSchedulingService:
     ) -> PubMedIngestionSummary:
         """Manually trigger ingestion for a source outside of scheduler cadence."""
         source = self._get_source(source_id)
+        if source.status != user_data_source.SourceStatus.ACTIVE:
+            msg = "Source must be active before ingestion can run"
+            raise ValueError(msg)
+        if not source.ingestion_schedule.requires_scheduler:
+            msg = "Source must have an enabled non-manual ingestion schedule"
+            raise ValueError(msg)
         return await self._run_ingestion_for_source(source)
 
     async def _execute_job(self, scheduled_job: ScheduledJob) -> None:
         source = self._get_source(scheduled_job.source_id)
+        if source.status != user_data_source.SourceStatus.ACTIVE:
+            return
         if (
             source.ingestion_schedule.frequency
             == user_data_source.ScheduleFrequency.MANUAL

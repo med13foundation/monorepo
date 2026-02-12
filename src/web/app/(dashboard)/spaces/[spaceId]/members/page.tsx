@@ -8,12 +8,13 @@ import { UserRole } from '@/types/auth'
 import SpaceMembersClient from '../space-members-client'
 
 interface SpaceMembersPageProps {
-  params: {
+  params: Promise<{
     spaceId: string
-  }
+  }>
 }
 
 export default async function SpaceMembersPage({ params }: SpaceMembersPageProps) {
+  const { spaceId } = await params
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 
@@ -27,13 +28,13 @@ export default async function SpaceMembersPage({ params }: SpaceMembersPageProps
   let currentMembership: ResearchSpaceMembership | null = null
 
   try {
-    space = await fetchResearchSpace(params.spaceId, token)
+    space = await fetchResearchSpace(spaceId, token)
   } catch (error) {
     console.error('[SpaceMembersPage] Failed to fetch research space', error)
   }
 
   try {
-    const membershipResponse = await fetchSpaceMembers(params.spaceId, undefined, token)
+    const membershipResponse = await fetchSpaceMembers(spaceId, undefined, token)
     memberships = membershipResponse.memberships
   } catch (error) {
     membersError =
@@ -42,7 +43,7 @@ export default async function SpaceMembersPage({ params }: SpaceMembersPageProps
   }
 
   try {
-    currentMembership = await fetchMyMembership(params.spaceId, token)
+    currentMembership = await fetchMyMembership(spaceId, token)
   } catch (error) {
     console.error('[SpaceMembersPage] Failed to fetch membership', error)
   }
@@ -63,7 +64,7 @@ export default async function SpaceMembersPage({ params }: SpaceMembersPageProps
 
   return (
     <SpaceMembersClient
-      spaceId={params.spaceId}
+      spaceId={spaceId}
       space={space}
       memberships={memberships}
       membersError={membersError}

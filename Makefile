@@ -27,6 +27,12 @@ NEXT_BUILD_ENV := NEXTAUTH_URL=$(NEXTAUTH_URL)
 
 ADMIN_PASSWORD_EFFECTIVE := $(strip $(or $(ADMIN_PASSWORD),$(MED13_ADMIN_PASSWORD)))
 
+# pip-audit exceptions:
+# - CVE-2025-69872: diskcache has no upstream fix yet.
+# - CVE-2026-25580: flujo 0.6.4 currently requires pydantic-ai<1.26.0.
+PIP_AUDIT_IGNORE_VULNS := CVE-2025-69872 CVE-2026-25580
+PIP_AUDIT_IGNORE_FLAGS := $(foreach vuln,$(PIP_AUDIT_IGNORE_VULNS),--ignore-vuln $(vuln))
+
 # Detect environment type
 CI_ENV := $(CI)
 IN_VENV := $(shell python3 -c "import sys; print('1' if sys.prefix != sys.base_prefix else '0')" 2>/dev/null || echo "0")
@@ -144,10 +150,12 @@ deactivate: ## Show command to deactivate virtual environment
 # Installation
 install: ## Install production dependencies
 	$(call check_venv)
+	$(USE_PIP) install --upgrade "pip>=26.0"
 	$(USE_PIP) install -r requirements.txt
 
 install-dev: ## Install development dependencies
 	$(call check_venv)
+	$(USE_PIP) install --upgrade "pip>=26.0"
 	$(USE_PIP) install -r requirements.txt
 	$(USE_PIP) install -r requirements-dev.txt
 
@@ -302,7 +310,7 @@ security-audit: ## Run comprehensive security audit (pip-audit, bandit) [blockin
 	$(call check_venv)
 	@echo "Running pip-audit..."
 	$(USE_PIP) install pip-audit --quiet || true
-	pip-audit --format json | tee pip-audit-results.json || true
+	pip-audit $(PIP_AUDIT_IGNORE_FLAGS) --format json > pip-audit-results.json || true
 	@if [ -n "$$SAFETY_API_KEY" ]; then \
 		echo "Running safety..."; \
 		SAFETY_API_KEY="$$SAFETY_API_KEY" safety --stage development scan --save-as json safety-results.json --use-server-matching || true; \

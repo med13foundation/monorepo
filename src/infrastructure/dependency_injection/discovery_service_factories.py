@@ -6,24 +6,39 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.application.services import (
+    DataDiscoveryService,
+    DataDiscoveryServiceDependencies,
+    DataSourceActivationService,
+    DiscoveryConfigurationService,
+    PubMedDiscoveryService,
+    PubMedQueryBuilder,
+    SourceManagementService,
+    StorageConfigurationService,
+    StorageOperationCoordinator,
+)
 from src.infrastructure.data_sources import (
     DeterministicPubMedSearchGateway,
     SimplePubMedPdfGateway,
 )
 from src.infrastructure.queries.source_query_client import HTTPQueryClient
+from src.infrastructure.repositories import (
+    SQLAlchemyDataDiscoverySessionRepository,
+    SqlAlchemyDataSourceActivationRepository,
+    SQLAlchemyDiscoveryPresetRepository,
+    SQLAlchemyDiscoverySearchJobRepository,
+    SQLAlchemyQueryTestResultRepository,
+    SQLAlchemySourceCatalogRepository,
+    SqlAlchemySourceTemplateRepository,
+    SqlAlchemyStorageConfigurationRepository,
+    SqlAlchemyStorageOperationRepository,
+    SqlAlchemyUserDataSourceRepository,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from src.application.services import (
-        DataDiscoveryService,
-        DiscoveryConfigurationService,
-        PubMedDiscoveryService,
-        SourceManagementService,
-        StorageConfigurationService,
-        StorageOperationCoordinator,
-        SystemStatusService,
-    )
+    from src.application.services import SystemStatusService
     from src.domain.services import storage_metrics, storage_providers
 
 
@@ -40,12 +55,6 @@ class DiscoveryServiceFactoryMixin:
         self,
         session: Session,
     ) -> DiscoveryConfigurationService:
-        from src.application.services import (
-            DiscoveryConfigurationService,
-            PubMedQueryBuilder,
-        )
-        from src.infrastructure.repositories import SQLAlchemyDiscoveryPresetRepository
-
         preset_repository = SQLAlchemyDiscoveryPresetRepository(session)
         return DiscoveryConfigurationService(
             preset_repository=preset_repository,
@@ -56,12 +65,6 @@ class DiscoveryServiceFactoryMixin:
         self,
         session: Session,
     ) -> StorageConfigurationService:
-        from src.application.services import StorageConfigurationService
-        from src.infrastructure.repositories import (
-            SqlAlchemyStorageConfigurationRepository,
-            SqlAlchemyStorageOperationRepository,
-        )
-
         configuration_repository = SqlAlchemyStorageConfigurationRepository(session)
         operation_repository = SqlAlchemyStorageOperationRepository(session)
         system_status_service = self.get_system_status_service()
@@ -78,8 +81,6 @@ class DiscoveryServiceFactoryMixin:
         session: Session,
     ) -> StorageOperationCoordinator:
         """Return a coordinator for storing artifacts via storage providers."""
-        from src.application.services import StorageOperationCoordinator
-
         storage_service = self.create_storage_configuration_service(session)
         return StorageOperationCoordinator(storage_service)
 
@@ -87,11 +88,6 @@ class DiscoveryServiceFactoryMixin:
         self,
         session: Session,
     ) -> PubMedDiscoveryService:
-        from src.application.services import PubMedDiscoveryService, PubMedQueryBuilder
-        from src.infrastructure.repositories import (
-            SQLAlchemyDiscoverySearchJobRepository,
-        )
-
         job_repository = SQLAlchemyDiscoverySearchJobRepository(session)
         query_builder = PubMedQueryBuilder()
         search_gateway = DeterministicPubMedSearchGateway(query_builder)
@@ -109,12 +105,6 @@ class DiscoveryServiceFactoryMixin:
         self,
         session: Session,
     ) -> SourceManagementService:
-        from src.application.services import SourceManagementService
-        from src.infrastructure.repositories import (
-            SqlAlchemySourceTemplateRepository,
-            SqlAlchemyUserDataSourceRepository,
-        )
-
         user_data_source_repo = SqlAlchemyUserDataSourceRepository(session)
         template_repo = SqlAlchemySourceTemplateRepository(session)
         return SourceManagementService(
@@ -123,19 +113,6 @@ class DiscoveryServiceFactoryMixin:
         )
 
     def create_data_discovery_service(self, session: Session) -> DataDiscoveryService:
-        from src.application.services import (
-            DataDiscoveryService,
-            DataDiscoveryServiceDependencies,
-            DataSourceActivationService,
-        )
-        from src.infrastructure.repositories import (
-            SQLAlchemyDataDiscoverySessionRepository,
-            SqlAlchemyDataSourceActivationRepository,
-            SQLAlchemyQueryTestResultRepository,
-            SQLAlchemySourceCatalogRepository,
-            SqlAlchemySourceTemplateRepository,
-        )
-
         session_repo = SQLAlchemyDataDiscoverySessionRepository(session)
         catalog_repo = SQLAlchemySourceCatalogRepository(session)
         query_repo = SQLAlchemyQueryTestResultRepository(session)

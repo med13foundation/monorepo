@@ -5,12 +5,13 @@ import { fetchTemplate } from '@/lib/api/templates'
 import TemplateDetailClient from './template-detail-client'
 
 interface TemplateDetailPageProps {
-  params: {
+  params: Promise<{
     templateId: string
-  }
+  }>
 }
 
 export default async function TemplateDetailPage({ params }: TemplateDetailPageProps) {
+  const { templateId } = await params
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 
@@ -21,10 +22,10 @@ export default async function TemplateDetailPage({ params }: TemplateDetailPageP
   let template = null
 
   try {
-    template = await fetchTemplate(params.templateId, token)
+    template = await fetchTemplate(templateId, token)
   } catch (error) {
     console.error('[TemplateDetailPage] Failed to fetch template:', error)
   }
 
-  return <TemplateDetailClient templateId={params.templateId} template={template} />
+  return <TemplateDetailClient templateId={templateId} template={template} />
 }

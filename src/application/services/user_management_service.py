@@ -340,42 +340,59 @@ class UserManagementService:
         )
 
     async def get_user_statistics(self) -> UserStatisticsResponse:
-        # Count by status
-        active_count = await self.user_repository.count_users_by_status(
-            UserStatus.ACTIVE,
-        )
-        inactive_count = await self.user_repository.count_users_by_status(
-            UserStatus.INACTIVE,
-        )
-        suspended_count = await self.user_repository.count_users_by_status(
-            UserStatus.SUSPENDED,
-        )
-        pending_count = await self.user_repository.count_users_by_status(
-            UserStatus.PENDING_VERIFICATION,
-        )
+        try:
+            # Count by status
+            active_count = await self.user_repository.count_users_by_status(
+                UserStatus.ACTIVE,
+            )
+            inactive_count = await self.user_repository.count_users_by_status(
+                UserStatus.INACTIVE,
+            )
+            suspended_count = await self.user_repository.count_users_by_status(
+                UserStatus.SUSPENDED,
+            )
+            pending_count = await self.user_repository.count_users_by_status(
+                UserStatus.PENDING_VERIFICATION,
+            )
 
-        total_users = active_count + inactive_count + suspended_count + pending_count
+            total_users = (
+                active_count + inactive_count + suspended_count + pending_count
+            )
 
-        # Count by role
-        role_counts = {}
-        for role in UserRole:
-            count = await self.user_repository.count_users(role=role.value)
-            role_counts[role.value] = count
+            # Count by role
+            role_counts: dict[str, int] = {}
+            for role in UserRole:
+                count = await self.user_repository.count_users(role=role.value)
+                role_counts[role.value] = count
 
-        # Recent activity (simplified - would need proper date filtering)
-        recent_registrations = 0  # TODO: Implement date-based queries
-        recent_logins = 0  # TODO: Implement date-based queries
+            # Recent activity (simplified - would need proper date filtering)
+            recent_registrations = 0  # TODO: Implement date-based queries
+            recent_logins = 0  # TODO: Implement date-based queries
 
-        return UserStatisticsResponse(
-            total_users=total_users,
-            active_users=active_count,
-            inactive_users=inactive_count,
-            suspended_users=suspended_count,
-            pending_verification=pending_count,
-            by_role=role_counts,
-            recent_registrations=recent_registrations,
-            recent_logins=recent_logins,
-        )
+            return UserStatisticsResponse(
+                total_users=total_users,
+                active_users=active_count,
+                inactive_users=inactive_count,
+                suspended_users=suspended_count,
+                pending_verification=pending_count,
+                by_role=role_counts,
+                recent_registrations=recent_registrations,
+                recent_logins=recent_logins,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to compute user statistics; returning empty statistics payload",
+            )
+            return UserStatisticsResponse(
+                total_users=0,
+                active_users=0,
+                inactive_users=0,
+                suspended_users=0,
+                pending_verification=0,
+                by_role={role.value: 0 for role in UserRole},
+                recent_registrations=0,
+                recent_logins=0,
+            )
 
     async def lock_user_account(
         self,

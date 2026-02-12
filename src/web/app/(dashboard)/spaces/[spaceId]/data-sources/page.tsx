@@ -7,12 +7,13 @@ import type { DataSourceListResponse } from '@/lib/api/data-sources'
 import { fetchSpaceDiscoveryState } from '@/app/actions/space-discovery'
 
 interface SpaceDataSourcesPageProps {
-  params: {
+  params: Promise<{
     spaceId: string
-  }
+  }>
 }
 
 export default async function SpaceDataSourcesPage({ params }: SpaceDataSourcesPageProps) {
+  const { spaceId } = await params
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 
@@ -24,21 +25,21 @@ export default async function SpaceDataSourcesPage({ params }: SpaceDataSourcesP
   let dataSourcesError: string | null = null
 
   try {
-    dataSources = await fetchDataSourcesBySpace(params.spaceId, {}, token)
+    dataSources = await fetchDataSourcesBySpace(spaceId, {}, token)
   } catch (error) {
     dataSourcesError =
       error instanceof Error ? error.message : 'Unable to load data sources for this space.'
     console.error('[SpaceDataSourcesPage] Failed to fetch data sources', error)
   }
 
-  const discoveryResult = await fetchSpaceDiscoveryState(params.spaceId)
+  const discoveryResult = await fetchSpaceDiscoveryState(spaceId)
   const discoveryState = discoveryResult.success ? discoveryResult.data.orchestratedState : null
   const discoveryCatalog = discoveryResult.success ? discoveryResult.data.catalog : []
   const discoveryError = discoveryResult.success ? null : discoveryResult.error
 
   return (
     <SpaceDataSourcesClient
-      spaceId={params.spaceId}
+      spaceId={spaceId}
       dataSources={dataSources}
       dataSourcesError={dataSourcesError}
       discoveryState={discoveryState}

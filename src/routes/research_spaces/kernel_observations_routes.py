@@ -147,6 +147,7 @@ def create_kernel_observation(
 )
 def list_kernel_observations(
     space_id: UUID,
+    *,
     subject_id: UUID | None = Query(
         None,
         description="Filter by subject entity_id",

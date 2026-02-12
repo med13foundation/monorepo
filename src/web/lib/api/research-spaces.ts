@@ -268,11 +268,24 @@ export async function fetchSpaceCurationStats(
   if (!token) {
     throw new Error('Authentication token is required')
   }
-  const resp = await apiClient.get<CurationStats>(
-    `/research-spaces/${spaceId}/curation/stats`,
-    authHeaders(token),
-  )
-  return resp.data
+  try {
+    const resp = await apiClient.get<CurationStats>(
+      `/research-spaces/${spaceId}/curation/stats`,
+      authHeaders(token),
+    )
+    return resp.data
+  } catch (error) {
+    const axiosError = error as AxiosError
+    if (axiosError.response?.status === 404 || axiosError.response?.status === 500) {
+      return {
+        total: 0,
+        pending: 0,
+        approved: 0,
+        rejected: 0,
+      }
+    }
+    throw error
+  }
 }
 
 export async function fetchSpaceCurationQueue(
@@ -289,12 +302,25 @@ export async function fetchSpaceCurationQueue(
   if (!token) {
     throw new Error('Authentication token is required')
   }
-  const resp = await apiClient.get<CurationQueueResponse>(
-    `/research-spaces/${spaceId}/curation/queue`,
-    {
-      params,
-      ...authHeaders(token),
-    },
-  )
-  return resp.data
+  try {
+    const resp = await apiClient.get<CurationQueueResponse>(
+      `/research-spaces/${spaceId}/curation/queue`,
+      {
+        params,
+        ...authHeaders(token),
+      },
+    )
+    return resp.data
+  } catch (error) {
+    const axiosError = error as AxiosError
+    if (axiosError.response?.status === 404 || axiosError.response?.status === 500) {
+      return {
+        items: [],
+        total: 0,
+        skip: params?.skip ?? 0,
+        limit: params?.limit ?? 50,
+      }
+    }
+    throw error
+  }
 }

@@ -7,18 +7,14 @@ import {
   deleteDataSource,
   fetchIngestionJobHistory,
   testDataSourceAiConfiguration,
-  triggerDataSourceIngestion,
   updateDataSource,
 } from '@/lib/api/data-sources'
 import type {
   DataSource,
-  DataSourceIngestionSchedule,
-  ScheduleFrequency,
 } from '@/types/data-source'
 import type {
   DataSourceAiTestResult,
   IngestionJobHistoryResponse,
-  IngestionRunResponse,
   ScheduleConfigurationPayload,
   ScheduleConfigurationResponse,
   UpdateDataSourcePayload,
@@ -104,26 +100,6 @@ export async function configureDataSourceScheduleAction(
     return {
       success: false,
       error: getActionErrorMessage(error, 'Failed to configure ingestion schedule'),
-    }
-  }
-}
-
-export async function triggerDataSourceIngestionAction(
-  sourceId: string,
-  spaceId?: string | null,
-): Promise<ActionResult<IngestionRunResponse>> {
-  try {
-    const token = await requireAccessToken()
-    const summary = await triggerDataSourceIngestion(sourceId, token)
-    revalidatePaths(getSpacePaths(spaceId))
-    return { success: true, data: summary }
-  } catch (error: unknown) {
-    if (process.env.NODE_ENV !== 'test') {
-      console.error('[ServerAction] triggerDataSourceIngestion failed:', error)
-    }
-    return {
-      success: false,
-      error: getActionErrorMessage(error, 'Failed to trigger ingestion'),
     }
   }
 }

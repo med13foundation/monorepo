@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, desc, func, select
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from src.domain.entities.ingestion_job import (
     IngestionError,
@@ -40,6 +42,14 @@ class SqlAlchemyIngestionJobRepository(IngestionJobRepository):
     def __init__(self, session: Session | None = None) -> None:
         self._session = session
 
+    @staticmethod
+    def _is_missing_optional_column_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "column ingestion_jobs.job_metadata does not exist" in message
+            or "column ingestion_jobs.source_config_snapshot does not exist" in message
+        )
+
     @property
     def session(self) -> Session:
         if self._session is None:
@@ -69,7 +79,18 @@ class SqlAlchemyIngestionJobRepository(IngestionJobRepository):
         self,
         stmt: Select[tuple[IngestionJobModel]],
     ) -> list[IngestionJob]:
-        models = self.session.execute(stmt).scalars().all()
+        logger = logging.getLogger(__name__)
+        try:
+            models = self.session.execute(stmt).scalars().all()
+        except (OperationalError, ProgrammingError) as exc:
+            if not self._is_missing_optional_column_error(exc):
+                raise
+            logger.warning(
+                "Ingestion job optional columns are unavailable; returning empty history list",
+                exc_info=exc,
+            )
+            self.session.rollback()
+            return []
         return [IngestionJobMapper.to_domain(model) for model in models]
 
     def find_by_source(

@@ -25,6 +25,7 @@ class ProvenanceTracker:
         self,
         research_space_id: str,
         source_type: str,
+        *,
         source_ref: str | None = None,
         extraction_run_id: str | None = None,
         mapping_method: str | None = None,

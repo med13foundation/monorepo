@@ -17,6 +17,7 @@ from src.application.dto.auth_requests import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
+    RefreshTokenRequest,
     RegisterUserRequest,
     ResetPasswordRequest,
     UpdateProfileRequest,
@@ -250,13 +251,13 @@ async def login(
     description="Get new access token using refresh token",
 )
 async def refresh_token(
-    refresh_token: str,
+    request: RefreshTokenRequest,
     auth_service: authentication_service.AuthenticationService = Depends(
         container.get_authentication_service,
     ),
 ) -> TokenRefreshResponse:
     try:
-        response = await auth_service.refresh_token(refresh_token)
+        response = await auth_service.refresh_token(request.refresh_token)
         return response
     except authentication_service.AuthenticationError:
         raise HTTPException(

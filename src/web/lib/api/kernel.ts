@@ -6,8 +6,6 @@ import type {
   KernelEntityUpdateRequest,
   KernelEntityUpsertResponse,
   KernelGraphExportResponse,
-  KernelIngestRequest,
-  KernelIngestResponse,
   KernelObservationCreateRequest,
   KernelObservationListResponse,
   KernelObservationResponse,
@@ -17,6 +15,8 @@ import type {
   KernelRelationCurationUpdateRequest,
   KernelRelationListResponse,
   KernelRelationResponse,
+  SpaceRunActiveSourcesResponse,
+  SpaceSourceIngestionRunResponse,
 } from '@/types/kernel'
 
 export interface KernelEntityListParams {
@@ -288,17 +288,31 @@ export async function fetchKernelProvenanceRecord(
   )
 }
 
-export async function ingestKernelRecords(
+export async function runAllActiveSpaceSourcesIngestion(
   spaceId: string,
-  payload: KernelIngestRequest,
   token?: string,
-): Promise<KernelIngestResponse> {
+): Promise<SpaceRunActiveSourcesResponse> {
   if (!token) {
-    throw new Error('Authentication token is required for ingestKernelRecords')
+    throw new Error('Authentication token is required for runAllActiveSpaceSourcesIngestion')
   }
-  return apiPost<KernelIngestResponse>(
-    `/research-spaces/${spaceId}/ingest`,
-    payload,
+  return apiPost<SpaceRunActiveSourcesResponse>(
+    `/research-spaces/${spaceId}/ingest/run`,
+    {},
+    { token },
+  )
+}
+
+export async function runSingleSpaceSourceIngestion(
+  spaceId: string,
+  sourceId: string,
+  token?: string,
+): Promise<SpaceSourceIngestionRunResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for runSingleSpaceSourceIngestion')
+  }
+  return apiPost<SpaceSourceIngestionRunResponse>(
+    `/research-spaces/${spaceId}/ingest/sources/${sourceId}/run`,
+    {},
     { token },
   )
 }

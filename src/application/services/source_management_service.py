@@ -180,7 +180,7 @@ class SourceManagementService:
     ) -> list[UserDataSource]:
         return self._source_repository.find_by_owner(owner_id, skip, limit)
 
-    def update_source(
+    def update_source(  # noqa: C901 - explicit field-by-field updates keep behavior clear
         self,
         source_id: UUID,
         request: UpdateSourceRequest,
@@ -189,6 +189,15 @@ class SourceManagementService:
         source = self._source_repository.find_by_id(source_id)
         if not source or (owner_id is not None and source.owner_id != owner_id):
             return None
+
+        if request.status == SourceStatus.ACTIVE:
+            effective_schedule = request.ingestion_schedule or source.ingestion_schedule
+            if not effective_schedule.requires_scheduler:
+                msg = (
+                    "Active sources require an enabled ingestion schedule "
+                    "with a non-manual frequency"
+                )
+                raise ValueError(msg)
 
         # Apply updates
         updated_source = source
@@ -249,6 +258,12 @@ class SourceManagementService:
         source = self._source_repository.find_by_id(source_id)
         if not source or source.owner_id != owner_id:
             return None
+        if not source.ingestion_schedule.requires_scheduler:
+            msg = (
+                "Active sources require an enabled ingestion schedule "
+                "with a non-manual frequency"
+            )
+            raise ValueError(msg)
 
         previous_status = source.status
         activated_source = source.update_status(SourceStatus.ACTIVE)

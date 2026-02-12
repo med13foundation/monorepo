@@ -6,13 +6,21 @@ for the Data Sources module.
 """
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 from src.domain.entities.user_data_source import (
+    IngestionSchedule,
+    QualityMetrics,
+    SourceConfiguration,
+    SourceStatus,
+    SourceType,
     UserDataSource,
 )
-
-# Stub for missing UserDataSourceModel
-UserDataSourceModel = object
+from src.models.database.user_data_source import (
+    SourceStatusEnum,
+    SourceTypeEnum,
+    UserDataSourceModel,
+)
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -52,8 +60,41 @@ class UserDataSourceMapper:
         Returns:
             The corresponding UserDataSource domain entity
         """
-        msg = "UserDataSourceModel has been removed."
-        raise NotImplementedError(msg)
+        source_type_raw = (
+            model.source_type.value
+            if isinstance(model.source_type, SourceTypeEnum)
+            else str(model.source_type)
+        )
+        status_raw = (
+            model.status.value
+            if isinstance(model.status, SourceStatusEnum)
+            else str(model.status)
+        )
+
+        return UserDataSource(
+            id=UUID(str(model.id)),
+            owner_id=UUID(str(model.owner_id)),
+            research_space_id=(
+                UUID(str(model.research_space_id))
+                if model.research_space_id is not None
+                else None
+            ),
+            name=model.name,
+            description=model.description,
+            source_type=SourceType(source_type_raw),
+            template_id=UUID(str(model.template_id)) if model.template_id else None,
+            configuration=SourceConfiguration.model_validate(model.configuration or {}),
+            status=SourceStatus(status_raw),
+            ingestion_schedule=IngestionSchedule.model_validate(
+                model.ingestion_schedule or {},
+            ),
+            quality_metrics=QualityMetrics.model_validate(model.quality_metrics or {}),
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+            last_ingested_at=_parse_datetime(model.last_ingested_at),
+            tags=model.tags or [],
+            version=model.version,
+        )
 
     @staticmethod
     def to_model(entity: UserDataSource) -> UserDataSourceModel:
@@ -66,5 +107,23 @@ class UserDataSourceMapper:
         Returns:
             The corresponding UserDataSourceModel
         """
-        msg = "UserDataSourceModel has been removed."
-        raise NotImplementedError(msg)
+        return UserDataSourceModel(
+            id=str(entity.id),
+            owner_id=str(entity.owner_id),
+            research_space_id=(
+                str(entity.research_space_id)
+                if entity.research_space_id is not None
+                else None
+            ),
+            name=entity.name,
+            description=entity.description,
+            source_type=SourceTypeEnum(entity.source_type.value),
+            template_id=str(entity.template_id) if entity.template_id else None,
+            configuration=entity.configuration.model_dump(mode="json"),
+            status=SourceStatusEnum(entity.status.value),
+            ingestion_schedule=entity.ingestion_schedule.model_dump(mode="json"),
+            quality_metrics=entity.quality_metrics.model_dump(mode="json"),
+            last_ingested_at=_format_datetime(entity.last_ingested_at),
+            tags=list(entity.tags),
+            version=entity.version,
+        )

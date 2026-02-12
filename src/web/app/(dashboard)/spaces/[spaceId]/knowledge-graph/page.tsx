@@ -6,12 +6,13 @@ import { fetchKernelGraphExport } from '@/lib/api/kernel'
 import type { KernelGraphExportResponse } from '@/types/kernel'
 
 interface KnowledgeGraphPageProps {
-  params: {
+  params: Promise<{
     spaceId: string
-  }
+  }>
 }
 
 export default async function KnowledgeGraphPage({ params }: KnowledgeGraphPageProps) {
+  const { spaceId } = await params
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 
@@ -23,7 +24,7 @@ export default async function KnowledgeGraphPage({ params }: KnowledgeGraphPageP
   let graphError: string | null = null
 
   try {
-    graph = await fetchKernelGraphExport(params.spaceId, token)
+    graph = await fetchKernelGraphExport(spaceId, token)
   } catch (error) {
     graphError =
       error instanceof Error ? error.message : 'Unable to load knowledge graph for this space.'
@@ -32,7 +33,7 @@ export default async function KnowledgeGraphPage({ params }: KnowledgeGraphPageP
 
   return (
     <KnowledgeGraphClient
-      spaceId={params.spaceId}
+      spaceId={spaceId}
       graph={graph}
       graphError={graphError}
     />

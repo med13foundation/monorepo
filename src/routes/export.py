@@ -50,6 +50,7 @@ def get_export_service(db: Session = Depends(get_session)) -> BulkExportService:
 async def export_entity_data(
     entity_type: str,
     space_id: UUID = Query(..., description="Research space scope"),
+    *,
     export_format: ExportFormat = Query(
         ExportFormat.JSON,
         description="Export format",

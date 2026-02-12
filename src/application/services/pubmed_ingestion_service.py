@@ -21,8 +21,6 @@ from src.type_definitions.storage import StorageUseCase
 LOW_CONFIDENCE_THRESHOLD = 0.5
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from src.application.services.ports.ingestion_pipeline_port import (
         IngestionPipelinePort,
     )
@@ -160,7 +158,7 @@ class PubMedIngestionService:
 
     def _to_pipeline_records(
         self,
-        records: Iterable[JSONObject],
+        records: list[JSONObject],
         *,
         original_source_id: str,
     ) -> list[IngestionRawRecord]:
@@ -193,7 +191,7 @@ class PubMedIngestionService:
 
     async def _persist_raw_records(
         self,
-        records: Iterable[RawRecord],
+        records: list[RawRecord],
         source: user_data_source.UserDataSource,
     ) -> None:
         """Persist raw records to storage if backend is available."""
@@ -234,7 +232,7 @@ class PubMedIngestionService:
 
     def _transform_records(
         self,
-        records: Iterable[RawRecord],
+        records: list[RawRecord],
     ) -> list[publication.Publication]:
         transformed: list[publication.Publication] = []
         for record in records:
@@ -247,7 +245,7 @@ class PubMedIngestionService:
 
     def _persist_publications(
         self,
-        publications: Iterable[publication.Publication],
+        publications: list[publication.Publication],
     ) -> tuple[int, int, tuple[int, ...], tuple[int, ...]]:
         created = 0
         updated = 0

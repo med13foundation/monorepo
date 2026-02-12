@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { apiGet, apiPost, apiPut, apiDelete, type ApiRequestOptions } from '@/lib/api/client'
 
 export interface UserPublic {
@@ -124,6 +125,17 @@ export interface UserStatisticsResponse {
   recent_logins: number
 }
 
+const emptyUserStatistics = (): UserStatisticsResponse => ({
+  total_users: 0,
+  active_users: 0,
+  inactive_users: 0,
+  suspended_users: 0,
+  pending_verification: 0,
+  by_role: {},
+  recent_registrations: 0,
+  recent_logins: 0,
+})
+
 export async function fetchUserStatistics(
   token?: string,
 ): Promise<UserStatisticsResponse> {
@@ -131,7 +143,17 @@ export async function fetchUserStatistics(
     throw new Error('Authentication token is required for fetchUserStatistics')
   }
 
-  return apiGet<UserStatisticsResponse>('/users/stats/overview', { token })
+  try {
+    return await apiGet<UserStatisticsResponse>('/users/stats/overview', { token })
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const statusCode = error.response?.status
+      if (statusCode === 500 || statusCode === 404) {
+        return emptyUserStatistics()
+      }
+    }
+    throw error
+  }
 }
 
 export async function lockUser(

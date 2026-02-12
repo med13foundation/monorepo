@@ -37,6 +37,7 @@ from .router import (
 )
 def list_kernel_provenance(
     space_id: UUID,
+    *,
     source_type: str | None = Query(None),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),

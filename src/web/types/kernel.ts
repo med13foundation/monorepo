@@ -141,21 +141,26 @@ export interface KernelGraphExportResponse {
   edges: KernelRelationResponse[]
 }
 
-export interface KernelIngestRecordRequest {
+export type SpaceSourceRunStatus = 'completed' | 'skipped' | 'failed'
+
+export interface SpaceSourceIngestionRunResponse {
   source_id: string
-  data: JSONObject
-  metadata?: JSONObject
+  source_name: string
+  status: SpaceSourceRunStatus
+  message?: string | null
+  fetched_records: number
+  parsed_publications: number
+  created_publications: number
+  updated_publications: number
+  executed_query?: string | null
 }
 
-export interface KernelIngestRequest {
-  entity_type?: string | null
-  record_type?: string | null
-  records: KernelIngestRecordRequest[]
-}
-
-export interface KernelIngestResponse {
-  success: boolean
-  entities_created: number
-  observations_created: number
-  errors: string[]
+export interface SpaceRunActiveSourcesResponse {
+  total_sources: number
+  active_sources: number
+  runnable_sources: number
+  completed_sources: number
+  skipped_sources: number
+  failed_sources: number
+  runs: SpaceSourceIngestionRunResponse[]
 }

@@ -5,7 +5,6 @@ import { toast } from 'sonner'
 import {
   deleteDataSourceAction,
   testDataSourceAiConfigurationAction,
-  triggerDataSourceIngestionAction,
   updateDataSourceAction,
 } from '@/app/actions/data-sources'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -29,7 +28,6 @@ import {
   Database,
   Loader2,
   Clock,
-  RefreshCw,
   Info,
   Search,
   MoreVertical,
@@ -38,7 +36,7 @@ import {
 } from 'lucide-react'
 import { DataSourceScheduleDialog } from './DataSourceScheduleDialog'
 import { DataSourceAiConfigDialog } from './DataSourceAiConfigDialog'
-import { DataSourceIngestionDetailsDialog, type ManualIngestionSummary } from './DataSourceIngestionDetailsDialog'
+import { DataSourceIngestionDetailsDialog } from './DataSourceIngestionDetailsDialog'
 import { DiscoverSourcesDialog } from './DiscoverSourcesDialog'
 import { DataSourceAiTestDialog } from './DataSourceAiTestDialog'
 import type { OrchestratedSessionState, SourceCatalogEntry } from '@/types/generated'
@@ -65,13 +63,12 @@ export function DataSourcesList({
   discoveryError,
 }: DataSourcesListProps) {
   const router = useRouter()
-  const [lastSummaries, setLastSummaries] = useState<Record<string, ManualIngestionSummary>>({})
   const [detailSourceId, setDetailSourceId] = useState<string | null>(null)
   const [isDiscoverDialogOpen, setIsDiscoverDialogOpen] = useState(false)
   const [scheduleDialogSource, setScheduleDialogSource] = useState<DataSource | null>(null)
   const [aiConfigDialogSource, setAiConfigDialogSource] = useState<DataSource | null>(null)
-  const [runningSourceId, setRunningSourceId] = useState<string | null>(null)
   const [testingSourceId, setTestingSourceId] = useState<string | null>(null)
+  const [togglingSourceId, setTogglingSourceId] = useState<string | null>(null)
   const [retiringSourceId, setRetiringSourceId] = useState<string | null>(null)
   const [deleteSourceId, setDeleteSourceId] = useState<string | null>(null)
   const [isDeletingSource, setIsDeletingSource] = useState(false)
@@ -98,27 +95,6 @@ export function DataSourcesList({
 
   const detailSource =
     resolvedDataSources.find((source) => source.id === detailSourceId) ?? null
-
-  const handleRunNow = async (source: DataSource) => {
-    try {
-      setRunningSourceId(source.id)
-      const result = await triggerDataSourceIngestionAction(source.id, spaceId)
-      if (!result.success) {
-        toast.error(result.error)
-        return
-      }
-      const summary = result.data
-      const completedAt = new Date().toISOString()
-      const enrichedSummary: ManualIngestionSummary = { ...summary, completedAt }
-      setLastSummaries((prev) => ({ ...prev, [source.id]: enrichedSummary }))
-      toast.success(`Ingestion completed for ${source.name}`, {
-        description: `${summary.created_publications} new, ${summary.updated_publications} updated publications.`,
-      })
-      router.refresh()
-    } finally {
-      setRunningSourceId(null)
-    }
-  }
 
   const handleTestAiConfiguration = async (source: DataSource) => {
     try {
@@ -157,6 +133,34 @@ export function DataSourcesList({
       // Error toast is handled by the mutation
     } finally {
       setRetiringSourceId(null)
+    }
+  }
+
+  const handleToggleSourceStatus = async (source: DataSource) => {
+    const shouldActivate = source.status !== 'active'
+    try {
+      setTogglingSourceId(source.id)
+      const result = await updateDataSourceAction(
+        source.id,
+        {
+          status: shouldActivate ? 'active' : 'inactive',
+        },
+        spaceId,
+      )
+      if (!result.success) {
+        toast.error(result.error)
+        return
+      }
+      toast.success(
+        shouldActivate
+          ? `${source.name} is now active`
+          : `${source.name} is now inactive`,
+      )
+      router.refresh()
+    } catch (error) {
+      // Error toast is handled by the mutation
+    } finally {
+      setTogglingSourceId(null)
     }
   }
 
@@ -377,21 +381,6 @@ export function DataSourcesList({
                           Test AI
                         </Button>
                       )}
-                      {source.source_type === 'pubmed' && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleRunNow(source)}
-                          disabled={runningSourceId === source.id}
-                        >
-                          {runningSourceId === source.id ? (
-                            <Loader2 className="mr-2 size-4 animate-spin" />
-                          ) : (
-                            <RefreshCw className="mr-2 size-4" />
-                          )}
-                          Run now
-                        </Button>
-                      )}
                       <Button
                         type="button"
                         size="sm"
@@ -414,6 +403,14 @@ export function DataSourcesList({
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          {source.status !== 'archived' && (
+                            <DropdownMenuItem
+                              disabled={togglingSourceId === source.id}
+                              onClick={() => handleToggleSourceStatus(source)}
+                            >
+                              {source.status === 'active' ? 'Disable source' : 'Enable source'}
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem
                             disabled={source.status === 'archived' || retiringSourceId === source.id}
                             onClick={() => handleRetire(source)}
@@ -460,7 +457,6 @@ export function DataSourcesList({
       />
       <DataSourceIngestionDetailsDialog
         source={detailSource}
-        summary={detailSource ? lastSummaries[detailSource.id] : undefined}
         open={Boolean(detailSourceId)}
         onOpenChange={(open) => {
           if (!open) {

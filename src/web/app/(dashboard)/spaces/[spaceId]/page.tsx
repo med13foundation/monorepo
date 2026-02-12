@@ -17,12 +17,13 @@ import type { DataSourceListResponse } from '@/lib/api/data-sources'
 import type { CurationQueueResponse, CurationStats } from '@/lib/api/research-spaces'
 
 interface SpaceDetailPageProps {
-  params: {
+  params: Promise<{
     spaceId: string
-  }
+  }>
 }
 
 export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) {
+  const { spaceId } = await params
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 
@@ -39,13 +40,13 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
   let currentMembership: ResearchSpaceMembership | null = null
 
   try {
-    space = await fetchResearchSpace(params.spaceId, token)
+    space = await fetchResearchSpace(spaceId, token)
   } catch (error) {
     console.error('[SpaceDetailPage] Failed to fetch research space', error)
   }
 
   try {
-    const membershipResponse = await fetchSpaceMembers(params.spaceId, undefined, token)
+    const membershipResponse = await fetchSpaceMembers(spaceId, undefined, token)
     memberships = membershipResponse.memberships
   } catch (error) {
     membersError =
@@ -54,7 +55,7 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
   }
 
   try {
-    currentMembership = await fetchMyMembership(params.spaceId, token)
+    currentMembership = await fetchMyMembership(spaceId, token)
   } catch (error) {
     console.error('[SpaceDetailPage] Failed to fetch membership', error)
   }
@@ -64,14 +65,14 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
 
   if (hasSpaceAccess) {
     try {
-      dataSources = await fetchDataSourcesBySpace(params.spaceId, { page: 1, limit: 5 }, token)
+      dataSources = await fetchDataSourcesBySpace(spaceId, { page: 1, limit: 5 }, token)
     } catch (error) {
       console.error('[SpaceDetailPage] Failed to fetch data sources', error)
     }
 
     try {
-      curationStats = await fetchSpaceCurationStats(params.spaceId, token)
-      curationQueue = await fetchSpaceCurationQueue(params.spaceId, { limit: 5 }, token)
+      curationStats = await fetchSpaceCurationStats(spaceId, token)
+      curationQueue = await fetchSpaceCurationQueue(spaceId, { limit: 5 }, token)
     } catch (error) {
       console.error('[SpaceDetailPage] Failed to fetch curation data', error)
     }
@@ -91,7 +92,7 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
 
   return (
     <SpaceDetailClient
-      spaceId={params.spaceId}
+      spaceId={spaceId}
       space={space}
       memberships={memberships}
       membersError={membersError}

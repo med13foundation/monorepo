@@ -86,6 +86,7 @@ def get_search_service(db: Session = Depends(get_session)) -> "UnifiedSearchServ
 async def unified_search(
     space_id: UUID = Query(..., description="Research space scope"),
     query: str = Query(..., min_length=1, max_length=200, description="Search query"),
+    *,
     entity_types: list[SearchEntity] | None = Query(
         None,
         description="Entity types to search (defaults to all)",

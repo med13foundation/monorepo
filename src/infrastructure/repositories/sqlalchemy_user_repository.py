@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, datetime
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, delete, desc, func, select, update
@@ -18,6 +19,8 @@ from src.models.database.user import UserModel
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from uuid import UUID
+
+    from sqlalchemy.sql.elements import ColumnElement
 
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
@@ -51,12 +54,76 @@ class SqlAlchemyUserRepository(UserRepository):
         """Convert a SQLAlchemy model to a domain entity."""
         if model is None:
             return None
-        return User.model_validate(model)
+        return User.model_validate(
+            {
+                "id": model.id,
+                "email": model.email,
+                "username": model.username,
+                "full_name": model.full_name,
+                "hashed_password": model.hashed_password,
+                "role": SqlAlchemyUserRepository._normalize_role(model.role),
+                "status": SqlAlchemyUserRepository._normalize_status(model.status),
+                "email_verified": model.email_verified,
+                "email_verification_token": model.email_verification_token,
+                "password_reset_token": model.password_reset_token,
+                "password_reset_expires": model.password_reset_expires,
+                "last_login": model.last_login,
+                "login_attempts": model.login_attempts,
+                "locked_until": model.locked_until,
+                "created_at": model.created_at,
+                "updated_at": model.updated_at,
+            },
+        )
 
     @staticmethod
     def _to_domain_list(models: list[UserModel]) -> list[User]:
         """Convert a list of SQLAlchemy models to domain entities."""
-        return [User.model_validate(user_model) for user_model in models]
+        users: list[User] = []
+        for user_model in models:
+            user = SqlAlchemyUserRepository._to_domain(user_model)
+            if user is not None:
+                users.append(user)
+        return users
+
+    @staticmethod
+    def _enum_to_text(raw_value: object) -> str:
+        if isinstance(raw_value, Enum):
+            return str(raw_value.value)
+        return str(raw_value)
+
+    @staticmethod
+    def _normalize_role(raw_role: object) -> UserRole:
+        return UserRole(
+            SqlAlchemyUserRepository._enum_to_text(raw_role).strip().lower(),
+        )
+
+    @staticmethod
+    def _normalize_status(raw_status: object) -> UserStatus:
+        normalized = SqlAlchemyUserRepository._enum_to_text(raw_status).strip().lower()
+        if normalized == "deactivated":
+            return UserStatus.INACTIVE
+        return UserStatus(normalized)
+
+    @staticmethod
+    def _status_filter(status: UserStatus) -> ColumnElement[bool]:
+        """
+        Build a resilient status predicate across enum schema variants.
+
+        Some environments still use legacy enum labels (e.g. DEACTIVATED)
+        while the current domain model uses INACTIVE. For INACTIVE we
+        intentionally infer it as "not active/suspended/pending" to avoid
+        enum-label coupling.
+        """
+        if status is UserStatus.INACTIVE:
+            return UserModel.status.notin_(
+                (
+                    UserStatus.ACTIVE,
+                    UserStatus.SUSPENDED,
+                    UserStatus.PENDING_VERIFICATION,
+                ),
+            )
+
+        return UserModel.status == status
 
     async def get_by_id(self, user_id: UUID) -> User | None:
         """Get user by ID."""
@@ -154,7 +221,7 @@ class SqlAlchemyUserRepository(UserRepository):
                 role_enum = UserRole(role)
                 stmt = stmt.where(UserModel.role == role_enum)
             if status is not None:
-                stmt = stmt.where(UserModel.status == status)
+                stmt = stmt.where(self._status_filter(status))
 
             stmt = stmt.order_by(desc(UserModel.created_at)).offset(skip).limit(limit)
             result = await session.execute(stmt)
@@ -174,7 +241,7 @@ class SqlAlchemyUserRepository(UserRepository):
                 role_enum = UserRole(role)
                 stmt = stmt.where(UserModel.role == role_enum)
             if status is not None:
-                stmt = stmt.where(UserModel.status == status)
+                stmt = stmt.where(self._status_filter(status))
 
             result = await session.execute(stmt)
             count = result.scalar_one()
@@ -183,7 +250,13 @@ class SqlAlchemyUserRepository(UserRepository):
     async def count_users_by_status(self, status: UserStatus) -> int:
         """Count users by status."""
         async with self._session() as session:
-            stmt = select(func.count()).where(UserModel.status == status)
+            stmt = (
+                select(func.count())
+                .select_from(UserModel)
+                .where(
+                    self._status_filter(status),
+                )
+            )
             result = await session.execute(stmt)
             count = result.scalar_one()
             return int(count)
@@ -275,7 +348,7 @@ class SqlAlchemyUserRepository(UserRepository):
                 .where(
                     and_(
                         UserModel.last_login.is_not(None),
-                        UserModel.status == UserStatus.ACTIVE,
+                        self._status_filter(UserStatus.ACTIVE),
                     ),
                 )
                 .order_by(desc(UserModel.last_login))
@@ -292,7 +365,7 @@ class SqlAlchemyUserRepository(UserRepository):
                 select(UserModel)
                 .where(
                     and_(
-                        UserModel.status == UserStatus.PENDING_VERIFICATION,
+                        self._status_filter(UserStatus.PENDING_VERIFICATION),
                         UserModel.email_verification_token.is_not(None),
                     ),
                 )

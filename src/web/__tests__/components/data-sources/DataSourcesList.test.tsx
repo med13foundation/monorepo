@@ -25,7 +25,6 @@ jest.mock('@/app/actions/data-sources', () => ({
   deleteDataSourceAction: jest.fn(),
   fetchIngestionJobHistoryAction: jest.fn(),
   testDataSourceAiConfigurationAction: jest.fn(),
-  triggerDataSourceIngestionAction: jest.fn(),
   updateDataSourceAction: jest.fn(),
 }))
 

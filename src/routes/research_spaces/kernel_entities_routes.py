@@ -47,6 +47,7 @@ from .router import (
 )
 def list_kernel_entities(
     space_id: UUID,
+    *,
     entity_type: str | None = Query(
         None,
         alias="type",

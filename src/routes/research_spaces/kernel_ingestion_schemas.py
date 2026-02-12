@@ -1,51 +1,44 @@
-"""Pydantic schemas for kernel ingestion routes."""
+"""Pydantic schemas for space-scoped ingestion execution routes."""
 
 from __future__ import annotations
 
+from typing import Literal
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.type_definitions.common import JSONObject
 
-
-class KernelIngestRecordRequest(BaseModel):
-    """Single raw record for kernel ingestion."""
+class SpaceSourceIngestionRunResponse(BaseModel):
+    """Result for a single source ingestion run."""
 
     model_config = ConfigDict(strict=True)
 
-    source_id: str = Field(..., min_length=1, max_length=256)
-    data: JSONObject
-    metadata: JSONObject = Field(default_factory=dict)
+    source_id: UUID
+    source_name: str = Field(..., min_length=1, max_length=200)
+    status: Literal["completed", "skipped", "failed"]
+    message: str | None = None
+    fetched_records: int = 0
+    parsed_publications: int = 0
+    created_publications: int = 0
+    updated_publications: int = 0
+    executed_query: str | None = None
 
 
-class KernelIngestRequest(BaseModel):
-    """Batch ingestion request."""
-
-    model_config = ConfigDict(strict=True)
-
-    entity_type: str | None = Field(
-        default=None,
-        description="If provided, applied to any record missing metadata.entity_type.",
-    )
-    record_type: str | None = Field(
-        default=None,
-        description="Optional record type (e.g. 'pubmed'); applied to records missing metadata.type.",
-    )
-    records: list[KernelIngestRecordRequest] = Field(..., min_length=1, max_length=200)
-
-
-class KernelIngestResponse(BaseModel):
-    """Ingestion result summary."""
+class SpaceRunActiveSourcesResponse(BaseModel):
+    """Summary for running all active sources in a space."""
 
     model_config = ConfigDict(strict=True)
 
-    success: bool
-    entities_created: int
-    observations_created: int
-    errors: list[str]
+    total_sources: int
+    active_sources: int
+    runnable_sources: int
+    completed_sources: int
+    skipped_sources: int
+    failed_sources: int
+    runs: list[SpaceSourceIngestionRunResponse]
 
 
 __all__ = [
-    "KernelIngestRecordRequest",
-    "KernelIngestRequest",
-    "KernelIngestResponse",
+    "SpaceRunActiveSourcesResponse",
+    "SpaceSourceIngestionRunResponse",
 ]

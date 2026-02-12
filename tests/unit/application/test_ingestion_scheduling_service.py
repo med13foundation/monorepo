@@ -31,6 +31,7 @@ from src.domain.entities.user_data_source import (
     IngestionSchedule,
     ScheduleFrequency,
     SourceConfiguration,
+    SourceStatus,
     SourceType,
     UserDataSource,
 )
@@ -60,7 +61,7 @@ if TYPE_CHECKING:
         StorageHealthSnapshot,
         StorageOperation,
     )
-    from src.domain.entities.user_data_source import QualityMetrics, SourceStatus
+    from src.domain.entities.user_data_source import QualityMetrics
     from src.type_definitions.common import JSONObject, StatisticsResponse
 
 
@@ -346,6 +347,7 @@ def _build_source(schedule: IngestionSchedule) -> UserDataSource:
             field_mapping=None,
             metadata={"query": "MED13"},
         ),
+        status=SourceStatus.ACTIVE,
         ingestion_schedule=schedule,
         tags=[],
         last_ingested_at=None,

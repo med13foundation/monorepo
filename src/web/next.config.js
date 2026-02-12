@@ -40,8 +40,6 @@ const buildCspHeader = () => {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Enable SWC minification for better performance
-  swcMinify: true,
   // Enable standalone output for Docker
   output: 'standalone',
   // Suppress font warnings

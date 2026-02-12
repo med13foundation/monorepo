@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -11,26 +12,25 @@ from src.application.curation.repositories.review_repository import (
     SqlAlchemyReviewRepository,
 )
 from src.application.curation.services.review_service import ReviewService
-from src.application.services.membership_management_service import (
+from src.application.services import (
+    DataSourceActivationService,
+    IngestionSchedulingService,
     MembershipManagementService,
+    SourceManagementService,
 )
 from src.application.services.research_space_management_service import (
     ResearchSpaceManagementService,
 )
-from src.application.services.source_management_service import (
-    SourceManagementService,
-)
 from src.database.session import get_session
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import UserRole
+from src.infrastructure.repositories import (
+    SqlAlchemyDataSourceActivationRepository,
+    SqlAlchemyResearchSpaceRepository,
+    SqlAlchemyUserDataSourceRepository,
+)
 from src.infrastructure.repositories.research_space_membership_repository import (
     SqlAlchemyResearchSpaceMembershipRepository,
-)
-from src.infrastructure.repositories.research_space_repository import (
-    SqlAlchemyResearchSpaceRepository,
-)
-from src.infrastructure.repositories.user_data_source_repository import (
-    SqlAlchemyUserDataSourceRepository,
 )
 
 
@@ -63,6 +63,26 @@ def get_source_service_for_space(
     source_repository = SqlAlchemyUserDataSourceRepository(session)
     # TODO: Add template repository when needed
     return SourceManagementService(source_repository, None)
+
+
+def get_activation_service_for_space(
+    session: Session = Depends(get_session),
+) -> DataSourceActivationService:
+    """Return activation policy service for space-scoped permission checks."""
+    activation_repository = SqlAlchemyDataSourceActivationRepository(session)
+    return DataSourceActivationService(activation_repository)
+
+
+def get_ingestion_scheduling_service_for_space() -> (
+    Generator[IngestionSchedulingService]
+):
+    """Yield ingestion scheduling service for space-scoped ingestion execution."""
+    from src.infrastructure.factories.ingestion_scheduler_factory import (  # noqa: PLC0415
+        ingestion_scheduling_service_context,
+    )
+
+    with ingestion_scheduling_service_context() as service:
+        yield service
 
 
 def verify_space_membership(

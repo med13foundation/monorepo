@@ -5,12 +5,13 @@ import { fetchResearchSpace } from '@/lib/api/research-spaces'
 import SpaceSettingsClient from '../space-settings-client'
 
 interface SpaceSettingsPageProps {
-  params: {
+  params: Promise<{
     spaceId: string
-  }
+  }>
 }
 
 export default async function SpaceSettingsPage({ params }: SpaceSettingsPageProps) {
+  const { spaceId } = await params
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 
@@ -21,10 +22,10 @@ export default async function SpaceSettingsPage({ params }: SpaceSettingsPagePro
   let space = null
 
   try {
-    space = await fetchResearchSpace(params.spaceId, token)
+    space = await fetchResearchSpace(spaceId, token)
   } catch (error) {
     console.error('[SpaceSettingsPage] Failed to fetch research space', error)
   }
 
-  return <SpaceSettingsClient spaceId={params.spaceId} space={space} />
+  return <SpaceSettingsClient spaceId={spaceId} space={space} />
 }

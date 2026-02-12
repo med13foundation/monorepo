@@ -9,6 +9,7 @@ const buildAxiosError = (params: {
   status?: number
   code?: string
   retryCount?: number
+  message?: string
 }): AxiosError => {
   const config = {
     url: '/test',
@@ -27,7 +28,7 @@ const buildAxiosError = (params: {
 
   return {
     name: 'AxiosError',
-    message: 'boom',
+    message: params.message ?? 'boom',
     config,
     code: params.code,
     response,
@@ -54,6 +55,16 @@ describe('shouldRetryRequest', () => {
 
   it('retries on transient network error codes', () => {
     const error = buildAxiosError({ code: 'ECONNABORTED', retryCount: 0 })
+    expect(shouldRetryRequest(error)).toBe(true)
+  })
+
+  it('retries on connection reset errors', () => {
+    const error = buildAxiosError({ code: 'ECONNRESET', retryCount: 0 })
+    expect(shouldRetryRequest(error)).toBe(true)
+  })
+
+  it('retries when socket hang up message is returned without an error code', () => {
+    const error = buildAxiosError({ message: 'socket hang up', retryCount: 0 })
     expect(shouldRetryRequest(error)).toBe(true)
   })
 })

@@ -52,15 +52,6 @@ export interface ScheduleConfigurationResponse {
   scheduled_job?: ScheduledJobResponse | null
 }
 
-export interface IngestionRunResponse {
-  source_id: string
-  fetched_records: number
-  parsed_publications: number
-  created_publications: number
-  updated_publications: number
-  executed_query?: string | null
-}
-
 export interface DataSourceAiTestLink {
   label: string
   url: string
@@ -203,22 +194,6 @@ export async function updateDataSource(
   const response = await apiClient.put<DataSource>(
     `/admin/data-sources/${sourceId}`,
     payload,
-    authHeaders(token),
-  )
-  return response.data
-}
-
-export async function triggerDataSourceIngestion(
-  sourceId: string,
-  token?: string,
-): Promise<IngestionRunResponse> {
-  if (!token) {
-    throw new Error('Authentication token is required for triggerDataSourceIngestion')
-  }
-
-  const response = await apiClient.post<IngestionRunResponse>(
-    `/admin/data-sources/${sourceId}/schedule/run`,
-    {},
     authHeaders(token),
   )
   return response.data

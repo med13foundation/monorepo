@@ -24,6 +24,7 @@ declare module "next-auth/jwt" {
     access_token: string
     refresh_token: string
     expires_at: number
+    refresh_failed?: boolean
     user: {
       id: string
       email: string
@@ -59,6 +60,36 @@ interface AuthenticatedUser extends BackendUser {
 
 // FastAPI backend URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
+
+function formatAxiosError(error: unknown): string {
+  if (!axios.isAxiosError(error)) {
+    if (error instanceof Error) {
+      return error.message
+    }
+    return "Unknown error"
+  }
+
+  const status = error.response?.status ?? "unknown"
+  const responseData = error.response?.data
+
+  if (typeof responseData === "string" && responseData.trim().length > 0) {
+    return `status=${status} ${responseData}`
+  }
+
+  if (responseData && typeof responseData === "object") {
+    const responseObject = responseData as Record<string, unknown>
+    if (Object.keys(responseObject).length > 0) {
+      const detail = responseObject.detail
+      if (typeof detail === "string" && detail.trim().length > 0) {
+        return `status=${status} ${detail}`
+      }
+      return `status=${status} ${JSON.stringify(responseObject)}`
+    }
+  }
+
+  const requestUrl = error.config?.url
+  return `status=${status} ${error.message}${requestUrl ? ` (${requestUrl})` : ""}`
+}
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -184,6 +215,7 @@ export const authOptions: NextAuthOptions = {
           access_token: customUser.access_token,
           refresh_token: customUser.refresh_token,
           expires_at: customUser.expires_at,
+          refresh_failed: false,
           user: {
             id: customUser.id,
             email: customUser.email!,
@@ -193,6 +225,10 @@ export const authOptions: NextAuthOptions = {
             email_verified: customUser.email_verified,
           }
         }
+      }
+
+      if (token.refresh_failed) {
+        return token
       }
 
       // Return previous token if the access token has not expired yet
@@ -218,8 +254,13 @@ export const authOptions: NextAuthOptions = {
       const refreshToken = token.refresh_token
       if (!refreshToken) {
         console.error("JWT callback: Cannot refresh token - refresh_token is missing", { token })
-        // Return token as-is to allow session to expire naturally
-        return token
+        return {
+          ...token,
+          access_token: '',
+          refresh_token: '',
+          expires_at: 0,
+          refresh_failed: true,
+        }
       }
 
       try {
@@ -240,15 +281,20 @@ export const authOptions: NextAuthOptions = {
           access_token,
           refresh_token,
           expires_at: Date.now() + expires_in * 1000,
+          refresh_failed: false,
         }
       } catch (error) {
-        if (axios.isAxiosError(error)) {
-          console.error("Token refresh error:", error.response?.data || error.message)
-        } else {
-          console.error("Token refresh error:", (error as Error)?.message)
+        const isExpectedRefresh401 = axios.isAxiosError(error) && error.response?.status === 401
+        if (!isExpectedRefresh401) {
+          console.error("Token refresh error:", formatAxiosError(error))
         }
-        // Return token as-is to allow session to expire naturally
-        return token
+        return {
+          ...token,
+          access_token: '',
+          refresh_token: '',
+          expires_at: 0,
+          refresh_failed: true,
+        }
       }
     },
     async session({ session, token }) {
@@ -269,7 +315,7 @@ export const authOptions: NextAuthOptions = {
         }
 
         // Debug: Log if access_token is missing
-        if (!tokenAccessToken) {
+        if (!tokenAccessToken && !token.refresh_failed) {
           console.error("Session callback: access_token is missing from token!", {
             tokenKeys: Object.keys(token || {}),
             hasUser: !!tokenUser,
