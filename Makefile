@@ -73,7 +73,7 @@ endef
 
 # Warn if venv is not active but exists
 define check_venv
-	@if [ "$(VENV_ACTIVE)" = "false" ] && [ -d "$(VENV)" ]; then \
+	@if [ "$(VENV_ACTIVE)" = "false" ] && [ -d "$(VENV)" ] && [ "$(SUPPRESS_VENV_WARNING)" != "1" ]; then \
 		echo "⚠️  Virtual environment exists but not activated."; \
 		echo "   Run: source $(VENV)/bin/activate"; \
 		echo "   Or use: make activate"; \
@@ -323,23 +323,25 @@ else
 endif
 
 run-all-postgres: ## Restart Postgres, run migrations, seed admin, start backend + Next.js
+	$(call check_venv)
 	@$(MAKE) -s stop-all
 	@$(MAKE) -s docker-postgres-up
-	@$(MAKE) -s postgres-migrate
-	@$(MAKE) -s init-flujo-schema
-	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin)
-	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1
+	@$(MAKE) -s postgres-migrate SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s init-flujo-schema SUPPRESS_VENV_WARNING=1
+	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin SUPPRESS_VENV_WARNING=1)
+	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
 	@echo "Backend running in background. Starting Next.js..."
 	@$(MAKE) -s web-clean
-	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1
+	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
 	@echo "All services running. FastAPI logs: $(BACKEND_LOG) | Next.js logs: $(WEB_LOG)"
 
 dev-postgres: ## Start Postgres (if needed) + services for local development
+	$(call check_venv)
 	@$(MAKE) -s setup-postgres
-	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin)
-	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1
+	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin SUPPRESS_VENV_WARNING=1)
+	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
 	@echo "Backend running in background. Starting Next.js..."
-	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1
+	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
 	@echo "All services running. FastAPI logs: $(BACKEND_LOG) | Next.js logs: $(WEB_LOG)"
 start-local: ## Run FastAPI backend in the background (logs/backend.log)
 	$(call check_venv)
@@ -418,15 +420,21 @@ start-web: ## Run Next.js admin interface in the background (logs/web.log)
 		echo "Next.js already running (PID $$(cat "$(WEB_PID_FILE)"))."; \
 		exit 0; \
 	fi
+ifneq ($(SKIP_ADMIN_SEED),1)
 	@echo "Ensuring admin user exists..."
+endif
 ifeq ($(POSTGRES_ACTIVE),)
+ifneq ($(SKIP_ADMIN_SEED),1)
 	@$(MAKE) db-seed-admin || echo "Warning: Could not seed admin user (backend may not be running)"
+endif
 	@/bin/bash -lc "cd src/web && $(NEXT_DEV_ENV) nohup npm run dev >> \"$(WEB_LOG_ABS)\" 2>&1 & echo \$$! > \"$(WEB_PID_FILE_ABS)\""
 else
 ifneq ($(SKIP_POSTGRES_MIGRATE),1)
 	@$(MAKE) postgres-migrate
 endif
+ifneq ($(SKIP_ADMIN_SEED),1)
 	$(call run_with_postgres_env,$(MAKE) db-seed-admin || echo "Warning: Could not seed admin user (backend may not be running)")
+endif
 	@/bin/bash -lc "set -a; source \"$(POSTGRES_ENV_FILE)\"; set +a; cd src/web && $(NEXT_DEV_ENV) nohup npm run dev >> \"$(WEB_LOG_ABS)\" 2>&1 & echo \$$! > \"$(WEB_PID_FILE_ABS)\""
 endif
 	@i=0; while [ ! -f "$(WEB_PID_FILE)" ] && [ $$i -lt 10 ]; do sleep 0.5; i=$$((i+1)); done
