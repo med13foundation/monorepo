@@ -38,9 +38,28 @@ from .service_factories import ApplicationServiceFactoryMixin
 
 # AsyncSession, async_sessionmaker, and create_async_engine are imported above
 
-DEFAULT_DEV_JWT_SECRET = os.getenv("MED13_DEV_JWT_SECRET") or os.urandom(48).hex()
-
 logger = logging.getLogger(__name__)
+_ENVIRONMENT = os.getenv("MED13_ENV", "development").lower()
+_PRODUCTION_LIKE_ENVS = frozenset({"production", "staging"})
+_FALLBACK_DEV_JWT_SIGNING_MATERIAL = (
+    "med13-resource-library-dev-jwt-secret-change-in-production-2026-01"
+)
+
+
+def _resolve_default_jwt_secret() -> str:
+    configured_secret = os.getenv("MED13_DEV_JWT_SECRET")
+    if configured_secret:
+        return configured_secret
+    if _ENVIRONMENT in _PRODUCTION_LIKE_ENVS:
+        message = (
+            "MED13_DEV_JWT_SECRET must be set when MED13_ENV is production or "
+            "staging."
+        )
+        raise RuntimeError(message)
+    return _FALLBACK_DEV_JWT_SIGNING_MATERIAL
+
+
+DEFAULT_DEV_JWT_SECRET = _resolve_default_jwt_secret()
 
 
 class DependencyContainer(ApplicationServiceFactoryMixin):
@@ -62,6 +81,15 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         resolved_secret = jwt_secret_key or DEFAULT_DEV_JWT_SECRET
         self.jwt_secret_key = resolved_secret
         self.jwt_algorithm = jwt_algorithm
+        if (
+            jwt_secret_key is None
+            and os.getenv("MED13_DEV_JWT_SECRET") is None
+            and _ENVIRONMENT not in _PRODUCTION_LIKE_ENVS
+        ):
+            logger.warning(
+                "MED13_DEV_JWT_SECRET is not set. Using fallback development "
+                "JWT secret; set MED13_DEV_JWT_SECRET for stable explicit config.",
+            )
 
         # Initialize ASYNC database engine (for Clean Architecture - auth)
         engine_kwargs: dict[str, object] = {

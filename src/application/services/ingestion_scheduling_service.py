@@ -38,7 +38,7 @@ if TYPE_CHECKING:
         user_data_source_repository,
     )
     from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
-    from src.type_definitions.common import JSONObject
+    from src.type_definitions.common import JSONObject, JSONValue
 
 
 @dataclass(frozen=True)
@@ -150,10 +150,7 @@ class IngestionSchedulingService:
         self,
         source: user_data_source.UserDataSource,
     ) -> PubMedIngestionSummary:
-        service = self._ingestion_services.get(source.source_type)
-        if service is None:
-            msg = f"No ingestion service registered for {source.source_type}"
-            raise ValueError(msg)
+        service = self._get_ingestion_service(source)
 
         job = self._job_repository.save(self._create_ingestion_job(source))
         running = self._job_repository.save(job.start_execution())
@@ -169,10 +166,7 @@ class IngestionSchedulingService:
                 duration_seconds=None,
                 records_per_second=None,
             )
-            # Record executed query in metadata if available
-            metadata = dict(running.metadata or {})
-            if hasattr(summary, "executed_query") and summary.executed_query:
-                metadata["executed_query"] = summary.executed_query
+            metadata = self._build_source_metadata(running=running, summary=summary)
 
             extraction_metadata = self._enqueue_extraction(
                 source=source,
@@ -208,6 +202,59 @@ class IngestionSchedulingService:
             )
             self._update_schedule_after_run(updated_source)
             return summary
+
+    def _get_ingestion_service(
+        self,
+        source: user_data_source.UserDataSource,
+    ) -> Callable[[user_data_source.UserDataSource], Awaitable[PubMedIngestionSummary]]:
+        """Return the ingestion service for a source type."""
+        service = self._ingestion_services.get(source.source_type)
+        if service is None:
+            msg = f"No ingestion service registered for {source.source_type}"
+            raise ValueError(msg)
+        return service
+
+    def _build_source_metadata(
+        self,
+        *,
+        running: ingestion_job.IngestionJob,
+        summary: PubMedIngestionSummary,
+    ) -> dict[str, JSONValue]:
+        """Build ingestion-job metadata including query-generation trace details."""
+        metadata: dict[str, JSONValue] = dict(running.metadata or {})
+        executed_query = getattr(summary, "executed_query", None)
+        if executed_query:
+            metadata["executed_query"] = executed_query
+
+        query_generation_metadata = self._build_query_generation_metadata(summary)
+        if query_generation_metadata:
+            metadata["query_generation"] = query_generation_metadata
+        return metadata
+
+    @staticmethod
+    def _build_query_generation_metadata(
+        summary: PubMedIngestionSummary,
+    ) -> dict[str, JSONValue]:
+        """Build the optional query-generation metadata payload."""
+        query_metadata: dict[str, JSONValue] = {}
+
+        run_id = getattr(summary, "query_generation_run_id", None)
+        if run_id is not None:
+            query_metadata["run_id"] = run_id
+
+        model = getattr(summary, "query_generation_model", None)
+        if model is not None:
+            query_metadata["model"] = model
+
+        decision = getattr(summary, "query_generation_decision", None)
+        if decision is not None:
+            query_metadata["decision"] = decision
+
+        confidence = getattr(summary, "query_generation_confidence", None)
+        if confidence is not None:
+            query_metadata["confidence"] = confidence
+
+        return query_metadata
 
     def _enqueue_extraction(
         self,

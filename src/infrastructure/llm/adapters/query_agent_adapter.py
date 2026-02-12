@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
+from flujo import Flujo
 from flujo.domain.models import PipelineResult, StepResult
 from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
 
@@ -32,7 +34,7 @@ from src.domain.agents.ports.query_agent_port import (
     QueryAgentPort,
     QueryAgentRunMetadataProvider,
 )
-from src.infrastructure.llm.config.governance import GovernanceConfig
+from src.infrastructure.llm.config.governance import GovernanceConfig, UsageLimits
 from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.llm.pipelines.query_pipelines.pubmed_pipeline import (
     create_pubmed_query_pipeline,
@@ -41,11 +43,9 @@ from src.infrastructure.llm.state.backend_manager import get_state_backend
 from src.infrastructure.llm.state.lifecycle import get_lifecycle_manager
 
 if TYPE_CHECKING:
-    from typing import Any
-
-    from flujo import Flujo
-
     from src.domain.agents.contexts.query_context import QueryGenerationContext
+
+QueryPipelineFactory = Callable[..., Flujo[Any, Any, Any]]
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,10 @@ _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 
 # Cache key format: (source_type, model_id or "default")
 PipelineCacheKey = tuple[str, str]
+
+_QUERY_PIPELINE_FACTORIES: dict[str, QueryPipelineFactory] = {
+    "pubmed": create_pubmed_query_pipeline,
+}
 
 
 class FlujoQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
@@ -169,12 +173,14 @@ class FlujoQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
         Raises:
             ValueError: If source type is not supported
         """
-        if source_type == "pubmed":
-            return create_pubmed_query_pipeline(
+        if source_type in _QUERY_PIPELINE_FACTORIES:
+            pipeline_factory = _QUERY_PIPELINE_FACTORIES[source_type]
+            return pipeline_factory(
                 state_backend=self._state_backend,
                 model=model_id,
                 use_governance=self._use_governance,
                 use_granular=self._use_granular,
+                usage_limits=self._resolve_usage_limits(source_type),
             )
 
         msg = f"Unsupported source type: {source_type}"
@@ -182,7 +188,17 @@ class FlujoQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
 
     def _is_supported_source(self, source_type: str) -> bool:
         """Check if a source type is supported."""
-        return source_type.lower() in {"pubmed"}
+        return source_type.lower() in _QUERY_PIPELINE_FACTORIES
+
+    def _resolve_usage_limits(self, source_type: str) -> UsageLimits:
+        """
+        Resolve usage limits for a source type.
+
+        Currently all query sources share policy defaults; this hook provides
+        a clean extension point for future source-specific budgets.
+        """
+        del source_type
+        return self._governance.usage_limits
 
     async def generate_query(  # noqa: PLR0913
         self,

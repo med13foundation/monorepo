@@ -20,11 +20,13 @@ from src.application.services.data_discovery_service.requests import (
     ExecuteQueryTestRequest,
     UpdateSessionParametersRequest,
 )
+from src.application.services.source_management_service import CreateSourceRequest
 from src.domain.entities.data_discovery_parameters import (
     AdvancedQueryParameters,
     QueryParameterType,
     TestResultStatus,
 )
+from src.domain.entities.user_data_source import SourceType
 from tests.test_types.data_discovery_fixtures import (
     TEST_SESSION_ACTIVE,
     TEST_SOURCE_CLINVAR,
@@ -412,6 +414,97 @@ class TestDataDiscoveryService:
             session_id=session_id,
             catalog_entry_id=catalog_entry_no_template.id,
             research_space_id=space_id,
+        )
+
+        result = await service.add_source_to_space(request)
+
+        assert result == mock_data_source.id
+        service._source_service.create_source.assert_called_once()
+
+    async def test_add_source_to_space_applies_api_defaults(
+        self,
+        service: DataDiscoveryService,
+    ) -> None:
+        """Catalog API entries should receive defaults when no config is provided."""
+        session_id = TEST_SESSION_ACTIVE.id
+        space_id = uuid4()
+        catalog_entry_api = create_test_source_catalog_entry(
+            entry_id="clinvar-api",
+            source_type=SourceType.API,
+            source_template_id=None,
+            api_endpoint="https://api.ncbi.nlm.nih.gov/clinvar/v1",
+            url_template=None,
+        )
+
+        service._session_repo.find_by_id.return_value = TEST_SESSION_ACTIVE
+        service._catalog_repo.find_by_id.return_value = catalog_entry_api
+
+        mock_data_source = Mock()
+        mock_data_source.id = uuid4()
+
+        def _create_source_side_effect(create_request: CreateSourceRequest) -> Mock:
+            configuration = create_request.configuration
+            source_type = create_request.source_type
+
+            assert source_type == SourceType.API
+            assert configuration.url == "https://api.ncbi.nlm.nih.gov/clinvar/v1"
+            assert configuration.requests_per_minute == 10
+            assert configuration.metadata.get("catalog_entry_id") == "clinvar-api"
+            return mock_data_source
+
+        service._source_service.create_source.side_effect = _create_source_side_effect
+
+        request = AddSourceToSpaceRequest(
+            session_id=session_id,
+            catalog_entry_id=catalog_entry_api.id,
+            research_space_id=space_id,
+            source_config={},
+        )
+
+        result = await service.add_source_to_space(request)
+
+        assert result == mock_data_source.id
+        service._source_service.create_source.assert_called_once()
+
+    async def test_add_source_to_space_coerces_legacy_pubmed_source_type(
+        self,
+        service: DataDiscoveryService,
+    ) -> None:
+        """PubMed entries mislabeled as API should still create PubMed sources."""
+        session_id = TEST_SESSION_ACTIVE.id
+        space_id = uuid4()
+        catalog_entry_pubmed = create_test_source_catalog_entry(
+            entry_id="pubmed",
+            name="PubMed",
+            category="Scientific Literature",
+            param_type="gene_and_term",
+            source_type=SourceType.API,
+            source_template_id=None,
+            api_endpoint=None,
+            url_template="https://pubmed.ncbi.nlm.nih.gov/?term=${gene}+${term}",
+        )
+
+        service._session_repo.find_by_id.return_value = TEST_SESSION_ACTIVE
+        service._catalog_repo.find_by_id.return_value = catalog_entry_pubmed
+
+        mock_data_source = Mock()
+        mock_data_source.id = uuid4()
+
+        def _create_source_side_effect(create_request: CreateSourceRequest) -> Mock:
+            configuration = create_request.configuration
+            source_type = create_request.source_type
+
+            assert source_type == SourceType.PUBMED
+            assert isinstance(configuration.metadata.get("query"), str)
+            return mock_data_source
+
+        service._source_service.create_source.side_effect = _create_source_side_effect
+
+        request = AddSourceToSpaceRequest(
+            session_id=session_id,
+            catalog_entry_id="pubmed",
+            research_space_id=space_id,
+            source_config={},
         )
 
         result = await service.add_source_to_space(request)

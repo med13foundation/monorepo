@@ -29,3 +29,7 @@ class PubMedIngestionSummary:
     created_publication_ids: tuple[int, ...] = ()
     updated_publication_ids: tuple[int, ...] = ()
     executed_query: str | None = None
+    query_generation_run_id: str | None = None
+    query_generation_model: str | None = None
+    query_generation_decision: str | None = None
+    query_generation_confidence: float | None = None

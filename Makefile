@@ -22,6 +22,7 @@ WEB_LOG := logs/web.log
 WEB_PID_FILE_ABS := $(abspath $(WEB_PID_FILE))
 WEB_LOG_ABS := $(abspath $(WEB_LOG))
 NEXT_DEV_ENV := NEXTAUTH_SECRET=med13-resource-library-nextauth-secret-key-for-development-2024-secure-random-string NEXTAUTH_URL=http://localhost:3000 NEXT_PUBLIC_API_URL=http://localhost:8080
+BACKEND_DEV_ENV := MED13_DEV_JWT_SECRET=med13-resource-library-backend-jwt-secret-for-development-2026-01
 NEXTAUTH_URL ?= http://localhost:3000
 NEXT_BUILD_ENV := NEXTAUTH_URL=$(NEXTAUTH_URL)
 
@@ -324,10 +325,10 @@ security-full: security-audit ## Full security assessment with all tools
 run-local: ## Run the application locally
 	$(call check_venv)
 ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload
+	$(BACKEND_DEV_ENV) $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 else
 	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,$(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload)
+	$(call run_with_postgres_env,$(BACKEND_DEV_ENV) $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload)
 endif
 
 run-all-postgres: ## Restart Postgres, run migrations, seed admin, start backend + Next.js
@@ -363,13 +364,13 @@ start-local: ## Run FastAPI backend in the background (logs/backend.log)
 		exit 0; \
 	fi
 ifeq ($(POSTGRES_ACTIVE),)
-	@nohup $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 >> "$(BACKEND_LOG)" 2>&1 &
+	@$(BACKEND_DEV_ENV) nohup $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 >> "$(BACKEND_LOG)" 2>&1 &
 	@echo $$! > "$(BACKEND_PID_FILE)"
 else
 ifneq ($(SKIP_POSTGRES_MIGRATE),1)
 	@$(MAKE) postgres-migrate
 endif
-	@/bin/bash -lc "set -a; source \"$(POSTGRES_ENV_FILE)\"; set +a; nohup $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 >> \"$(BACKEND_LOG)\" 2>&1 & echo \$$! > \"$(BACKEND_PID_FILE)\""
+	@/bin/bash -lc "set -a; source \"$(POSTGRES_ENV_FILE)\"; set +a; $(BACKEND_DEV_ENV) nohup $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 >> \"$(BACKEND_LOG)\" 2>&1 & echo \$$! > \"$(BACKEND_PID_FILE)\""
 endif
 	@i=0; while [ ! -f "$(BACKEND_PID_FILE)" ] && [ $$i -lt 10 ]; do sleep 0.5; i=$$((i+1)); done
 	@if [ -f "$(BACKEND_PID_FILE)" ]; then \
@@ -392,7 +393,7 @@ backend-status: ## Show FastAPI background process status
 	fi
 
 run-local-postgres: ## Run the FastAPI backend with Postgres env vars loaded
-	$(call run_with_postgres_env,$(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload)
+	$(call run_with_postgres_env,$(BACKEND_DEV_ENV) $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload)
 
 
 run-web: ## Run the Next.js admin interface locally (seeds admin user if needed)

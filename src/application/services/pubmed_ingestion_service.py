@@ -69,6 +69,9 @@ class PubMedIngestionService:
         """Execute ingestion for a PubMed data source."""
         self._assert_source_type(source)
         config = self._build_config(source.configuration)
+        query_generation_decision: str = "skipped"
+        query_generation_confidence: float = 0.0
+        query_generation_run_id: str | None = None
 
         # AI-Managed Logic (Preserved)
         if (
@@ -94,6 +97,9 @@ class PubMedIngestionService:
                 source_type="pubmed",
                 model_id=config.agent_config.model_id,
             )
+            query_generation_decision = contract.decision
+            query_generation_confidence = contract.confidence_score
+            query_generation_run_id = self._extract_query_generation_run_id()
 
             if contract.decision == "generated" and contract.query:
                 # Override static query with AI-generated one
@@ -154,6 +160,10 @@ class PubMedIngestionService:
             created_publication_ids=(),  # Pipeline uses UUIDs, Summary expects ints?
             updated_publication_ids=(),
             executed_query=config.query,
+            query_generation_run_id=query_generation_run_id,
+            query_generation_model=config.agent_config.model_id,
+            query_generation_decision=query_generation_decision,
+            query_generation_confidence=query_generation_confidence,
         )
 
     def _to_pipeline_records(
@@ -277,6 +287,16 @@ class PubMedIngestionService:
                     created_ids.append(created_entity.id)
                 created += 1
         return created, updated, tuple(created_ids), tuple(updated_ids)
+
+    def _extract_query_generation_run_id(self) -> str | None:
+        """Extract the latest query-generation run id from the query agent."""
+        if self._query_agent is None:
+            return None
+        provider = getattr(self._query_agent, "get_last_run_id", None)
+        if callable(provider):
+            run_id = provider()
+            return run_id if isinstance(run_id, str) and run_id.strip() else None
+        return None
 
     @staticmethod
     def _build_update_payload(

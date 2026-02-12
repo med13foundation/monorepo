@@ -151,9 +151,12 @@ def get_usage_limits_dict(limits: UsageLimits | None = None) -> dict[str, float 
     if limits.total_cost_usd is not None:
         result["total_cost_usd_limit"] = limits.total_cost_usd
     if limits.max_turns is not None:
-        result["max_turns"] = limits.max_turns
+        logger.debug(
+            "max_turns is tracked by Flujo governance layer; Flujo usage_limits "
+            "uses total_tokens_limit, not turns.",
+        )
     if limits.max_tokens is not None:
-        result["max_tokens"] = limits.max_tokens
+        result["total_tokens_limit"] = limits.max_tokens
     return result
 
 

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from flujo import Flujo, Pipeline, Step
 from flujo.domain.dsl import ConditionalStep, GranularStep, HumanInTheLoopStep
+from flujo.domain.models import UsageLimits as FlujoUsageLimits
 
 from src.domain.agents.contexts.query_context import QueryGenerationContext
 from src.infrastructure.llm.config.governance import GovernanceConfig, UsageLimits
@@ -164,20 +165,33 @@ def create_pubmed_query_pipeline(
         "context_model": QueryGenerationContext,
         "state_backend": state_backend,
         "persist_state": True,
+        "usage_limits": _to_flujo_usage_limits(limits),
     }
 
-    # Add usage limits if configured
-    if limits.total_cost_usd is not None:
-        # Note: UsageLimits integration depends on Flujo version
-        # This prepares for future integration
+    if limits.max_turns is not None:
         logger.debug(
-            "Usage limits configured: cost=%.2f, turns=%s, tokens=%s",
-            limits.total_cost_usd,
+            "UsageLimits.max_turns=%s is ignored by Flujo 0.6.3; "
+            "controlled by max_tokens/cost only.",
             limits.max_turns,
-            limits.max_tokens,
         )
 
     return Flujo(
         Pipeline(steps=steps),
         **runner_kwargs,  # type: ignore[arg-type]
+    )
+
+
+def _to_flujo_usage_limits(
+    limits: UsageLimits,
+) -> FlujoUsageLimits:
+    """
+    Convert internal UsageLimits to Flujo UsageLimits.
+
+    Note:
+    - Flujo expects total_cost_usd_limit and total_tokens_limit.
+    - max_turns is tracked by domain policy only and is not mapped.
+    """
+    return FlujoUsageLimits(
+        total_cost_usd_limit=limits.total_cost_usd,
+        total_tokens_limit=limits.max_tokens,
     )

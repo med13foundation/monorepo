@@ -95,6 +95,46 @@ class QueryExecutionMixin(SessionManagementMixin):
         )
         return config_payload
 
+    def _apply_api_defaults(
+        self,
+        source_config: JSONObject,
+        catalog_entry: data_discovery_session.SourceCatalogEntry,
+    ) -> JSONObject:
+        """Ensure API-backed sources have the minimum required configuration."""
+        config_payload: JSONObject = dict(source_config)
+
+        raw_url = config_payload.get("url")
+        current_url = raw_url.strip() if isinstance(raw_url, str) else None
+        fallback_url = catalog_entry.api_endpoint or catalog_entry.url_template
+        if not current_url and isinstance(fallback_url, str) and fallback_url.strip():
+            config_payload["url"] = fallback_url
+
+        raw_rpm = config_payload.get("requests_per_minute")
+        if not isinstance(raw_rpm, int) or raw_rpm < 1:
+            config_payload["requests_per_minute"] = 10
+
+        raw_metadata = config_payload.get("metadata")
+        metadata_payload: dict[str, object] = (
+            dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        )
+        metadata_payload.setdefault("catalog_entry_id", catalog_entry.id)
+        config_payload["metadata"] = self._to_json_object(metadata_payload)
+        return config_payload
+
+    def _prepare_source_configuration(
+        self,
+        source_type: user_data_source.SourceType,
+        source_config: JSONObject,
+        catalog_entry: data_discovery_session.SourceCatalogEntry,
+        parameters: data_discovery_parameters.AdvancedQueryParameters,
+    ) -> JSONObject:
+        """Apply source-type-specific defaults before configuration validation."""
+        if source_type == user_data_source.SourceType.PUBMED:
+            return self._apply_pubmed_defaults(source_config, parameters)
+        if source_type == user_data_source.SourceType.API:
+            return self._apply_api_defaults(source_config, catalog_entry)
+        return source_config
+
     async def execute_query_test(
         self,
         request: ExecuteQueryTestRequest,
@@ -290,14 +330,24 @@ class QueryExecutionMixin(SessionManagementMixin):
             template.source_type if template else catalog_entry.source_type,
             request.catalog_entry_id,
         )
+        if (
+            request.catalog_entry_id.lower() == "pubmed"
+            and resolved_source_type == user_data_source.SourceType.API
+        ):
+            logger.warning(
+                "Catalog entry %s resolved to api; coercing to pubmed",
+                request.catalog_entry_id,
+            )
+            resolved_source_type = user_data_source.SourceType.PUBMED
 
         # Create UserDataSource
         source_config = request.source_config or {}
-        if resolved_source_type == user_data_source.SourceType.PUBMED:
-            source_config = self._apply_pubmed_defaults(
-                source_config,
-                session.current_parameters,
-            )
+        source_config = self._prepare_source_configuration(
+            resolved_source_type,
+            source_config,
+            catalog_entry,
+            session.current_parameters,
+        )
         configuration = user_data_source.SourceConfiguration.model_validate(
             source_config,
         )
