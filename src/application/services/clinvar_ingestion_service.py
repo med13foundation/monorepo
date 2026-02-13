@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import tempfile
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from src.domain.entities import data_source_configs, user_data_source
+from src.domain.entities.source_record_ledger import SourceRecordLedgerEntry
+from src.domain.entities.source_sync_state import CheckpointKind
 from src.domain.services.clinvar_ingestion import (
     ClinVarGateway,
+    ClinVarGatewayFetchResult,
+    ClinVarIncrementalGateway,
     ClinVarIngestionSummary,
 )
 from src.type_definitions.ingestion import RawRecord as IngestionRawRecord
@@ -25,9 +32,21 @@ if TYPE_CHECKING:
     from src.application.services.storage_configuration_service import (
         StorageConfigurationService,
     )
+    from src.domain.services.ingestion import IngestionRunContext
     from src.type_definitions.common import JSONObject, RawRecord
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _LedgerDedupOutcome:
+    """Result of applying record-ledger deduplication to fetched records."""
+
+    filtered_records: list[JSONObject]
+    entries_to_upsert: list[SourceRecordLedgerEntry]
+    new_records: int
+    updated_records: int
+    unchanged_records: int
 
 
 class ClinVarIngestionService:
@@ -46,18 +65,42 @@ class ClinVarIngestionService:
     async def ingest(
         self,
         source: user_data_source.UserDataSource,
+        context: IngestionRunContext | None = None,
     ) -> ClinVarIngestionSummary:
         """Execute ingestion for a ClinVar data source."""
         self._assert_source_type(source)
         config = self._build_config(source.configuration)
+        checkpoint_before = (
+            dict(context.source_sync_state.checkpoint_payload)
+            if context is not None
+            else None
+        )
+        query_signature = (
+            context.query_signature
+            if context is not None and context.query_signature.strip()
+            else self._build_query_signature(
+                source_type=source.source_type,
+                metadata=config.model_dump(mode="json"),
+            )
+        )
 
-        raw_records_data = await self._gateway.fetch_records(config)
+        fetch_result = await self._fetch_records_with_checkpoint(
+            config=config,
+            checkpoint_before=checkpoint_before,
+        )
+        raw_records_data = fetch_result.records
+        dedup_outcome = self._build_ledger_dedup_outcome(
+            source=source,
+            records=raw_records_data,
+            context=context,
+        )
+        filtered_records = dedup_outcome.filtered_records
 
         if self._storage_service:
-            await self._persist_raw_records(raw_records_data, source)
+            await self._persist_raw_records(filtered_records, source)
 
         raw_records = self._to_pipeline_records(
-            raw_records_data,
+            filtered_records,
             original_source_id=str(source.id),
         )
 
@@ -74,16 +117,75 @@ class ClinVarIngestionService:
                 source.id,
             )
 
+        if (
+            context is not None
+            and context.source_record_ledger_repository is not None
+            and dedup_outcome.entries_to_upsert
+        ):
+            context.source_record_ledger_repository.upsert_entries(
+                dedup_outcome.entries_to_upsert,
+            )
+
+        checkpoint_after_raw = fetch_result.checkpoint_after
+        if isinstance(checkpoint_after_raw, dict):
+            checkpoint_after_payload: JSONObject = dict(checkpoint_after_raw)
+        else:
+            checkpoint_after_payload = self._build_fallback_checkpoint(
+                fetched_records=fetch_result.fetched_records,
+                processed_records=len(filtered_records),
+            )
+
         return ClinVarIngestionSummary(
             source_id=source.id,
-            fetched_records=len(raw_records),
+            fetched_records=fetch_result.fetched_records,
             parsed_publications=len(raw_records),
             created_publications=observations_created,
             updated_publications=0,
             created_publication_ids=(),
             updated_publication_ids=(),
             executed_query=config.query,
+            query_signature=query_signature,
+            checkpoint_before=checkpoint_before,
+            checkpoint_after=checkpoint_after_payload,
+            checkpoint_kind=fetch_result.checkpoint_kind.value,
+            new_records=dedup_outcome.new_records,
+            updated_records=dedup_outcome.updated_records,
+            unchanged_records=dedup_outcome.unchanged_records,
+            skipped_records=dedup_outcome.unchanged_records,
         )
+
+    async def _fetch_records_with_checkpoint(
+        self,
+        *,
+        config: data_source_configs.ClinVarQueryConfig,
+        checkpoint_before: JSONObject | None,
+    ) -> ClinVarGatewayFetchResult:
+        if isinstance(self._gateway, ClinVarIncrementalGateway):
+            return await self._gateway.fetch_records_incremental(
+                config,
+                checkpoint=checkpoint_before,
+            )
+
+        records = await self._gateway.fetch_records(config)
+        return ClinVarGatewayFetchResult(
+            records=records,
+            fetched_records=len(records),
+            checkpoint_after=None,
+            checkpoint_kind=CheckpointKind.NONE,
+        )
+
+    @staticmethod
+    def _build_fallback_checkpoint(
+        *,
+        fetched_records: int,
+        processed_records: int,
+    ) -> JSONObject:
+        checkpoint_after: JSONObject = {
+            "last_processed_at": datetime.now(UTC).isoformat(),
+            "fetched_records": fetched_records,
+            "processed_records": processed_records,
+        }
+        return checkpoint_after
 
     def _to_pipeline_records(
         self,
@@ -120,6 +222,152 @@ class ClinVarIngestionService:
             )
 
         return raw_records
+
+    def _build_ledger_dedup_outcome(
+        self,
+        *,
+        source: user_data_source.UserDataSource,
+        records: list[JSONObject],
+        context: IngestionRunContext | None,
+    ) -> _LedgerDedupOutcome:
+        if context is None or context.source_record_ledger_repository is None:
+            return _LedgerDedupOutcome(
+                filtered_records=records,
+                entries_to_upsert=[],
+                new_records=len(records),
+                updated_records=0,
+                unchanged_records=0,
+            )
+
+        ledger_repository = context.source_record_ledger_repository
+        record_pairs = [
+            (
+                record,
+                self._extract_external_record_id(record),
+                self._compute_payload_hash(record),
+            )
+            for record in records
+        ]
+        external_ids = [external_id for _, external_id, _ in record_pairs]
+        existing_by_external_id = ledger_repository.get_entries_by_external_ids(
+            source_id=source.id,
+            external_record_ids=list(dict.fromkeys(external_ids)),
+        )
+
+        now = datetime.now(UTC)
+        current_entries: dict[str, SourceRecordLedgerEntry] = dict(
+            existing_by_external_id,
+        )
+        filtered_records: list[JSONObject] = []
+        entries_to_upsert: list[SourceRecordLedgerEntry] = []
+        new_records = 0
+        updated_records = 0
+        unchanged_records = 0
+
+        for record, external_id, payload_hash in record_pairs:
+            existing_entry = current_entries.get(external_id)
+            if existing_entry is None:
+                new_records += 1
+                filtered_records.append(record)
+                new_entry = SourceRecordLedgerEntry(
+                    source_id=source.id,
+                    external_record_id=external_id,
+                    payload_hash=payload_hash,
+                    source_updated_at=self._extract_source_updated_at(record),
+                    first_seen_job_id=context.ingestion_job_id,
+                    last_seen_job_id=context.ingestion_job_id,
+                    last_changed_job_id=context.ingestion_job_id,
+                    last_processed_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+                entries_to_upsert.append(new_entry)
+                current_entries[external_id] = new_entry
+                continue
+
+            updated_entry = existing_entry.mark_seen(
+                payload_hash=payload_hash,
+                seen_job_id=context.ingestion_job_id,
+                source_updated_at=self._extract_source_updated_at(record),
+                seen_at=now,
+            )
+            entries_to_upsert.append(updated_entry)
+            current_entries[external_id] = updated_entry
+            if existing_entry.payload_hash == payload_hash:
+                unchanged_records += 1
+                continue
+            updated_records += 1
+            filtered_records.append(record)
+
+        return _LedgerDedupOutcome(
+            filtered_records=filtered_records,
+            entries_to_upsert=entries_to_upsert,
+            new_records=new_records,
+            updated_records=updated_records,
+            unchanged_records=unchanged_records,
+        )
+
+    @staticmethod
+    def _extract_external_record_id(record: JSONObject) -> str:
+        for key in ("clinvar_id", "variation_id", "accession"):
+            value = record.get(key)
+            if isinstance(value, str) and value.strip():
+                return f"clinvar:{key}:{value.strip()}"
+            if isinstance(value, int):
+                return f"clinvar:{key}:{value}"
+
+        parsed_data_raw = record.get("parsed_data")
+        if isinstance(parsed_data_raw, dict):
+            for key in ("clinvar_id", "variation_id", "accession"):
+                value = parsed_data_raw.get(key)
+                if isinstance(value, str) and value.strip():
+                    return f"clinvar:{key}:{value.strip()}"
+                if isinstance(value, int):
+                    return f"clinvar:{key}:{value}"
+
+        payload_hash = ClinVarIngestionService._compute_payload_hash(record)
+        return f"clinvar:hash:{payload_hash}"
+
+    @staticmethod
+    def _compute_payload_hash(record: JSONObject) -> str:
+        serialized = json.dumps(
+            record,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _extract_source_updated_at(record: JSONObject) -> datetime | None:
+        for key in ("fetched_at", "updated_at", "last_updated"):
+            value = record.get(key)
+            if isinstance(value, str):
+                try:
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if parsed.tzinfo is None:
+                    return parsed.replace(tzinfo=UTC)
+                return parsed
+        return None
+
+    @staticmethod
+    def _build_query_signature(
+        *,
+        source_type: user_data_source.SourceType,
+        metadata: object,
+    ) -> str:
+        canonical_payload = json.dumps(
+            {
+                "source_type": source_type.value,
+                "metadata": metadata,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _extract_pipeline_payload(record: JSONObject) -> JSONObject:

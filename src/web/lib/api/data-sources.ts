@@ -2,6 +2,9 @@ import { apiClient, authHeaders } from './client'
 import type {
   DataSource,
   DataSourceIngestionSchedule,
+  IngestionIdempotencyMetadata,
+  IngestionJobMetadata,
+  IngestionQueryGenerationMetadata,
   ScheduleFrequency,
 } from '@/types/data-source'
 import type { JSONObject } from '@/types/generated'
@@ -99,6 +102,11 @@ export interface IngestionJobHistoryItem {
   records_failed: number
   records_skipped: number
   bytes_processed: number
+  executed_query?: string | null
+  query_generation?: IngestionQueryGenerationMetadata | null
+  idempotency?: IngestionIdempotencyMetadata | null
+  metadata_typed?: IngestionJobMetadata | null
+  metadata?: JSONObject
 }
 
 export interface IngestionJobHistoryResponse {

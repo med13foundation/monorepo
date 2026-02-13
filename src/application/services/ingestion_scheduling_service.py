@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import inspect
+import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,9 +21,12 @@ from src.application.services.pubmed_discovery_service import (
     PubmedDownloadRequest,
 )
 from src.domain.entities import ingestion_job, user_data_source
+from src.domain.entities.source_sync_state import CheckpointKind, SourceSyncState
+from src.domain.services.ingestion import IngestionRunContext
 from src.domain.services.storage_providers import StorageOperationError
 from src.domain.value_objects.provenance import DataSource as ProvenanceSource
 from src.domain.value_objects.provenance import Provenance
+from src.type_definitions import data_sources as data_source_types
 from src.type_definitions.storage import StorageOperationRecord, StorageUseCase
 
 if TYPE_CHECKING:
@@ -37,8 +43,14 @@ if TYPE_CHECKING:
         storage_repository,
         user_data_source_repository,
     )
+    from src.domain.repositories import (
+        source_record_ledger_repository as source_record_ledger_repo,
+    )
+    from src.domain.repositories import (
+        source_sync_state_repository as source_sync_state_repo,
+    )
     from src.domain.services.ingestion import IngestionRunSummary
-    from src.type_definitions.common import JSONObject, JSONValue
+    from src.type_definitions.common import JSONValue
 
 
 @dataclass(frozen=True)
@@ -49,10 +61,17 @@ class IngestionSchedulingOptions:
     pubmed_discovery_service: PubMedDiscoveryService | None = None
     extraction_queue_service: ExtractionQueueService | None = None
     extraction_runner_service: ExtractionRunnerService | None = None
+    source_sync_state_repository: (
+        source_sync_state_repo.SourceSyncStateRepository | None
+    ) = None
+    source_record_ledger_repository: (
+        source_record_ledger_repo.SourceRecordLedgerRepository | None
+    ) = None
     retry_batch_size: int = 25
 
 
 logger = logging.getLogger(__name__)
+MIN_POSITIONAL_PARAMETERS_WITH_CONTEXT = 2
 
 
 class IngestionSchedulingService:
@@ -65,10 +84,7 @@ class IngestionSchedulingService:
         job_repository: ingestion_job_repository.IngestionJobRepository,
         ingestion_services: Mapping[
             user_data_source.SourceType,
-            Callable[
-                [user_data_source.UserDataSource],
-                Awaitable[IngestionRunSummary],
-            ],
+            Callable[..., Awaitable[IngestionRunSummary]],
         ],
         options: IngestionSchedulingOptions | None = None,
     ) -> None:
@@ -83,6 +99,12 @@ class IngestionSchedulingService:
         self._pubmed_discovery_service = resolved_options.pubmed_discovery_service
         self._extraction_queue_service = resolved_options.extraction_queue_service
         self._extraction_runner_service = resolved_options.extraction_runner_service
+        self._source_sync_state_repository = (
+            resolved_options.source_sync_state_repository
+        )
+        self._source_record_ledger_repository = (
+            resolved_options.source_record_ledger_repository
+        )
         self._retry_batch_size = max(resolved_options.retry_batch_size, 1)
 
     async def schedule_source(self, source_id: UUID) -> ScheduledJob:
@@ -154,19 +176,42 @@ class IngestionSchedulingService:
 
         job = self._job_repository.save(self._create_ingestion_job(source))
         running = self._job_repository.save(job.start_execution())
+        sync_state_before = self._prepare_sync_state_for_attempt(source)
+        run_context = self._build_run_context(
+            source=source,
+            ingestion_job_id=running.id,
+            sync_state=sync_state_before,
+        )
         try:
-            summary = await service(source)
+            summary = await self._invoke_ingestion_service(
+                service=service,
+                source=source,
+                context=run_context,
+            )
+            sync_state_after = self._persist_sync_state_on_success(
+                sync_state=sync_state_before,
+                ingestion_job_id=running.id,
+                summary=summary,
+            )
+            skipped_records = self._int_summary_field(summary, "skipped_records") + (
+                self._int_summary_field(summary, "unchanged_records")
+            )
             metrics = ingestion_job.JobMetrics(
                 records_processed=summary.created_publications
                 + summary.updated_publications,
                 records_failed=0,
-                records_skipped=0,
+                records_skipped=skipped_records,
                 bytes_processed=0,
                 api_calls_made=0,
                 duration_seconds=None,
                 records_per_second=None,
             )
-            metadata = self._build_source_metadata(running=running, summary=summary)
+            metadata = self._build_source_metadata(
+                running=running,
+                summary=summary,
+                sync_state_before=sync_state_before,
+                sync_state_after=sync_state_after,
+            )
 
             extraction_metadata = self._enqueue_extraction(
                 source=source,
@@ -174,17 +219,21 @@ class IngestionSchedulingService:
                 summary=summary,
             )
             if extraction_metadata:
-                metadata["extraction_queue"] = extraction_metadata
+                metadata = metadata.model_copy(
+                    update={"extraction_queue": extraction_metadata},
+                )
                 extraction_run = await self._run_extraction(
                     source=source,
                     ingestion_job_id=running.id,
-                    queued_count=extraction_metadata["queued"],
+                    queued_count=extraction_metadata.queued,
                 )
                 if extraction_run:
-                    metadata["extraction_run"] = extraction_run
+                    metadata = metadata.model_copy(
+                        update={"extraction_run": extraction_run},
+                    )
 
             completed = running.model_copy(
-                update={"metadata": metadata},
+                update={"metadata": metadata.to_json_object()},
             ).complete_successfully(metrics)
         except Exception as exc:  # pragma: no cover - defensive
             error = ingestion_job.IngestionError(
@@ -206,7 +255,7 @@ class IngestionSchedulingService:
     def _get_ingestion_service(
         self,
         source: user_data_source.UserDataSource,
-    ) -> Callable[[user_data_source.UserDataSource], Awaitable[IngestionRunSummary]]:
+    ) -> Callable[..., Awaitable[IngestionRunSummary]]:
         """Return the ingestion service for a source type."""
         service = self._ingestion_services.get(source.source_type)
         if service is None:
@@ -219,42 +268,321 @@ class IngestionSchedulingService:
         *,
         running: ingestion_job.IngestionJob,
         summary: IngestionRunSummary,
-    ) -> dict[str, JSONValue]:
+        sync_state_before: SourceSyncState | None,
+        sync_state_after: SourceSyncState | None,
+    ) -> data_source_types.IngestionJobMetadata:
         """Build ingestion-job metadata including query-generation trace details."""
-        metadata: dict[str, JSONValue] = dict(running.metadata or {})
+        metadata = (
+            data_source_types.IngestionJobMetadata.parse_optional(running.metadata)
+            or data_source_types.IngestionJobMetadata()
+        )
         executed_query = getattr(summary, "executed_query", None)
-        if executed_query:
-            metadata["executed_query"] = executed_query
+        if executed_query and isinstance(executed_query, str):
+            metadata = metadata.model_copy(update={"executed_query": executed_query})
 
         query_generation_metadata = self._build_query_generation_metadata(summary)
-        if query_generation_metadata:
-            metadata["query_generation"] = query_generation_metadata
+        if query_generation_metadata is not None:
+            metadata = metadata.model_copy(
+                update={"query_generation": query_generation_metadata},
+            )
+
+        idempotency_metadata = self._build_idempotency_metadata(
+            summary=summary,
+            sync_state_before=sync_state_before,
+            sync_state_after=sync_state_after,
+        )
+        if idempotency_metadata is not None:
+            metadata = metadata.model_copy(update={"idempotency": idempotency_metadata})
         return metadata
 
     @staticmethod
     def _build_query_generation_metadata(
         summary: IngestionRunSummary,
-    ) -> dict[str, JSONValue]:
+    ) -> data_source_types.IngestionQueryGenerationMetadata | None:
         """Build the optional query-generation metadata payload."""
-        query_metadata: dict[str, JSONValue] = {}
-
         run_id = getattr(summary, "query_generation_run_id", None)
-        if run_id is not None:
-            query_metadata["run_id"] = run_id
-
         model = getattr(summary, "query_generation_model", None)
-        if model is not None:
-            query_metadata["model"] = model
-
         decision = getattr(summary, "query_generation_decision", None)
-        if decision is not None:
-            query_metadata["decision"] = decision
-
         confidence = getattr(summary, "query_generation_confidence", None)
-        if confidence is not None:
-            query_metadata["confidence"] = confidence
 
-        return query_metadata
+        has_signal = any(
+            value is not None
+            for value in (
+                run_id,
+                model,
+                decision,
+                confidence,
+            )
+        )
+        if not has_signal:
+            return None
+        return data_source_types.IngestionQueryGenerationMetadata(
+            run_id=run_id if isinstance(run_id, str) else None,
+            model=model if isinstance(model, str) else None,
+            decision=decision if isinstance(decision, str) else None,
+            confidence=confidence if isinstance(confidence, float | int) else None,
+        )
+
+    def _prepare_sync_state_for_attempt(
+        self,
+        source: user_data_source.UserDataSource,
+    ) -> SourceSyncState | None:
+        repository = self._source_sync_state_repository
+        if repository is None:
+            return None
+
+        query_signature = self._build_query_signature(source)
+        default_checkpoint_kind = self._default_checkpoint_kind(source.source_type)
+        existing = repository.get_by_source(source.id)
+        if existing is None:
+            existing = SourceSyncState(
+                source_id=source.id,
+                source_type=source.source_type,
+                checkpoint_kind=default_checkpoint_kind,
+                query_signature=query_signature,
+            )
+        elif (
+            existing.checkpoint_kind == CheckpointKind.NONE
+            and default_checkpoint_kind != CheckpointKind.NONE
+        ):
+            existing = existing.model_copy(
+                update={"checkpoint_kind": default_checkpoint_kind},
+            )
+        if (
+            existing.query_signature is not None
+            and existing.query_signature != query_signature
+        ):
+            existing = existing.model_copy(
+                update={
+                    "checkpoint_payload": {},
+                    "checkpoint_kind": default_checkpoint_kind,
+                },
+            )
+        attempted = existing.mark_attempt().model_copy(
+            update={"query_signature": query_signature},
+        )
+        return repository.upsert(attempted)
+
+    def _build_run_context(
+        self,
+        *,
+        source: user_data_source.UserDataSource,
+        ingestion_job_id: UUID,
+        sync_state: SourceSyncState | None,
+    ) -> IngestionRunContext | None:
+        if (
+            self._source_sync_state_repository is None
+            and self._source_record_ledger_repository is None
+        ):
+            return None
+
+        resolved_state = sync_state or SourceSyncState(
+            source_id=source.id,
+            source_type=source.source_type,
+            query_signature=self._build_query_signature(source),
+        )
+        query_signature = resolved_state.query_signature or self._build_query_signature(
+            source,
+        )
+        return IngestionRunContext(
+            ingestion_job_id=ingestion_job_id,
+            source_sync_state=resolved_state,
+            query_signature=query_signature,
+            source_record_ledger_repository=self._source_record_ledger_repository,
+        )
+
+    async def _invoke_ingestion_service(
+        self,
+        *,
+        service: Callable[..., Awaitable[IngestionRunSummary]],
+        source: user_data_source.UserDataSource,
+        context: IngestionRunContext | None,
+    ) -> IngestionRunSummary:
+        if context is not None and self._service_accepts_context(service):
+            return await service(source, context=context)
+        return await service(source)
+
+    @staticmethod
+    def _service_accepts_context(
+        service: Callable[..., Awaitable[IngestionRunSummary]],
+    ) -> bool:
+        try:
+            signature = inspect.signature(service)
+        except (TypeError, ValueError):
+            return False
+        parameters = signature.parameters
+        if "context" in parameters:
+            return True
+        positional_count = sum(
+            1
+            for parameter in parameters.values()
+            if parameter.kind
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        )
+        return positional_count >= MIN_POSITIONAL_PARAMETERS_WITH_CONTEXT
+
+    def _persist_sync_state_on_success(
+        self,
+        *,
+        sync_state: SourceSyncState | None,
+        ingestion_job_id: UUID,
+        summary: IngestionRunSummary,
+    ) -> SourceSyncState | None:
+        repository = self._source_sync_state_repository
+        if repository is None or sync_state is None:
+            return None
+
+        checkpoint_after_raw = getattr(summary, "checkpoint_after", None)
+        if isinstance(checkpoint_after_raw, dict):
+            checkpoint_after: dict[str, JSONValue] = dict(checkpoint_after_raw)
+        else:
+            checkpoint_after = dict(sync_state.checkpoint_payload)
+
+        updated = sync_state.mark_success(
+            successful_job_id=ingestion_job_id,
+            checkpoint_payload=checkpoint_after,
+        )
+        checkpoint_kind = self._resolve_checkpoint_kind(
+            raw_value=getattr(summary, "checkpoint_kind", None),
+            fallback=sync_state.checkpoint_kind,
+        )
+        query_signature = getattr(summary, "query_signature", None)
+        update_payload: dict[str, object] = {"checkpoint_kind": checkpoint_kind}
+        if isinstance(query_signature, str) and query_signature.strip():
+            update_payload["query_signature"] = query_signature
+        updated = updated.model_copy(update=update_payload)
+        return repository.upsert(updated)
+
+    @staticmethod
+    def _int_summary_field(
+        summary: IngestionRunSummary,
+        field_name: str,
+    ) -> int:
+        raw_value = getattr(summary, field_name, 0)
+        return raw_value if isinstance(raw_value, int) else 0
+
+    def _build_idempotency_metadata(
+        self,
+        *,
+        summary: IngestionRunSummary,
+        sync_state_before: SourceSyncState | None,
+        sync_state_after: SourceSyncState | None,
+    ) -> data_source_types.IngestionIdempotencyMetadata | None:
+        query_signature = getattr(summary, "query_signature", None)
+        if not isinstance(query_signature, str) or not query_signature.strip():
+            query_signature = (
+                sync_state_after.query_signature
+                if sync_state_after is not None
+                else (
+                    sync_state_before.query_signature
+                    if sync_state_before is not None
+                    else None
+                )
+            )
+        resolved_query_signature = (
+            query_signature
+            if isinstance(query_signature, str) and query_signature.strip()
+            else None
+        )
+        resolved_checkpoint_kind = self._resolve_checkpoint_kind(
+            raw_value=getattr(summary, "checkpoint_kind", None),
+            fallback=(
+                sync_state_after.checkpoint_kind
+                if sync_state_after is not None
+                else (
+                    sync_state_before.checkpoint_kind
+                    if sync_state_before is not None
+                    else CheckpointKind.NONE
+                )
+            ),
+        )
+
+        checkpoint_before_raw = getattr(summary, "checkpoint_before", None)
+        if isinstance(checkpoint_before_raw, dict):
+            checkpoint_before: dict[str, JSONValue] | None = dict(checkpoint_before_raw)
+        elif sync_state_before is not None:
+            checkpoint_before = dict(sync_state_before.checkpoint_payload)
+        else:
+            checkpoint_before = None
+
+        checkpoint_after_raw = getattr(summary, "checkpoint_after", None)
+        if isinstance(checkpoint_after_raw, dict):
+            checkpoint_after: dict[str, JSONValue] | None = dict(checkpoint_after_raw)
+        elif sync_state_after is not None:
+            checkpoint_after = dict(sync_state_after.checkpoint_payload)
+        else:
+            checkpoint_after = None
+
+        new_records = self._int_summary_field(summary, "new_records")
+        updated_records = self._int_summary_field(summary, "updated_records")
+        unchanged_records = self._int_summary_field(summary, "unchanged_records")
+        skipped_records = self._int_summary_field(summary, "skipped_records")
+
+        has_signal = (
+            resolved_query_signature is not None
+            or resolved_checkpoint_kind != CheckpointKind.NONE
+            or checkpoint_before is not None
+            or checkpoint_after is not None
+            or new_records > 0
+            or updated_records > 0
+            or unchanged_records > 0
+            or skipped_records > 0
+        )
+        if not has_signal:
+            return None
+
+        return data_source_types.IngestionIdempotencyMetadata(
+            query_signature=resolved_query_signature,
+            checkpoint_kind=resolved_checkpoint_kind.value,
+            checkpoint_before=checkpoint_before,
+            checkpoint_after=checkpoint_after,
+            new_records=new_records,
+            updated_records=updated_records,
+            unchanged_records=unchanged_records,
+            skipped_records=skipped_records,
+        )
+
+    @staticmethod
+    def _resolve_checkpoint_kind(
+        *,
+        raw_value: object,
+        fallback: CheckpointKind,
+    ) -> CheckpointKind:
+        if isinstance(raw_value, CheckpointKind):
+            return raw_value
+        if isinstance(raw_value, str):
+            normalized = raw_value.strip().lower()
+            for kind in CheckpointKind:
+                if kind.value == normalized:
+                    return kind
+        return fallback
+
+    @staticmethod
+    def _default_checkpoint_kind(
+        source_type: user_data_source.SourceType,
+    ) -> CheckpointKind:
+        if source_type in (
+            user_data_source.SourceType.PUBMED,
+            user_data_source.SourceType.CLINVAR,
+        ):
+            return CheckpointKind.CURSOR
+        return CheckpointKind.NONE
+
+    @staticmethod
+    def _build_query_signature(source: user_data_source.UserDataSource) -> str:
+        canonical_payload = json.dumps(
+            {
+                "source_type": source.source_type.value,
+                "configuration": source.configuration.model_dump(mode="json"),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
     def _enqueue_extraction(
         self,
@@ -262,7 +590,7 @@ class IngestionSchedulingService:
         source: user_data_source.UserDataSource,
         ingestion_job_id: UUID,
         summary: IngestionRunSummary,
-    ) -> dict[str, int] | None:
+    ) -> data_source_types.IngestionExtractionQueueMetadata | None:
         if self._extraction_queue_service is None:
             return None
 
@@ -278,12 +606,12 @@ class IngestionSchedulingService:
             ingestion_job_id=ingestion_job_id,
             publication_ids=publication_ids,
         )
-        return {
-            "requested": enqueue_summary.requested,
-            "queued": enqueue_summary.queued,
-            "skipped": enqueue_summary.skipped,
-            "version": enqueue_summary.extraction_version,
-        }
+        return data_source_types.IngestionExtractionQueueMetadata(
+            requested=enqueue_summary.requested,
+            queued=enqueue_summary.queued,
+            skipped=enqueue_summary.skipped,
+            version=enqueue_summary.extraction_version,
+        )
 
     async def _run_extraction(
         self,
@@ -291,7 +619,7 @@ class IngestionSchedulingService:
         source: user_data_source.UserDataSource,
         ingestion_job_id: UUID,
         queued_count: int,
-    ) -> JSONObject | None:
+    ) -> data_source_types.IngestionExtractionRunMetadata | None:
         if self._extraction_runner_service is None:
             return None
         if queued_count <= 0:
@@ -301,7 +629,21 @@ class IngestionSchedulingService:
             ingestion_job_id=ingestion_job_id,
             expected_items=queued_count,
         )
-        return summary.to_metadata()
+        return data_source_types.IngestionExtractionRunMetadata(
+            source_id=str(summary.source_id) if summary.source_id is not None else None,
+            ingestion_job_id=(
+                str(summary.ingestion_job_id)
+                if summary.ingestion_job_id is not None
+                else None
+            ),
+            requested=summary.requested,
+            processed=summary.processed,
+            completed=summary.completed,
+            skipped=summary.skipped,
+            failed=summary.failed,
+            started_at=summary.started_at,
+            completed_at=summary.completed_at,
+        )
 
     def _create_ingestion_job(
         self,

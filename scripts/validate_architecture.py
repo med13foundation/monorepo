@@ -640,10 +640,19 @@ class ArchitectureValidator:
 
     def _check_import_count(self, tree: ast.AST, file_path: str) -> None:
         """Check if file has too many imports (indicates multiple responsibilities)."""
+        parent_by_child: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parent_by_child[child] = parent
+
         imports = [
             node
             for node in ast.walk(tree)
             if isinstance(node, ast.Import | ast.ImportFrom)
+            and not self._is_type_checking_import(
+                node=node,
+                parent_by_child=parent_by_child,
+            )
         ]
 
         if len(imports) > MAX_IMPORTS_PER_FILE:
@@ -673,6 +682,36 @@ class ArchitectureValidator:
                     severity="warning",
                 ),
             )
+
+    @staticmethod
+    def _is_type_checking_import(
+        *,
+        node: ast.AST,
+        parent_by_child: dict[ast.AST, ast.AST],
+    ) -> bool:
+        """Return True when an import is nested under an `if TYPE_CHECKING` block."""
+        current = parent_by_child.get(node)
+        while current is not None:
+            if isinstance(
+                current,
+                ast.If,
+            ) and ArchitectureValidator._is_type_checking_guard(current.test):
+                return True
+            current = parent_by_child.get(current)
+        return False
+
+    @staticmethod
+    def _is_type_checking_guard(test: ast.AST) -> bool:
+        """Return True when an if-test is `TYPE_CHECKING`."""
+        if isinstance(test, ast.Name):
+            return test.id == "TYPE_CHECKING"
+        if isinstance(test, ast.Attribute):
+            return (
+                test.attr == "TYPE_CHECKING"
+                and isinstance(test.value, ast.Name)
+                and test.value.id == "typing"
+            )
+        return False
 
     def _check_function_parameters(self, tree: ast.AST, file_path: str) -> None:
         """Check if functions have too many parameters."""

@@ -35,6 +35,11 @@ from .data_sources import (
     DataSourceAiTestLink,
     DataSourceAiTestResult,
     FlujoTableSummary,
+    IngestionExtractionQueueMetadata,
+    IngestionExtractionRunMetadata,
+    IngestionIdempotencyMetadata,
+    IngestionJobMetadata,
+    IngestionQueryGenerationMetadata,
     SourceCatalogEntrySeed,
 )
 from .external_apis import (
@@ -123,6 +128,11 @@ __all__ = [
     "GoogleCloudStorageConfig",
     "HashInfo",
     "HPOOntologyResponse",
+    "IngestionExtractionQueueMetadata",
+    "IngestionExtractionRunMetadata",
+    "IngestionIdempotencyMetadata",
+    "IngestionJobMetadata",
+    "IngestionQueryGenerationMetadata",
     "LicenseInfo",
     "LicenseManifest",
     "LicenseRecord",

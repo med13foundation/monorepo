@@ -4,7 +4,14 @@ Domain entities for MED13 Resource Library.
 These entities represent the core business objects and their relationships.
 """
 
-from . import data_source_configs, ingestion_job, publication, user_data_source
+from . import (
+    data_source_configs,
+    ingestion_job,
+    publication,
+    source_record_ledger,
+    source_sync_state,
+    user_data_source,
+)
 from .data_discovery import (
     AdvancedQueryParameters,
     DataDiscoverySession,
@@ -20,6 +27,7 @@ from .data_discovery import (
 )
 from .data_sources import (
     ActivationScope,
+    CheckpointKind,
     DataSourceActivation,
     ExtractionQueueItem,
     ExtractionStatus,
@@ -31,7 +39,9 @@ from .data_sources import (
     JobMetrics,
     QualityMetrics,
     SourceConfiguration,
+    SourceRecordLedgerEntry,
     SourceStatus,
+    SourceSyncState,
     SourceTemplate,
     SourceType,
     StorageConfiguration,
@@ -58,6 +68,7 @@ __all__ = [
     "DataSourceActivation",
     "DiscoverySearchJob",
     "DiscoverySearchStatus",
+    "CheckpointKind",
     "ExtractionOutcome",
     "ExtractionQueueItem",
     "ExtractionStatus",
@@ -78,7 +89,9 @@ __all__ = [
     "QueryTestResult",
     "SourceCatalogEntry",
     "SourceConfiguration",
+    "SourceRecordLedgerEntry",
     "SourceStatus",
+    "SourceSyncState",
     "SourceTemplate",
     "SourceType",
     "StorageConfiguration",
@@ -94,5 +107,7 @@ __all__ = [
     "data_source_configs",
     "ingestion_job",
     "publication",
+    "source_record_ledger",
+    "source_sync_state",
     "user_data_source",
 ]

@@ -9,6 +9,8 @@ from .ingestion_job import (
     IngestionTrigger,
     JobMetrics,
 )
+from .source_record_ledger import SourceRecordLedgerEntry
+from .source_sync_state import CheckpointKind, SourceSyncState
 from .source_template import (
     SourceTemplate,
     TemplateCategory,
@@ -42,9 +44,12 @@ __all__ = [
     "IngestionStatus",
     "IngestionTrigger",
     "JobMetrics",
+    "CheckpointKind",
     "QualityMetrics",
+    "SourceRecordLedgerEntry",
     "SourceConfiguration",
     "SourceStatus",
+    "SourceSyncState",
     "SourceTemplate",
     "SourceType",
     "StorageConfiguration",

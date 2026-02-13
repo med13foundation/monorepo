@@ -16,6 +16,11 @@ from src.domain.entities.user_data_source import (
 )
 from src.models.api.common import PaginatedResponse
 from src.type_definitions.common import JSONObject
+from src.type_definitions.data_sources import (
+    IngestionIdempotencyMetadata,
+    IngestionJobMetadata,
+    IngestionQueryGenerationMetadata,
+)
 
 
 class CreateDataSourceRequest(BaseModel):
@@ -125,6 +130,10 @@ class IngestionJobResponse(BaseModel):
     records_failed: int
     records_skipped: int
     bytes_processed: int
+    executed_query: str | None = None
+    query_generation: IngestionQueryGenerationMetadata | None = None
+    idempotency: IngestionIdempotencyMetadata | None = None
+    metadata_typed: IngestionJobMetadata | None = None
     metadata: JSONObject | None = None
 
 

@@ -27,6 +27,10 @@ from src.domain.entities.discovery_search_job import (
     DiscoverySearchJob,
     DiscoverySearchStatus,
 )
+from src.domain.entities.source_record_ledger import (
+    SourceRecordLedgerEntry,  # noqa: TC001
+)
+from src.domain.entities.source_sync_state import SourceSyncState  # noqa: TC001
 from src.domain.entities.user_data_source import (
     IngestionSchedule,
     ScheduleFrequency,
@@ -36,8 +40,15 @@ from src.domain.entities.user_data_source import (
     UserDataSource,
 )
 from src.domain.repositories.ingestion_job_repository import IngestionJobRepository
+from src.domain.repositories.source_record_ledger_repository import (
+    SourceRecordLedgerRepository,
+)
+from src.domain.repositories.source_sync_state_repository import (
+    SourceSyncStateRepository,
+)
 from src.domain.repositories.storage_repository import StorageOperationRepository
 from src.domain.repositories.user_data_source_repository import UserDataSourceRepository
+from src.domain.services.ingestion import IngestionRunContext  # noqa: TC001
 from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
 from src.infrastructure.scheduling import InMemoryScheduler
 from src.type_definitions.storage import (
@@ -328,6 +339,94 @@ class StubPubMedIngestionService:
         )
 
 
+class StubSourceSyncStateRepository(SourceSyncStateRepository):
+    def __init__(self) -> None:
+        self.by_source: dict[UUID, SourceSyncState] = {}
+
+    def get_by_source(self, source_id: UUID) -> SourceSyncState | None:
+        return self.by_source.get(source_id)
+
+    def list_by_source_type(
+        self,
+        source_type: SourceType,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[SourceSyncState]:
+        all_states = [
+            state
+            for state in self.by_source.values()
+            if state.source_type == source_type
+        ]
+        return all_states[offset : offset + limit]
+
+    def upsert(self, state: SourceSyncState) -> SourceSyncState:
+        self.by_source[state.source_id] = state
+        return state
+
+    def delete_by_source(self, source_id: UUID) -> bool:
+        return self.by_source.pop(source_id, None) is not None
+
+
+class StubSourceRecordLedgerRepository(SourceRecordLedgerRepository):
+    def get_entry(
+        self,
+        *,
+        source_id: UUID,
+        external_record_id: str,
+    ) -> SourceRecordLedgerEntry | None:
+        return None
+
+    def get_entries_by_external_ids(
+        self,
+        *,
+        source_id: UUID,
+        external_record_ids: list[str],
+    ) -> dict[str, SourceRecordLedgerEntry]:
+        return {}
+
+    def upsert_entries(
+        self,
+        entries: list[SourceRecordLedgerEntry],
+    ) -> list[SourceRecordLedgerEntry]:
+        return entries
+
+    def delete_by_source(self, source_id: UUID) -> int:
+        return 0
+
+    def count_for_source(self, source_id: UUID) -> int:
+        return 0
+
+
+class ContextAwarePubMedIngestionService:
+    def __init__(self) -> None:
+        self.contexts: list[IngestionRunContext] = []
+
+    async def ingest(
+        self,
+        source: UserDataSource,
+        *,
+        context: IngestionRunContext | None = None,
+    ) -> PubMedIngestionSummary:
+        assert context is not None
+        self.contexts.append(context)
+        checkpoint_before = dict(context.source_sync_state.checkpoint_payload)
+        return PubMedIngestionSummary(
+            source_id=source.id,
+            fetched_records=2,
+            parsed_publications=1,
+            created_publications=1,
+            updated_publications=0,
+            query_signature=context.query_signature,
+            checkpoint_before=checkpoint_before,
+            checkpoint_after={"cursor": "next-page"},
+            new_records=1,
+            updated_records=0,
+            unchanged_records=1,
+            skipped_records=1,
+        )
+
+
 def _build_source(schedule: IngestionSchedule) -> UserDataSource:
     return UserDataSource(
         id=uuid4(),
@@ -528,6 +627,50 @@ async def test_run_due_jobs_triggers_ingestion() -> None:
     assert source_repo.ingestion_recorded
     # Jobs saved include initial, running, completion states
     assert len(job_repo.saved) >= 3
+
+
+@pytest.mark.asyncio
+async def test_run_due_jobs_updates_sync_state_and_idempotency_metadata() -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    source_repo = StubSourceRepository(source)
+    job_repo = StubJobRepository()
+    pubmed_service = ContextAwarePubMedIngestionService()
+    scheduler = InMemoryScheduler()
+    sync_state_repository = StubSourceSyncStateRepository()
+    ledger_repository = StubSourceRecordLedgerRepository()
+
+    service = IngestionSchedulingService(
+        scheduler=scheduler,
+        source_repository=source_repo,
+        job_repository=job_repo,
+        ingestion_services={SourceType.PUBMED: pubmed_service.ingest},
+        options=IngestionSchedulingOptions(
+            source_sync_state_repository=sync_state_repository,
+            source_record_ledger_repository=ledger_repository,
+        ),
+    )
+
+    await service.schedule_source(source.id)
+    await service.run_due_jobs(as_of=datetime.now(UTC) + timedelta(hours=1, seconds=1))
+
+    saved_state = sync_state_repository.get_by_source(source.id)
+    assert saved_state is not None
+    assert saved_state.last_successful_job_id is not None
+    assert saved_state.query_signature is not None
+    assert saved_state.checkpoint_payload == {"cursor": "next-page"}
+
+    completed_jobs = [job for job in job_repo.saved if job.status.value == "completed"]
+    assert completed_jobs
+    idempotency = completed_jobs[-1].metadata.get("idempotency")
+    assert isinstance(idempotency, dict)
+    assert idempotency.get("checkpoint_after") == {"cursor": "next-page"}
+    assert idempotency.get("new_records") == 1
+    assert idempotency.get("unchanged_records") == 1
 
 
 @pytest.mark.asyncio

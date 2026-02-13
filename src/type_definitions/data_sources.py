@@ -10,9 +10,153 @@ from datetime import datetime  # noqa: TC003
 from typing import TypedDict
 from uuid import UUID  # noqa: TC003
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from src.type_definitions.common import JSONObject  # noqa: TC001
+
+
+class IngestionIdempotencyMetadata(BaseModel):
+    """Canonical idempotency metadata for ingestion runs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query_signature: str | None = None
+    checkpoint_kind: str | None = None
+    checkpoint_before: JSONObject | None = None
+    checkpoint_after: JSONObject | None = None
+    new_records: int = Field(default=0, ge=0)
+    updated_records: int = Field(default=0, ge=0)
+    unchanged_records: int = Field(default=0, ge=0)
+    skipped_records: int = Field(default=0, ge=0)
+
+    def to_json_object(self) -> JSONObject:
+        """Serialize to a JSON-safe object for ingestion job metadata."""
+        return {
+            "query_signature": self.query_signature,
+            "checkpoint_kind": self.checkpoint_kind,
+            "checkpoint_before": self.checkpoint_before,
+            "checkpoint_after": self.checkpoint_after,
+            "new_records": self.new_records,
+            "updated_records": self.updated_records,
+            "unchanged_records": self.unchanged_records,
+            "skipped_records": self.skipped_records,
+        }
+
+
+class IngestionQueryGenerationMetadata(BaseModel):
+    """Typed metadata for AI query generation decisions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str | None = None
+    model: str | None = None
+    decision: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    def to_json_object(self) -> JSONObject:
+        """Serialize to a JSON-safe object for ingestion job metadata."""
+        return {
+            "run_id": self.run_id,
+            "model": self.model,
+            "decision": self.decision,
+            "confidence": self.confidence,
+        }
+
+
+class IngestionExtractionQueueMetadata(BaseModel):
+    """Typed metadata for extraction queue enqueue operations."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    requested: int = Field(default=0, ge=0)
+    queued: int = Field(default=0, ge=0)
+    skipped: int = Field(default=0, ge=0)
+    version: int = Field(default=1, ge=1)
+
+    def to_json_object(self) -> JSONObject:
+        """Serialize to a JSON-safe object for ingestion job metadata."""
+        return {
+            "requested": self.requested,
+            "queued": self.queued,
+            "skipped": self.skipped,
+            "version": self.version,
+        }
+
+
+class IngestionExtractionRunMetadata(BaseModel):
+    """Typed metadata for extraction runner execution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str | None = None
+    ingestion_job_id: str | None = None
+    requested: int = Field(default=0, ge=0)
+    processed: int = Field(default=0, ge=0)
+    completed: int = Field(default=0, ge=0)
+    skipped: int = Field(default=0, ge=0)
+    failed: int = Field(default=0, ge=0)
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+    def to_json_object(self) -> JSONObject:
+        """Serialize to a JSON-safe object for ingestion job metadata."""
+        return {
+            "source_id": self.source_id,
+            "ingestion_job_id": self.ingestion_job_id,
+            "requested": self.requested,
+            "processed": self.processed,
+            "completed": self.completed,
+            "skipped": self.skipped,
+            "failed": self.failed,
+            "started_at": (
+                self.started_at.isoformat(timespec="seconds")
+                if self.started_at is not None
+                else None
+            ),
+            "completed_at": (
+                self.completed_at.isoformat(timespec="seconds")
+                if self.completed_at is not None
+                else None
+            ),
+        }
+
+
+class IngestionJobMetadata(BaseModel):
+    """Canonical typed envelope for ingestion job metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    executed_query: str | None = None
+    query_generation: IngestionQueryGenerationMetadata | None = None
+    idempotency: IngestionIdempotencyMetadata | None = None
+    extraction_queue: IngestionExtractionQueueMetadata | None = None
+    extraction_run: IngestionExtractionRunMetadata | None = None
+
+    def to_json_object(self) -> JSONObject:
+        """Serialize non-empty metadata sections for persistence."""
+        payload: JSONObject = {}
+        if self.executed_query is not None:
+            payload["executed_query"] = self.executed_query
+        if self.query_generation is not None:
+            payload["query_generation"] = self.query_generation.to_json_object()
+        if self.idempotency is not None:
+            payload["idempotency"] = self.idempotency.to_json_object()
+        if self.extraction_queue is not None:
+            payload["extraction_queue"] = self.extraction_queue.to_json_object()
+        if self.extraction_run is not None:
+            payload["extraction_run"] = self.extraction_run.to_json_object()
+        return payload
+
+    @classmethod
+    def parse_optional(cls, raw_metadata: object) -> IngestionJobMetadata | None:
+        """Parse metadata payload into typed contract when possible."""
+        if not isinstance(raw_metadata, dict):
+            return None
+        try:
+            parsed = cls.model_validate(raw_metadata)
+        except ValidationError:
+            return None
+        return parsed if parsed.to_json_object() else None
 
 
 class DataSourceAiTestLink(BaseModel):
@@ -90,5 +234,10 @@ __all__ = [
     "DataSourceAiTestLink",
     "DataSourceAiTestResult",
     "FlujoTableSummary",
+    "IngestionExtractionQueueMetadata",
+    "IngestionExtractionRunMetadata",
+    "IngestionIdempotencyMetadata",
+    "IngestionJobMetadata",
+    "IngestionQueryGenerationMetadata",
     "SourceCatalogEntrySeed",
 ]

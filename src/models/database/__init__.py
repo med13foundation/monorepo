@@ -15,6 +15,8 @@ from . import (
     ingestion_job,
     research_space,
     session,
+    source_record_ledger,
+    source_sync_state,
     source_template,
     storage,
     system_status,
@@ -49,6 +51,8 @@ UserDataSourceModel = user_data_source.UserDataSourceModel
 DataSourceActivationModel = data_source_activation.DataSourceActivationModel
 IngestionJobModel = ingestion_job.IngestionJobModel
 ExtractionQueueItemModel = extraction_queue.ExtractionQueueItemModel
+SourceSyncStateModel = source_sync_state.SourceSyncStateModel
+SourceRecordLedgerModel = source_record_ledger.SourceRecordLedgerModel
 
 ResearchSpaceModel = research_space.ResearchSpaceModel
 ResearchSpaceMembershipModel = research_space.ResearchSpaceMembershipModel
@@ -100,6 +104,8 @@ __all__ = [
     "DataSourceActivationModel",
     "IngestionJobModel",
     "ExtractionQueueItemModel",
+    "SourceSyncStateModel",
+    "SourceRecordLedgerModel",
     # Restored ResearchSpace
     "ResearchSpaceModel",
     "ResearchSpaceMembershipModel",

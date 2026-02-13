@@ -12,6 +12,8 @@ from .ingestion_job_repository import IngestionJobRepository
 from .publication_extraction_repository import PublicationExtractionRepository
 from .publication_repository import PublicationRepository
 from .research_space_repository import ResearchSpaceRepository
+from .source_record_ledger_repository import SourceRecordLedgerRepository
+from .source_sync_state_repository import SourceSyncStateRepository
 from .source_template_repository import SourceTemplateRepository
 from .storage_repository import (
     StorageConfigurationRepository,
@@ -29,6 +31,8 @@ __all__ = [
     "QuerySpecification",
     "Repository",
     "SourceTemplateRepository",
+    "SourceRecordLedgerRepository",
+    "SourceSyncStateRepository",
     "StorageConfigurationRepository",
     "StorageOperationRepository",
     "SystemStatusRepository",

@@ -6,6 +6,7 @@ Fetches scientific literature and publication data from PubMed.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,42 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 # Relevance threshold constant
 RELEVANCE_THRESHOLD: int = 5
+
+
+@dataclass(frozen=True)
+class PubMedSearchPage:
+    """Search-stage page metadata returned by ESearch."""
+
+    article_ids: list[str]
+    total_count: int
+    retstart: int
+    retmax: int
+
+    @property
+    def returned_count(self) -> int:
+        """Number of IDs returned in this page."""
+        return len(self.article_ids)
+
+
+@dataclass(frozen=True)
+class PubMedFetchPage:
+    """Fetch-stage result including records and cursor metadata."""
+
+    records: list[RawRecord]
+    total_count: int
+    retstart: int
+    retmax: int
+    returned_count: int
+
+    @property
+    def next_retstart(self) -> int:
+        """Cursor offset for the next page."""
+        return self.retstart + self.returned_count
+
+    @property
+    def has_more(self) -> bool:
+        """Whether additional pages are available."""
+        return self.next_retstart < self.total_count
 
 
 class PubMedIngestor(BaseIngestor):
@@ -50,6 +87,11 @@ class PubMedIngestor(BaseIngestor):
         Returns:
             List of PubMed article records
         """
+        page = await self.fetch_page(**kwargs)
+        return page.records
+
+    async def fetch_page(self, **kwargs: JSONValue) -> PubMedFetchPage:
+        """Fetch one PubMed page with explicit cursor metadata."""
         # Step 1: Search for publications
         query_value = kwargs.get("query")
         query = query_value if isinstance(query_value, str) else "MED13"
@@ -57,9 +99,16 @@ class PubMedIngestor(BaseIngestor):
         search_kwargs = dict(kwargs)
         search_kwargs.pop("query", None)
 
-        article_ids = await self._search_publications(query, **search_kwargs)
+        search_page = await self._search_publications(query, **search_kwargs)
+        article_ids = list(search_page.article_ids)
         if not article_ids:
-            return []
+            return PubMedFetchPage(
+                records=[],
+                total_count=search_page.total_count,
+                retstart=search_page.retstart,
+                retmax=search_page.retmax,
+                returned_count=0,
+            )
 
         # Step 2: Fetch detailed records in batches
         all_records: list[RawRecord] = []
@@ -73,9 +122,19 @@ class PubMedIngestor(BaseIngestor):
             # Small delay between batches
             await asyncio.sleep(0.1)
 
-        return all_records
+        return PubMedFetchPage(
+            records=all_records,
+            total_count=search_page.total_count,
+            retstart=search_page.retstart,
+            retmax=search_page.retmax,
+            returned_count=search_page.returned_count,
+        )
 
-    async def _search_publications(self, query: str, **kwargs: JSONValue) -> list[str]:
+    async def _search_publications(
+        self,
+        query: str,
+        **kwargs: JSONValue,
+    ) -> PubMedSearchPage:
         """
         Search PubMed for publications matching the query.
 
@@ -108,11 +167,14 @@ class PubMedIngestor(BaseIngestor):
         mindate_value = kwargs.get("mindate")
         maxdate_value = kwargs.get("maxdate")
 
+        retstart = max(self._coerce_int(kwargs.get("retstart"), 0), 0)
+        retmax = max(self._coerce_int(kwargs.get("max_results"), 500), 1)
         params: dict[str, str | int | float | bool | None] = {
             "db": "pubmed",
             "term": full_query,
             "retmode": "json",
-            "retmax": self._coerce_int(kwargs.get("max_results"), 500),
+            "retstart": retstart,
+            "retmax": retmax,
             "sort": "relevance",
             "datetype": "pdat",
             "mindate": mindate_value if isinstance(mindate_value, str) else None,
@@ -125,11 +187,29 @@ class PubMedIngestor(BaseIngestor):
         # Extract article IDs from search results
         esearch_section = data.get("esearchresult")
         if not isinstance(esearch_section, dict):
-            return []
+            return PubMedSearchPage(
+                article_ids=[],
+                total_count=0,
+                retstart=retstart,
+                retmax=retmax,
+            )
+        response_total_count = self._coerce_int(esearch_section.get("count"), 0)
+        response_retstart = self._coerce_int(esearch_section.get("retstart"), retstart)
+        response_retmax = self._coerce_int(esearch_section.get("retmax"), retmax)
         id_list = esearch_section.get("idlist", [])
         if not isinstance(id_list, list):
-            return []
-        return [str(aid) for aid in id_list]
+            return PubMedSearchPage(
+                article_ids=[],
+                total_count=response_total_count,
+                retstart=response_retstart,
+                retmax=response_retmax,
+            )
+        return PubMedSearchPage(
+            article_ids=[str(aid) for aid in id_list],
+            total_count=response_total_count,
+            retstart=response_retstart,
+            retmax=response_retmax,
+        )
 
     async def _fetch_article_details(
         self,

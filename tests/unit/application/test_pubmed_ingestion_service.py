@@ -13,6 +13,10 @@ from src.application.services.storage_configuration_service import (
     StorageConfigurationService,
 )
 from src.domain.entities.publication import Publication, PublicationType
+from src.domain.entities.source_record_ledger import (
+    SourceRecordLedgerEntry,  # noqa: TC001
+)
+from src.domain.entities.source_sync_state import SourceSyncState  # noqa: TC001
 from src.domain.entities.storage_configuration import StorageConfiguration
 from src.domain.entities.user_data_source import (
     SourceConfiguration,
@@ -20,12 +24,20 @@ from src.domain.entities.user_data_source import (
     UserDataSource,
 )
 from src.domain.repositories.publication_repository import PublicationRepository
+from src.domain.repositories.source_record_ledger_repository import (
+    SourceRecordLedgerRepository,
+)
+from src.domain.services.ingestion import IngestionRunContext  # noqa: TC001
 from src.domain.services.pubmed_ingestion import PubMedGateway
 from src.domain.value_objects.identifiers import PublicationIdentifier
+from src.type_definitions.ingestion import IngestResult
 from src.type_definitions.storage import StorageUseCase
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from src.type_definitions.common import RawRecord
+    from src.type_definitions.ingestion import RawRecord as PipelineRawRecord
 
 
 class StubGateway(PubMedGateway):
@@ -208,6 +220,69 @@ class StubPublicationRepository(PublicationRepository):
         return []
 
 
+class StubPipeline:
+    """In-memory ingestion pipeline test double."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[PipelineRawRecord], str]] = []
+
+    def run(
+        self,
+        records: list[PipelineRawRecord],
+        research_space_id: str,
+    ) -> IngestResult:
+        self.calls.append((records, research_space_id))
+        return IngestResult(success=True, observations_created=len(records))
+
+
+class StubLedgerRepository(SourceRecordLedgerRepository):
+    def __init__(self, entries: list[SourceRecordLedgerEntry] | None = None) -> None:
+        self._entries: dict[tuple[str, str], SourceRecordLedgerEntry] = {
+            (str(entry.source_id), entry.external_record_id): entry
+            for entry in (entries or [])
+        }
+
+    def get_entry(
+        self,
+        *,
+        source_id: UUID,
+        external_record_id: str,
+    ) -> SourceRecordLedgerEntry | None:
+        return self._entries.get((str(source_id), external_record_id))
+
+    def get_entries_by_external_ids(
+        self,
+        *,
+        source_id: UUID,
+        external_record_ids: list[str],
+    ) -> dict[str, SourceRecordLedgerEntry]:
+        results: dict[str, SourceRecordLedgerEntry] = {}
+        for external_record_id in external_record_ids:
+            entry = self._entries.get((str(source_id), external_record_id))
+            if entry is not None:
+                results[external_record_id] = entry
+        return results
+
+    def upsert_entries(
+        self,
+        entries: list[SourceRecordLedgerEntry],
+    ) -> list[SourceRecordLedgerEntry]:
+        for entry in entries:
+            self._entries[(str(entry.source_id), entry.external_record_id)] = entry
+        return entries
+
+    def delete_by_source(self, source_id: UUID) -> int:
+        prefix = str(source_id)
+        keys = [key for key in self._entries if key[0] == prefix]
+        for key in keys:
+            self._entries.pop(key, None)
+        return len(keys)
+
+    def count_for_source(self, source_id: UUID) -> int:
+        prefix = str(source_id)
+        return sum(1 for key in self._entries if key[0] == prefix)
+
+
 def _build_source(metadata: dict) -> UserDataSource:
     return UserDataSource(
         id=uuid4(),
@@ -285,3 +360,46 @@ async def test_rejects_non_pubmed_source() -> None:
 
     with pytest.raises(ValueError):
         await service.ingest(source)
+
+
+@pytest.mark.asyncio
+async def test_ingest_skips_unchanged_records_using_ledger() -> None:
+    unchanged_record: RawRecord = {"pmid": "100", "title": "Known"}
+    changed_record: RawRecord = {"pmid": "101", "title": "New"}
+    gateway = StubGateway(records=[unchanged_record, changed_record])
+    pipeline = StubPipeline()
+    service = PubMedIngestionService(
+        gateway=gateway,
+        pipeline=pipeline,
+        publication_repository=StubPublicationRepository(),
+    )
+
+    source = _build_source({"query": "MED13"}).model_copy(
+        update={"research_space_id": uuid4()},
+    )
+    existing_entry = SourceRecordLedgerEntry(
+        source_id=source.id,
+        external_record_id="pubmed:pmid:100",
+        payload_hash=PubMedIngestionService._compute_payload_hash(unchanged_record),
+    )
+    ledger = StubLedgerRepository(entries=[existing_entry])
+    context = IngestionRunContext(
+        ingestion_job_id=uuid4(),
+        source_sync_state=SourceSyncState(
+            source_id=source.id,
+            source_type=SourceType.PUBMED,
+        ),
+        query_signature="pubmed-signature",
+        source_record_ledger_repository=ledger,
+    )
+
+    summary = await service.ingest(source, context=context)
+
+    assert summary.fetched_records == 2
+    assert summary.parsed_publications == 1
+    assert summary.new_records == 1
+    assert summary.unchanged_records == 1
+    assert summary.skipped_records == 1
+    assert len(pipeline.calls) == 1
+    assert len(pipeline.calls[0][0]) == 1
+    assert ledger.count_for_source(source.id) == 2

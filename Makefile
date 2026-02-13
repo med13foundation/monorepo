@@ -810,33 +810,11 @@ venv-check: ## Ensure virtual environment is active
 
 # Report directory for QA outputs
 REPORT_DIR := reports
-TIMESTAMP := $(shell date +%Y%m%d_%H%M%S)
-QA_REPORT := $(REPORT_DIR)/qa_report_$(TIMESTAMP).txt
 
-all: venv-check check-env format lint-strict type-check-strict validate-architecture validate-dependencies-warn web-build web-lint web-type-check web-test-all test test-architecture security-audit ## Run complete quality assurance suite (fails on first error)
-	@echo ""
-	@echo "✅ All quality checks passed!"
+all: all-report ## Run complete quality assurance suite (fails on first error)
 
-all-report: ## Run complete QA suite with report generation (fails on first error)
-	@mkdir -p $(REPORT_DIR)
-	@echo "=========================================" > $(QA_REPORT)
-	@echo "MED13 Resource Library - QA Report" >> $(QA_REPORT)
-	@echo "Generated: $(shell date)" >> $(QA_REPORT)
-	@echo "=========================================" >> $(QA_REPORT)
-	@echo "" >> $(QA_REPORT)
-	@echo "Running quality assurance suite..." | tee -a $(QA_REPORT)
-	@bash -c 'set -o pipefail; $(MAKE) venv-check check-env format lint-strict type-check-strict web-build web-lint web-type-check web-test-all test test-architecture security-audit 2>&1 | tee -a $(QA_REPORT)' || \
-		(echo "" >> $(QA_REPORT); \
-		 echo "❌ QA Suite FAILED at: $(shell date)" >> $(QA_REPORT); \
-		 echo ""; \
-		 echo "❌ QA Suite FAILED - Report saved to: $(QA_REPORT)"; \
-		 exit 1)
-	@echo "" >> $(QA_REPORT)
-	@echo "✅ All quality checks passed!" >> $(QA_REPORT)
-	@echo "Completed at: $(shell date)" >> $(QA_REPORT)
-	@echo ""
-	@echo "✅ All quality checks passed!"
-	@echo "Report saved to: $(QA_REPORT)"
+all-report: ## Run complete QA suite with final warnings/errors report (fails on first error)
+	@bash scripts/run_qa_report.sh
 
 # CI/CD Simulation
 ci: install-dev lint test security-audit ## Run full CI pipeline locally

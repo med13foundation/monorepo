@@ -6,27 +6,24 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pydantic
 
+from src.application.services.data_source_ai_test_helpers import (
+    LOW_CONFIDENCE_THRESHOLD,
+    apply_clinvar_defaults,
+    build_clinvar_findings,
+    build_findings,
+    extract_search_terms,
+    should_use_clinvar_gateway,
+    should_use_pubmed_gateway,
+)
 from src.domain.entities import data_source_configs, user_data_source
 from src.type_definitions import data_sources as data_source_types
 
 logger = logging.getLogger(__name__)
-
-# Confidence threshold below which queries are logged as warnings
-LOW_CONFIDENCE_THRESHOLD = 0.5
-CLINVAR_DISCOVERY_SOURCE_IDS: frozenset[str] = frozenset(
-    {"clinvar", "clinvar_benchmark"},
-)
-DEFAULT_CLINVAR_AGENT_PROMPT = (
-    "Use ClinVar-specific ontology and evidence criteria to generate targeted "
-    "queries for pathogenicity-focused tasks."
-)
-DEFAULT_CLINVAR_QUERY = "MED13 pathogenic variant"
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -156,7 +153,7 @@ class DataSourceAiTestService:
         else:
             message = error_message
 
-        search_terms = self._extract_search_terms(executed_query)
+        search_terms = extract_search_terms(executed_query)
         model_name = self._resolve_model_name(
             has_query_agent=self._query_agent is not None,
             configured_model_id=actual_model_id,
@@ -189,7 +186,7 @@ class DataSourceAiTestService:
         source: user_data_source.UserDataSource,
     ) -> data_source_configs.PubMedQueryConfig | None:
         metadata: SourceMetadata = dict(source.configuration.metadata or {})
-        metadata_with_defaults = DataSourceAiTestService._apply_clinvar_defaults(
+        metadata_with_defaults = apply_clinvar_defaults(
             metadata,
         )
         try:
@@ -207,7 +204,7 @@ class DataSourceAiTestService:
         executed_query: str,
     ) -> data_source_configs.ClinVarQueryConfig | None:
         metadata: SourceMetadata = dict(source.configuration.metadata or {})
-        metadata_with_defaults = DataSourceAiTestService._apply_clinvar_defaults(
+        metadata_with_defaults = apply_clinvar_defaults(
             metadata,
         )
         metadata_with_defaults["query"] = executed_query
@@ -232,7 +229,7 @@ class DataSourceAiTestService:
         list[data_source_types.DataSourceAiTestFinding],
         str | None,
     ]:
-        if self._should_use_pubmed_gateway(source, config):
+        if should_use_pubmed_gateway(source, config):
             test_config = config.model_copy(
                 update={
                     "query": executed_query,
@@ -256,7 +253,7 @@ class DataSourceAiTestService:
             )
             return True, fetched_records, findings, error_message
 
-        if self._should_use_clinvar_gateway(source, config):
+        if should_use_clinvar_gateway(source, config):
             clinvar_test_config = self._build_clinvar_test_config(
                 source=source,
                 executed_query=executed_query,
@@ -293,48 +290,6 @@ class DataSourceAiTestService:
             source.id,
         )
         return False, 0, [], None
-
-    @staticmethod
-    def _normalize_catalog_entry_id(metadata: SourceMetadata) -> str | None:
-        catalog_entry_id = metadata.get("catalog_entry_id")
-        if not isinstance(catalog_entry_id, str):
-            return None
-        normalized = catalog_entry_id.strip().lower()
-        return normalized if normalized else None
-
-    @classmethod
-    def _is_clinvar_discovery_source(cls, metadata: SourceMetadata) -> bool:
-        catalog_entry_id = cls._normalize_catalog_entry_id(metadata)
-        return (
-            catalog_entry_id in CLINVAR_DISCOVERY_SOURCE_IDS
-            if catalog_entry_id is not None
-            else False
-        )
-
-    @classmethod
-    def _apply_clinvar_defaults(cls, metadata: SourceMetadata) -> SourceMetadata:
-        """Backfill AI defaults for legacy ClinVar discovery sources."""
-        if not cls._is_clinvar_discovery_source(metadata):
-            return metadata
-
-        normalized_metadata: SourceMetadata = dict(metadata)
-        query = normalized_metadata.get("query")
-        if not isinstance(query, str) or not query.strip():
-            normalized_metadata["query"] = DEFAULT_CLINVAR_QUERY
-
-        raw_agent_config = normalized_metadata.get("agent_config")
-        if isinstance(raw_agent_config, dict):
-            agent_config: SourceMetadata = dict(raw_agent_config)
-        else:
-            agent_config = {}
-
-        agent_config.setdefault("is_ai_managed", True)
-        agent_config.setdefault("query_agent_source_type", "clinvar")
-        agent_config.setdefault("use_research_space_context", True)
-        agent_config.setdefault("agent_prompt", DEFAULT_CLINVAR_AGENT_PROMPT)
-
-        normalized_metadata["agent_config"] = agent_config
-        return normalized_metadata
 
     def _validate_preconditions(
         self,
@@ -410,30 +365,6 @@ class DataSourceAiTestService:
             logger.exception("AI query generation failed")
             return ""
 
-    @staticmethod
-    def _should_use_pubmed_gateway(
-        source: user_data_source.UserDataSource,
-        config: data_source_configs.PubMedQueryConfig,
-    ) -> bool:
-        """
-        Determine if the configured source should run through PubMed fetch for AI tests.
-        """
-        return (
-            source.source_type == user_data_source.SourceType.PUBMED
-            or config.agent_config.query_agent_source_type.lower() == "pubmed"
-        )
-
-    @staticmethod
-    def _should_use_clinvar_gateway(
-        source: user_data_source.UserDataSource,
-        config: data_source_configs.PubMedQueryConfig,
-    ) -> bool:
-        """Determine if the configured source should run through ClinVar fetch."""
-        return (
-            source.source_type == user_data_source.SourceType.CLINVAR
-            or config.agent_config.query_agent_source_type.lower() == "clinvar"
-        )
-
     def _resolve_model_name(
         self,
         *,
@@ -446,151 +377,17 @@ class DataSourceAiTestService:
         model = configured_model_id or self._ai_model_name
         return model.strip() if isinstance(model, str) and model.strip() else None
 
-    @staticmethod
-    def _extract_search_terms(query: str | None) -> list[str]:
-        if not query:
-            return []
-
-        terms: list[str] = []
-        quoted_terms = re.findall(r'"([^"]+)"', query)
-        for term in quoted_terms:
-            normalized = term.strip()
-            if normalized and normalized not in terms:
-                terms.append(normalized)
-
-        scrubbed = re.sub(r'"[^"]+"', " ", query)
-        scrubbed = re.sub(r"\[[^\]]+\]", " ", scrubbed)
-        scrubbed = scrubbed.replace("(", " ").replace(")", " ")
-        for token in scrubbed.split():
-            normalized = token.strip()
-            if not normalized:
-                continue
-            if normalized.upper() in {"AND", "OR", "NOT"}:
-                continue
-            if normalized not in terms:
-                terms.append(normalized)
-
-        return terms
-
     def _build_findings(
         self,
         records: list[RawRecord],
     ) -> list[data_source_types.DataSourceAiTestFinding]:
-        findings: list[data_source_types.DataSourceAiTestFinding] = []
-        for record in records[: self._sample_size]:
-            pubmed_id = self._coerce_scalar(record.get("pubmed_id"))
-            title = self._coerce_scalar(record.get("title")) or "Untitled PubMed record"
-            doi = self._coerce_scalar(record.get("doi"))
-            pmc_id = self._coerce_scalar(record.get("pmc_id"))
-            publication_date = self._coerce_scalar(record.get("publication_date"))
-            journal = self._extract_journal_title(record.get("journal"))
-            links = self._build_links(pubmed_id, pmc_id, doi)
-
-            findings.append(
-                data_source_types.DataSourceAiTestFinding(
-                    title=title,
-                    pubmed_id=pubmed_id,
-                    doi=doi,
-                    pmc_id=pmc_id,
-                    publication_date=publication_date,
-                    journal=journal,
-                    links=links,
-                ),
-            )
-        return findings
+        return build_findings(records, self._sample_size)
 
     def _build_clinvar_findings(
         self,
         records: list[RawRecord],
     ) -> list[data_source_types.DataSourceAiTestFinding]:
-        findings: list[data_source_types.DataSourceAiTestFinding] = []
-        for record in records[: self._sample_size]:
-            clinvar_id = self._coerce_scalar(record.get("clinvar_id"))
-            parsed_data_raw = record.get("parsed_data")
-            parsed_data = parsed_data_raw if isinstance(parsed_data_raw, dict) else {}
-            gene_symbol = self._coerce_scalar(parsed_data.get("gene_symbol"))
-            clinical_significance = self._coerce_scalar(
-                parsed_data.get("clinical_significance"),
-            )
-            title_parts = [
-                part for part in (gene_symbol, clinical_significance) if part
-            ]
-            title = (
-                " - ".join(title_parts)
-                if title_parts
-                else (
-                    f"ClinVar variant {clinvar_id}" if clinvar_id else "ClinVar variant"
-                )
-            )
-            links: list[data_source_types.DataSourceAiTestLink] = []
-            if clinvar_id:
-                links.append(
-                    data_source_types.DataSourceAiTestLink(
-                        label="ClinVar",
-                        url=(
-                            "https://www.ncbi.nlm.nih.gov/clinvar/variation/"
-                            f"{clinvar_id}/"
-                        ),
-                    ),
-                )
-
-            findings.append(
-                data_source_types.DataSourceAiTestFinding(
-                    title=title,
-                    publication_date=self._coerce_scalar(record.get("fetched_at")),
-                    links=links,
-                ),
-            )
-        return findings
-
-    @staticmethod
-    def _coerce_scalar(value: object | None) -> str | None:
-        if isinstance(value, str):
-            return value.strip() or None
-        if isinstance(value, int | float):
-            return str(value)
-        return None
-
-    @staticmethod
-    def _extract_journal_title(value: object | None) -> str | None:
-        if not isinstance(value, dict):
-            return None
-        title_value = value.get("title")
-        return (
-            title_value.strip()
-            if isinstance(title_value, str) and title_value.strip()
-            else None
-        )
-
-    @staticmethod
-    def _build_links(
-        pubmed_id: str | None,
-        pmc_id: str | None,
-        doi: str | None,
-    ) -> list[data_source_types.DataSourceAiTestLink]:
-        links: list[data_source_types.DataSourceAiTestLink] = []
-        if pubmed_id:
-            links.append(
-                data_source_types.DataSourceAiTestLink(
-                    label="PubMed",
-                    url=f"https://pubmed.ncbi.nlm.nih.gov/{pubmed_id}/",
-                ),
-            )
-        if pmc_id:
-            links.append(
-                data_source_types.DataSourceAiTestLink(
-                    label="PubMed Central",
-                    url=f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/",
-                ),
-            )
-        if doi:
-            links.append(
-                data_source_types.DataSourceAiTestLink(
-                    label="DOI",
-                    url=f"https://doi.org/{doi}",
-                ),
-            )
-        return links
+        return build_clinvar_findings(records, self._sample_size)
 
     def _resolve_flujo_state(
         self,

@@ -52,6 +52,16 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
   </div>
 )
 
+const formatCheckpoint = (checkpoint?: Record<string, unknown> | null): string => {
+  if (!checkpoint || Object.keys(checkpoint).length === 0) {
+    return 'n/a'
+  }
+  return Object.entries(checkpoint)
+    .slice(0, 2)
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(', ')
+}
+
 export function DataSourceIngestionDetailsDialog({
   source,
   summary,
@@ -171,20 +181,44 @@ export function DataSourceIngestionDetailsDialog({
                       <TableHead>Trigger</TableHead>
                       <TableHead>Started</TableHead>
                       <TableHead>Completed</TableHead>
+                      <TableHead>Checkpoint</TableHead>
                       <TableHead className="text-right">Processed</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {historyItems.map((job) => {
+                      const typedMetadata = job.metadata_typed
                       const executedQuery =
-                        typeof job.metadata?.executed_query === 'string'
-                          ? job.metadata.executed_query
+                        typeof job.executed_query === 'string'
+                          ? job.executed_query
+                          : typeof typedMetadata?.executed_query === 'string'
+                            ? typedMetadata.executed_query
+                          : typeof job.metadata?.executed_query === 'string'
+                            ? job.metadata.executed_query
                           : null
+                      const queryGeneration = job.query_generation ?? typedMetadata?.query_generation ?? null
+                      const idempotency = job.idempotency ?? typedMetadata?.idempotency ?? null
+                      const checkpointKindLabel =
+                        typeof idempotency?.checkpoint_kind === 'string' &&
+                        idempotency.checkpoint_kind.length > 0
+                          ? `${idempotency.checkpoint_kind}: `
+                          : ''
+                      const checkpointSummary =
+                        checkpointKindLabel + formatCheckpoint(idempotency?.checkpoint_after)
+                      const countersSummary = idempotency
+                        ? `N/U/Un ${idempotency.new_records}/${idempotency.updated_records}/${idempotency.unchanged_records}`
+                        : null
                       return (
                         <TableRow
                           key={job.id}
                           className="cursor-help"
-                          title={executedQuery ? `Query: ${executedQuery}` : undefined}
+                          title={
+                            executedQuery
+                              ? `Query: ${executedQuery}`
+                              : idempotency?.query_signature
+                                ? `Signature: ${idempotency.query_signature}`
+                                : undefined
+                          }
                         >
                           <TableCell className="font-medium capitalize">
                             <div className="flex flex-col">
@@ -197,11 +231,24 @@ export function DataSourceIngestionDetailsDialog({
                                   {executedQuery}
                                 </span>
                               )}
+                              {countersSummary && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  {countersSummary}
+                                </span>
+                              )}
+                              {queryGeneration?.decision && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  Query AI: {queryGeneration.decision}
+                                </span>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell className="capitalize">{job.trigger}</TableCell>
                           <TableCell>{formatTimestamp(job.started_at)}</TableCell>
                           <TableCell>{formatTimestamp(job.completed_at)}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {checkpointSummary}
+                          </TableCell>
                           <TableCell className="text-right">
                             {job.records_processed} (+{job.records_failed}/{job.records_skipped})
                           </TableCell>

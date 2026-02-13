@@ -13,8 +13,8 @@ export interface DataSourceIngestionSchedule {
   timezone: string
   cron_expression?: string | null
   backend_job_id?: string | null
-   next_run_at?: string | null
-   last_run_at?: string | null
+  next_run_at?: string | null
+  last_run_at?: string | null
 }
 
 export interface DataSourceQualityMetrics {
@@ -69,5 +69,54 @@ export interface IngestionJobHistoryItem {
   records_failed: number
   records_skipped: number
   bytes_processed: number
+  executed_query?: string | null
+  query_generation?: IngestionQueryGenerationMetadata | null
+  idempotency?: IngestionIdempotencyMetadata | null
+  metadata_typed?: IngestionJobMetadata | null
   metadata?: Record<string, unknown>
+}
+
+export interface IngestionIdempotencyMetadata {
+  query_signature?: string | null
+  checkpoint_kind?: string | null
+  checkpoint_before?: Record<string, unknown> | null
+  checkpoint_after?: Record<string, unknown> | null
+  new_records: number
+  updated_records: number
+  unchanged_records: number
+  skipped_records: number
+}
+
+export interface IngestionQueryGenerationMetadata {
+  run_id?: string | null
+  model?: string | null
+  decision?: string | null
+  confidence?: number | null
+}
+
+export interface IngestionExtractionQueueMetadata {
+  requested: number
+  queued: number
+  skipped: number
+  version: number
+}
+
+export interface IngestionExtractionRunMetadata {
+  source_id?: string | null
+  ingestion_job_id?: string | null
+  requested: number
+  processed: number
+  completed: number
+  skipped: number
+  failed: number
+  started_at?: string | null
+  completed_at?: string | null
+}
+
+export interface IngestionJobMetadata {
+  executed_query?: string | null
+  query_generation?: IngestionQueryGenerationMetadata | null
+  idempotency?: IngestionIdempotencyMetadata | null
+  extraction_queue?: IngestionExtractionQueueMetadata | null
+  extraction_run?: IngestionExtractionRunMetadata | null
 }

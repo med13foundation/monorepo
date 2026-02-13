@@ -2,8 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID  # noqa: TCH003
+
+from src.type_definitions.common import JSONObject  # noqa: TC001
+
+if TYPE_CHECKING:
+    from src.domain.entities.source_sync_state import SourceSyncState
+    from src.domain.repositories.source_record_ledger_repository import (
+        SourceRecordLedgerRepository,
+    )
+
+
+@dataclass(frozen=True)
+class IngestionRunContext:
+    """Context passed by scheduler to source ingestion services."""
+
+    ingestion_job_id: UUID
+    source_sync_state: SourceSyncState
+    query_signature: str
+    source_record_ledger_repository: SourceRecordLedgerRepository | None = None
 
 
 class IngestionRunSummary(Protocol):
@@ -40,3 +59,35 @@ class IngestionRunSummary(Protocol):
     @property
     def executed_query(self) -> str | None:
         """Source query string when available."""
+
+    @property
+    def query_signature(self) -> str | None:
+        """Hash of normalized query/config used for this run."""
+
+    @property
+    def checkpoint_before(self) -> JSONObject | None:
+        """Checkpoint payload before this run started."""
+
+    @property
+    def checkpoint_after(self) -> JSONObject | None:
+        """Checkpoint payload after this run completed."""
+
+    @property
+    def checkpoint_kind(self) -> str | None:
+        """Checkpoint mechanism used for this run (cursor/timestamp/etc)."""
+
+    @property
+    def new_records(self) -> int:
+        """Number of new upstream records this run observed."""
+
+    @property
+    def updated_records(self) -> int:
+        """Number of changed upstream records this run observed."""
+
+    @property
+    def unchanged_records(self) -> int:
+        """Number of upstream records skipped as unchanged."""
+
+    @property
+    def skipped_records(self) -> int:
+        """Number of skipped records for scheduling metrics."""

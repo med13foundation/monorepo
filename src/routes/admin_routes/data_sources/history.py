@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import ValidationError
 
 from src.domain.entities.ingestion_job import IngestionJob
 from src.domain.repositories.ingestion_job_repository import IngestionJobRepository
@@ -13,12 +14,67 @@ from src.routes.admin_routes.data_sources.schemas import (
     IngestionJobResponse,
 )
 from src.routes.admin_routes.dependencies import get_ingestion_job_repository
+from src.type_definitions.data_sources import (
+    IngestionIdempotencyMetadata,
+    IngestionJobMetadata,
+    IngestionQueryGenerationMetadata,
+)
 
 router = APIRouter()
 
 
+def _extract_executed_query(metadata: object) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+    executed_query = metadata.get("executed_query")
+    return executed_query if isinstance(executed_query, str) else None
+
+
+def _extract_query_generation(
+    metadata: object,
+) -> IngestionQueryGenerationMetadata | None:
+    if not isinstance(metadata, dict):
+        return None
+    query_generation_raw = metadata.get("query_generation")
+    if not isinstance(query_generation_raw, dict):
+        return None
+    try:
+        return IngestionQueryGenerationMetadata.model_validate(query_generation_raw)
+    except ValidationError:
+        return None
+
+
+def _extract_idempotency(metadata: object) -> IngestionIdempotencyMetadata | None:
+    if not isinstance(metadata, dict):
+        return None
+    idempotency_raw = metadata.get("idempotency")
+    if not isinstance(idempotency_raw, dict):
+        return None
+    try:
+        return IngestionIdempotencyMetadata.model_validate(idempotency_raw)
+    except ValidationError:
+        return None
+
+
 def _job_to_response(job: IngestionJob) -> IngestionJobResponse:
     metrics = job.metrics
+    metadata = dict(job.metadata or {})
+    typed_metadata = IngestionJobMetadata.parse_optional(metadata)
+    executed_query = (
+        typed_metadata.executed_query
+        if typed_metadata is not None
+        else _extract_executed_query(metadata)
+    )
+    query_generation = (
+        typed_metadata.query_generation
+        if typed_metadata is not None
+        else _extract_query_generation(metadata)
+    )
+    idempotency = (
+        typed_metadata.idempotency
+        if typed_metadata is not None
+        else _extract_idempotency(metadata)
+    )
     return IngestionJobResponse(
         id=job.id,
         status=job.status,
@@ -29,7 +85,11 @@ def _job_to_response(job: IngestionJob) -> IngestionJobResponse:
         records_failed=metrics.records_failed,
         records_skipped=metrics.records_skipped,
         bytes_processed=metrics.bytes_processed,
-        metadata=job.metadata,
+        executed_query=executed_query,
+        query_generation=query_generation,
+        idempotency=idempotency,
+        metadata_typed=typed_metadata,
+        metadata=metadata,
     )
 
 
