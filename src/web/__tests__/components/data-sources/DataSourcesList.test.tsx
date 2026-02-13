@@ -176,6 +176,59 @@ describe('DiscoverSourcesDialog - onSourceAdded prop', () => {
 })
 
 describe('DataSourcesList - AI Controls', () => {
+  it('shows schedule and AI buttons for any connector with query_agent_source_type', () => {
+    const connectorSource: DataSource = {
+      id: 'source-future-connector',
+      name: 'Future Connector Source',
+      description: 'Generic connector source',
+      source_type: 'api',
+      status: 'active',
+      owner_id: 'user-123',
+      research_space_id: 'space-123',
+      config: {
+        metadata: {
+          agent_config: {
+            is_ai_managed: true,
+            query_agent_source_type: 'future_connector',
+            agent_prompt: 'Use connector-specific terminology.',
+          },
+        },
+      },
+      ingestion_schedule: {
+        enabled: true,
+        frequency: 'daily',
+        timezone: 'UTC',
+        start_time: null,
+        cron_expression: null,
+        backend_job_id: null,
+        next_run_at: null,
+        last_run_at: null,
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={{
+          items: [connectorSource],
+          total: 1,
+          page: 1,
+          limit: 20,
+          has_next: false,
+          has_prev: false,
+        }}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /configure schedule/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /configure ai/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /test ai/i })).toBeInTheDocument()
+  })
+
   it('shows schedule and AI buttons for ClinVar AI-managed sources', () => {
     const clinvarSource: DataSource = {
       id: 'source-clinvar',
@@ -197,6 +250,56 @@ describe('DataSourcesList - AI Controls', () => {
       ingestion_schedule: {
         enabled: true,
         frequency: 'daily',
+        timezone: 'UTC',
+        start_time: null,
+        cron_expression: null,
+        backend_job_id: null,
+        next_run_at: null,
+        last_run_at: null,
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={{
+          items: [clinvarSource],
+          total: 1,
+          page: 1,
+          limit: 20,
+          has_next: false,
+          has_prev: false,
+        }}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /configure schedule/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /configure ai/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /test ai/i })).toBeInTheDocument()
+  })
+
+  it('shows schedule and AI buttons for ClinVar discovery sources without agent config', () => {
+    const clinvarSource: DataSource = {
+      id: 'source-clinvar-discovery',
+      name: 'ClinVar (from Data Discovery)',
+      description: 'Public archive connecting human genetic variants to phenotypes.',
+      source_type: 'api',
+      status: 'draft',
+      owner_id: 'user-123',
+      research_space_id: 'space-123',
+      config: {
+        metadata: {
+          catalog_entry_id: 'clinvar',
+          query: 'MED13 pathogenic variant',
+        },
+      },
+      ingestion_schedule: {
+        enabled: false,
+        frequency: 'manual',
         timezone: 'UTC',
         start_time: null,
         cron_expression: null,

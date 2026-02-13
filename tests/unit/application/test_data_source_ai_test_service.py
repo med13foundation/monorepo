@@ -417,6 +417,119 @@ async def test_ai_test_skips_fetch_for_clinvar_connector() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ai_test_skips_fetch_for_non_pubmed_connector() -> None:
+    source_id = uuid4()
+    space_id = uuid4()
+    connector_name = "future_connector"
+    space = ResearchSpace(
+        id=space_id,
+        slug="test-space",
+        name="Test Space",
+        description="Study MED13 variants",
+        owner_id=uuid4(),
+        status=SpaceStatus.ACTIVE,
+    )
+    source = build_pubmed_source(
+        source_id=source_id,
+        research_space_id=space_id,
+        source_type=SourceType.API,
+        query_agent_source_type=connector_name,
+        ai_enabled=True,
+    )
+
+    pubmed_gateway = StubPubMedGateway(
+        [
+            {
+                "pubmed_id": "1",
+                "title": "MED13 findings in cardiac research",
+                "doi": "10.1000/xyz",
+                "pmc_id": "PMC12345",
+                "publication_date": "2024-01-01",
+                "journal": {"title": "Nature Medicine"},
+            },
+        ],
+    )
+    query_agent = StubQueryAgent("MED13 connector query")
+    dependencies = DataSourceAiTestDependencies(
+        source_repository=StubUserDataSourceRepository(source),
+        pubmed_gateway=pubmed_gateway,
+        query_agent=query_agent,
+        run_id_provider=None,
+        research_space_repository=StubResearchSpaceRepository(space),
+    )
+    service = DataSourceAiTestService(
+        dependencies,
+        settings=DataSourceAiTestSettings(
+            sample_size=3,
+            ai_model_name="openai:gpt-test",
+        ),
+    )
+
+    result = await service.test_ai_configuration(source_id)
+
+    assert result.success is True
+    assert result.executed_query == "MED13 connector query"
+    assert result.fetched_records == 0
+    assert not pubmed_gateway.called_queries
+    assert query_agent.calls[0]["source_type"] == connector_name
+    assert f"no connector fetch step for {connector_name}" in result.message
+
+
+@pytest.mark.asyncio
+async def test_ai_test_uses_clinvar_defaults_for_discovery_source_without_agent_config():
+    source_id = uuid4()
+    space_id = uuid4()
+    space = ResearchSpace(
+        id=space_id,
+        slug="clinvar-space",
+        name="ClinVar Space",
+        description="Study MED13 variants",
+        owner_id=uuid4(),
+        status=SpaceStatus.ACTIVE,
+    )
+
+    source = UserDataSource(
+        id=source_id,
+        owner_id=uuid4(),
+        research_space_id=space_id,
+        name="ClinVar (from Data Discovery)",
+        description="ClinVar source added from discovery",
+        source_type=SourceType.API,
+        template_id=None,
+        configuration=SourceConfiguration(
+            metadata={
+                "catalog_entry_id": "clinvar",
+            },
+        ),
+    )
+
+    query_agent = StubQueryAgent("MED13 pathogenic variant")
+    pubmed_gateway = StubPubMedGateway([])
+    dependencies = DataSourceAiTestDependencies(
+        source_repository=StubUserDataSourceRepository(source),
+        pubmed_gateway=pubmed_gateway,
+        query_agent=query_agent,
+        run_id_provider=None,
+        research_space_repository=StubResearchSpaceRepository(space),
+    )
+    service = DataSourceAiTestService(
+        dependencies,
+        settings=DataSourceAiTestSettings(
+            sample_size=3,
+            ai_model_name="openai:gpt-test",
+        ),
+    )
+
+    result = await service.test_ai_configuration(source_id)
+
+    assert result.success is True
+    assert result.executed_query == "MED13 pathogenic variant"
+    assert query_agent.calls[0]["source_type"] == "clinvar"
+    assert not pubmed_gateway.called_queries
+    assert "no connector fetch step for clinvar" in result.message
+
+
+@pytest.mark.asyncio
 async def test_ai_disabled_returns_failure() -> None:
     source_id = uuid4()
     source = build_pubmed_source(

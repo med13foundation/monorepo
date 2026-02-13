@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 
 # Confidence threshold below which queries are logged as warnings
 LOW_CONFIDENCE_THRESHOLD = 0.5
+CLINVAR_DISCOVERY_SOURCE_IDS: frozenset[str] = frozenset(
+    {"clinvar", "clinvar_benchmark"},
+)
+DEFAULT_CLINVAR_AGENT_PROMPT = (
+    "Use ClinVar-specific ontology and evidence criteria to generate targeted "
+    "queries for pathogenicity-focused tasks."
+)
+DEFAULT_CLINVAR_QUERY = "MED13 pathogenic variant"
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -195,11 +203,58 @@ class DataSourceAiTestService:
         source: user_data_source.UserDataSource,
     ) -> data_source_configs.PubMedQueryConfig | None:
         metadata: SourceMetadata = dict(source.configuration.metadata or {})
+        metadata_with_defaults = DataSourceAiTestService._apply_clinvar_defaults(
+            metadata,
+        )
         try:
-            return data_source_configs.PubMedQueryConfig.model_validate(metadata)
+            return data_source_configs.PubMedQueryConfig.model_validate(
+                metadata_with_defaults,
+            )
         except pydantic.ValidationError as exc:
             logger.warning("Invalid PubMed config for source %s: %s", source.id, exc)
             return None
+
+    @staticmethod
+    def _normalize_catalog_entry_id(metadata: SourceMetadata) -> str | None:
+        catalog_entry_id = metadata.get("catalog_entry_id")
+        if not isinstance(catalog_entry_id, str):
+            return None
+        normalized = catalog_entry_id.strip().lower()
+        return normalized if normalized else None
+
+    @classmethod
+    def _is_clinvar_discovery_source(cls, metadata: SourceMetadata) -> bool:
+        catalog_entry_id = cls._normalize_catalog_entry_id(metadata)
+        return (
+            catalog_entry_id in CLINVAR_DISCOVERY_SOURCE_IDS
+            if catalog_entry_id is not None
+            else False
+        )
+
+    @classmethod
+    def _apply_clinvar_defaults(cls, metadata: SourceMetadata) -> SourceMetadata:
+        """Backfill AI defaults for legacy ClinVar discovery sources."""
+        if not cls._is_clinvar_discovery_source(metadata):
+            return metadata
+
+        normalized_metadata: SourceMetadata = dict(metadata)
+        query = normalized_metadata.get("query")
+        if not isinstance(query, str) or not query.strip():
+            normalized_metadata["query"] = DEFAULT_CLINVAR_QUERY
+
+        raw_agent_config = normalized_metadata.get("agent_config")
+        if isinstance(raw_agent_config, dict):
+            agent_config: SourceMetadata = dict(raw_agent_config)
+        else:
+            agent_config = {}
+
+        agent_config.setdefault("is_ai_managed", True)
+        agent_config.setdefault("query_agent_source_type", "clinvar")
+        agent_config.setdefault("use_research_space_context", True)
+        agent_config.setdefault("agent_prompt", DEFAULT_CLINVAR_AGENT_PROMPT)
+
+        normalized_metadata["agent_config"] = agent_config
+        return normalized_metadata
 
     def _validate_preconditions(
         self,

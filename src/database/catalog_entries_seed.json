@@ -6,6 +6,20 @@
     "category": "Genomic Variant Databases",
     "param_type": "gene",
     "url_template": "https://www.ncbi.nlm.nih.gov/clinvar/?term=${gene}[gene]",
+    "query_capabilities": {
+      "discovery_defaults": {
+        "schedule_enabled": true,
+        "schedule_frequency": "daily",
+        "schedule_timezone": "UTC",
+        "ai_profile": {
+          "is_ai_managed": true,
+          "source_type": "clinvar",
+          "agent_prompt": "Use ClinVar-specific ontology and evidence criteria to generate targeted variant interpretation queries.",
+          "use_research_space_context": true,
+          "default_query": "MED13 pathogenic variant"
+        }
+      }
+    },
     "tags": [
       "variants",
       "genomics",

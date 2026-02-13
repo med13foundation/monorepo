@@ -31,6 +31,10 @@ import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import { AiModelSelector } from './AiModelSelector'
+import {
+  DEFAULT_CLINVAR_AGENT_PROMPT,
+  getSourceAgentConfigSnapshot,
+} from './sourceAgentConfig'
 
 const aiConfigSchema = z.object({
   is_ai_managed: z.boolean().default(false),
@@ -62,18 +66,20 @@ export function DataSourceAiConfigDialog({
   const config = isRecord(source?.config) ? source?.config : {}
   const metadata = isRecord(config.metadata) ? config.metadata : {}
   const agentConfig = isRecord(metadata.agent_config) ? metadata.agent_config : {}
-  const queryAgentSourceType =
-    typeof agentConfig.query_agent_source_type === 'string' &&
-      agentConfig.query_agent_source_type.trim().length > 0
-      ? agentConfig.query_agent_source_type.trim()
-      : null
-  const supportsAiConfiguration =
-    source?.source_type === 'pubmed' ||
-    queryAgentSourceType !== null ||
-    agentConfig.is_ai_managed === true
-  const defaultIsAiManaged = agentConfig.is_ai_managed === true
+  const sourceAgentConfigSnapshot = source
+    ? getSourceAgentConfigSnapshot(source)
+    : null
+  const queryAgentSourceType = sourceAgentConfigSnapshot?.queryAgentSourceType ?? null
+  const supportsAiConfiguration = sourceAgentConfigSnapshot?.supportsAiControls ?? false
+  const defaultIsAiManaged =
+    agentConfig.is_ai_managed === true ||
+    sourceAgentConfigSnapshot?.isClinvarCatalogSource === true
   const defaultAgentPrompt =
-    typeof agentConfig.agent_prompt === 'string' ? agentConfig.agent_prompt : ''
+    typeof agentConfig.agent_prompt === 'string'
+      ? agentConfig.agent_prompt
+      : sourceAgentConfigSnapshot?.isClinvarCatalogSource
+        ? DEFAULT_CLINVAR_AGENT_PROMPT
+        : ''
   const defaultUseContext =
     typeof agentConfig.use_research_space_context === 'boolean'
       ? agentConfig.use_research_space_context
@@ -105,12 +111,15 @@ export function DataSourceAiConfigDialog({
   }
 
   const onSubmit = async (values: AiConfigFormValues) => {
-    const updatedAgentConfig = {
+    const updatedAgentConfig: Record<string, unknown> = {
       ...agentConfig,
       is_ai_managed: values.is_ai_managed,
       agent_prompt: values.agent_prompt,
       use_research_space_context: values.use_research_space_context,
       model_id: values.model_id,
+    }
+    if (queryAgentSourceType !== null) {
+      updatedAgentConfig.query_agent_source_type = queryAgentSourceType
     }
     const updatedMetadata = {
       ...metadata,

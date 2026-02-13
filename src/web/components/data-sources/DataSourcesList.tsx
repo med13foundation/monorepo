@@ -39,6 +39,7 @@ import { DataSourceAiConfigDialog } from './DataSourceAiConfigDialog'
 import { DataSourceIngestionDetailsDialog } from './DataSourceIngestionDetailsDialog'
 import { DiscoverSourcesDialog } from './DiscoverSourcesDialog'
 import { DataSourceAiTestDialog } from './DataSourceAiTestDialog'
+import { getSourceAgentConfigSnapshot } from './sourceAgentConfig'
 import type { OrchestratedSessionState, SourceCatalogEntry } from '@/types/generated'
 import type { DataSource } from '@/types/data-source'
 import { componentRegistry } from '@/lib/components/registry'
@@ -52,27 +53,6 @@ interface DataSourcesListProps {
   discoveryState: OrchestratedSessionState | null
   discoveryCatalog: SourceCatalogEntry[]
   discoveryError?: string | null
-}
-
-type SourceAgentConfigSnapshot = {
-  isAiManaged: boolean
-  queryAgentSourceType: string | null
-}
-
-function getSourceAgentConfigSnapshot(source: DataSource): SourceAgentConfigSnapshot {
-  const isRecord = (value: unknown): value is Record<string, unknown> =>
-    typeof value === 'object' && value !== null && !Array.isArray(value)
-  const config = isRecord(source.config) ? source.config : {}
-  const metadata = isRecord(config.metadata) ? config.metadata : {}
-  const agentConfig = isRecord(metadata.agent_config) ? metadata.agent_config : {}
-  const queryAgentSourceType = typeof agentConfig.query_agent_source_type === 'string'
-    && agentConfig.query_agent_source_type.trim().length > 0
-    ? agentConfig.query_agent_source_type.trim()
-    : null
-  return {
-    isAiManaged: agentConfig.is_ai_managed === true,
-    queryAgentSourceType,
-  }
 }
 
 export function DataSourcesList({
@@ -285,10 +265,7 @@ export function DataSourcesList({
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {resolvedDataSources.map((source: DataSource) => {
             const agentConfig = getSourceAgentConfigSnapshot(source)
-            const showsAiControls =
-              source.source_type === 'pubmed' ||
-              agentConfig.queryAgentSourceType !== null ||
-              agentConfig.isAiManaged
+            const showsAiControls = agentConfig.supportsAiControls
 
             return (
               <Card key={source.id}>
