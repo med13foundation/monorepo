@@ -28,6 +28,7 @@ const templateSourceTypes = [
   'database',
   'web_scraping',
   'pubmed',
+  'clinvar',
 ] as const satisfies SourceType[]
 
 const schema = z.object({

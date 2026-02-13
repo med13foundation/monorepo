@@ -37,7 +37,7 @@ if TYPE_CHECKING:
         storage_repository,
         user_data_source_repository,
     )
-    from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
+    from src.domain.services.ingestion import IngestionRunSummary
     from src.type_definitions.common import JSONObject, JSONValue
 
 
@@ -67,7 +67,7 @@ class IngestionSchedulingService:
             user_data_source.SourceType,
             Callable[
                 [user_data_source.UserDataSource],
-                Awaitable[PubMedIngestionSummary],
+                Awaitable[IngestionRunSummary],
             ],
         ],
         options: IngestionSchedulingOptions | None = None,
@@ -124,7 +124,7 @@ class IngestionSchedulingService:
     async def trigger_ingestion(
         self,
         source_id: UUID,
-    ) -> PubMedIngestionSummary:
+    ) -> IngestionRunSummary:
         """Manually trigger ingestion for a source outside of scheduler cadence."""
         source = self._get_source(source_id)
         if source.status != user_data_source.SourceStatus.ACTIVE:
@@ -149,7 +149,7 @@ class IngestionSchedulingService:
     async def _run_ingestion_for_source(
         self,
         source: user_data_source.UserDataSource,
-    ) -> PubMedIngestionSummary:
+    ) -> IngestionRunSummary:
         service = self._get_ingestion_service(source)
 
         job = self._job_repository.save(self._create_ingestion_job(source))
@@ -206,7 +206,7 @@ class IngestionSchedulingService:
     def _get_ingestion_service(
         self,
         source: user_data_source.UserDataSource,
-    ) -> Callable[[user_data_source.UserDataSource], Awaitable[PubMedIngestionSummary]]:
+    ) -> Callable[[user_data_source.UserDataSource], Awaitable[IngestionRunSummary]]:
         """Return the ingestion service for a source type."""
         service = self._ingestion_services.get(source.source_type)
         if service is None:
@@ -218,7 +218,7 @@ class IngestionSchedulingService:
         self,
         *,
         running: ingestion_job.IngestionJob,
-        summary: PubMedIngestionSummary,
+        summary: IngestionRunSummary,
     ) -> dict[str, JSONValue]:
         """Build ingestion-job metadata including query-generation trace details."""
         metadata: dict[str, JSONValue] = dict(running.metadata or {})
@@ -233,7 +233,7 @@ class IngestionSchedulingService:
 
     @staticmethod
     def _build_query_generation_metadata(
-        summary: PubMedIngestionSummary,
+        summary: IngestionRunSummary,
     ) -> dict[str, JSONValue]:
         """Build the optional query-generation metadata payload."""
         query_metadata: dict[str, JSONValue] = {}
@@ -261,7 +261,7 @@ class IngestionSchedulingService:
         *,
         source: user_data_source.UserDataSource,
         ingestion_job_id: UUID,
-        summary: PubMedIngestionSummary,
+        summary: IngestionRunSummary,
     ) -> dict[str, int] | None:
         if self._extraction_queue_service is None:
             return None

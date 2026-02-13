@@ -4,7 +4,10 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from src.domain.entities.data_source_configs import PubMedQueryConfig
+from src.domain.entities.data_source_configs import (
+    ClinVarQueryConfig,
+    PubMedQueryConfig,
+)
 from src.domain.entities.user_data_source import (
     SourceConfiguration,
     SourceType,
@@ -107,8 +110,41 @@ class PubMedSourcePlugin(SourcePlugin):
         )
 
 
+class ClinVarSourcePlugin(SourcePlugin):
+    """Plugin for validating ClinVar data sources."""
+
+    source_type = SourceType.CLINVAR
+    DEFAULT_REQUESTS_PER_MINUTE = 10
+
+    def validate_configuration(
+        self,
+        configuration: SourceConfiguration,
+    ) -> SourceConfiguration:
+        metadata: SourceMetadata = dict(configuration.metadata or {})
+        try:
+            clinvar_config = ClinVarQueryConfig.model_validate(metadata)
+        except ValidationError as exc:
+            messages = ", ".join(error["msg"] for error in exc.errors())
+            raise ValueError(messages) from exc
+
+        sanitized_metadata: SourceMetadata = dict(
+            clinvar_config.model_dump(mode="json"),
+        )
+        requests_per_minute = (
+            configuration.requests_per_minute or self.DEFAULT_REQUESTS_PER_MINUTE
+        )
+
+        return configuration.model_copy(
+            update={
+                "metadata": sanitized_metadata,
+                "requests_per_minute": requests_per_minute,
+            },
+        )
+
+
 __all__ = [
     "APISourcePlugin",
+    "ClinVarSourcePlugin",
     "DatabaseSourcePlugin",
     "PubMedSourcePlugin",
     "FileUploadSourcePlugin",

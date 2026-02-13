@@ -3,6 +3,7 @@ from __future__ import annotations
 from .base import SourcePlugin
 from .plugins import (
     APISourcePlugin,
+    ClinVarSourcePlugin,
     DatabaseSourcePlugin,
     FileUploadSourcePlugin,
     PubMedSourcePlugin,
@@ -15,12 +16,14 @@ default_registry.register_many(
         APISourcePlugin(),
         DatabaseSourcePlugin(),
         PubMedSourcePlugin(),
+        ClinVarSourcePlugin(),
     ],
     override=True,
 )
 
 __all__ = [
     "APISourcePlugin",
+    "ClinVarSourcePlugin",
     "DatabaseSourcePlugin",
     "FileUploadSourcePlugin",
     "PubMedSourcePlugin",

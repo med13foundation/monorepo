@@ -43,7 +43,13 @@ export interface DataSource {
   tags?: string[]
 }
 
-export type SourceType = 'api' | 'file_upload' | 'database' | 'web_scraping' | 'pubmed'
+export type SourceType =
+  | 'api'
+  | 'file_upload'
+  | 'database'
+  | 'web_scraping'
+  | 'pubmed'
+  | 'clinvar'
 
 export type SourceStatus =
   | 'draft'

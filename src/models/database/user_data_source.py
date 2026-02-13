@@ -28,6 +28,7 @@ class SourceTypeEnum(str, Enum):
     DATABASE = "database"
     WEB_SCRAPING = "web_scraping"
     PUBMED = "pubmed"
+    CLINVAR = "clinvar"
 
 
 class SourceStatusEnum(str, Enum):

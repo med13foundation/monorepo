@@ -33,6 +33,8 @@ class SourceTypeEnum(str, Enum):
     API = "api"
     DATABASE = "database"
     WEB_SCRAPING = "web_scraping"
+    PUBMED = "pubmed"
+    CLINVAR = "clinvar"
 
 
 class SourceTemplateModel(Base):

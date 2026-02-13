@@ -72,6 +72,7 @@ const SOURCE_TYPE_LABELS: Record<SourceCatalogEntry['source_type'], string> = {
   file_upload: 'File Upload',
   web_scraping: 'Web Scraping',
   pubmed: 'PubMed',
+  clinvar: 'ClinVar',
 }
 
 const STORAGE_TARGET_SUMMARY: Record<
@@ -82,6 +83,11 @@ const STORAGE_TARGET_SUMMARY: Record<
     label: 'PDF storage backend',
     description: 'Articles are saved via the StorageUseCase.PDF configuration.',
     useCase: 'PDF',
+  },
+  clinvar: {
+    label: 'Raw source storage',
+    description: 'Variant payloads are persisted through StorageUseCase.RAW_SOURCE.',
+    useCase: 'RAW_SOURCE',
   },
   api: {
     label: 'Raw source storage',
@@ -123,7 +129,7 @@ const PARAMETER_DESCRIPTIONS = {
 
 type CapabilityFlag = Exclude<
   keyof QueryParameterCapabilities,
-  'max_results_limit' | 'supported_storage_use_cases'
+  'max_results_limit' | 'supported_storage_use_cases' | 'discovery_defaults'
 >
 
 const CAPABILITY_LABELS: Record<CapabilityFlag, string> = {

@@ -27,7 +27,7 @@
     ],
     "is_active": true,
     "requires_auth": false,
-    "source_type": "api"
+    "source_type": "clinvar"
   },
   {
     "id": "gnomad",

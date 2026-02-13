@@ -265,8 +265,9 @@ class DataSourceAiTestService:
         if source.source_type not in (
             user_data_source.SourceType.PUBMED,
             user_data_source.SourceType.API,
+            user_data_source.SourceType.CLINVAR,
         ):
-            return "AI testing is only supported for PubMed or API sources."
+            return "AI testing is only supported for PubMed, ClinVar, or API sources."
         if config is None:
             return "Source configuration is invalid. Review the source settings."
         if not config.agent_config.is_ai_managed:

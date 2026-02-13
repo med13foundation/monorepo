@@ -539,6 +539,52 @@ class TestDataDiscoveryService:
         assert result == mock_data_source.id
         service._source_service.create_source.assert_called_once()
 
+    async def test_add_source_to_space_applies_clinvar_defaults(
+        self,
+        service: DataDiscoveryService,
+    ) -> None:
+        """ClinVar entries should create ClinVar sources with metadata defaults."""
+        session_id = TEST_SESSION_ACTIVE.id
+        space_id = uuid4()
+        catalog_entry_clinvar = create_test_source_catalog_entry(
+            entry_id="clinvar",
+            name="ClinVar",
+            category="Genomic Variant Databases",
+            param_type="gene",
+            source_type=SourceType.CLINVAR,
+            source_template_id=None,
+            api_endpoint="https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
+            url_template="https://www.ncbi.nlm.nih.gov/clinvar/?term=${gene}[gene]",
+        )
+
+        service._session_repo.find_by_id.return_value = TEST_SESSION_ACTIVE
+        service._catalog_repo.find_by_id.return_value = catalog_entry_clinvar
+
+        mock_data_source = Mock()
+        mock_data_source.id = uuid4()
+
+        def _create_source_side_effect(create_request: CreateSourceRequest) -> Mock:
+            metadata = create_request.configuration.metadata
+            assert create_request.source_type == SourceType.CLINVAR
+            assert metadata.get("gene_symbol") == "MED13L"
+            assert isinstance(metadata.get("query"), str)
+            assert create_request.configuration.requests_per_minute == 10
+            return mock_data_source
+
+        service._source_service.create_source.side_effect = _create_source_side_effect
+
+        request = AddSourceToSpaceRequest(
+            session_id=session_id,
+            catalog_entry_id="clinvar",
+            research_space_id=space_id,
+            source_config={},
+        )
+
+        result = await service.add_source_to_space(request)
+
+        assert result == mock_data_source.id
+        service._source_service.create_source.assert_called_once()
+
     async def test_add_source_to_space_coerces_legacy_pubmed_source_type(
         self,
         service: DataDiscoveryService,

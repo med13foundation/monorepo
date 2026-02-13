@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from src.application.services import (
+    ClinVarIngestionService,
     ExtractionQueueService,
     ExtractionRunnerService,
     IngestionSchedulingOptions,
@@ -17,8 +18,9 @@ from src.application.services import (
     StorageOperationCoordinator,
 )
 from src.database.session import SessionLocal
-from src.domain.entities.user_data_source import SourceType
+from src.domain.entities.user_data_source import SourceType, UserDataSource
 from src.infrastructure.data_sources import (
+    ClinVarSourceGateway,
     DeterministicPubMedSearchGateway,
     PubMedSourceGateway,
     SimplePubMedPdfGateway,
@@ -43,11 +45,12 @@ from src.infrastructure.scheduling import InMemoryScheduler
 from src.infrastructure.storage import initialize_storage_plugins
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Awaitable, Callable, Iterator
 
     from sqlalchemy.orm import Session
 
     from src.application.services.ports.scheduler_port import SchedulerPort
+    from src.domain.services.ingestion import IngestionRunSummary
 
 SCHEDULER_BACKEND = InMemoryScheduler()
 
@@ -99,6 +102,11 @@ def build_ingestion_scheduling_service(
         query_agent=query_agent,
         research_space_repository=research_space_repository,
     )
+    clinvar_service = ClinVarIngestionService(
+        gateway=ClinVarSourceGateway(),
+        pipeline=pipeline,
+        storage_service=storage_service,
+    )
 
     discovery_job_repository = SQLAlchemyDiscoverySearchJobRepository(session)
     query_builder = PubMedQueryBuilder()
@@ -112,8 +120,18 @@ def build_ingestion_scheduling_service(
         storage_coordinator=storage_coordinator,
     )
 
-    ingestion_services = {
-        SourceType.PUBMED: pubmed_service.ingest,
+    async def _run_pubmed_ingestion(source: UserDataSource) -> IngestionRunSummary:
+        return await pubmed_service.ingest(source)
+
+    async def _run_clinvar_ingestion(source: UserDataSource) -> IngestionRunSummary:
+        return await clinvar_service.ingest(source)
+
+    ingestion_services: dict[
+        SourceType,
+        Callable[[UserDataSource], Awaitable[IngestionRunSummary]],
+    ] = {
+        SourceType.PUBMED: _run_pubmed_ingestion,
+        SourceType.CLINVAR: _run_clinvar_ingestion,
     }
 
     return IngestionSchedulingService(

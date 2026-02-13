@@ -26,6 +26,7 @@ class SourceType(str, Enum):
     DATABASE = "database"
     WEB_SCRAPING = "web_scraping"  # Future use
     PUBMED = "pubmed"  # Biomedical literature ingestion
+    CLINVAR = "clinvar"  # ClinVar genomic variant ingestion
 
 
 class ScheduleFrequency(str, Enum):

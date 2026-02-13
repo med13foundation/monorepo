@@ -6,6 +6,7 @@ export enum SourceType {
   FILE = 'file',
   DATABASE = 'database',
   PUBMED = 'pubmed',
+  CLINVAR = 'clinvar',
 }
 
 export enum SourceStatus {

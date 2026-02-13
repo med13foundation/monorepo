@@ -182,6 +182,63 @@ class QuerySourceConfigurationMixin(SessionManagementMixin):
         config_payload["metadata"] = self._to_json_object(metadata_payload)
         return config_payload
 
+    @staticmethod
+    def _derive_default_clinvar_query(
+        parameters: data_discovery_parameters.AdvancedQueryParameters,
+    ) -> str:
+        gene = (
+            parameters.gene_symbol.strip().upper()
+            if isinstance(parameters.gene_symbol, str)
+            and parameters.gene_symbol.strip()
+            else "MED13"
+        )
+        term = (
+            parameters.search_term.strip()
+            if isinstance(parameters.search_term, str)
+            and parameters.search_term.strip()
+            else "pathogenic variant"
+        )
+        return f"{gene} {term}".strip()
+
+    def _apply_clinvar_defaults(
+        self,
+        source_config: JSONObject,
+        parameters: data_discovery_parameters.AdvancedQueryParameters,
+    ) -> JSONObject:
+        """Apply ClinVar-specific defaults and normalize metadata."""
+        config_payload: JSONObject = dict(source_config)
+        raw_metadata = config_payload.get("metadata")
+        metadata = self._coerce_json_object(raw_metadata)
+
+        if not isinstance(metadata.get("query"), str) or not metadata.get("query"):
+            metadata.setdefault(
+                "query",
+                self._derive_default_clinvar_query(parameters),
+            )
+
+        if not isinstance(metadata.get("gene_symbol"), str) or not metadata.get(
+            "gene_symbol",
+        ):
+            default_gene = (
+                parameters.gene_symbol.strip().upper()
+                if isinstance(parameters.gene_symbol, str)
+                and parameters.gene_symbol.strip()
+                else "MED13"
+            )
+            metadata.setdefault("gene_symbol", default_gene)
+
+        validated_config = data_source_configs.ClinVarQueryConfig.model_validate(
+            metadata,
+        )
+        config_payload["metadata"] = self._to_json_object(
+            validated_config.model_dump(mode="json"),
+        )
+
+        raw_rpm = config_payload.get("requests_per_minute")
+        if not isinstance(raw_rpm, int) or raw_rpm < 1:
+            config_payload["requests_per_minute"] = 10
+        return config_payload
+
     def _prepare_source_configuration(
         self,
         source_type: user_data_source.SourceType,
@@ -196,6 +253,8 @@ class QuerySourceConfigurationMixin(SessionManagementMixin):
         )
         if source_type == user_data_source.SourceType.PUBMED:
             return self._apply_pubmed_defaults(config_payload, parameters)
+        if source_type == user_data_source.SourceType.CLINVAR:
+            return self._apply_clinvar_defaults(config_payload, parameters)
         if source_type == user_data_source.SourceType.API:
             return self._apply_api_defaults(config_payload, catalog_entry)
         return config_payload

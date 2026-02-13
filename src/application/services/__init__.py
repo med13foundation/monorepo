@@ -11,6 +11,7 @@ from . import (
     audit_service,
     authentication_service,
     authorization_service,
+    clinvar_ingestion_service,
     dashboard_service,
     data_discovery_service,
     data_source_activation_service,
@@ -48,6 +49,7 @@ DataDiscoveryServiceDependencies = (
 DataSourceAiTestService = data_source_ai_test_service.DataSourceAiTestService
 DataSourceAiTestDependencies = data_source_ai_test_service.DataSourceAiTestDependencies
 DataSourceAiTestSettings = data_source_ai_test_service.DataSourceAiTestSettings
+ClinVarIngestionService = clinvar_ingestion_service.ClinVarIngestionService
 DataSourceActivationService = data_source_activation_service.DataSourceActivationService
 DataSourceAuthorizationService = (
     data_source_authorization_service.DataSourceAuthorizationService
@@ -112,6 +114,7 @@ __all__ = [
     "CreateSourceRequest",
     "CreateStorageConfigurationRequest",
     "CreateTemplateRequest",
+    "ClinVarIngestionService",
     "DashboardService",
     "DataDiscoveryService",
     "DataDiscoveryServiceDependencies",
