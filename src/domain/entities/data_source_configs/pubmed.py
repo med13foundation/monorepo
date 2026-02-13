@@ -19,6 +19,10 @@ class AiAgentConfig(BaseModel):
         default="",
         description="Custom instructions to steer the agent's behavior",
     )
+    query_agent_source_type: str = Field(
+        default="pubmed",
+        description="Source type passed to the query-generation agent.",
+    )
     use_research_space_context: bool = Field(
         default=True,
         description="Whether to use the research space description as context",

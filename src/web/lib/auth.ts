@@ -91,6 +91,75 @@ function formatAxiosError(error: unknown): string {
   return `status=${status} ${error.message}${requestUrl ? ` (${requestUrl})` : ""}`
 }
 
+function decodeJwtClaimValue(
+  accessToken: string,
+  claim: "exp",
+): number | null {
+  try {
+    const parts = accessToken.split(".")
+    if (parts.length !== 3) {
+      return null
+    }
+
+    const base64Url = parts[1]
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/")
+    const padded = `${base64}${"=".repeat((4 - (base64.length % 4)) % 4)}`
+    const payloadJson = Buffer.from(padded, "base64").toString("utf8")
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>
+
+    const rawExp = payload[claim]
+    if (typeof rawExp === "number" && Number.isFinite(rawExp)) {
+      return claim === "exp" ? rawExp * 1000 : null
+    }
+    if (typeof rawExp === "string") {
+      const parsedExp = Number(rawExp)
+      return Number.isFinite(parsedExp) ? parsedExp * 1000 : null
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function resolveExpiresAt(
+  value: unknown,
+  accessToken: string | undefined,
+): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed
+    }
+  }
+
+  const expiryFromToken = accessToken
+    ? decodeJwtClaimValue(accessToken, "exp")
+    : null
+  if (expiryFromToken && expiryFromToken > 0) {
+    return expiryFromToken
+  }
+
+  return 0
+}
+
+function toSafeExpiresAt(
+  tokenExpiresIn: number | string | undefined,
+  accessToken: string,
+): number {
+  const parsed = typeof tokenExpiresIn === "string"
+    ? Number(tokenExpiresIn)
+    : tokenExpiresIn
+  if (typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0) {
+    return Date.now() + parsed * 1000
+  }
+
+  const expiryFromJwt = decodeJwtClaimValue(accessToken, "exp")
+  return expiryFromJwt ?? 0
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
@@ -152,7 +221,7 @@ export const authOptions: NextAuthOptions = {
             email_verified: user.email_verified,
             access_token,
             refresh_token,
-            expires_at: Date.now() + expires_in * 1000, // Convert to milliseconds
+            expires_at: toSafeExpiresAt(expires_in, access_token), // Convert to milliseconds
           }
 
           return authenticatedUser
@@ -214,7 +283,7 @@ export const authOptions: NextAuthOptions = {
         return {
           access_token: customUser.access_token,
           refresh_token: customUser.refresh_token,
-          expires_at: customUser.expires_at,
+          expires_at: resolveExpiresAt(customUser.expires_at, customUser.access_token),
           refresh_failed: false,
           user: {
             id: customUser.id,
@@ -232,13 +301,18 @@ export const authOptions: NextAuthOptions = {
       }
 
       // Return previous token if the access token has not expired yet
-      const expiresAt = token.expires_at as number | undefined
+      const expiresAt = resolveExpiresAt(token.expires_at, token.access_token)
+      const normalizedToken = {
+        ...token,
+        expires_at: expiresAt,
+      }
+
       if (expiresAt && Date.now() < expiresAt) {
         // Ensure access_token exists before returning
         if (!token.access_token) {
           console.warn("JWT callback: Token exists but missing access_token", { token })
         }
-        return token
+        return normalizedToken
       }
 
       // If token expired or missing, return null to force re-authentication
@@ -255,7 +329,7 @@ export const authOptions: NextAuthOptions = {
       if (!refreshToken) {
         console.error("JWT callback: Cannot refresh token - refresh_token is missing", { token })
         return {
-          ...token,
+          ...normalizedToken,
           access_token: '',
           refresh_token: '',
           expires_at: 0,
@@ -277,7 +351,7 @@ export const authOptions: NextAuthOptions = {
         }
 
         return {
-          ...token,
+          ...normalizedToken,
           access_token,
           refresh_token,
           expires_at: Date.now() + expires_in * 1000,
@@ -289,7 +363,7 @@ export const authOptions: NextAuthOptions = {
           console.error("Token refresh error:", formatAxiosError(error))
         }
         return {
-          ...token,
+          ...normalizedToken,
           access_token: '',
           refresh_token: '',
           expires_at: 0,

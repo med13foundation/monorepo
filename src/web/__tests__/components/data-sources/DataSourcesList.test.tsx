@@ -174,3 +174,73 @@ describe('DiscoverSourcesDialog - onSourceAdded prop', () => {
     })
   })
 })
+
+describe('DataSourcesList - AI Controls', () => {
+  it('shows schedule and AI buttons for ClinVar AI-managed sources', () => {
+    const clinvarSource: DataSource = {
+      id: 'source-clinvar',
+      name: 'ClinVar Pathogenicity Benchmark',
+      description: 'Curated benchmark set for pathogenicity tasks',
+      source_type: 'api',
+      status: 'active',
+      owner_id: 'user-123',
+      research_space_id: 'space-123',
+      config: {
+        metadata: {
+          agent_config: {
+            is_ai_managed: true,
+            query_agent_source_type: 'clinvar',
+            agent_prompt: 'Use ClinVar terminology for variant queries.',
+          },
+        },
+      },
+      ingestion_schedule: {
+        enabled: true,
+        frequency: 'daily',
+        timezone: 'UTC',
+        start_time: null,
+        cron_expression: null,
+        backend_job_id: null,
+        next_run_at: null,
+        last_run_at: null,
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={{
+          items: [clinvarSource],
+          total: 1,
+          page: 1,
+          limit: 20,
+          has_next: false,
+          has_prev: false,
+        }}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /configure schedule/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /configure ai/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /test ai/i })).toBeInTheDocument()
+  })
+
+  it('keeps AI buttons hidden for plain API sources without agent metadata', () => {
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={dataSourcesResponse}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: /configure schedule/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /configure ai/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /test ai/i })).not.toBeInTheDocument()
+  })
+})

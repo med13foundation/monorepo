@@ -186,3 +186,16 @@ max_tokens = 8192
 total_cost_usd = 5.0
 max_turns = 25
 max_tokens = 16384
+
+# Source-specific query-generation profiles
+# Profiles can set:
+# - model: explicit model override
+# - usage_limits: inline budget overrides for this source
+# - budget_profile: alias into [budgets.<name>] (for shared budgets)
+
+[source_profiles.pubmed]
+budget_profile = "default"
+
+[source_profiles.clinvar]
+model = "openai:gpt-5"
+budget_profile = "research"

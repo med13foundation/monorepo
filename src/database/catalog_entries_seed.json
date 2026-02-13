@@ -486,6 +486,20 @@
     "category": "AI / ML Benchmark Datasets",
     "param_type": "none",
     "url_template": "https://github.com/genomicsAI/clinvar-benchmark",
+    "query_capabilities": {
+      "discovery_defaults": {
+        "schedule_enabled": true,
+        "schedule_frequency": "daily",
+        "schedule_timezone": "UTC",
+        "ai_profile": {
+          "is_ai_managed": true,
+          "source_type": "clinvar",
+          "agent_prompt": "Use ClinVar-specific ontology and evidence criteria to generate targeted queries for pathogenicity classification tasks.",
+          "use_research_space_context": true,
+          "default_query": "MED13 pathogenic variant"
+        }
+      }
+    },
     "tags": [
       "benchmark",
       "machine-learning",

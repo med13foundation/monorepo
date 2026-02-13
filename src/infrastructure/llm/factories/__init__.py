@@ -14,6 +14,7 @@ from src.infrastructure.llm.factories.base_factory import (
 )
 from src.infrastructure.llm.factories.query_agent_factory import (
     QueryAgentFactory,
+    create_clinvar_query_agent,
     create_pubmed_query_agent,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "BaseAgentFactory",
     "FlujoAgent",
     "create_pubmed_query_agent",
+    "create_clinvar_query_agent",
     "QueryAgentFactory",
 ]

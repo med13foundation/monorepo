@@ -15,6 +15,9 @@ from src.infrastructure.llm.pipelines.base_pipeline import (
     create_governance_gate,
     get_usage_limits_dict,
 )
+from src.infrastructure.llm.pipelines.query_pipelines.clinvar_pipeline import (
+    create_clinvar_query_pipeline,
+)
 from src.infrastructure.llm.pipelines.query_pipelines.pubmed_pipeline import (
     create_pubmed_query_pipeline,
 )
@@ -25,5 +28,6 @@ __all__ = [
     "create_confidence_checker",
     "create_governance_gate",
     "create_pubmed_query_pipeline",
+    "create_clinvar_query_pipeline",
     "get_usage_limits_dict",
 ]

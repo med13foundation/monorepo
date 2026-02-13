@@ -17,8 +17,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Form, FormDescription, FormLabel } from '@/components/ui/form'
+import { Form } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
@@ -173,14 +174,15 @@ export function DataSourceScheduleDialog({
             <div className="rounded-lg border p-4">
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
-                  <FormLabel>Source status</FormLabel>
-                  <FormDescription>
+                  <Label htmlFor="source-status-toggle">Source status</Label>
+                  <p className="text-sm text-muted-foreground">
                     Enable the source after all configuration is complete.
-                  </FormDescription>
+                  </p>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-medium">{statusLabel}</span>
                   <Switch
+                    id="source-status-toggle"
                     checked={source.status === 'active'}
                     onCheckedChange={handleStatusToggle}
                     disabled={statusToggleDisabled}

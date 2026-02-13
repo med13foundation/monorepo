@@ -23,10 +23,13 @@ from src.application.services.data_discovery_service.requests import (
 from src.application.services.source_management_service import CreateSourceRequest
 from src.domain.entities.data_discovery_parameters import (
     AdvancedQueryParameters,
+    CatalogAIProfile,
+    CatalogDiscoveryDefaults,
+    QueryParameterCapabilities,
     QueryParameterType,
     TestResultStatus,
 )
-from src.domain.entities.user_data_source import SourceType
+from src.domain.entities.user_data_source import ScheduleFrequency, SourceType
 from tests.test_types.data_discovery_fixtures import (
     TEST_SESSION_ACTIVE,
     TEST_SOURCE_CLINVAR,
@@ -457,6 +460,76 @@ class TestDataDiscoveryService:
         request = AddSourceToSpaceRequest(
             session_id=session_id,
             catalog_entry_id=catalog_entry_api.id,
+            research_space_id=space_id,
+            source_config={},
+        )
+
+        result = await service.add_source_to_space(request)
+
+        assert result == mock_data_source.id
+        service._source_service.create_source.assert_called_once()
+
+    async def test_add_source_to_space_applies_discovery_defaults_and_schedule(
+        self,
+        service: DataDiscoveryService,
+    ) -> None:
+        """Discovery defaults should hydrate AI config and ingestion schedule."""
+        session_id = TEST_SESSION_ACTIVE.id
+        space_id = uuid4()
+        catalog_entry_benchmark = create_test_source_catalog_entry(
+            entry_id="clinvar_benchmark",
+            name="ClinVar Pathogenicity Benchmark",
+            category="AI / ML Benchmark Datasets",
+            param_type="none",
+            source_type=SourceType.API,
+            source_template_id=None,
+            api_endpoint="https://github.com/genomicsAI/clinvar-benchmark",
+            url_template="https://github.com/genomicsAI/clinvar-benchmark",
+            capabilities=QueryParameterCapabilities(
+                discovery_defaults=CatalogDiscoveryDefaults(
+                    schedule_enabled=True,
+                    schedule_frequency="daily",
+                    schedule_timezone="UTC",
+                    ai_profile=CatalogAIProfile(
+                        is_ai_managed=True,
+                        source_type="clinvar",
+                        agent_prompt=(
+                            "Use ClinVar-specific ontology and evidence criteria "
+                            "for pathogenicity-focused queries."
+                        ),
+                        use_research_space_context=True,
+                        default_query="MED13 pathogenic variant",
+                    ),
+                ),
+            ),
+        )
+
+        service._session_repo.find_by_id.return_value = TEST_SESSION_ACTIVE
+        service._catalog_repo.find_by_id.return_value = catalog_entry_benchmark
+
+        mock_data_source = Mock()
+        mock_data_source.id = uuid4()
+
+        def _create_source_side_effect(create_request: CreateSourceRequest) -> Mock:
+            metadata = create_request.configuration.metadata
+            assert metadata.get("query") == "MED13 pathogenic variant"
+            agent_config = metadata.get("agent_config")
+            assert isinstance(agent_config, dict)
+            assert agent_config.get("is_ai_managed") is True
+            assert agent_config.get("query_agent_source_type") == "clinvar"
+            assert create_request.ingestion_schedule is not None
+            assert create_request.ingestion_schedule.enabled is True
+            assert (
+                create_request.ingestion_schedule.frequency == ScheduleFrequency.DAILY
+            )
+            assert create_request.ingestion_schedule.timezone == "UTC"
+            return mock_data_source
+
+        service._source_service.create_source.side_effect = _create_source_side_effect
+
+        request = AddSourceToSpaceRequest(
+            session_id=session_id,
+            catalog_entry_id=catalog_entry_benchmark.id,
             research_space_id=space_id,
             source_config={},
         )

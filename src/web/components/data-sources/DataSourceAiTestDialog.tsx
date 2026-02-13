@@ -126,7 +126,7 @@ export function DataSourceAiTestDialog({
         <DialogHeader className="shrink-0">
           <DialogTitle>AI test results</DialogTitle>
           <DialogDescription>
-            Review the AI-generated PubMed query and sample findings for <b>{source.name}</b>.
+            Review the AI-generated query and sample findings for <b>{source.name}</b>.
           </DialogDescription>
         </DialogHeader>
 

@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import { forwardRef, useEffect, useState } from 'react'
+import type { ComponentPropsWithoutRef, ElementRef } from 'react'
 import { useSession } from 'next-auth/react'
 
 import type { ModelSpec } from '@/types/ai-models'
@@ -25,7 +26,13 @@ interface AiModelSelectorProps {
  * Model selector component for choosing AI models.
  * Fetches available models on mount and displays them with cost/capability badges.
  */
-export function AiModelSelector({ value, onChange, disabled }: AiModelSelectorProps) {
+export const AiModelSelector = forwardRef<
+  ElementRef<typeof SelectTrigger>,
+  AiModelSelectorProps & Omit<ComponentPropsWithoutRef<typeof SelectTrigger>, 'value'>
+>(function AiModelSelector(
+  { value, onChange, disabled, ...triggerProps },
+  ref,
+) {
   const { data: session } = useSession()
   const [availableModels, setAvailableModels] = useState<ModelSpec[]>([])
   const [defaultModelId, setDefaultModelId] = useState<string>('')
@@ -76,7 +83,7 @@ export function AiModelSelector({ value, onChange, disabled }: AiModelSelectorPr
       onValueChange={(newValue) => onChange(newValue === 'default' ? null : newValue)}
       disabled={disabled || isLoading}
     >
-      <SelectTrigger>
+      <SelectTrigger ref={ref} {...triggerProps}>
         <SelectValue placeholder={isLoading ? 'Loading models...' : 'Select a model'} />
       </SelectTrigger>
       <SelectContent>
@@ -108,4 +115,4 @@ export function AiModelSelector({ value, onChange, disabled }: AiModelSelectorPr
       </SelectContent>
     </Select>
   )
-}
+})

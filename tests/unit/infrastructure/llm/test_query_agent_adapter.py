@@ -8,6 +8,7 @@ import pytest
 
 from src.domain.agents.models import ModelCapability, ModelSpec
 from src.infrastructure.llm.adapters.query_agent_adapter import FlujoQueryAgentAdapter
+from src.infrastructure.llm.config import QuerySourcePolicy, UsageLimits
 
 
 class TestFlujoQueryAgentAdapterModelSelection:
@@ -114,7 +115,7 @@ class TestFlujoQueryAgentAdapterModelSelection:
             ),
         ):
             adapter = FlujoQueryAgentAdapter()
-            resolved = adapter._resolve_model_id(None)
+            resolved = adapter._resolve_model_id("pubmed")
             assert resolved == "openai:gpt-4o-mini"
 
     def test_resolve_model_id_with_valid_model(
@@ -138,7 +139,7 @@ class TestFlujoQueryAgentAdapterModelSelection:
             ),
         ):
             adapter = FlujoQueryAgentAdapter()
-            resolved = adapter._resolve_model_id("openai:gpt-5")
+            resolved = adapter._resolve_model_id("pubmed", "openai:gpt-5")
             assert resolved == "openai:gpt-5"
 
     def test_resolve_model_id_with_invalid_model_falls_back(
@@ -163,7 +164,7 @@ class TestFlujoQueryAgentAdapterModelSelection:
             ),
         ):
             adapter = FlujoQueryAgentAdapter()
-            resolved = adapter._resolve_model_id("invalid:model")
+            resolved = adapter._resolve_model_id("pubmed", "invalid:model")
             # Should fall back to default
             assert resolved == "openai:gpt-4o-mini"
 
@@ -190,7 +191,92 @@ class TestFlujoQueryAgentAdapterModelSelection:
             adapter = FlujoQueryAgentAdapter()
             assert adapter._is_supported_source("pubmed")
             assert adapter._is_supported_source("PUBMED")
-            assert not adapter._is_supported_source("clinvar")
+            assert adapter._is_supported_source("clinvar")
+
+    def test_resolve_model_id_with_source_override(
+        self,
+        mock_registry: MagicMock,
+    ) -> None:
+        """Should resolve source-level model override before default."""
+        policies = {
+            "clinvar": QuerySourcePolicy(
+                model_id="openai:gpt-5",
+            ),
+        }
+
+        with (
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
+                return_value=mock_registry,
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.load_query_source_policies",
+                return_value=policies,
+            ),
+        ):
+            adapter = FlujoQueryAgentAdapter()
+            resolved = adapter._resolve_model_id("clinvar")
+            assert resolved == "openai:gpt-5"
+
+    def test_resolve_usage_limits_from_source_profile(
+        self,
+        mock_registry: MagicMock,
+    ) -> None:
+        """Should resolve source-specific limits with governance fallback."""
+        policies = {
+            "clinvar": QuerySourcePolicy(
+                model_id=None,
+                usage_limits=UsageLimits(
+                    total_cost_usd=2.5,
+                    max_turns=None,
+                    max_tokens=2048,
+                ),
+            ),
+        }
+
+        with (
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
+                return_value=mock_registry,
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.load_query_source_policies",
+                return_value=policies,
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.GovernanceConfig.from_environment",
+                return_value=MagicMock(
+                    usage_limits=MagicMock(
+                        total_cost_usd=1.0,
+                        max_turns=10,
+                        max_tokens=8192,
+                    ),
+                ),
+            ),
+        ):
+            adapter = FlujoQueryAgentAdapter()
+            limits = adapter._resolve_usage_limits("clinvar")
+            assert limits.total_cost_usd == 2.5
+            assert limits.max_turns == 10
+            assert limits.max_tokens == 2048
 
     def test_is_openai_model_detection(
         self,
@@ -288,6 +374,66 @@ class TestFlujoQueryAgentAdapterModelSelection:
             assert pipeline1 is pipeline2
             # Should not have created additional pipeline
             assert create_pipeline_mock.call_count == initial_call_count
+
+    @pytest.mark.asyncio
+    async def test_generate_query_uses_clinvar_pipeline(
+        self,
+        mock_registry: MagicMock,
+        mock_pipeline: MagicMock,
+    ) -> None:
+        """Should route clinvar source to the ClinVar pipeline."""
+        mock_state_backend = MagicMock()
+        mock_state_backend.load_state = AsyncMock(return_value=None)
+        mock_state_backend.save_run_start = AsyncMock(return_value=None)
+        mock_state_backend.save_workflow_state = AsyncMock(return_value=None)
+
+        policies = {
+            "clinvar": QuerySourcePolicy(
+                model_id="openai:gpt-5",
+                usage_limits=UsageLimits(
+                    total_cost_usd=2.5,
+                    max_turns=10,
+                    max_tokens=2048,
+                ),
+            ),
+        }
+        create_clinvar_pipeline_mock = MagicMock(return_value=mock_pipeline)
+        create_pubmed_pipeline_mock = MagicMock(return_value=mock_pipeline)
+
+        with (
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
+                return_value=mock_registry,
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
+                return_value=mock_state_backend,
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
+            ),
+            patch.dict(
+                "src.infrastructure.llm.adapters.query_agent_adapter._QUERY_PIPELINE_FACTORIES",
+                {
+                    "pubmed": create_pubmed_pipeline_mock,
+                    "clinvar": create_clinvar_pipeline_mock,
+                },
+            ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.load_query_source_policies",
+                return_value=policies,
+            ),
+            patch.dict("os.environ", {"OPENAI_API_KEY": "test-openai-key"}),
+        ):
+            adapter = FlujoQueryAgentAdapter()
+            result = await adapter.generate_query(
+                research_space_description="Test",
+                user_instructions="Test",
+                source_type="clinvar",
+            )
+
+            assert result.source_type == "clinvar"
+            create_clinvar_pipeline_mock.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_generate_query_unsupported_source(

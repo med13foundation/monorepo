@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import date  # noqa: TC003
 from enum import Enum
-from typing import assert_never
+from typing import Literal, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,8 +14,10 @@ from src.type_definitions.storage import StorageUseCase  # noqa: TC001
 
 __all__ = [
     "AdvancedQueryParameters",
-    "PubMedSortOption",
+    "CatalogAIProfile",
+    "CatalogDiscoveryDefaults",
     "QueryParameterCapabilities",
+    "PubMedSortOption",
     "QueryParameters",
     "QueryParameterType",
     "TestResultStatus",
@@ -44,6 +46,68 @@ class TestResultStatus(str, Enum):
     VALIDATION_FAILED = "validation_failed"
 
 
+ScheduleFrequencyProfile = Literal[
+    "manual",
+    "hourly",
+    "daily",
+    "weekly",
+    "monthly",
+    "cron",
+]
+# Supported cadence values in catalog-discovery defaults.
+
+
+class CatalogAIProfile(BaseModel):
+    """Catalog-level defaults for AI-assisted query generation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    is_ai_managed: bool = False
+    source_type: str = Field(
+        default="pubmed",
+        description="Query-generation source type passed to AI pipelines.",
+    )
+    agent_prompt: str = Field(
+        default="",
+        description="Default prompt used when generating queries.",
+    )
+    use_research_space_context: bool = Field(
+        default=True,
+        description="Whether research-space context should be used.",
+    )
+    model_id: str | None = Field(
+        default=None,
+        description="Optional model override for AI generation.",
+    )
+    default_query: str | None = Field(
+        default=None,
+        description="Seed query when no explicit query exists.",
+    )
+
+
+class CatalogDiscoveryDefaults(BaseModel):
+    """Catalog-level defaults for source scheduling and AI behavior."""
+
+    model_config = ConfigDict(frozen=True)
+
+    schedule_enabled: bool = Field(
+        default=False,
+        description="Whether schedule defaults should enable ingestion.",
+    )
+    schedule_frequency: ScheduleFrequencyProfile = Field(
+        default="manual",
+        description="Default ingestion frequency.",
+    )
+    schedule_timezone: str = Field(
+        default="UTC",
+        description="Default timezone for schedule execution.",
+    )
+    ai_profile: CatalogAIProfile = Field(
+        default_factory=CatalogAIProfile,
+        description="Defaults for AI-assisted query generation.",
+    )
+
+
 class QueryParameterCapabilities(BaseModel):
     """Describes which advanced parameters a source supports."""
 
@@ -65,6 +129,10 @@ class QueryParameterCapabilities(BaseModel):
     supports_clinical_significance: bool = False
     supports_review_status: bool = False
     supports_organism: bool = False
+    discovery_defaults: CatalogDiscoveryDefaults = Field(
+        default_factory=CatalogDiscoveryDefaults,
+        description="Catalog-level defaults for discovered sources.",
+    )
 
 
 class QueryParameters(BaseModel):

@@ -81,20 +81,20 @@ export function DataSourceScheduleFields({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Frequency</FormLabel>
-                <FormControl>
-                  <Select value={field.value} onValueChange={field.onChange}>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl>
                     <SelectTrigger>
                       <SelectValue placeholder="Select frequency" />
                     </SelectTrigger>
-                    <SelectContent>
-                      {frequencyOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FormControl>
+                  </FormControl>
+                  <SelectContent>
+                    {frequencyOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <FormDescription>
                   Choose how often MED13 should attempt ingestion.
                 </FormDescription>

@@ -24,7 +24,11 @@ from src.infrastructure.llm.config.model_registry import (
 )
 from src.infrastructure.llm.factories.query_agent_factory import (
     QueryAgentFactory,
+    create_clinvar_query_agent,
     create_pubmed_query_agent,
+)
+from src.infrastructure.llm.pipelines.query_pipelines.clinvar_pipeline import (
+    create_clinvar_query_pipeline,
 )
 from src.infrastructure.llm.pipelines.query_pipelines.pubmed_pipeline import (
     create_pubmed_query_pipeline,
@@ -58,9 +62,11 @@ __all__ = [
     "resolve_flujo_state_uri",
     # Factories
     "create_pubmed_query_agent",
+    "create_clinvar_query_agent",
     "QueryAgentFactory",
     # Pipelines
     "create_pubmed_query_pipeline",
+    "create_clinvar_query_pipeline",
     # Skills
     "get_skill_registry",
     "register_all_skills",

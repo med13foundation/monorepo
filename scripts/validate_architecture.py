@@ -47,8 +47,10 @@ ALLOWED_ANY_USAGE = {
     # Flujo library interop - documented exceptions for Flujo's generic type system
     "src/infrastructure/llm/pipelines/base_pipeline.py",
     "src/infrastructure/llm/pipelines/query_pipelines/pubmed_pipeline.py",
+    "src/infrastructure/llm/pipelines/query_pipelines/clinvar_pipeline.py",
     "src/infrastructure/llm/state/lifecycle.py",
     "src/infrastructure/llm/adapters/query_agent_adapter.py",
+    "src/infrastructure/llm/adapters/query_agent_adapter_helpers.py",
 }
 
 # Clean Architecture layer definitions

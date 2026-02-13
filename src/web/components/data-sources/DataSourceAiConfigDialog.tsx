@@ -62,6 +62,15 @@ export function DataSourceAiConfigDialog({
   const config = isRecord(source?.config) ? source?.config : {}
   const metadata = isRecord(config.metadata) ? config.metadata : {}
   const agentConfig = isRecord(metadata.agent_config) ? metadata.agent_config : {}
+  const queryAgentSourceType =
+    typeof agentConfig.query_agent_source_type === 'string' &&
+      agentConfig.query_agent_source_type.trim().length > 0
+      ? agentConfig.query_agent_source_type.trim()
+      : null
+  const supportsAiConfiguration =
+    source?.source_type === 'pubmed' ||
+    queryAgentSourceType !== null ||
+    agentConfig.is_ai_managed === true
   const defaultIsAiManaged = agentConfig.is_ai_managed === true
   const defaultAgentPrompt =
     typeof agentConfig.agent_prompt === 'string' ? agentConfig.agent_prompt : ''
@@ -91,19 +100,21 @@ export function DataSourceAiConfigDialog({
     form.reset(defaultValues)
   }, [defaultValues, form, open])
 
-  if (!source || source.source_type !== 'pubmed') {
+  if (!source || !supportsAiConfiguration) {
     return null
   }
 
   const onSubmit = async (values: AiConfigFormValues) => {
+    const updatedAgentConfig = {
+      ...agentConfig,
+      is_ai_managed: values.is_ai_managed,
+      agent_prompt: values.agent_prompt,
+      use_research_space_context: values.use_research_space_context,
+      model_id: values.model_id,
+    }
     const updatedMetadata = {
       ...metadata,
-      agent_config: {
-        is_ai_managed: values.is_ai_managed,
-        agent_prompt: values.agent_prompt,
-        use_research_space_context: values.use_research_space_context,
-        model_id: values.model_id,
-      },
+      agent_config: updatedAgentConfig,
     }
     const updatedConfig = { ...config, metadata: updatedMetadata }
 
@@ -137,7 +148,7 @@ export function DataSourceAiConfigDialog({
         <DialogHeader>
           <DialogTitle>Configure AI agent</DialogTitle>
           <DialogDescription>
-            Control how the AI agent builds PubMed ingestion queries for this source.
+            Control how the AI agent builds ingestion queries for this source.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>

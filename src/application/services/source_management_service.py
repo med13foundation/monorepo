@@ -13,6 +13,7 @@ from src.domain.entities.source_template import SourceTemplate
 from src.domain.entities.user_data_source import (
     IngestionSchedule,
     QualityMetrics,
+    ScheduleFrequency,
     SourceConfiguration,
     SourceStatus,
     SourceType,
@@ -54,6 +55,7 @@ class CreateSourceRequest(BaseModel):
     )
     tags: list[str] = Field(default_factory=list)
     research_space_id: UUID | None = None
+    ingestion_schedule: IngestionSchedule | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -153,6 +155,16 @@ class SourceManagementService:
             source_type=request.source_type,
             template_id=request.template_id,
             configuration=configuration,
+            ingestion_schedule=(
+                request.ingestion_schedule
+                if request.ingestion_schedule is not None
+                else IngestionSchedule(
+                    enabled=False,
+                    frequency=ScheduleFrequency.MANUAL,
+                    start_time=None,
+                    timezone="UTC",
+                )
+            ),
             tags=request.tags,
             last_ingested_at=None,
         )

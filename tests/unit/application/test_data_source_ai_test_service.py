@@ -273,15 +273,19 @@ def build_pubmed_source(
     source_id: UUID,
     research_space_id: UUID | None,
     ai_enabled: bool,
+    source_type: SourceType = SourceType.PUBMED,
+    query_agent_source_type: str = "pubmed",
+    query: str = "MED13",
     model_id: str | None = None,
 ) -> UserDataSource:
     metadata: SourceMetadata = {
-        "query": "MED13",
+        "query": query,
         "max_results": 50,
         "agent_config": {
             "is_ai_managed": ai_enabled,
             "agent_prompt": "Focus on MED13 clinical studies.",
             "use_research_space_context": True,
+            "query_agent_source_type": query_agent_source_type,
             "model_id": model_id,
         },
     }
@@ -291,7 +295,7 @@ def build_pubmed_source(
         research_space_id=research_space_id,
         name="Test PubMed",
         description="Test",
-        source_type=SourceType.PUBMED,
+        source_type=source_type,
         template_id=None,
         configuration=SourceConfiguration(metadata=metadata),
     )
@@ -352,6 +356,64 @@ async def test_ai_test_success_returns_result() -> None:
     assert len(result.findings) == 1
     assert result.findings[0].title == "MED13 findings in cardiac research"
     assert any(link.label == "PubMed" for link in result.findings[0].links)
+
+
+@pytest.mark.asyncio
+async def test_ai_test_skips_fetch_for_clinvar_connector() -> None:
+    source_id = uuid4()
+    space_id = uuid4()
+    space = ResearchSpace(
+        id=space_id,
+        slug="test-space",
+        name="Test Space",
+        description="Study MED13 variants",
+        owner_id=uuid4(),
+        status=SpaceStatus.ACTIVE,
+    )
+    source = build_pubmed_source(
+        source_id=source_id,
+        research_space_id=space_id,
+        source_type=SourceType.API,
+        query_agent_source_type="clinvar",
+        ai_enabled=True,
+    )
+
+    pubmed_gateway = StubPubMedGateway(
+        [
+            {
+                "pubmed_id": "1",
+                "title": "MED13 findings in cardiac research",
+                "doi": "10.1000/xyz",
+                "pmc_id": "PMC12345",
+                "publication_date": "2024-01-01",
+                "journal": {"title": "Nature Medicine"},
+            },
+        ],
+    )
+    query_agent = StubQueryAgent("MED13[Title/Abstract]")
+    dependencies = DataSourceAiTestDependencies(
+        source_repository=StubUserDataSourceRepository(source),
+        pubmed_gateway=pubmed_gateway,
+        query_agent=query_agent,
+        run_id_provider=None,
+        research_space_repository=StubResearchSpaceRepository(space),
+    )
+    service = DataSourceAiTestService(
+        dependencies,
+        settings=DataSourceAiTestSettings(
+            sample_size=3,
+            ai_model_name="openai:gpt-test",
+        ),
+    )
+
+    result = await service.test_ai_configuration(source_id)
+
+    assert result.success is True
+    assert result.executed_query == "MED13[Title/Abstract]"
+    assert result.fetched_records == 0
+    assert not pubmed_gateway.called_queries
+    assert query_agent.calls[0]["source_type"] == "clinvar"
+    assert "no connector fetch step for clinvar" in result.message
 
 
 @pytest.mark.asyncio

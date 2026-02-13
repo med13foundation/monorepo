@@ -82,6 +82,7 @@ class SourceCatalogEntrySeed(TypedDict, total=False):
     is_active: bool
     requires_auth: bool
     source_type: str
+    query_capabilities: JSONObject
 
 
 __all__ = [

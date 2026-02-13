@@ -82,7 +82,7 @@ class DataSourceAiTestService:
         """Run a lightweight AI-driven test against a data source configuration."""
         source = self._require_source(source_id)
         checked_at = dt.datetime.now(dt.UTC)
-        config = self._build_pubmed_config(source)
+        config = self._build_source_config(source)
         error_message = self._validate_preconditions(source=source, config=config)
         executed_query: str | None = None
         fetched_records = 0
@@ -90,6 +90,7 @@ class DataSourceAiTestService:
         flujo_run_id: str | None = None
         flujo_tables: list[data_source_types.FlujoTableSummary] = []
         ai_executed = False
+        fetch_attempted = False
 
         # Track the actual model used (configured or default)
         actual_model_id: str | None = None
@@ -99,13 +100,15 @@ class DataSourceAiTestService:
                 source,
                 config,
             )
+            agent_source_type = config.agent_config.query_agent_source_type
             ai_executed = True
             # Use configured model_id or fall back to default
             actual_model_id = config.agent_config.model_id or self._ai_model_name
             intelligent_query = await self._generate_intelligent_query(
                 research_space_description,
                 config.agent_config.agent_prompt,
-                config.agent_config.model_id,
+                source_type=agent_source_type,
+                model_id=config.agent_config.model_id,
             )
 
             if not intelligent_query:
@@ -119,25 +122,43 @@ class DataSourceAiTestService:
                         "relevance_threshold": 0,
                     },
                 )
-                try:
-                    raw_records = await self._pubmed_gateway.fetch_records(test_config)
-                    fetched_records = len(raw_records)
-                    findings = self._build_findings(raw_records)
-                    if fetched_records == 0:
-                        error_message = (
-                            "PubMed returned no results for the AI-generated query. "
-                            "Adjust the prompt or filters and try again."
+                if self._should_use_pubmed_gateway(source, config):
+                    fetch_attempted = True
+                    try:
+                        raw_records = await self._pubmed_gateway.fetch_records(
+                            test_config,
                         )
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.exception("AI test failed for source %s", source.id)
-                    error_message = f"PubMed request failed: {exc!s}"
+                        fetched_records = len(raw_records)
+                        findings = self._build_findings(raw_records)
+                        if fetched_records == 0:
+                            error_message = (
+                                "PubMed returned no results for the AI-generated query. "
+                                "Adjust the prompt or filters and try again."
+                            )
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.exception("AI test failed for source %s", source.id)
+                        error_message = f"PubMed request failed: {exc!s}"
+                else:
+                    # Non-PubMed sources currently support query generation validation only.
+                    logger.info(
+                        "Skipping PubMed fetch for non-PubMed AI test source %s",
+                        source.id,
+                    )
 
         if ai_executed:
             flujo_run_id, flujo_tables = self._resolve_flujo_state(checked_at)
 
         success = error_message is None
         if error_message is None:
-            message = f"AI test succeeded with {fetched_records} record(s) returned."
+            if fetch_attempted:
+                message = (
+                    f"AI test succeeded with {fetched_records} record(s) returned."
+                )
+            else:
+                message = (
+                    f"AI query generated successfully; no connector fetch step for "
+                    f"{agent_source_type}."
+                )
         else:
             message = error_message
 
@@ -170,7 +191,7 @@ class DataSourceAiTestService:
         return source
 
     @staticmethod
-    def _build_pubmed_config(
+    def _build_source_config(
         source: user_data_source.UserDataSource,
     ) -> data_source_configs.PubMedQueryConfig | None:
         metadata: SourceMetadata = dict(source.configuration.metadata or {})
@@ -186,10 +207,13 @@ class DataSourceAiTestService:
         source: user_data_source.UserDataSource,
         config: data_source_configs.PubMedQueryConfig | None,
     ) -> str | None:
-        if source.source_type != user_data_source.SourceType.PUBMED:
-            return "AI testing is only supported for PubMed sources."
+        if source.source_type not in (
+            user_data_source.SourceType.PUBMED,
+            user_data_source.SourceType.API,
+        ):
+            return "AI testing is only supported for PubMed or API sources."
         if config is None:
-            return "PubMed configuration is invalid. Review the source settings."
+            return "Source configuration is invalid. Review the source settings."
         if not config.agent_config.is_ai_managed:
             return "AI-managed queries are disabled for this source."
         if self._query_agent is None:
@@ -217,6 +241,7 @@ class DataSourceAiTestService:
         self,
         research_space_description: str,
         agent_prompt: str,
+        source_type: str,
         model_id: str | None = None,
     ) -> str:
         if self._query_agent is None:
@@ -225,7 +250,7 @@ class DataSourceAiTestService:
             contract = await self._query_agent.generate_query(
                 research_space_description=research_space_description,
                 user_instructions=agent_prompt,
-                source_type="pubmed",
+                source_type=source_type,
                 model_id=model_id,
             )
 
@@ -248,6 +273,19 @@ class DataSourceAiTestService:
         except Exception:  # pragma: no cover - defensive
             logger.exception("AI query generation failed")
             return ""
+
+    @staticmethod
+    def _should_use_pubmed_gateway(
+        source: user_data_source.UserDataSource,
+        config: data_source_configs.PubMedQueryConfig,
+    ) -> bool:
+        """
+        Determine if the configured source should run through PubMed fetch for AI tests.
+        """
+        return (
+            source.source_type == user_data_source.SourceType.PUBMED
+            or config.agent_config.query_agent_source_type.lower() == "pubmed"
+        )
 
     def _resolve_model_name(
         self,

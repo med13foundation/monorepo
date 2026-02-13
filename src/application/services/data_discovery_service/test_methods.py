@@ -9,16 +9,12 @@ from uuid import UUID, uuid4  # noqa: TCH003
 from src.domain.entities import (
     data_discovery_parameters,
     data_discovery_session,
-    data_source_configs,
     user_data_source,
 )
-from src.type_definitions.json_utils import to_json_value
 
-from .session_methods import SessionManagementMixin
+from .source_configuration_methods import QuerySourceConfigurationMixin
 
 if TYPE_CHECKING:
-    from datetime import date
-
     from src.application.services.data_discovery_service.requests import (
         AddSourceToSpaceRequest,
         ExecuteQueryTestRequest,
@@ -34,106 +30,17 @@ if TYPE_CHECKING:
     from src.domain.repositories.source_template_repository import (
         SourceTemplateRepository,
     )
-    from src.type_definitions.common import JSONObject, SourceMetadata
+    from src.type_definitions.common import JSONObject
 
 logger = logging.getLogger(__name__)
 
 
-class QueryExecutionMixin(SessionManagementMixin):
+class QueryExecutionMixin(QuerySourceConfigurationMixin):
     _query_repo: QueryTestResultRepository
     _query_client: SourceQueryClient
     _source_service: SourceManagementService
     _template_repo: SourceTemplateRepository | None
     _pubmed_query_builder: PubMedQueryBuilder
-
-    @staticmethod
-    def _to_json_object(payload: dict[str, object]) -> JSONObject:
-        return {key: to_json_value(value) for key, value in payload.items()}
-
-    @staticmethod
-    def _format_pubmed_date(value: date | None) -> str | None:
-        if value is None:
-            return None
-        return value.strftime("%Y/%m/%d")
-
-    def _build_pubmed_metadata(
-        self,
-        parameters: data_discovery_parameters.AdvancedQueryParameters,
-    ) -> SourceMetadata:
-        self._pubmed_query_builder.validate(parameters)
-        query = self._pubmed_query_builder.build_query(parameters)
-        if query == "ALL[All Fields]":
-            query = "MED13"
-        config = data_source_configs.pubmed.PubMedQueryConfig(
-            query=query,
-            date_from=self._format_pubmed_date(parameters.date_from),
-            date_to=self._format_pubmed_date(parameters.date_to),
-            publication_types=(parameters.publication_types or None),
-            max_results=parameters.max_results,
-        )
-        return self._to_json_object(config.model_dump(mode="json"))
-
-    def _apply_pubmed_defaults(
-        self,
-        source_config: JSONObject,
-        parameters: data_discovery_parameters.AdvancedQueryParameters,
-    ) -> JSONObject:
-        config_payload: JSONObject = dict(source_config)
-        raw_metadata = config_payload.get("metadata")
-        metadata: SourceMetadata = (
-            dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
-        )
-        if not isinstance(metadata.get("query"), str) or not metadata.get("query"):
-            derived = self._build_pubmed_metadata(parameters)
-            for key, value in derived.items():
-                metadata.setdefault(key, value)
-        validated_config = data_source_configs.pubmed.PubMedQueryConfig.model_validate(
-            metadata,
-        )
-        config_payload["metadata"] = self._to_json_object(
-            validated_config.model_dump(mode="json"),
-        )
-        return config_payload
-
-    def _apply_api_defaults(
-        self,
-        source_config: JSONObject,
-        catalog_entry: data_discovery_session.SourceCatalogEntry,
-    ) -> JSONObject:
-        """Ensure API-backed sources have the minimum required configuration."""
-        config_payload: JSONObject = dict(source_config)
-
-        raw_url = config_payload.get("url")
-        current_url = raw_url.strip() if isinstance(raw_url, str) else None
-        fallback_url = catalog_entry.api_endpoint or catalog_entry.url_template
-        if not current_url and isinstance(fallback_url, str) and fallback_url.strip():
-            config_payload["url"] = fallback_url
-
-        raw_rpm = config_payload.get("requests_per_minute")
-        if not isinstance(raw_rpm, int) or raw_rpm < 1:
-            config_payload["requests_per_minute"] = 10
-
-        raw_metadata = config_payload.get("metadata")
-        metadata_payload: dict[str, object] = (
-            dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
-        )
-        metadata_payload.setdefault("catalog_entry_id", catalog_entry.id)
-        config_payload["metadata"] = self._to_json_object(metadata_payload)
-        return config_payload
-
-    def _prepare_source_configuration(
-        self,
-        source_type: user_data_source.SourceType,
-        source_config: JSONObject,
-        catalog_entry: data_discovery_session.SourceCatalogEntry,
-        parameters: data_discovery_parameters.AdvancedQueryParameters,
-    ) -> JSONObject:
-        """Apply source-type-specific defaults before configuration validation."""
-        if source_type == user_data_source.SourceType.PUBMED:
-            return self._apply_pubmed_defaults(source_config, parameters)
-        if source_type == user_data_source.SourceType.API:
-            return self._apply_api_defaults(source_config, catalog_entry)
-        return source_config
 
     async def execute_query_test(
         self,
@@ -371,6 +278,7 @@ class QueryExecutionMixin(SessionManagementMixin):
             configuration=configuration,
             research_space_id=request.research_space_id,
             tags=["data-discovery", catalog_entry.category.lower()],
+            ingestion_schedule=self._build_ingestion_schedule(catalog_entry),
         )
 
         try:

@@ -13,10 +13,12 @@ from src.domain.agents.contracts.query_generation import QueryGenerationContract
 from src.domain.agents.models import ModelCapability, ModelSpec
 from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.llm.factories.base_factory import BaseAgentFactory, FlujoAgent
+from src.infrastructure.llm.prompts.query import CLINVAR_QUERY_SYSTEM_PROMPT
 from src.infrastructure.llm.prompts.query.pubmed import PUBMED_QUERY_SYSTEM_PROMPT
 
 _QUERY_SYSTEM_PROMPTS: dict[str, str] = {
     "pubmed": PUBMED_QUERY_SYSTEM_PROMPT,
+    "clinvar": CLINVAR_QUERY_SYSTEM_PROMPT,
 }
 SUPPORTED_QUERY_SOURCES = frozenset(_QUERY_SYSTEM_PROMPTS)
 
@@ -110,6 +112,29 @@ def create_pubmed_query_agent(
     """
     return create_query_agent_for_source(
         source_type="pubmed",
+        model=model,
+        max_retries=max_retries,
+    )
+
+
+def create_clinvar_query_agent(
+    model: str | None = None,
+    max_retries: int = 3,
+) -> FlujoAgent:
+    """
+    Factory function for ClinVar query generation agent.
+
+    Creates an agent optimized for generating ClinVar variant queries.
+
+    Args:
+        model: Optional model ID override (defaults to registry default)
+        max_retries: Number of retries for failed calls
+
+    Returns:
+        Configured agent for ClinVar query generation
+    """
+    return create_query_agent_for_source(
+        source_type="clinvar",
         model=model,
         max_retries=max_retries,
     )
