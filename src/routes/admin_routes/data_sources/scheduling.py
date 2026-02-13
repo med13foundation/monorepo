@@ -111,9 +111,17 @@ async def trigger_ingestion_run(
     try:
         summary = await scheduling_service.trigger_ingestion(source_id)
     except ValueError as exc:
+        detail = str(exc)
+        lowered_detail = detail.lower()
+        if "already running" in lowered_detail:
+            status_code = status.HTTP_409_CONFLICT
+        elif "not found" in lowered_detail:
+            status_code = status.HTTP_404_NOT_FOUND
+        else:
+            status_code = status.HTTP_400_BAD_REQUEST
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
+            status_code=status_code,
+            detail=detail,
         ) from exc
     return IngestionRunResponse(
         source_id=summary.source_id,

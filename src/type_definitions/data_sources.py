@@ -7,12 +7,14 @@ Provides typed contracts for data source testing results.
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003
-from typing import TypedDict
+from typing import TypedDict, TypeVar
 from uuid import UUID  # noqa: TC003
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from src.type_definitions.common import JSONObject  # noqa: TC001
+
+MetadataModelT = TypeVar("MetadataModelT", bound=BaseModel)
 
 
 class IngestionIdempotencyMetadata(BaseModel):
@@ -159,6 +161,83 @@ class IngestionJobMetadata(BaseModel):
         return parsed if parsed.to_json_object() else None
 
 
+def normalize_ingestion_job_metadata(raw_metadata: object) -> JSONObject:
+    """Normalize known ingestion metadata fields to typed contracts when possible."""
+    if not isinstance(raw_metadata, dict):
+        return {}
+    parsed = IngestionJobMetadata.parse_optional(raw_metadata)
+    if parsed is not None:
+        return parsed.to_json_object()
+
+    known_sections = {
+        "executed_query",
+        "query_generation",
+        "idempotency",
+        "extraction_queue",
+        "extraction_run",
+    }
+    normalized_payload: JSONObject = {
+        str(key): value
+        for key, value in raw_metadata.items()
+        if str(key) not in known_sections
+    }
+    updates: dict[str, object] = {}
+    executed_query = raw_metadata.get("executed_query")
+    if isinstance(executed_query, str):
+        updates["executed_query"] = executed_query
+
+    query_generation = _parse_metadata_section(
+        raw_metadata=raw_metadata,
+        key="query_generation",
+        model_type=IngestionQueryGenerationMetadata,
+    )
+    if query_generation is not None:
+        updates["query_generation"] = query_generation
+
+    idempotency = _parse_metadata_section(
+        raw_metadata=raw_metadata,
+        key="idempotency",
+        model_type=IngestionIdempotencyMetadata,
+    )
+    if idempotency is not None:
+        updates["idempotency"] = idempotency
+
+    extraction_queue = _parse_metadata_section(
+        raw_metadata=raw_metadata,
+        key="extraction_queue",
+        model_type=IngestionExtractionQueueMetadata,
+    )
+    if extraction_queue is not None:
+        updates["extraction_queue"] = extraction_queue
+
+    extraction_run = _parse_metadata_section(
+        raw_metadata=raw_metadata,
+        key="extraction_run",
+        model_type=IngestionExtractionRunMetadata,
+    )
+    if extraction_run is not None:
+        updates["extraction_run"] = extraction_run
+
+    typed_payload = IngestionJobMetadata.model_validate(updates)
+    normalized_payload.update(typed_payload.to_json_object())
+    return normalized_payload
+
+
+def _parse_metadata_section(
+    *,
+    raw_metadata: dict[object, object],
+    key: str,
+    model_type: type[MetadataModelT],
+) -> MetadataModelT | None:
+    section_raw = raw_metadata.get(key)
+    if not isinstance(section_raw, dict):
+        return None
+    try:
+        return model_type.model_validate(section_raw)
+    except ValidationError:
+        return None
+
+
 class DataSourceAiTestLink(BaseModel):
     """Reference link to a finding surfaced during AI testing."""
 
@@ -239,5 +318,6 @@ __all__ = [
     "IngestionIdempotencyMetadata",
     "IngestionJobMetadata",
     "IngestionQueryGenerationMetadata",
+    "normalize_ingestion_job_metadata",
     "SourceCatalogEntrySeed",
 ]

@@ -175,11 +175,13 @@ async def run_space_source_ingestion(
         summary = await scheduling_service.trigger_ingestion(source.id)
     except ValueError as exc:
         detail = str(exc)
-        status_code = (
-            HTTP_404_NOT_FOUND
-            if "not found" in detail.lower()
-            else HTTP_400_BAD_REQUEST
-        )
+        lowered_detail = detail.lower()
+        if "already running" in lowered_detail:
+            status_code = 409
+        elif "not found" in lowered_detail:
+            status_code = HTTP_404_NOT_FOUND
+        else:
+            status_code = HTTP_400_BAD_REQUEST
         raise HTTPException(
             status_code=status_code,
             detail=detail,
@@ -267,6 +269,29 @@ async def run_all_active_space_sources_ingestion(
 
         try:
             summary = await scheduling_service.trigger_ingestion(source.id)
+        except ValueError as exc:
+            message = str(exc)
+            if "already running" in message.lower():
+                runs.append(
+                    _summary_to_run_response(
+                        source_name=source.name,
+                        summary_status="skipped",
+                        source_id=source.id,
+                        message=message,
+                    ),
+                )
+                skipped_sources += 1
+                continue
+            runs.append(
+                _summary_to_run_response(
+                    source_name=source.name,
+                    summary_status="failed",
+                    source_id=source.id,
+                    message=message,
+                ),
+            )
+            failed_sources += 1
+            continue
         except Exception as exc:  # pragma: no cover - defensive guard
             runs.append(
                 _summary_to_run_response(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime  # noqa: TC003
 from typing import TYPE_CHECKING
 from uuid import UUID  # noqa: TC003
 
@@ -45,3 +46,12 @@ class SourceRecordLedgerRepository(ABC):
     @abstractmethod
     def count_for_source(self, source_id: UUID) -> int:
         """Count ledger entries for a source."""
+
+    @abstractmethod
+    def delete_entries_older_than(
+        self,
+        *,
+        cutoff: datetime,
+        limit: int = 1000,
+    ) -> int:
+        """Delete stale ledger entries older than cutoff and return deleted rows."""

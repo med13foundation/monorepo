@@ -19,6 +19,7 @@ from src.models.database.ingestion_job import (
     IngestionStatusEnum,
     IngestionTriggerEnum,
 )
+from src.type_definitions.data_sources import normalize_ingestion_job_metadata
 
 if TYPE_CHECKING:
     from src.type_definitions.common import JSONObject
@@ -57,7 +58,7 @@ class IngestionJobMapper:
         metrics_payload = model.metrics or {}
         errors_payload = model.errors or []
         # Type: model.job_metadata is already dict[str, object] from SQLAlchemy JSON
-        metadata_payload: JSONObject = dict(model.job_metadata or {})
+        metadata_payload = normalize_ingestion_job_metadata(model.job_metadata)
         # Type: model.source_config_snapshot is already dict[str, object] from SQLAlchemy JSON
         snapshot_payload: JSONObject = dict(model.source_config_snapshot or {})
 
@@ -95,7 +96,7 @@ class IngestionJobMapper:
             "metrics": job.metrics.model_dump(mode="json"),
             "errors": [error.model_dump(mode="json") for error in job.errors],
             "provenance": job.provenance.model_dump(mode="json"),
-            "job_metadata": dict(job.metadata),
+            "job_metadata": normalize_ingestion_job_metadata(job.metadata),
             "source_config_snapshot": dict(job.source_config_snapshot),
         }
 

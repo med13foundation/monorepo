@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -150,3 +150,50 @@ def test_source_record_ledger_upsert_lookup_and_delete(session) -> None:
     deleted_count = repository.delete_by_source(source_id)
     assert deleted_count == 2
     assert repository.count_for_source(source_id) == 0
+
+
+def test_source_record_ledger_prunes_stale_entries_with_limit(session) -> None:
+    source_id = _seed_source(session)
+    repository = SqlAlchemySourceRecordLedgerRepository(session)
+    now = datetime.now(UTC)
+
+    entries = [
+        SourceRecordLedgerEntry(
+            source_id=source_id,
+            external_record_id="CV-stale-1",
+            payload_hash="hash-stale-1",
+            last_processed_at=now - timedelta(days=90),
+        ),
+        SourceRecordLedgerEntry(
+            source_id=source_id,
+            external_record_id="CV-stale-2",
+            payload_hash="hash-stale-2",
+            last_processed_at=now - timedelta(days=60),
+        ),
+        SourceRecordLedgerEntry(
+            source_id=source_id,
+            external_record_id="CV-fresh",
+            payload_hash="hash-fresh",
+            last_processed_at=now - timedelta(days=5),
+        ),
+    ]
+    repository.upsert_entries(entries)
+
+    deleted_first = repository.delete_entries_older_than(
+        cutoff=now - timedelta(days=30),
+        limit=1,
+    )
+    assert deleted_first == 1
+
+    deleted_second = repository.delete_entries_older_than(
+        cutoff=now - timedelta(days=30),
+        limit=10,
+    )
+    assert deleted_second == 1
+    assert repository.count_for_source(source_id) == 1
+
+    fresh_entry = repository.get_entry(
+        source_id=source_id,
+        external_record_id="CV-fresh",
+    )
+    assert fresh_entry is not None

@@ -129,3 +129,31 @@ def test_update_metrics_and_errors(session):
     )
     assert updated_with_error is not None
     assert len(updated_with_error.errors) == 1
+
+
+def test_save_normalizes_known_ingestion_metadata_sections(session) -> None:
+    source_id = _seed_source(session)
+    repository = SqlAlchemyIngestionJobRepository(session)
+    job = _build_job(source_id).model_copy(
+        update={
+            "metadata": {
+                "executed_query": "MED13 query",
+                "query_generation": {
+                    "run_id": "run-1",
+                    "model": "gpt-5",
+                    "decision": "generated",
+                    "confidence": 0.81,
+                },
+                "idempotency": {"new_records": "invalid"},
+                "custom_note": "keep-me",
+            },
+        },
+    )
+
+    saved = repository.save(job)
+    fetched = repository.find_by_id(saved.id)
+
+    assert fetched is not None
+    assert fetched.metadata.get("executed_query") == "MED13 query"
+    assert fetched.metadata.get("custom_note") == "keep-me"
+    assert "idempotency" not in fetched.metadata

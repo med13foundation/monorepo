@@ -25,6 +25,7 @@ from src.domain.services.ingestion import IngestionRunContext  # noqa: TC001
 from src.type_definitions.ingestion import IngestResult
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from uuid import UUID
 
     from src.domain.entities.data_source_configs import ClinVarQueryConfig
@@ -106,6 +107,16 @@ class StubLedgerRepository(SourceRecordLedgerRepository):
     def count_for_source(self, source_id: UUID) -> int:
         prefix = str(source_id)
         return sum(1 for key in self._entries if key[0] == prefix)
+
+    def delete_entries_older_than(
+        self,
+        *,
+        cutoff: datetime,
+        limit: int = 1000,
+    ) -> int:
+        _ = cutoff
+        _ = limit
+        return 0
 
 
 def _build_source() -> UserDataSource:

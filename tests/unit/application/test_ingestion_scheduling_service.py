@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, NoReturn
 from uuid import UUID, uuid4
@@ -27,10 +28,18 @@ from src.domain.entities.discovery_search_job import (
     DiscoverySearchJob,
     DiscoverySearchStatus,
 )
+from src.domain.entities.ingestion_job import (
+    IngestionJob,
+    IngestionStatus,
+    IngestionTrigger,
+)
 from src.domain.entities.source_record_ledger import (
     SourceRecordLedgerEntry,  # noqa: TC001
 )
-from src.domain.entities.source_sync_state import SourceSyncState  # noqa: TC001
+from src.domain.entities.source_sync_state import (
+    CheckpointKind,
+    SourceSyncState,
+)  # noqa: TC001
 from src.domain.entities.user_data_source import (
     IngestionSchedule,
     ScheduleFrequency,
@@ -50,6 +59,8 @@ from src.domain.repositories.storage_repository import StorageOperationRepositor
 from src.domain.repositories.user_data_source_repository import UserDataSourceRepository
 from src.domain.services.ingestion import IngestionRunContext  # noqa: TC001
 from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
+from src.domain.value_objects.provenance import DataSource as ProvenanceSource
+from src.domain.value_objects.provenance import Provenance
 from src.infrastructure.scheduling import InMemoryScheduler
 from src.type_definitions.storage import (
     StorageOperationRecord,
@@ -61,13 +72,7 @@ from src.type_definitions.storage import (
 )
 
 if TYPE_CHECKING:
-    from src.domain.entities.ingestion_job import (
-        IngestionError,
-        IngestionJob,
-        IngestionStatus,
-        IngestionTrigger,
-        JobMetrics,
-    )
+    from src.domain.entities.ingestion_job import IngestionError, JobMetrics
     from src.domain.entities.storage_configuration import (
         StorageHealthSnapshot,
         StorageOperation,
@@ -193,8 +198,8 @@ class StubSourceRepository(UserDataSourceRepository):
 
 
 class StubJobRepository(IngestionJobRepository):
-    def __init__(self) -> None:
-        self.saved: list[IngestionJob] = []
+    def __init__(self, initial_jobs: list[IngestionJob] | None = None) -> None:
+        self.saved: list[IngestionJob] = list(initial_jobs or [])
 
     def save(self, job: IngestionJob) -> IngestionJob:
         self.saved.append(job)
@@ -209,7 +214,8 @@ class StubJobRepository(IngestionJobRepository):
         skip: int = 0,
         limit: int = 50,
     ) -> list[IngestionJob]:
-        _unsupported("find_by_source")
+        matching = [job for job in self.saved if job.source_id == source_id]
+        return matching[skip : skip + limit]
 
     def find_by_trigger(
         self,
@@ -369,6 +375,10 @@ class StubSourceSyncStateRepository(SourceSyncStateRepository):
 
 
 class StubSourceRecordLedgerRepository(SourceRecordLedgerRepository):
+    def __init__(self, delete_return_value: int = 0) -> None:
+        self.delete_return_value = delete_return_value
+        self.delete_calls: list[tuple[datetime, int]] = []
+
     def get_entry(
         self,
         *,
@@ -396,6 +406,15 @@ class StubSourceRecordLedgerRepository(SourceRecordLedgerRepository):
 
     def count_for_source(self, source_id: UUID) -> int:
         return 0
+
+    def delete_entries_older_than(
+        self,
+        *,
+        cutoff: datetime,
+        limit: int = 1000,
+    ) -> int:
+        self.delete_calls.append((cutoff, limit))
+        return self.delete_return_value
 
 
 class ContextAwarePubMedIngestionService:
@@ -427,6 +446,24 @@ class ContextAwarePubMedIngestionService:
         )
 
 
+class HighDedupPubMedIngestionService:
+    async def ingest(
+        self,
+        source: UserDataSource,
+    ) -> PubMedIngestionSummary:
+        return PubMedIngestionSummary(
+            source_id=source.id,
+            fetched_records=20,
+            parsed_publications=2,
+            created_publications=1,
+            updated_publications=1,
+            new_records=1,
+            updated_records=1,
+            unchanged_records=18,
+            skipped_records=18,
+        )
+
+
 def _build_source(schedule: IngestionSchedule) -> UserDataSource:
     return UserDataSource(
         id=uuid4(),
@@ -450,6 +487,28 @@ def _build_source(schedule: IngestionSchedule) -> UserDataSource:
         ingestion_schedule=schedule,
         tags=[],
         last_ingested_at=None,
+    )
+
+
+def _build_running_job(source_id: UUID) -> IngestionJob:
+    return IngestionJob(
+        id=uuid4(),
+        source_id=source_id,
+        trigger=IngestionTrigger.SCHEDULED,
+        triggered_by=None,
+        status=IngestionStatus.RUNNING,
+        started_at=datetime.now(UTC),
+        completed_at=None,
+        provenance=Provenance(
+            source=ProvenanceSource.COMPUTED,
+            source_version=None,
+            source_url=None,
+            acquired_by="test-suite",
+            processing_steps=("scheduled_ingestion",),
+            quality_score=None,
+        ),
+        metadata={},
+        source_config_snapshot={},
     )
 
 
@@ -757,3 +816,138 @@ async def test_retry_skips_when_article_already_stored() -> None:
     assert not discovery_service.download_calls
     updated_metadata = storage_repo.updated[0][1]
     assert updated_metadata[PUBMED_STORAGE_METADATA_RETRYABLE_KEY] is False
+
+
+@pytest.mark.asyncio
+async def test_trigger_ingestion_blocks_when_source_has_running_job() -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    source_repo = StubSourceRepository(source)
+    job_repo = StubJobRepository(initial_jobs=[_build_running_job(source.id)])
+    scheduler = InMemoryScheduler()
+
+    service = IngestionSchedulingService(
+        scheduler=scheduler,
+        source_repository=source_repo,
+        job_repository=job_repo,
+        ingestion_services={SourceType.PUBMED: StubPubMedIngestionService().ingest},
+    )
+
+    with pytest.raises(ValueError, match="already running"):
+        await service.trigger_ingestion(source.id)
+
+
+@pytest.mark.asyncio
+async def test_run_due_jobs_compacts_stale_ledger_entries() -> None:
+    source = _build_source(
+        IngestionSchedule(
+            enabled=False,
+            frequency=ScheduleFrequency.MANUAL,
+        ),
+    )
+    ledger_repository = StubSourceRecordLedgerRepository(delete_return_value=7)
+    service = IngestionSchedulingService(
+        scheduler=InMemoryScheduler(),
+        source_repository=StubSourceRepository(source),
+        job_repository=StubJobRepository(),
+        ingestion_services={},
+        options=IngestionSchedulingOptions(
+            source_record_ledger_repository=ledger_repository,
+            source_ledger_retention_days=30,
+            source_ledger_cleanup_batch_size=55,
+        ),
+    )
+
+    await service.run_due_jobs()
+
+    assert len(ledger_repository.delete_calls) == 1
+    _, limit = ledger_repository.delete_calls[0]
+    assert limit == 55
+
+
+@pytest.mark.asyncio
+async def test_run_due_jobs_logs_high_dedup_ratio_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    source_repo = StubSourceRepository(source)
+    job_repo = StubJobRepository()
+    scheduler = InMemoryScheduler()
+    service = IngestionSchedulingService(
+        scheduler=scheduler,
+        source_repository=source_repo,
+        job_repository=job_repo,
+        ingestion_services={
+            SourceType.PUBMED: HighDedupPubMedIngestionService().ingest,
+        },
+    )
+
+    await service.schedule_source(source.id)
+    with caplog.at_level(logging.WARNING):
+        await service.run_due_jobs(
+            as_of=datetime.now(UTC) + timedelta(hours=1, seconds=1),
+        )
+
+    assert any(
+        "High dedup ratio detected for source ingestion run" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_signature_change_logs_checkpoint_reset_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    source_repo = StubSourceRepository(source)
+    job_repo = StubJobRepository()
+    pubmed_service = ContextAwarePubMedIngestionService()
+    scheduler = InMemoryScheduler()
+    sync_state_repository = StubSourceSyncStateRepository()
+    sync_state_repository.upsert(
+        SourceSyncState(
+            source_id=source.id,
+            source_type=source.source_type,
+            checkpoint_kind=CheckpointKind.CURSOR,
+            checkpoint_payload={"retstart": 50},
+            query_signature="outdated-signature",
+        ),
+    )
+
+    service = IngestionSchedulingService(
+        scheduler=scheduler,
+        source_repository=source_repo,
+        job_repository=job_repo,
+        ingestion_services={SourceType.PUBMED: pubmed_service.ingest},
+        options=IngestionSchedulingOptions(
+            source_sync_state_repository=sync_state_repository,
+            source_record_ledger_repository=StubSourceRecordLedgerRepository(),
+        ),
+    )
+
+    await service.schedule_source(source.id)
+    with caplog.at_level(logging.WARNING):
+        await service.run_due_jobs(
+            as_of=datetime.now(UTC) + timedelta(hours=1, seconds=1),
+        )
+
+    assert any(
+        "Source query signature changed; resetting checkpoint payload" in record.message
+        for record in caplog.records
+    )
+    assert pubmed_service.contexts
+    assert pubmed_service.contexts[0].source_sync_state.checkpoint_payload == {}

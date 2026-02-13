@@ -7,7 +7,7 @@ import inspect
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Awaitable, Callable, Mapping  # noqa: UP035
 from uuid import UUID, uuid4
 
@@ -67,11 +67,14 @@ class IngestionSchedulingOptions:
     source_record_ledger_repository: (
         source_record_ledger_repo.SourceRecordLedgerRepository | None
     ) = None
+    source_ledger_retention_days: int | None = 180
+    source_ledger_cleanup_batch_size: int = 1000
     retry_batch_size: int = 25
 
 
 logger = logging.getLogger(__name__)
 MIN_POSITIONAL_PARAMETERS_WITH_CONTEXT = 2
+DEDUP_WARNING_THRESHOLD = 0.9
 
 
 class IngestionSchedulingService:
@@ -104,6 +107,17 @@ class IngestionSchedulingService:
         )
         self._source_record_ledger_repository = (
             resolved_options.source_record_ledger_repository
+        )
+        if resolved_options.source_ledger_retention_days is None:
+            self._source_ledger_retention_days = None
+        else:
+            self._source_ledger_retention_days = max(
+                resolved_options.source_ledger_retention_days,
+                1,
+            )
+        self._source_ledger_cleanup_batch_size = max(
+            resolved_options.source_ledger_cleanup_batch_size,
+            1,
         )
         self._retry_batch_size = max(resolved_options.retry_batch_size, 1)
 
@@ -142,6 +156,7 @@ class IngestionSchedulingService:
         for job in due_jobs:
             await self._execute_job(job)
         await self._retry_failed_pdf_downloads()
+        self._compact_source_record_ledger()
 
     async def trigger_ingestion(
         self,
@@ -155,6 +170,7 @@ class IngestionSchedulingService:
         if not source.ingestion_schedule.requires_scheduler:
             msg = "Source must have an enabled non-manual ingestion schedule"
             raise ValueError(msg)
+        self._ensure_source_not_running(source.id)
         return await self._run_ingestion_for_source(source)
 
     async def _execute_job(self, scheduled_job: ScheduledJob) -> None:
@@ -166,12 +182,19 @@ class IngestionSchedulingService:
             == user_data_source.ScheduleFrequency.MANUAL
         ):
             return
+        if self._source_has_running_job(source.id):
+            logger.info(
+                "Skipping scheduled ingestion because source already has a running job",
+                extra={"source_id": str(source.id)},
+            )
+            return
         await self._run_ingestion_for_source(source)
 
     async def _run_ingestion_for_source(
         self,
         source: user_data_source.UserDataSource,
     ) -> IngestionRunSummary:
+        self._ensure_source_not_running(source.id)
         service = self._get_ingestion_service(source)
 
         job = self._job_repository.save(self._create_ingestion_job(source))
@@ -188,6 +211,7 @@ class IngestionSchedulingService:
                 source=source,
                 context=run_context,
             )
+            self._emit_dedup_telemetry(source_id=source.id, summary=summary)
             sync_state_after = self._persist_sync_state_on_success(
                 sync_state=sync_state_before,
                 ingestion_job_id=running.id,
@@ -251,6 +275,17 @@ class IngestionSchedulingService:
             )
             self._update_schedule_after_run(updated_source)
             return summary
+
+    def _source_has_running_job(self, source_id: UUID) -> bool:
+        recent_jobs = self._job_repository.find_by_source(source_id, limit=10)
+        return any(
+            job.status == ingestion_job.IngestionStatus.RUNNING for job in recent_jobs
+        )
+
+    def _ensure_source_not_running(self, source_id: UUID) -> None:
+        if self._source_has_running_job(source_id):
+            msg = f"Ingestion already running for source {source_id}"
+            raise ValueError(msg)
 
     def _get_ingestion_service(
         self,
@@ -352,6 +387,15 @@ class IngestionSchedulingService:
             existing.query_signature is not None
             and existing.query_signature != query_signature
         ):
+            logger.warning(
+                "Source query signature changed; resetting checkpoint payload",
+                extra={
+                    "source_id": str(source.id),
+                    "source_type": source.source_type.value,
+                    "previous_signature": existing.query_signature,
+                    "new_signature": query_signature,
+                },
+            )
             existing = existing.model_copy(
                 update={
                     "checkpoint_payload": {},
@@ -545,6 +589,35 @@ class IngestionSchedulingService:
             skipped_records=skipped_records,
         )
 
+    def _emit_dedup_telemetry(
+        self,
+        *,
+        source_id: UUID,
+        summary: IngestionRunSummary,
+    ) -> None:
+        fetched_records = summary.fetched_records
+        if fetched_records <= 0:
+            return
+        unchanged_records = self._int_summary_field(summary, "unchanged_records")
+        new_records = self._int_summary_field(summary, "new_records")
+        updated_records = self._int_summary_field(summary, "updated_records")
+        dedup_ratio = unchanged_records / fetched_records
+        log_extra = {
+            "source_id": str(source_id),
+            "fetched_records": fetched_records,
+            "new_records": new_records,
+            "updated_records": updated_records,
+            "unchanged_records": unchanged_records,
+            "dedup_ratio": round(dedup_ratio, 4),
+        }
+        if dedup_ratio >= DEDUP_WARNING_THRESHOLD:
+            logger.warning(
+                "High dedup ratio detected for source ingestion run",
+                extra=log_extra,
+            )
+            return
+        logger.info("Source ingestion dedup telemetry", extra=log_extra)
+
     @staticmethod
     def _resolve_checkpoint_kind(
         *,
@@ -688,6 +761,27 @@ class IngestionSchedulingService:
                 updates["next_run_at"] = job.next_run_at
         updated_schedule = schedule.model_copy(update=updates)
         self._source_repository.update_ingestion_schedule(source.id, updated_schedule)
+
+    def _compact_source_record_ledger(self) -> None:
+        repository = self._source_record_ledger_repository
+        retention_days = self._source_ledger_retention_days
+        if repository is None or retention_days is None:
+            return
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        deleted_rows = repository.delete_entries_older_than(
+            cutoff=cutoff,
+            limit=self._source_ledger_cleanup_batch_size,
+        )
+        if deleted_rows <= 0:
+            return
+        logger.info(
+            "Compacted stale source record ledger entries",
+            extra={
+                "deleted_rows": deleted_rows,
+                "retention_days": retention_days,
+                "cutoff": cutoff.isoformat(timespec="seconds"),
+            },
+        )
 
     async def _retry_failed_pdf_downloads(self) -> None:
         """Retry failed PDF storage operations for PubMed discovery jobs."""

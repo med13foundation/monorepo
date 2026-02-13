@@ -18,6 +18,7 @@ from src.infrastructure.mappers.source_record_ledger_mapper import (
 from src.models.database.source_record_ledger import SourceRecordLedgerModel
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from uuid import UUID
 
     from sqlalchemy.orm import Session
@@ -100,3 +101,33 @@ class SqlAlchemySourceRecordLedgerRepository(SourceRecordLedgerRepository):
             SourceRecordLedgerModel.source_id == str(source_id),
         )
         return int(self.session.execute(stmt).scalar_one())
+
+    def delete_entries_older_than(
+        self,
+        *,
+        cutoff: datetime,
+        limit: int = 1000,
+    ) -> int:
+        effective_limit = max(limit, 1)
+        candidate_stmt = (
+            select(
+                SourceRecordLedgerModel.source_id,
+                SourceRecordLedgerModel.external_record_id,
+            )
+            .where(SourceRecordLedgerModel.last_processed_at < cutoff)
+            .order_by(SourceRecordLedgerModel.last_processed_at.asc())
+            .limit(effective_limit)
+        )
+        candidate_rows = self.session.execute(candidate_stmt).all()
+        if not candidate_rows:
+            return 0
+        deleted_rows = 0
+        for source_id, external_record_id in candidate_rows:
+            delete_stmt = delete(SourceRecordLedgerModel).where(
+                SourceRecordLedgerModel.source_id == source_id,
+                SourceRecordLedgerModel.external_record_id == external_record_id,
+            )
+            result = self.session.execute(delete_stmt)
+            deleted_rows += self._rowcount(result)
+        self.session.commit()
+        return deleted_rows

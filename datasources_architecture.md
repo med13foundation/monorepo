@@ -241,16 +241,27 @@ All Version 2 architecture gaps are implemented:
    - Implemented for PubMed and ClinVar with provider cursor payloads persisted in
      `source_sync_state`.
 
-## Remaining Gaps (Post-V2 Hardening)
+## Post-V2 Hardening Status
 
-No blocking architecture gaps remain for PubMed/ClinVar independence and schedulable ingestion.
+All previously listed post-V2 hardening items are now implemented:
 
-Optional hardening items for future iterations:
-
-1. Add retention/compaction policy for `source_record_ledger` growth over long-running sources.
-2. Add explicit per-source concurrency guards (for overlapping manual + scheduled runs).
-3. Add richer operational telemetry/alerts for checkpoint resets and dedup ratios.
-4. Extend typed metadata contract adoption to any non-scheduler metadata writers, if introduced.
+1. Retention/compaction policy for `source_record_ledger`.
+   - `SourceRecordLedgerRepository.delete_entries_older_than(...)` implemented.
+   - Scheduler loop runs compaction via `IngestionSchedulingService._compact_source_record_ledger`.
+   - Default policy is configurable via `IngestionSchedulingOptions`:
+     - `source_ledger_retention_days` (default `180`)
+     - `source_ledger_cleanup_batch_size` (default `1000`)
+2. Per-source concurrency guard for overlapping runs.
+   - `IngestionSchedulingService` now blocks duplicate runs when a source already has a `RUNNING` ingestion job.
+   - Scheduler skips overlapping due jobs; manual triggers return conflict semantics.
+3. Operational telemetry/alerts for checkpoint and dedup behavior.
+   - Checkpoint reset warning emitted when query signature changes and checkpoint is cleared.
+   - Dedup telemetry emitted per run; high dedup ratios are logged as warnings.
+4. Typed metadata contract adoption for non-scheduler writers.
+   - Metadata normalization is centralized in
+     `normalize_ingestion_job_metadata(...)` (`src/type_definitions/data_sources.py`).
+   - `IngestionJobMapper` now enforces typed normalization of known metadata sections
+     on persistence and hydration, preserving unknown keys.
 
 ## Principles to Keep
 
