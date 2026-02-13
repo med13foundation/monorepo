@@ -60,6 +60,12 @@ interface AuthenticatedUser extends BackendUser {
 
 // FastAPI backend URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
+const authApiClient = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 15000,
+  // Avoid Node.js proxy-from-env URL parsing path (DEP0169 on Node 24+)
+  proxy: false,
+})
 
 function formatAxiosError(error: unknown): string {
   if (!axios.isAxiosError(error)) {
@@ -175,7 +181,7 @@ export const authOptions: NextAuthOptions = {
 
         try {
           // Call FastAPI login endpoint
-          const response = await axios.post<BackendLoginResponse>(`${API_BASE_URL}/auth/login`, {
+          const response = await authApiClient.post<BackendLoginResponse>("/auth/login", {
             email: credentials.email,
             password: credentials.password,
           })
@@ -338,7 +344,7 @@ export const authOptions: NextAuthOptions = {
       }
 
       try {
-        const response = await axios.post<{ access_token: string; refresh_token: string; expires_in: number }>(`${API_BASE_URL}/auth/refresh`, {
+        const response = await authApiClient.post<{ access_token: string; refresh_token: string; expires_in: number }>("/auth/refresh", {
           refresh_token: refreshToken
         })
 

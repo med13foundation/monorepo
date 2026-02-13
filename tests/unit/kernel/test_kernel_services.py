@@ -53,12 +53,34 @@ def mock_relation_repo():
 # ── Kernel Entity Service Tests ───────────────────────────────────────────────
 
 
-def test_create_entity_no_resolution(mock_entity_repo, mock_dictionary_repo):
+def test_create_entity_rejects_unknown_type(mock_entity_repo, mock_dictionary_repo):
     service = KernelEntityService(mock_entity_repo, mock_dictionary_repo)
 
     # Setup
     research_space_id = "space-123"
     mock_dictionary_repo.get_resolution_policy.return_value = None
+
+    # Execute
+    with pytest.raises(ValueError, match="Unknown entity_type"):
+        service.create_or_resolve(
+            research_space_id=research_space_id,
+            entity_type="UNKNOWN",
+            display_label="BRCA1",
+        )
+
+
+def test_create_entity_without_resolution_policy_match_creates_entity(
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelEntityService(mock_entity_repo, mock_dictionary_repo)
+
+    # Setup
+    research_space_id = "space-123"
+    policy = Mock(spec=EntityResolutionPolicyModel)
+    policy.policy_strategy = "NONE"
+    policy.required_anchors = []
+    mock_dictionary_repo.get_resolution_policy.return_value = policy
     mock_entity_repo.create.return_value = EntityModel(
         id="ent-1",
         research_space_id=research_space_id,

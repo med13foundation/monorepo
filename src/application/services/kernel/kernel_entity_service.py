@@ -55,8 +55,14 @@ class KernelEntityService:
         Uses the entity resolution policy to determine dedup strategy.
         Returns (entity, created) — ``created`` is False if resolved to existing.
         """
-        # 1. Check resolution policy
+        # 1. Enforce dictionary-defined entity types.
         policy = self._dictionary.get_resolution_policy(entity_type)
+        if policy is None:
+            msg = (
+                f"Unknown entity_type '{entity_type}'. "
+                "Add an entity resolution policy before creating this type."
+            )
+            raise ValueError(msg)
 
         if policy and identifiers and policy.policy_strategy != "NONE":
             required_anchors: list[str] = (

@@ -34,6 +34,9 @@ const calculateRetryDelay = (attempt: number) =>
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
+  // Backend API calls are direct and should not traverse environment proxies.
+  // This avoids Node.js DEP0169 warnings from proxy-from-env/url.parse on Node 24+.
+  proxy: false,
 })
 
 apiClient.interceptors.request.use((config) => {

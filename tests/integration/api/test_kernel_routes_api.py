@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.database import session as session_module
+from src.database.seeds.seeder import seed_entity_resolution_policies
 from src.domain.entities.user import UserRole
 from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
 from src.infrastructure.security.jwt_provider import JWTProvider
@@ -179,6 +180,9 @@ def test_kernel_entity_observation_relation_flow(
     # 2) Create two entities in the space (researcher/owner)
     headers = _auth_headers(researcher_user)
 
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+
     gene_resp = test_client.post(
         f"/research-spaces/{space.id}/entities",
         headers=headers,
@@ -287,6 +291,31 @@ def test_kernel_entity_observation_relation_flow(
     )
     assert curate.status_code == 200, curate.text
     assert curate.json()["curation_status"] == "APPROVED"
+
+
+def test_kernel_entity_rejects_unknown_type(
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+
+    response = test_client.post(
+        f"/research-spaces/{space.id}/entities",
+        headers=headers,
+        json={
+            "entity_type": "UNKNOWN_TYPE",
+            "display_label": "Suspicious",
+            "metadata": {},
+            "identifiers": {"custom": "x"},
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"].startswith("Unknown entity_type")
 
 
 def test_space_ingest_runs_only_configured_active_sources(
