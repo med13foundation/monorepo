@@ -40,6 +40,7 @@ if TYPE_CHECKING:
         ResearchSpaceRepository,
         UserDataSourceRepository,
     )
+    from src.domain.services.clinvar_ingestion import ClinVarGateway
     from src.domain.services.pubmed_ingestion import PubMedGateway
     from src.type_definitions.common import RawRecord, SourceMetadata
 
@@ -59,6 +60,7 @@ class DataSourceAiTestDependencies:
 
     source_repository: UserDataSourceRepository
     pubmed_gateway: PubMedGateway
+    clinvar_gateway: ClinVarGateway
     query_agent: QueryAgentPort | None
     research_space_repository: ResearchSpaceRepository | None
     flujo_state: FlujoStatePort | None = None
@@ -75,6 +77,7 @@ class DataSourceAiTestService:
     ) -> None:
         self._source_repository = dependencies.source_repository
         self._pubmed_gateway = dependencies.pubmed_gateway
+        self._clinvar_gateway = dependencies.clinvar_gateway
         self._query_agent = dependencies.query_agent
         self._run_id_provider = dependencies.run_id_provider
         self._research_space_repository = dependencies.research_space_repository
@@ -123,35 +126,18 @@ class DataSourceAiTestService:
                 error_message = "AI agent did not return a query. Refine the AI instructions and try again."
             else:
                 executed_query = intelligent_query
-                test_config = config.model_copy(
-                    update={
-                        "query": intelligent_query,
-                        "max_results": self._sample_size,
-                        "relevance_threshold": 0,
-                    },
+                (
+                    fetch_attempted,
+                    fetched_records,
+                    findings,
+                    fetch_error,
+                ) = await self._fetch_test_records(
+                    source=source,
+                    config=config,
+                    executed_query=intelligent_query,
                 )
-                if self._should_use_pubmed_gateway(source, config):
-                    fetch_attempted = True
-                    try:
-                        raw_records = await self._pubmed_gateway.fetch_records(
-                            test_config,
-                        )
-                        fetched_records = len(raw_records)
-                        findings = self._build_findings(raw_records)
-                        if fetched_records == 0:
-                            error_message = (
-                                "PubMed returned no results for the AI-generated query. "
-                                "Adjust the prompt or filters and try again."
-                            )
-                    except Exception as exc:  # pragma: no cover - defensive
-                        logger.exception("AI test failed for source %s", source.id)
-                        error_message = f"PubMed request failed: {exc!s}"
-                else:
-                    # Non-PubMed sources currently support query generation validation only.
-                    logger.info(
-                        "Skipping PubMed fetch for non-PubMed AI test source %s",
-                        source.id,
-                    )
+                if fetch_error is not None:
+                    error_message = fetch_error
 
         if ai_executed:
             flujo_run_id, flujo_tables = self._resolve_flujo_state(checked_at)
@@ -213,6 +199,100 @@ class DataSourceAiTestService:
         except pydantic.ValidationError as exc:
             logger.warning("Invalid PubMed config for source %s: %s", source.id, exc)
             return None
+
+    @staticmethod
+    def _build_clinvar_test_config(
+        *,
+        source: user_data_source.UserDataSource,
+        executed_query: str,
+    ) -> data_source_configs.ClinVarQueryConfig | None:
+        metadata: SourceMetadata = dict(source.configuration.metadata or {})
+        metadata_with_defaults = DataSourceAiTestService._apply_clinvar_defaults(
+            metadata,
+        )
+        metadata_with_defaults["query"] = executed_query
+        metadata_with_defaults["max_results"] = 5
+        try:
+            return data_source_configs.ClinVarQueryConfig.model_validate(
+                metadata_with_defaults,
+            )
+        except pydantic.ValidationError as exc:
+            logger.warning("Invalid ClinVar config for source %s: %s", source.id, exc)
+            return None
+
+    async def _fetch_test_records(
+        self,
+        *,
+        source: user_data_source.UserDataSource,
+        config: data_source_configs.PubMedQueryConfig,
+        executed_query: str,
+    ) -> tuple[
+        bool,
+        int,
+        list[data_source_types.DataSourceAiTestFinding],
+        str | None,
+    ]:
+        if self._should_use_pubmed_gateway(source, config):
+            test_config = config.model_copy(
+                update={
+                    "query": executed_query,
+                    "max_results": self._sample_size,
+                    "relevance_threshold": 0,
+                },
+            )
+            try:
+                raw_records = await self._pubmed_gateway.fetch_records(test_config)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("AI test failed for source %s", source.id)
+                return True, 0, [], f"PubMed request failed: {exc!s}"
+
+            findings = self._build_findings(raw_records)
+            fetched_records = len(raw_records)
+            error_message = (
+                "PubMed returned no results for the AI-generated query. "
+                "Adjust the prompt or filters and try again."
+                if fetched_records == 0
+                else None
+            )
+            return True, fetched_records, findings, error_message
+
+        if self._should_use_clinvar_gateway(source, config):
+            clinvar_test_config = self._build_clinvar_test_config(
+                source=source,
+                executed_query=executed_query,
+            )
+            if clinvar_test_config is None:
+                return (
+                    True,
+                    0,
+                    [],
+                    "ClinVar source configuration is invalid. "
+                    "Review source settings and try again.",
+                )
+            try:
+                raw_records = await self._clinvar_gateway.fetch_records(
+                    clinvar_test_config,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("AI test failed for source %s", source.id)
+                return True, 0, [], f"ClinVar request failed: {exc!s}"
+
+            findings = self._build_clinvar_findings(raw_records)
+            fetched_records = len(raw_records)
+            error_message = (
+                "ClinVar returned no results for the AI-generated query. "
+                "Adjust the prompt or filters and try again."
+                if fetched_records == 0
+                else None
+            )
+            return True, fetched_records, findings, error_message
+
+        # Non-PubMed/ClinVar sources currently support query generation validation only.
+        logger.info(
+            "Skipping connector fetch for unsupported AI test source %s",
+            source.id,
+        )
+        return False, 0, [], None
 
     @staticmethod
     def _normalize_catalog_entry_id(metadata: SourceMetadata) -> str | None:
@@ -343,6 +423,17 @@ class DataSourceAiTestService:
             or config.agent_config.query_agent_source_type.lower() == "pubmed"
         )
 
+    @staticmethod
+    def _should_use_clinvar_gateway(
+        source: user_data_source.UserDataSource,
+        config: data_source_configs.PubMedQueryConfig,
+    ) -> bool:
+        """Determine if the configured source should run through ClinVar fetch."""
+        return (
+            source.source_type == user_data_source.SourceType.CLINVAR
+            or config.agent_config.query_agent_source_type.lower() == "clinvar"
+        )
+
     def _resolve_model_name(
         self,
         *,
@@ -403,6 +494,50 @@ class DataSourceAiTestService:
                     pmc_id=pmc_id,
                     publication_date=publication_date,
                     journal=journal,
+                    links=links,
+                ),
+            )
+        return findings
+
+    def _build_clinvar_findings(
+        self,
+        records: list[RawRecord],
+    ) -> list[data_source_types.DataSourceAiTestFinding]:
+        findings: list[data_source_types.DataSourceAiTestFinding] = []
+        for record in records[: self._sample_size]:
+            clinvar_id = self._coerce_scalar(record.get("clinvar_id"))
+            parsed_data_raw = record.get("parsed_data")
+            parsed_data = parsed_data_raw if isinstance(parsed_data_raw, dict) else {}
+            gene_symbol = self._coerce_scalar(parsed_data.get("gene_symbol"))
+            clinical_significance = self._coerce_scalar(
+                parsed_data.get("clinical_significance"),
+            )
+            title_parts = [
+                part for part in (gene_symbol, clinical_significance) if part
+            ]
+            title = (
+                " - ".join(title_parts)
+                if title_parts
+                else (
+                    f"ClinVar variant {clinvar_id}" if clinvar_id else "ClinVar variant"
+                )
+            )
+            links: list[data_source_types.DataSourceAiTestLink] = []
+            if clinvar_id:
+                links.append(
+                    data_source_types.DataSourceAiTestLink(
+                        label="ClinVar",
+                        url=(
+                            "https://www.ncbi.nlm.nih.gov/clinvar/variation/"
+                            f"{clinvar_id}/"
+                        ),
+                    ),
+                )
+
+            findings.append(
+                data_source_types.DataSourceAiTestFinding(
+                    title=title,
+                    publication_date=self._coerce_scalar(record.get("fetched_at")),
                     links=links,
                 ),
             )

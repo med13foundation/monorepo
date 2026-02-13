@@ -25,12 +25,16 @@ from src.domain.entities.user_data_source import (
 )
 from src.domain.repositories.research_space_repository import ResearchSpaceRepository
 from src.domain.repositories.user_data_source_repository import UserDataSourceRepository
+from src.domain.services.clinvar_ingestion import ClinVarGateway
 from src.domain.services.pubmed_ingestion import PubMedGateway
 
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from src.domain.entities.data_source_configs import PubMedQueryConfig
+    from src.domain.entities.data_source_configs import (
+        ClinVarQueryConfig,
+        PubMedQueryConfig,
+    )
     from src.type_definitions.common import (
         RawRecord,
         SourceMetadata,
@@ -46,6 +50,18 @@ class StubPubMedGateway(PubMedGateway):
         self.called_queries: list[str] = []
 
     async def fetch_records(self, config: PubMedQueryConfig) -> list[RawRecord]:
+        self.called_queries.append(config.query)
+        return self._records
+
+
+class StubClinVarGateway(ClinVarGateway):
+    """Stub ClinVar gateway returning pre-defined records."""
+
+    def __init__(self, records: list[RawRecord]) -> None:
+        self._records = records
+        self.called_queries: list[str] = []
+
+    async def fetch_records(self, config: ClinVarQueryConfig) -> list[RawRecord]:
         self.called_queries.append(config.query)
         return self._records
 
@@ -333,6 +349,7 @@ async def test_ai_test_success_returns_result() -> None:
                 },
             ],
         ),
+        clinvar_gateway=StubClinVarGateway([]),
         query_agent=StubQueryAgent("MED13[Title/Abstract]"),
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(space),
@@ -359,7 +376,7 @@ async def test_ai_test_success_returns_result() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ai_test_skips_fetch_for_clinvar_connector() -> None:
+async def test_ai_test_fetches_for_clinvar_connector() -> None:
     source_id = uuid4()
     space_id = uuid4()
     space = ResearchSpace(
@@ -390,10 +407,23 @@ async def test_ai_test_skips_fetch_for_clinvar_connector() -> None:
             },
         ],
     )
+    clinvar_gateway = StubClinVarGateway(
+        [
+            {
+                "clinvar_id": "12345",
+                "fetched_at": "2026-02-13T10:00:00Z",
+                "parsed_data": {
+                    "gene_symbol": "MED13",
+                    "clinical_significance": "pathogenic",
+                },
+            },
+        ],
+    )
     query_agent = StubQueryAgent("MED13[Title/Abstract]")
     dependencies = DataSourceAiTestDependencies(
         source_repository=StubUserDataSourceRepository(source),
         pubmed_gateway=pubmed_gateway,
+        clinvar_gateway=clinvar_gateway,
         query_agent=query_agent,
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(space),
@@ -410,10 +440,11 @@ async def test_ai_test_skips_fetch_for_clinvar_connector() -> None:
 
     assert result.success is True
     assert result.executed_query == "MED13[Title/Abstract]"
-    assert result.fetched_records == 0
+    assert result.fetched_records == 1
     assert not pubmed_gateway.called_queries
+    assert clinvar_gateway.called_queries == ["MED13[Title/Abstract]"]
     assert query_agent.calls[0]["source_type"] == "clinvar"
-    assert "no connector fetch step for clinvar" in result.message
+    assert "1 record(s) returned" in result.message
 
 
 @pytest.mark.asyncio
@@ -453,6 +484,7 @@ async def test_ai_test_skips_fetch_for_non_pubmed_connector() -> None:
     dependencies = DataSourceAiTestDependencies(
         source_repository=StubUserDataSourceRepository(source),
         pubmed_gateway=pubmed_gateway,
+        clinvar_gateway=StubClinVarGateway([]),
         query_agent=query_agent,
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(space),
@@ -505,9 +537,22 @@ async def test_ai_test_uses_clinvar_defaults_for_discovery_source_without_agent_
 
     query_agent = StubQueryAgent("MED13 pathogenic variant")
     pubmed_gateway = StubPubMedGateway([])
+    clinvar_gateway = StubClinVarGateway(
+        [
+            {
+                "clinvar_id": "77777",
+                "fetched_at": "2026-02-13T10:00:00Z",
+                "parsed_data": {
+                    "gene_symbol": "MED13",
+                    "clinical_significance": "likely pathogenic",
+                },
+            },
+        ],
+    )
     dependencies = DataSourceAiTestDependencies(
         source_repository=StubUserDataSourceRepository(source),
         pubmed_gateway=pubmed_gateway,
+        clinvar_gateway=clinvar_gateway,
         query_agent=query_agent,
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(space),
@@ -526,7 +571,8 @@ async def test_ai_test_uses_clinvar_defaults_for_discovery_source_without_agent_
     assert result.executed_query == "MED13 pathogenic variant"
     assert query_agent.calls[0]["source_type"] == "clinvar"
     assert not pubmed_gateway.called_queries
-    assert "no connector fetch step for clinvar" in result.message
+    assert clinvar_gateway.called_queries == ["MED13 pathogenic variant"]
+    assert "1 record(s) returned" in result.message
 
 
 @pytest.mark.asyncio
@@ -541,6 +587,7 @@ async def test_ai_disabled_returns_failure() -> None:
     dependencies = DataSourceAiTestDependencies(
         source_repository=StubUserDataSourceRepository(source),
         pubmed_gateway=StubPubMedGateway([{"pubmed_id": "1"}]),
+        clinvar_gateway=StubClinVarGateway([]),
         query_agent=StubQueryAgent("MED13"),
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(None),
@@ -569,6 +616,7 @@ async def test_no_results_returns_failure() -> None:
     dependencies = DataSourceAiTestDependencies(
         source_repository=StubUserDataSourceRepository(source),
         pubmed_gateway=StubPubMedGateway([]),
+        clinvar_gateway=StubClinVarGateway([]),
         query_agent=StubQueryAgent("MED13"),
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(None),
@@ -622,6 +670,7 @@ async def test_ai_test_passes_model_id_from_agent_config() -> None:
                 },
             ],
         ),
+        clinvar_gateway=StubClinVarGateway([]),
         query_agent=query_agent,
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(space),
@@ -678,6 +727,7 @@ async def test_result_model_shows_configured_model_id() -> None:
                 },
             ],
         ),
+        clinvar_gateway=StubClinVarGateway([]),
         query_agent=StubQueryAgent("MED13[Title/Abstract]"),
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(space),
@@ -734,6 +784,7 @@ async def test_result_model_falls_back_to_default_when_not_configured() -> None:
                 },
             ],
         ),
+        clinvar_gateway=StubClinVarGateway([]),
         query_agent=StubQueryAgent("MED13[Title/Abstract]"),
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(space),
@@ -790,6 +841,7 @@ async def test_ai_test_passes_none_model_id_when_not_configured() -> None:
                 },
             ],
         ),
+        clinvar_gateway=StubClinVarGateway([]),
         query_agent=query_agent,
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(space),
@@ -824,6 +876,7 @@ async def test_result_model_is_none_when_no_query_agent() -> None:
     dependencies = DataSourceAiTestDependencies(
         source_repository=StubUserDataSourceRepository(source),
         pubmed_gateway=StubPubMedGateway([]),
+        clinvar_gateway=StubClinVarGateway([]),
         query_agent=None,  # No query agent available
         run_id_provider=None,
         research_space_repository=StubResearchSpaceRepository(None),

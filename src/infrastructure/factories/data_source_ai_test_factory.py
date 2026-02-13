@@ -12,7 +12,7 @@ from src.application.services import (
 )
 from src.database.session import SessionLocal
 from src.domain.agents.models import ModelCapability
-from src.infrastructure.data_sources import PubMedSourceGateway
+from src.infrastructure.data_sources import ClinVarSourceGateway, PubMedSourceGateway
 from src.infrastructure.llm.adapters.query_agent_adapter import FlujoQueryAgentAdapter
 from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.llm.state.flujo_state_repository import (
@@ -50,6 +50,7 @@ def build_data_source_ai_test_service(
     dependencies = DataSourceAiTestDependencies(
         source_repository=source_repository,
         pubmed_gateway=PubMedSourceGateway(),
+        clinvar_gateway=ClinVarSourceGateway(),
         query_agent=query_agent,
         run_id_provider=query_agent,
         research_space_repository=research_space_repository,
