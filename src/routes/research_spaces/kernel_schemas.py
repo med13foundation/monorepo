@@ -211,9 +211,9 @@ class KernelRelationResponse(BaseModel):
     relation_type: str
     target_id: UUID
 
-    confidence: float
-    evidence_summary: str | None
-    evidence_tier: str | None
+    aggregate_confidence: float
+    source_count: int
+    highest_evidence_tier: str | None
     curation_status: str
 
     provenance_id: UUID | None
@@ -233,9 +233,9 @@ class KernelRelationResponse(BaseModel):
             source_id=_to_uuid(model.source_id),
             relation_type=str(model.relation_type),
             target_id=_to_uuid(model.target_id),
-            confidence=float(model.confidence),
-            evidence_summary=model.evidence_summary,
-            evidence_tier=model.evidence_tier,
+            aggregate_confidence=float(model.aggregate_confidence),
+            source_count=int(model.source_count),
+            highest_evidence_tier=model.highest_evidence_tier,
             curation_status=str(model.curation_status),
             provenance_id=(
                 _to_uuid(provenance_id_raw) if provenance_id_raw is not None else None

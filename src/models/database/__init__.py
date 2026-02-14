@@ -30,6 +30,7 @@ from .kernel import (
     ObservationModel,
     ProvenanceModel,
     RelationConstraintModel,
+    RelationEvidenceModel,
     RelationModel,
     TransformRegistryModel,
     VariableDefinitionModel,
@@ -82,6 +83,7 @@ __all__ = [
     "EntityModel",
     "EntityIdentifierModel",
     "ObservationModel",
+    "RelationEvidenceModel",
     "RelationModel",
     "ProvenanceModel",
     # Surviving infrastructure

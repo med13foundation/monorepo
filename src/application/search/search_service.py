@@ -280,7 +280,12 @@ class UnifiedSearchService:
         results: list[SearchResult] = []
         for rel in relations:
             score = self._calculate_relation_relevance(query, rel)
-            description = rel.evidence_summary or ""
+            tier_label = rel.highest_evidence_tier or "UNKNOWN"
+            description = (
+                f"sources={rel.source_count}, "
+                f"aggregate_confidence={rel.aggregate_confidence:.3f}, "
+                f"tier={tier_label}"
+            )
             results.append(
                 SearchResult(
                     entity_type=SearchResultType.RELATION,
@@ -293,8 +298,9 @@ class UnifiedSearchService:
                         "target_id": str(rel.target_id),
                         "relation_type": rel.relation_type,
                         "curation_status": rel.curation_status,
-                        "confidence": float(rel.confidence),
-                        "evidence_tier": rel.evidence_tier,
+                        "aggregate_confidence": float(rel.aggregate_confidence),
+                        "source_count": int(rel.source_count),
+                        "highest_evidence_tier": rel.highest_evidence_tier,
                         "reviewed_by": (
                             str(rel.reviewed_by) if rel.reviewed_by else None
                         ),
@@ -360,8 +366,9 @@ class UnifiedSearchService:
         elif query_lower in relation_type:
             score += 0.6
 
-        if query_lower in (rel.evidence_summary or "").lower():
-            score += 0.6
+        tier = (rel.highest_evidence_tier or "").lower()
+        if query_lower and query_lower in tier:
+            score += 0.3
 
         return min(score, 1.0)
 
@@ -400,7 +407,12 @@ class UnifiedSearchService:
             "searchable_fields": {
                 "entities": ["display_label", "entity_type", "metadata"],
                 "observations": ["variable_id", "value_text", "value_coded", "unit"],
-                "relations": ["relation_type", "evidence_summary", "curation_status"],
+                "relations": [
+                    "relation_type",
+                    "highest_evidence_tier",
+                    "aggregate_confidence",
+                    "curation_status",
+                ],
             },
             "last_updated": None,
         }

@@ -9,6 +9,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from src.application.services.extraction_queue_service import ExtractionEnqueueSummary
+from src.application.services.extraction_runner_service import ExtractionRunSummary
 from src.application.services.ingestion_scheduling_service import (
     IngestionSchedulingOptions,
     IngestionSchedulingService,
@@ -57,7 +59,10 @@ from src.domain.repositories.source_sync_state_repository import (
 )
 from src.domain.repositories.storage_repository import StorageOperationRepository
 from src.domain.repositories.user_data_source_repository import UserDataSourceRepository
-from src.domain.services.ingestion import IngestionRunContext  # noqa: TC001
+from src.domain.services.ingestion import (
+    IngestionExtractionTarget,
+    IngestionRunContext,  # noqa: TC001
+)
 from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
 from src.domain.value_objects.provenance import DataSource as ProvenanceSource
 from src.domain.value_objects.provenance import Provenance
@@ -345,6 +350,67 @@ class StubPubMedIngestionService:
         )
 
 
+class StubExtractionQueueService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[UUID, UUID, tuple[IngestionExtractionTarget, ...]]] = []
+
+    def enqueue_for_ingestion(
+        self,
+        *,
+        source_id: UUID,
+        ingestion_job_id: UUID,
+        targets: list[IngestionExtractionTarget],
+        extraction_version: int | None = None,
+    ) -> ExtractionEnqueueSummary:
+        _ = extraction_version
+        normalized_targets = tuple(targets)
+        self.calls.append((source_id, ingestion_job_id, normalized_targets))
+        return ExtractionEnqueueSummary(
+            source_id=source_id,
+            ingestion_job_id=ingestion_job_id,
+            extraction_version=1,
+            requested=len(normalized_targets),
+            queued=len(normalized_targets),
+            skipped=0,
+        )
+
+
+class StubExtractionRunnerService:
+    def __init__(self, supported_source_types: set[str] | None = None) -> None:
+        self.supported_source_types = {
+            value.strip().lower()
+            for value in (supported_source_types or set())
+            if value.strip()
+        }
+        self.calls: list[tuple[UUID, UUID, int]] = []
+
+    def has_processor_for_source_type(self, source_type: str) -> bool:
+        return source_type.strip().lower() in self.supported_source_types
+
+    async def run_for_ingestion_job(
+        self,
+        *,
+        source_id: UUID,
+        ingestion_job_id: UUID,
+        expected_items: int,
+        batch_size: int | None = None,
+    ) -> ExtractionRunSummary:
+        _ = batch_size
+        self.calls.append((source_id, ingestion_job_id, expected_items))
+        now = datetime.now(UTC)
+        return ExtractionRunSummary(
+            source_id=source_id,
+            ingestion_job_id=ingestion_job_id,
+            requested=expected_items,
+            processed=expected_items,
+            completed=expected_items,
+            skipped=0,
+            failed=0,
+            started_at=now,
+            completed_at=now,
+        )
+
+
 class StubSourceSyncStateRepository(SourceSyncStateRepository):
     def __init__(self) -> None:
         self.by_source: dict[UUID, SourceSyncState] = {}
@@ -464,6 +530,39 @@ class HighDedupPubMedIngestionService:
         )
 
 
+class QueueingSourceIngestionService:
+    def __init__(self, source_type: SourceType) -> None:
+        self.source_type = source_type
+
+    async def ingest(
+        self,
+        source: UserDataSource,
+        *,
+        context: IngestionRunContext | None = None,
+    ) -> PubMedIngestionSummary:
+        _ = context
+        source_type_value = source.source_type.value
+        extraction_target = IngestionExtractionTarget(
+            source_record_id=f"{source_type_value}:record-1",
+            source_type=source_type_value,
+            publication_id=None,
+            pubmed_id="123456" if source.source_type == SourceType.PUBMED else None,
+            metadata={"raw_record": {"title": "queued"}},
+        )
+        return PubMedIngestionSummary(
+            source_id=source.id,
+            fetched_records=1,
+            parsed_publications=1,
+            created_publications=1,
+            updated_publications=0,
+            extraction_targets=(extraction_target,),
+            new_records=1,
+            updated_records=0,
+            unchanged_records=0,
+            skipped_records=0,
+        )
+
+
 def _build_source(schedule: IngestionSchedule) -> UserDataSource:
     return UserDataSource(
         id=uuid4(),
@@ -509,6 +608,38 @@ def _build_running_job(source_id: UUID) -> IngestionJob:
         ),
         metadata={},
         source_config_snapshot={},
+    )
+
+
+def _build_ingestion_options(
+    *,
+    storage_operation_repository: StorageOperationRepository | None = None,
+    pubmed_discovery_service: PubMedDiscoveryService | None = None,
+    source_sync_state_repository: SourceSyncStateRepository | None = None,
+    source_record_ledger_repository: SourceRecordLedgerRepository | None = None,
+    source_ledger_retention_days: int | None = 180,
+    source_ledger_cleanup_batch_size: int = 1000,
+    retry_batch_size: int = 25,
+    extraction_queue_service: StubExtractionQueueService | None = None,
+    extraction_runner_service: StubExtractionRunnerService | None = None,
+) -> IngestionSchedulingOptions:
+    queue_service = extraction_queue_service or StubExtractionQueueService()
+    runner_service = extraction_runner_service or StubExtractionRunnerService(
+        {
+            SourceType.PUBMED.value,
+            SourceType.CLINVAR.value,
+        },
+    )
+    return IngestionSchedulingOptions(
+        storage_operation_repository=storage_operation_repository,
+        pubmed_discovery_service=pubmed_discovery_service,
+        extraction_queue_service=queue_service,
+        extraction_runner_service=runner_service,
+        source_sync_state_repository=source_sync_state_repository,
+        source_record_ledger_repository=source_record_ledger_repository,
+        source_ledger_retention_days=source_ledger_retention_days,
+        source_ledger_cleanup_batch_size=source_ledger_cleanup_batch_size,
+        retry_batch_size=retry_batch_size,
     )
 
 
@@ -677,6 +808,7 @@ async def test_run_due_jobs_triggers_ingestion() -> None:
         source_repository=source_repo,
         job_repository=job_repo,
         ingestion_services={SourceType.PUBMED: pubmed_service.ingest},
+        options=_build_ingestion_options(),
     )
 
     await service.schedule_source(source.id)
@@ -708,7 +840,7 @@ async def test_run_due_jobs_updates_sync_state_and_idempotency_metadata() -> Non
         source_repository=source_repo,
         job_repository=job_repo,
         ingestion_services={SourceType.PUBMED: pubmed_service.ingest},
-        options=IngestionSchedulingOptions(
+        options=_build_ingestion_options(
             source_sync_state_repository=sync_state_repository,
             source_record_ledger_repository=ledger_repository,
         ),
@@ -762,7 +894,7 @@ async def test_run_due_jobs_retries_failed_pdf_downloads() -> None:
         ),
         job_repository=StubJobRepository(),
         ingestion_services={},
-        options=IngestionSchedulingOptions(
+        options=_build_ingestion_options(
             storage_operation_repository=storage_repo,
             pubmed_discovery_service=discovery_service,
         ),
@@ -805,7 +937,7 @@ async def test_retry_skips_when_article_already_stored() -> None:
         ),
         job_repository=StubJobRepository(),
         ingestion_services={},
-        options=IngestionSchedulingOptions(
+        options=_build_ingestion_options(
             storage_operation_repository=storage_repo,
             pubmed_discovery_service=discovery_service,
         ),
@@ -835,6 +967,7 @@ async def test_trigger_ingestion_blocks_when_source_has_running_job() -> None:
         source_repository=source_repo,
         job_repository=job_repo,
         ingestion_services={SourceType.PUBMED: StubPubMedIngestionService().ingest},
+        options=_build_ingestion_options(),
     )
 
     with pytest.raises(ValueError, match="already running"):
@@ -855,7 +988,7 @@ async def test_run_due_jobs_compacts_stale_ledger_entries() -> None:
         source_repository=StubSourceRepository(source),
         job_repository=StubJobRepository(),
         ingestion_services={},
-        options=IngestionSchedulingOptions(
+        options=_build_ingestion_options(
             source_record_ledger_repository=ledger_repository,
             source_ledger_retention_days=30,
             source_ledger_cleanup_batch_size=55,
@@ -889,6 +1022,7 @@ async def test_run_due_jobs_logs_high_dedup_ratio_warning(
         ingestion_services={
             SourceType.PUBMED: HighDedupPubMedIngestionService().ingest,
         },
+        options=_build_ingestion_options(),
     )
 
     await service.schedule_source(source.id)
@@ -901,6 +1035,123 @@ async def test_run_due_jobs_logs_high_dedup_ratio_warning(
         "High dedup ratio detected for source ingestion run" in record.message
         for record in caplog.records
     )
+
+
+@pytest.mark.asyncio
+async def test_schedule_source_fails_without_extraction_queue_contract() -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    service = IngestionSchedulingService(
+        scheduler=InMemoryScheduler(),
+        source_repository=StubSourceRepository(source),
+        job_repository=StubJobRepository(),
+        ingestion_services={SourceType.PUBMED: StubPubMedIngestionService().ingest},
+    )
+
+    with pytest.raises(ValueError, match="Extraction queue contract is required"):
+        await service.schedule_source(source.id)
+
+
+@pytest.mark.asyncio
+async def test_trigger_ingestion_fails_without_source_processor_contract() -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    queue_service = StubExtractionQueueService()
+    runner_service = StubExtractionRunnerService({SourceType.CLINVAR.value})
+    service = IngestionSchedulingService(
+        scheduler=InMemoryScheduler(),
+        source_repository=StubSourceRepository(source),
+        job_repository=StubJobRepository(),
+        ingestion_services={SourceType.PUBMED: StubPubMedIngestionService().ingest},
+        options=_build_ingestion_options(
+            extraction_queue_service=queue_service,
+            extraction_runner_service=runner_service,
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="No extraction processor contract registered",
+    ):
+        await service.trigger_ingestion(source.id)
+
+
+@pytest.mark.asyncio
+async def test_trigger_ingestion_queues_and_runs_extraction_for_pubmed_source() -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    queue_service = StubExtractionQueueService()
+    runner_service = StubExtractionRunnerService({SourceType.PUBMED.value})
+    service = IngestionSchedulingService(
+        scheduler=InMemoryScheduler(),
+        source_repository=StubSourceRepository(source),
+        job_repository=StubJobRepository(),
+        ingestion_services={
+            SourceType.PUBMED: QueueingSourceIngestionService(SourceType.PUBMED).ingest,
+        },
+        options=_build_ingestion_options(
+            extraction_queue_service=queue_service,
+            extraction_runner_service=runner_service,
+        ),
+    )
+
+    await service.trigger_ingestion(source.id)
+
+    assert queue_service.calls
+    queued_targets = queue_service.calls[0][2]
+    assert queued_targets[0].source_type == SourceType.PUBMED.value
+    assert runner_service.calls
+    assert runner_service.calls[0][2] == len(queued_targets)
+
+
+@pytest.mark.asyncio
+async def test_trigger_ingestion_queues_and_runs_extraction_for_clinvar_source() -> (
+    None
+):
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule).model_copy(
+        update={"source_type": SourceType.CLINVAR},
+    )
+    queue_service = StubExtractionQueueService()
+    runner_service = StubExtractionRunnerService({SourceType.CLINVAR.value})
+    service = IngestionSchedulingService(
+        scheduler=InMemoryScheduler(),
+        source_repository=StubSourceRepository(source),
+        job_repository=StubJobRepository(),
+        ingestion_services={
+            SourceType.CLINVAR: QueueingSourceIngestionService(
+                SourceType.CLINVAR,
+            ).ingest,
+        },
+        options=_build_ingestion_options(
+            extraction_queue_service=queue_service,
+            extraction_runner_service=runner_service,
+        ),
+    )
+
+    await service.trigger_ingestion(source.id)
+
+    assert queue_service.calls
+    queued_targets = queue_service.calls[0][2]
+    assert queued_targets[0].source_type == SourceType.CLINVAR.value
+    assert runner_service.calls
+    assert runner_service.calls[0][2] == len(queued_targets)
 
 
 @pytest.mark.asyncio
@@ -933,7 +1184,7 @@ async def test_query_signature_change_logs_checkpoint_reset_warning(
         source_repository=source_repo,
         job_repository=job_repo,
         ingestion_services={SourceType.PUBMED: pubmed_service.ingest},
-        options=IngestionSchedulingOptions(
+        options=_build_ingestion_options(
             source_sync_state_repository=sync_state_repository,
             source_record_ledger_repository=StubSourceRecordLedgerRepository(),
         ),

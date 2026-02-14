@@ -2,7 +2,7 @@
 SQLAlchemy implementation of KernelRelationRepository.
 
 Handles graph-edge CRUD, curation lifecycle, and neighborhood traversal
-against the ``relations`` table.
+against the canonical ``relations`` + ``relation_evidence`` tables.
 """
 
 from __future__ import annotations
@@ -18,16 +18,49 @@ from sqlalchemy.engine import CursorResult
 
 from src.domain.entities.kernel.relations import KernelRelation
 from src.domain.repositories.kernel.relation_repository import KernelRelationRepository
-from src.models.database.kernel.relations import RelationModel
+from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_EVIDENCE_TIER = "COMPUTATIONAL"
+_EVIDENCE_TIER_RANK: dict[str, int] = {
+    "EXPERT_CURATED": 6,
+    "CLINICAL": 5,
+    "EXPERIMENTAL": 4,
+    "LITERATURE": 3,
+    "STRUCTURED_DATA": 2,
+    "COMPUTATIONAL": 1,
+}
+
 
 def _as_uuid(value: str | UUID) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
+
+
+def _clamp_confidence(value: float) -> float:
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
+
+
+def _normalize_evidence_tier(value: str | None) -> str:
+    if value is None:
+        return _DEFAULT_EVIDENCE_TIER
+    normalized = value.strip().upper()
+    if not normalized:
+        return _DEFAULT_EVIDENCE_TIER
+    return normalized
+
+
+def _tier_rank(value: str | None) -> int:
+    if value is None:
+        return 0
+    return _EVIDENCE_TIER_RANK.get(value.strip().upper(), 0)
 
 
 class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
@@ -51,21 +84,50 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         curation_status: str = "DRAFT",
         provenance_id: str | None = None,
     ) -> KernelRelation:
-        relation = RelationModel(
+        canonical_stmt = select(RelationModel).where(
+            RelationModel.research_space_id == _as_uuid(research_space_id),
+            RelationModel.source_id == _as_uuid(source_id),
+            RelationModel.relation_type == relation_type,
+            RelationModel.target_id == _as_uuid(target_id),
+        )
+        relation = self._session.scalars(canonical_stmt).first()
+
+        if relation is None:
+            relation = RelationModel(
+                id=uuid4(),
+                research_space_id=_as_uuid(research_space_id),
+                source_id=_as_uuid(source_id),
+                relation_type=relation_type,
+                target_id=_as_uuid(target_id),
+                aggregate_confidence=0.0,
+                source_count=0,
+                highest_evidence_tier=None,
+                curation_status=curation_status,
+                provenance_id=(
+                    _as_uuid(provenance_id) if provenance_id is not None else None
+                ),
+            )
+            self._session.add(relation)
+            self._session.flush()
+        elif provenance_id is not None and relation.provenance_id is None:
+            relation.provenance_id = _as_uuid(provenance_id)
+
+        evidence = RelationEvidenceModel(
             id=uuid4(),
-            research_space_id=_as_uuid(research_space_id),
-            source_id=_as_uuid(source_id),
-            relation_type=relation_type,
-            target_id=_as_uuid(target_id),
-            confidence=confidence,
+            relation_id=relation.id,
+            confidence=_clamp_confidence(confidence),
             evidence_summary=evidence_summary,
-            evidence_tier=evidence_tier,
-            curation_status=curation_status,
+            evidence_tier=_normalize_evidence_tier(evidence_tier),
             provenance_id=(
                 _as_uuid(provenance_id) if provenance_id is not None else None
             ),
+            source_document_id=None,
+            agent_run_id=None,
         )
-        self._session.add(relation)
+        self._session.add(evidence)
+        self._session.flush()
+
+        self._recompute_relation_aggregate(relation.id)
         self._session.flush()
         return KernelRelation.model_validate(relation)
 
@@ -208,19 +270,32 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         *,
         limit: int = 20,
     ) -> list[KernelRelation]:
-        stmt = select(RelationModel).where(
-            RelationModel.research_space_id == _as_uuid(research_space_id),
-            or_(
-                RelationModel.relation_type.ilike(f"%{query}%"),
-                RelationModel.evidence_summary.ilike(f"%{query}%"),
-                RelationModel.curation_status.ilike(f"%{query}%"),
-            ),
+        stmt = (
+            select(RelationModel)
+            .outerjoin(
+                RelationEvidenceModel,
+                RelationEvidenceModel.relation_id == RelationModel.id,
+            )
+            .where(
+                RelationModel.research_space_id == _as_uuid(research_space_id),
+                or_(
+                    RelationModel.relation_type.ilike(f"%{query}%"),
+                    RelationModel.curation_status.ilike(f"%{query}%"),
+                    RelationEvidenceModel.evidence_summary.ilike(f"%{query}%"),
+                ),
+            )
+            .order_by(RelationModel.updated_at.desc())
+            .limit(limit)
         )
-        stmt = stmt.order_by(RelationModel.created_at.desc()).limit(limit)
-        return [
-            KernelRelation.model_validate(model)
-            for model in self._session.scalars(stmt).all()
-        ]
+        models = list(self._session.scalars(stmt).all())
+        seen: set[UUID] = set()
+        unique_models: list[RelationModel] = []
+        for model in models:
+            if model.id in seen:
+                continue
+            seen.add(model.id)
+            unique_models.append(model)
+        return [KernelRelation.model_validate(model) for model in unique_models]
 
     # ── Curation lifecycle ────────────────────────────────────────────
 
@@ -253,12 +328,42 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         return True
 
     def delete_by_provenance(self, provenance_id: str) -> int:
-        result = self._session.execute(
-            sa_delete(RelationModel).where(
-                RelationModel.provenance_id == _as_uuid(provenance_id),
+        target_provenance_id = _as_uuid(provenance_id)
+        relation_ids = list(
+            set(
+                self._session.scalars(
+                    select(RelationEvidenceModel.relation_id).where(
+                        RelationEvidenceModel.provenance_id == target_provenance_id,
+                    ),
+                ).all(),
             ),
         )
-        count = int(result.rowcount or 0) if isinstance(result, CursorResult) else 0
+        if not relation_ids:
+            return 0
+
+        self._session.execute(
+            sa_delete(RelationEvidenceModel).where(
+                RelationEvidenceModel.provenance_id == target_provenance_id,
+            ),
+        )
+
+        for relation_id in relation_ids:
+            relation_model = self._session.get(RelationModel, relation_id)
+            if relation_model is None:
+                continue
+            self._recompute_relation_aggregate(relation_id)
+
+        delete_result = self._session.execute(
+            sa_delete(RelationModel).where(
+                RelationModel.id.in_(relation_ids),
+                ~RelationModel.evidences.any(),
+            ),
+        )
+        count = (
+            int(delete_result.rowcount or 0)
+            if isinstance(delete_result, CursorResult)
+            else 0
+        )
         self._session.flush()
         logger.info(
             "Rolled back %d relations for provenance %s",
@@ -268,6 +373,44 @@ class SqlAlchemyKernelRelationRepository(KernelRelationRepository):
         return count
 
     # ── Aggregate helpers ─────────────────────────────────────────────
+
+    def _recompute_relation_aggregate(self, relation_id: UUID) -> None:
+        relation_model = self._session.get(RelationModel, relation_id)
+        if relation_model is None:
+            return
+
+        evidences = list(
+            self._session.scalars(
+                select(RelationEvidenceModel).where(
+                    RelationEvidenceModel.relation_id == relation_id,
+                ),
+            ).all(),
+        )
+        if not evidences:
+            relation_model.aggregate_confidence = 0.0
+            relation_model.source_count = 0
+            relation_model.highest_evidence_tier = None
+            relation_model.updated_at = datetime.now(UTC)
+            return
+
+        product = 1.0
+        highest_tier: str | None = None
+        highest_rank = -1
+
+        for evidence in evidences:
+            confidence = _clamp_confidence(float(evidence.confidence))
+            product *= 1.0 - confidence
+
+            tier = _normalize_evidence_tier(evidence.evidence_tier)
+            rank = _tier_rank(tier)
+            if rank > highest_rank:
+                highest_rank = rank
+                highest_tier = tier
+
+        relation_model.aggregate_confidence = _clamp_confidence(1.0 - product)
+        relation_model.source_count = len(evidences)
+        relation_model.highest_evidence_tier = highest_tier
+        relation_model.updated_at = datetime.now(UTC)
 
     def count_by_research_space(self, research_space_id: str) -> int:
         """Count total relations in a research space."""

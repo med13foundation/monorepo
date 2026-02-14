@@ -39,7 +39,7 @@ class PublicationExtraction(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: UUID
-    publication_id: int
+    publication_id: int | None = None
     pubmed_id: str | None = None
     source_id: UUID
     ingestion_job_id: UUID

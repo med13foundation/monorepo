@@ -12,17 +12,17 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Float, ForeignKey, Index, String, Text
+from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.database.base import Base
 
 
 class RelationModel(Base):
     """
-    A graph edge with evidence and curation lifecycle.
+    A canonical graph edge with evidence accumulation and curation lifecycle.
 
     Represents typed relationships between any two entities:
       GENE --ASSOCIATED_WITH--> PHENOTYPE
@@ -62,22 +62,23 @@ class RelationModel(Base):
         doc="Target entity",
     )
 
-    # Evidence metadata
-    confidence: Mapped[float] = mapped_column(
+    # Aggregated evidence metadata
+    aggregate_confidence: Mapped[float] = mapped_column(
         Float,
         nullable=False,
-        server_default="0.5",
-        doc="Confidence score 0.0-1.0",
+        server_default="0.0",
+        doc="Aggregate confidence score 0.0-1.0",
     )
-    evidence_summary: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        doc="Human-readable evidence summary",
+    source_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        doc="Number of supporting evidence rows",
     )
-    evidence_tier: Mapped[str | None] = mapped_column(
+    highest_evidence_tier: Mapped[str | None] = mapped_column(
         String(32),
         nullable=True,
-        doc="COMPUTATIONAL, LITERATURE, EXPERIMENTAL, CLINICAL, EXPERT_CURATED",
+        doc="Best evidence tier across all evidence rows",
     )
 
     # Curation lifecycle
@@ -88,12 +89,12 @@ class RelationModel(Base):
         doc="DRAFT, UNDER_REVIEW, APPROVED, REJECTED, RETRACTED",
     )
 
-    # Provenance
+    # Legacy canonical provenance pointer (evidence-level provenance is authoritative)
     provenance_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("provenance.id"),
         nullable=True,
-        doc="Link to ingestion provenance",
+        doc="Optional canonical provenance pointer",
     )
 
     # Review tracking
@@ -117,13 +118,28 @@ class RelationModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
+    evidences: Mapped[list[RelationEvidenceModel]] = relationship(
+        "RelationEvidenceModel",
+        back_populates="relation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
     __table_args__ = (
         Index("idx_relations_source", "source_id"),
         Index("idx_relations_target", "target_id"),
         Index("idx_relations_space_type", "research_space_id", "relation_type"),
         Index("idx_relations_curation", "curation_status"),
         Index("idx_relations_provenance", "provenance_id"),
-        {"comment": "Graph edges with evidence and curation lifecycle"},
+        Index("idx_relations_aggregate_confidence", "aggregate_confidence"),
+        UniqueConstraint(
+            "source_id",
+            "relation_type",
+            "target_id",
+            "research_space_id",
+            name="uq_relations_canonical_edge",
+        ),
+        {"comment": "Canonical graph edges with evidence and curation lifecycle"},
     )
 
     def __repr__(self) -> str:
@@ -131,3 +147,75 @@ class RelationModel(Base):
             f"<RelationModel(src={self.source_id}, "
             f"rel={self.relation_type}, tgt={self.target_id})>"
         )
+
+
+class RelationEvidenceModel(Base):
+    """Supporting evidence rows for canonical graph edges."""
+
+    __tablename__ = "relation_evidence"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+        doc="Unique evidence ID",
+    )
+    relation_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("relations.id", ondelete="CASCADE"),
+        nullable=False,
+        doc="Parent relation ID",
+    )
+    confidence: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        server_default="0.5",
+        doc="Per-evidence confidence score 0.0-1.0",
+    )
+    evidence_summary: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Human-readable evidence summary",
+    )
+    evidence_tier: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="COMPUTATIONAL",
+        doc="Evidence tier classification",
+    )
+    provenance_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("provenance.id"),
+        nullable=True,
+        doc="Link to ingestion provenance",
+    )
+    source_document_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=True,
+        doc="Optional source document reference",
+    )
+    agent_run_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=True,
+        doc="Optional agent run reference",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+    )
+
+    relation: Mapped[RelationModel] = relationship(
+        "RelationModel",
+        back_populates="evidences",
+    )
+
+    __table_args__ = (
+        Index("idx_relation_evidence_relation", "relation_id"),
+        Index("idx_relation_evidence_provenance", "provenance_id"),
+        Index("idx_relation_evidence_tier", "evidence_tier"),
+        {"comment": "Per-source evidence supporting canonical relation edges"},
+    )
+
+
+__all__ = ["RelationEvidenceModel", "RelationModel"]

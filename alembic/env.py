@@ -1,7 +1,9 @@
 import os
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, inspect, pool, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
 
 from alembic import context
 
@@ -25,6 +27,17 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 target_metadata = Base.metadata
+_LEGACY_REVISION_ALIAS_MAP = {
+    "004_relation_evidence_and_extraction_queue_contract": (
+        "004_rel_evidence_extract_queue"
+    ),
+}
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_for_sqlite(_type: JSONB, _compiler: object, **_kw: object) -> str:
+    """Allow PostgreSQL JSONB columns to compile as JSON on SQLite."""
+    return "JSON"
 
 
 def run_migrations_offline() -> None:
@@ -65,6 +78,39 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        inspector = inspect(connection)
+        if "alembic_version" in inspector.get_table_names():
+            for old_revision, canonical_revision in _LEGACY_REVISION_ALIAS_MAP.items():
+                current_revisions = {
+                    str(row[0])
+                    for row in connection.execute(
+                        text("SELECT version_num FROM alembic_version"),
+                    ).all()
+                }
+                if old_revision not in current_revisions:
+                    continue
+                if canonical_revision in current_revisions:
+                    connection.execute(
+                        text(
+                            "DELETE FROM alembic_version "
+                            "WHERE version_num = :version_num",
+                        ),
+                        {"version_num": old_revision},
+                    )
+                else:
+                    connection.execute(
+                        text(
+                            "UPDATE alembic_version "
+                            "SET version_num = :canonical_revision "
+                            "WHERE version_num = :old_revision",
+                        ),
+                        {
+                            "canonical_revision": canonical_revision,
+                            "old_revision": old_revision,
+                        },
+                    )
+        if connection.in_transaction():
+            connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():

@@ -23,9 +23,9 @@ class KernelRelation(BaseModel):
     relation_type: str = Field(..., min_length=1, max_length=64)
     target_id: UUID
 
-    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
-    evidence_summary: str | None = None
-    evidence_tier: str | None = Field(None, max_length=32)
+    aggregate_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    source_count: int = Field(default=0, ge=0)
+    highest_evidence_tier: str | None = Field(None, max_length=32)
     curation_status: str = Field(default="DRAFT", min_length=1, max_length=32)
 
     provenance_id: UUID | None = None

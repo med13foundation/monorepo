@@ -12,18 +12,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from src.domain.entities import data_source_configs, user_data_source
-from src.domain.entities.source_record_ledger import SourceRecordLedgerEntry
-from src.domain.entities.source_sync_state import CheckpointKind
-from src.domain.services.clinvar_ingestion import (
-    ClinVarGateway,
-    ClinVarGatewayFetchResult,
-    ClinVarIncrementalGateway,
-    ClinVarIngestionSummary,
+from src import type_definitions
+from src.domain.entities import (
+    data_source_configs,
+    source_record_ledger,
+    source_sync_state,
+    user_data_source,
 )
-from src.type_definitions.ingestion import RawRecord as IngestionRawRecord
-from src.type_definitions.json_utils import to_json_value
-from src.type_definitions.storage import StorageUseCase
+from src.domain.services import clinvar_ingestion, ingestion
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.application.services.ports.ingestion_pipeline_port import (
@@ -32,18 +30,14 @@ if TYPE_CHECKING:
     from src.application.services.storage_configuration_service import (
         StorageConfigurationService,
     )
-    from src.domain.services.ingestion import IngestionRunContext
-    from src.type_definitions.common import JSONObject, RawRecord
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class _LedgerDedupOutcome:
     """Result of applying record-ledger deduplication to fetched records."""
 
-    filtered_records: list[JSONObject]
-    entries_to_upsert: list[SourceRecordLedgerEntry]
+    filtered_records: list[type_definitions.common.JSONObject]
+    entries_to_upsert: list[source_record_ledger.SourceRecordLedgerEntry]
     new_records: int
     updated_records: int
     unchanged_records: int
@@ -54,7 +48,7 @@ class ClinVarIngestionService:
 
     def __init__(
         self,
-        gateway: ClinVarGateway,
+        gateway: clinvar_ingestion.ClinVarGateway,
         pipeline: IngestionPipelinePort,
         storage_service: StorageConfigurationService | None = None,
     ) -> None:
@@ -65,8 +59,8 @@ class ClinVarIngestionService:
     async def ingest(
         self,
         source: user_data_source.UserDataSource,
-        context: IngestionRunContext | None = None,
-    ) -> ClinVarIngestionSummary:
+        context: ingestion.IngestionRunContext | None = None,
+    ) -> clinvar_ingestion.ClinVarIngestionSummary:
         """Execute ingestion for a ClinVar data source."""
         self._assert_source_type(source)
         config = self._build_config(source.configuration)
@@ -128,21 +122,25 @@ class ClinVarIngestionService:
 
         checkpoint_after_raw = fetch_result.checkpoint_after
         if isinstance(checkpoint_after_raw, dict):
-            checkpoint_after_payload: JSONObject = dict(checkpoint_after_raw)
+            checkpoint_after_payload: type_definitions.common.JSONObject = dict(
+                checkpoint_after_raw,
+            )
         else:
             checkpoint_after_payload = self._build_fallback_checkpoint(
                 fetched_records=fetch_result.fetched_records,
                 processed_records=len(filtered_records),
             )
 
-        return ClinVarIngestionSummary(
+        return clinvar_ingestion.ClinVarIngestionSummary(
             source_id=source.id,
             fetched_records=fetch_result.fetched_records,
             parsed_publications=len(raw_records),
             created_publications=observations_created,
             updated_publications=0,
-            created_publication_ids=(),
-            updated_publication_ids=(),
+            extraction_targets=self._build_extraction_targets(
+                filtered_records,
+                source_type=source.source_type,
+            ),
             executed_query=config.query,
             query_signature=query_signature,
             checkpoint_before=checkpoint_before,
@@ -154,24 +152,53 @@ class ClinVarIngestionService:
             skipped_records=dedup_outcome.unchanged_records,
         )
 
+    def _build_extraction_targets(
+        self,
+        records: list[type_definitions.common.JSONObject],
+        *,
+        source_type: user_data_source.SourceType,
+    ) -> tuple[ingestion.IngestionExtractionTarget, ...]:
+        targets: list[ingestion.IngestionExtractionTarget] = []
+        seen_source_record_ids: set[str] = set()
+        for record in records:
+            source_record_id = self._extract_external_record_id(record)
+            if source_record_id in seen_source_record_ids:
+                continue
+            seen_source_record_ids.add(source_record_id)
+            metadata_payload: type_definitions.common.JSONObject = {
+                "raw_record": self._extract_pipeline_payload(record),
+                "source_record_id": source_record_id,
+                "source_type": source_type.value,
+            }
+            targets.append(
+                ingestion.IngestionExtractionTarget(
+                    source_record_id=source_record_id,
+                    source_type=source_type.value,
+                    publication_id=None,
+                    pubmed_id=None,
+                    metadata=metadata_payload,
+                ),
+            )
+        return tuple(targets)
+
     async def _fetch_records_with_checkpoint(
         self,
         *,
         config: data_source_configs.ClinVarQueryConfig,
-        checkpoint_before: JSONObject | None,
-    ) -> ClinVarGatewayFetchResult:
-        if isinstance(self._gateway, ClinVarIncrementalGateway):
+        checkpoint_before: type_definitions.common.JSONObject | None,
+    ) -> clinvar_ingestion.ClinVarGatewayFetchResult:
+        if isinstance(self._gateway, clinvar_ingestion.ClinVarIncrementalGateway):
             return await self._gateway.fetch_records_incremental(
                 config,
                 checkpoint=checkpoint_before,
             )
 
         records = await self._gateway.fetch_records(config)
-        return ClinVarGatewayFetchResult(
+        return clinvar_ingestion.ClinVarGatewayFetchResult(
             records=records,
             fetched_records=len(records),
             checkpoint_after=None,
-            checkpoint_kind=CheckpointKind.NONE,
+            checkpoint_kind=source_sync_state.CheckpointKind.NONE,
         )
 
     @staticmethod
@@ -179,8 +206,8 @@ class ClinVarIngestionService:
         *,
         fetched_records: int,
         processed_records: int,
-    ) -> JSONObject:
-        checkpoint_after: JSONObject = {
+    ) -> type_definitions.common.JSONObject:
+        checkpoint_after: type_definitions.common.JSONObject = {
             "last_processed_at": datetime.now(UTC).isoformat(),
             "fetched_records": fetched_records,
             "processed_records": processed_records,
@@ -189,12 +216,12 @@ class ClinVarIngestionService:
 
     def _to_pipeline_records(
         self,
-        records: list[JSONObject],
+        records: list[type_definitions.common.JSONObject],
         *,
         original_source_id: str,
-    ) -> list[IngestionRawRecord]:
+    ) -> list[type_definitions.ingestion.RawRecord]:
         """Adapt ClinVar JSON records into the kernel ingestion pipeline format."""
-        raw_records: list[IngestionRawRecord] = []
+        raw_records: list[type_definitions.ingestion.RawRecord] = []
         for record in records:
             clinvar_id = record.get("clinvar_id")
             record_id = (
@@ -205,7 +232,7 @@ class ClinVarIngestionService:
             payload = self._extract_pipeline_payload(record)
 
             raw_records.append(
-                IngestionRawRecord(
+                type_definitions.ingestion.RawRecord(
                     source_id=record_id,
                     data=payload,
                     metadata={
@@ -227,8 +254,8 @@ class ClinVarIngestionService:
         self,
         *,
         source: user_data_source.UserDataSource,
-        records: list[JSONObject],
-        context: IngestionRunContext | None,
+        records: list[type_definitions.common.JSONObject],
+        context: ingestion.IngestionRunContext | None,
     ) -> _LedgerDedupOutcome:
         if context is None or context.source_record_ledger_repository is None:
             return _LedgerDedupOutcome(
@@ -255,11 +282,11 @@ class ClinVarIngestionService:
         )
 
         now = datetime.now(UTC)
-        current_entries: dict[str, SourceRecordLedgerEntry] = dict(
+        current_entries: dict[str, source_record_ledger.SourceRecordLedgerEntry] = dict(
             existing_by_external_id,
         )
-        filtered_records: list[JSONObject] = []
-        entries_to_upsert: list[SourceRecordLedgerEntry] = []
+        filtered_records: list[type_definitions.common.JSONObject] = []
+        entries_to_upsert: list[source_record_ledger.SourceRecordLedgerEntry] = []
         new_records = 0
         updated_records = 0
         unchanged_records = 0
@@ -269,7 +296,7 @@ class ClinVarIngestionService:
             if existing_entry is None:
                 new_records += 1
                 filtered_records.append(record)
-                new_entry = SourceRecordLedgerEntry(
+                new_entry = source_record_ledger.SourceRecordLedgerEntry(
                     source_id=source.id,
                     external_record_id=external_id,
                     payload_hash=payload_hash,
@@ -308,7 +335,9 @@ class ClinVarIngestionService:
         )
 
     @staticmethod
-    def _extract_external_record_id(record: JSONObject) -> str:
+    def _extract_external_record_id(
+        record: type_definitions.common.JSONObject,
+    ) -> str:
         for key in ("clinvar_id", "variation_id", "accession"):
             value = record.get(key)
             if isinstance(value, str) and value.strip():
@@ -329,7 +358,9 @@ class ClinVarIngestionService:
         return f"clinvar:hash:{payload_hash}"
 
     @staticmethod
-    def _compute_payload_hash(record: JSONObject) -> str:
+    def _compute_payload_hash(
+        record: type_definitions.common.JSONObject,
+    ) -> str:
         serialized = json.dumps(
             record,
             sort_keys=True,
@@ -339,7 +370,9 @@ class ClinVarIngestionService:
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _extract_source_updated_at(record: JSONObject) -> datetime | None:
+    def _extract_source_updated_at(
+        record: type_definitions.common.JSONObject,
+    ) -> datetime | None:
         for key in ("fetched_at", "updated_at", "last_updated"):
             value = record.get(key)
             if isinstance(value, str):
@@ -370,12 +403,14 @@ class ClinVarIngestionService:
         return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _extract_pipeline_payload(record: JSONObject) -> JSONObject:
-        payload: JSONObject = {}
+    def _extract_pipeline_payload(
+        record: type_definitions.common.JSONObject,
+    ) -> type_definitions.common.JSONObject:
+        payload: type_definitions.common.JSONObject = {}
         parsed_data = record.get("parsed_data")
         if isinstance(parsed_data, dict):
             for key, value in parsed_data.items():
-                payload[str(key)] = to_json_value(value)
+                payload[str(key)] = type_definitions.json_utils.to_json_value(value)
 
         for key in (
             "clinvar_id",
@@ -388,18 +423,18 @@ class ClinVarIngestionService:
         ):
             value = record.get(key)
             if value is not None:
-                payload[key] = to_json_value(value)
+                payload[key] = type_definitions.json_utils.to_json_value(value)
 
         if payload:
             return payload
 
         for key, value in record.items():
-            payload[str(key)] = to_json_value(value)
+            payload[str(key)] = type_definitions.json_utils.to_json_value(value)
         return payload
 
     async def _persist_raw_records(
         self,
-        records: list[RawRecord],
+        records: list[type_definitions.common.JSONObject],
         source: user_data_source.UserDataSource,
     ) -> None:
         """Persist raw records to storage if backend is available."""
@@ -407,7 +442,7 @@ class ClinVarIngestionService:
             return
 
         backend = self._storage_service.resolve_backend_for_use_case(
-            StorageUseCase.RAW_SOURCE,
+            type_definitions.storage.StorageUseCase.RAW_SOURCE,
         )
         if not backend:
             return

@@ -2,10 +2,16 @@
 
 Last updated: 2026-02-13
 
-This guide documents how MED13 handles external data sources end-to-end: from
-discovery and fetch through content enrichment, knowledge extraction, and graph
-persistence.  It covers both the **implemented** source ingestion infrastructure
-and the **planned** Flujo-agent-driven extraction pipeline that will complete the
+This guide documents how the platform handles external data sources end-to-end
+— from discovery and fetch through content enrichment, knowledge extraction,
+and graph persistence — across **any domain**.  The architecture is
+domain-agnostic: the same pipeline, agents, and kernel graph serve biomedical
+research (MED13, ClinVar), sports analytics (MLB statistics), CS benchmarking,
+or any other domain.  Only the Dictionary content differs.
+
+It covers both the **implemented** source ingestion infrastructure (currently
+deployed for PubMed and ClinVar as the first domain connectors) and the
+**planned** Flujo-agent-driven extraction pipeline that will complete the
 journey from raw upstream data to the kernel knowledge graph.
 
 ---
@@ -41,12 +47,26 @@ journey from raw upstream data to the kernel knowledge graph.
 
 ## Current Source Types
 
-The system currently supports:
+The platform is designed to ingest data from **any source type** in any domain.
+Each source type has its own connector, config, and query contract, while
+scheduling, job lifecycle, dedup, and the kernel pipeline are shared.
 
-- `pubmed` (`SourceType.PUBMED`) and `clinvar` (`SourceType.CLINVAR`) as independent ingestion sources.
-- `api`, `file_upload`, `database`, and `web_scraping` remain in the shared source model for future expansion.
+**Currently implemented connectors:**
 
-`PubMed` and `ClinVar` are different upstream systems with different query contracts, response schemas, and query generation defaults, so they are treated as separate source types all the way down the stack.
+- `pubmed` (`SourceType.PUBMED`) — biomedical literature search and MEDLINE XML retrieval.
+- `clinvar` (`SourceType.CLINVAR`) — genomic variant classification records.
+
+**Available but not yet connected:**
+
+- `api` — generic REST/GraphQL API connector (e.g. ESPN stats API, OpenAlex, GBIF).
+- `file_upload` — CSV, JSON, or Excel uploads (e.g. batting statistics, lab results, benchmark scores).
+- `database` — direct database connector (e.g. institutional data warehouse, REDCap export).
+- `web_scraping` — structured web extraction (e.g. trade trackers, leaderboard pages).
+
+Adding a new domain requires only a new connector and Dictionary seeds — no
+changes to the pipeline, agents, or kernel graph.  PubMed and ClinVar are
+treated as separate source types because they have different upstream APIs,
+response schemas, and query contracts — the same pattern any new connector follows.
 
 ---
 
@@ -157,15 +177,17 @@ Key characteristics:
 
 What Tier 1 does **not** do:
 
-- It does not fetch full-text content (e.g. full papers from PMC/publishers).
-  PubMed ingestion retrieves MEDLINE XML via `efetch.fcgi` which yields
-  titles, abstracts, and structured metadata — not paper bodies.
+- It does not fetch full-text or enriched content beyond what the upstream API
+  provides.  For example, PubMed ingestion retrieves MEDLINE XML (titles,
+  abstracts, structured metadata — not paper bodies); a CSV upload provides
+  tabular rows but no narrative context.
 - It does not perform deep knowledge extraction.  The current
   `RuleBasedPubMedExtractionProcessor` applies regex patterns to
-  title+abstract for gene symbols, HGVS variants, and HPO IDs.  This is a
-  useful baseline but fundamentally limited to structured identifiers.
+  title+abstract for structured identifiers.  This is a useful baseline for
+  biomedical data but does not generalise to other domains.
 
-Tiers 2 and 3 fill these gaps.
+These limitations are specific to the current connectors.  Tiers 2 and 3 fill
+these gaps with domain-agnostic, agent-driven enrichment and extraction.
 
 ---
 
@@ -173,10 +195,12 @@ Tiers 2 and 3 fill these gaps.
 
 ### Problem
 
-PubMed search results give us metadata and abstracts.  ClinVar gives us
-structured variant records.  Neither provides the **full narrative content**
-(research paper body text, supplementary tables, clinical case descriptions)
-that a Knowledge Extraction agent needs to build the graph.
+Different sources provide different levels of content.  PubMed gives metadata
+and abstracts; ClinVar gives structured variant records; a CSV upload gives
+tabular rows; a web scrape gives HTML fragments.  Some sources lack the **full
+narrative or structured content** (paper body text, supplementary tables,
+complete API payloads) that a Knowledge Extraction agent needs to build the
+graph.
 
 ### Solution — Content Enrichment Agent (Flujo)
 
@@ -253,15 +277,17 @@ class ContentEnrichmentContract(BaseAgentContract):
 
 The current extraction path (`ExtractionRunnerService` +
 `RuleBasedPubMedExtractionProcessor`) applies regex patterns to title+abstract.
-This works for structured identifiers (HPO IDs, HGVS notation) but cannot:
+This works for structured identifiers in a known domain but cannot:
 
-- Understand that "enlarged heart" maps to `HP:0001640` (Cardiomegaly).
-- Recognise that a paragraph describes a gene-phenotype association vs. a
-  hypothesis.
-- Decide whether a novel measurement corresponds to an existing Dictionary
-  variable or requires a new one.
+- Map natural-language mentions to Dictionary entries across any domain
+  (e.g. "enlarged heart" → `HP:0001640`, or "batting average" → `VAR_BATTING_AVERAGE`).
+- Recognise whether a passage describes a factual association vs. a hypothesis.
+- Decide whether a novel concept corresponds to an existing Dictionary entry
+  or requires a new one — for variables, entity types, or relation types.
 - Extract typed triples (entity → relation → entity) with evidence and
-  confidence from unstructured prose.
+  confidence from unstructured or semi-structured content.
+- Bootstrap Dictionary content for a **brand new domain** where no entries
+  exist yet (e.g. a sports analytics source or a CS benchmarking dataset).
 
 These are **reasoning tasks** — exactly what Flujo agents with contracts and
 evidence-first outputs are designed for.
@@ -456,7 +482,7 @@ entry it must supply **all** of the following fields:
 | `data_type` | `ENUM` | One of: `INTEGER`, `FLOAT`, `STRING`, `DATE`, `CODED`, `BOOLEAN`, `JSON`. Inferred from the data. |
 | `preferred_unit` | `STRING(64)` or `NULL` | UCUM-standard unit if applicable (e.g. `mmHg`). |
 | `constraints` | `JSONB` | Validation bounds (e.g. `{"min": 0, "max": 300}`). Agent infers from domain context. |
-| `domain_context` | `STRING(64)` | Domain tag: `clinical`, `genomics`, `cs_benchmarking`, `general`. |
+| `domain_context` | `STRING(64)` | Domain tag — agent-extensible: `clinical`, `genomics`, `sports`, `cs_benchmarking`, `general`, or any new domain the agent creates. |
 | `sensitivity` | `ENUM` | `PUBLIC`, `INTERNAL`, or `PHI`. Default `INTERNAL` unless clearly public data. |
 | `description` | `TEXT` | A clear, concise explanation of what this variable represents, its measurement context, and any relevant ontology references. |
 
@@ -550,7 +576,8 @@ exclusively to the Entity Recognition Agent.  Every extracted fact must
 reference a valid Dictionary entry.
 
 **Relation upsert semantics:** When the Extraction Agent outputs a relation
-(e.g. GENE → ASSOCIATED_WITH → PHENOTYPE), the kernel pipeline performs a
+(e.g. `GENE → ASSOCIATED_WITH → PHENOTYPE` or `PLAYER → PLAYS_FOR → TEAM`),
+the kernel pipeline performs a
 **canonical upsert**: if an edge with the same `(source_id, relation_type,
 target_id, research_space_id)` already exists, a new `relation_evidence` row
 is added and the `aggregate_confidence` is recomputed.  If no edge exists, a
@@ -630,9 +657,9 @@ A `source_documents` table that tracks document lifecycle:
 | `research_space_id` | UUID FK | Owning research space |
 | `source_id` | UUID FK | `user_data_sources.id` |
 | `ingestion_job_id` | UUID FK | Job that created this record |
-| `external_record_id` | TEXT | Stable upstream ID (e.g. PMID, ClinVar ID) |
-| `source_type` | TEXT | `pubmed`, `clinvar`, etc. |
-| `document_format` | TEXT | `medline_xml`, `clinvar_xml`, `pdf`, `text`, `json` |
+| `external_record_id` | TEXT | Stable upstream ID (e.g. PMID, ClinVar ID, CSV row hash, API record ID) |
+| `source_type` | TEXT | `pubmed`, `clinvar`, `file_upload`, `api`, `web_scraping`, etc. |
+| `document_format` | TEXT | `medline_xml`, `clinvar_xml`, `csv`, `json`, `pdf`, `text` |
 | `raw_storage_key` | TEXT | Blob key for raw content |
 | `enriched_storage_key` | TEXT | Blob key for enriched full-text (nullable) |
 | `content_hash` | TEXT | SHA-256 of enriched content for dedup |
@@ -912,7 +939,7 @@ Track external IDs and payload fingerprints for idempotent re-runs:
 
 ## New Source Onboarding Checklist
 
-For each new `SourceType.X`:
+For each new `SourceType.X` (any domain — biomedical, sports, CS, etc.):
 
 ### Tier 1 — Source Ingestion (required)
 
@@ -940,16 +967,23 @@ For each new `SourceType.X`:
     - Implement rate-limiting and access-rights checks.
     - Add `document_format` mapping (e.g. `clinvar_xml`, `pdf`, `text`).
 14. If the source provides structured data directly (e.g. ClinVar API returns
-    complete variant records), mark the enrichment strategy as `pass_through` —
+    complete variant records, a CSV upload contains all columns, an API returns
+    full JSON payloads), mark the enrichment strategy as `pass_through` —
     no additional content fetching needed.
 
 ### Tier 3 — Knowledge Extraction (if applicable)
 
-15. Seed the Dictionary with source-relevant variable definitions and synonyms.
-16. Seed `entity_resolution_policies` for entity types this source introduces.
-17. Seed `relation_constraints` for relation types this source supports.
-18. Verify that the Entity Recognition Agent's tools cover the source's
-    terminology (add domain-specific synonyms as needed).
+15. Optionally seed the Dictionary with source-relevant variable definitions,
+    entity types, relation types, and synonyms for the new domain.  If no seeds
+    are provided, the Entity Recognition Agent will bootstrap all Dictionary
+    content autonomously on the first extraction run (cold-start capable).
+16. Optionally seed `entity_resolution_policies` for entity types this source
+    introduces.  The agent can also create these during extraction.
+17. Optionally seed `relation_constraints` for relation types this source
+    supports.  The agent can also create these during extraction.
+18. Verify that the Entity Recognition Agent's unified search covers the
+    source's terminology (add domain-specific synonyms if needed for faster
+    deterministic matching on future runs).
 19. Add integration tests: document → extraction → kernel persistence round-trip.
 
 ## Version 2 Status
@@ -996,7 +1030,7 @@ tables that together form a hybrid property graph:
 
 ```
                     ┌─────────────────────┐
-                    │      entities       │  ← Nodes (GENE, VARIANT, PATIENT, …)
+                    │      entities       │  ← Nodes (GENE, PLAYER, TEAM, ALGORITHM, …)
                     │  (graph nodes)      │
                     └────────┬────────────┘
                              │ 1:N
@@ -1023,22 +1057,24 @@ tables that together form a hybrid property graph:
 
 ### `entities` — the graph nodes
 
-Every typed entity in the system: genes, variants, phenotypes, patients,
-publications, drugs, pathways, mechanisms, etc.
+Every typed entity in the system — any noun the Dictionary defines: genes,
+variants, phenotypes, players, teams, leagues, algorithms, benchmarks,
+publications, drugs, pathways, or any other domain-specific concept.
 
 | Column | Type | Purpose |
 |---|---|---|
 | `id` | `UUID` PK | Unique entity identifier |
 | `research_space_id` | `UUID` FK → `research_spaces` | Owning research space (multi-tenancy boundary) |
-| `entity_type` | `STRING(64)` indexed | Entity type: `GENE`, `VARIANT`, `PHENOTYPE`, `PATIENT`, etc. |
+| `entity_type` | `STRING(64)` indexed | Entity type — agent-extensible per domain: `GENE`, `PLAYER`, `TEAM`, `ALGORITHM`, `PHENOTYPE`, etc. |
 | `display_label` | `STRING(512)` nullable | Human-readable label |
 | `metadata_payload` | `JSONB` DEFAULT `{}` | Sparse, low-velocity metadata only — **no PHI, no high-volume data** |
 | `created_at` | `TIMESTAMPTZ` | |
 | `updated_at` | `TIMESTAMPTZ` | |
 
-**Design rationale:** No PHI or clinical data lives here.  Only stable metadata
-(e.g. gene symbol, publication title).  High-volume time-series data lives in
-`observations`.  Sensitive identifiers live in `entity_identifiers`.
+**Design rationale:** No PHI or high-volume data lives here.  Only stable
+metadata (e.g. gene symbol, team name, algorithm version, publication title).
+High-volume time-series data lives in `observations`.  Sensitive identifiers
+live in `entity_identifiers`.
 
 **Indexes:** `(research_space_id, entity_type)`, `(created_at)`.
 
@@ -1051,7 +1087,7 @@ Stores lookup keys separately from the entity itself.  PHI identifiers
 |---|---|---|
 | `id` | `INT` PK auto | |
 | `entity_id` | `UUID` FK → `entities` ON DELETE CASCADE | Owning entity |
-| `namespace` | `STRING(64)` | Identifier namespace: `MRN`, `HGNC`, `DOI`, `HPOID`, `RSID` |
+| `namespace` | `STRING(64)` | Identifier namespace — domain-specific: `HGNC`, `DOI`, `MRN`, `MLB_PLAYER_ID`, `GITHUB_REPO`, `ORCID`, etc. |
 | `identifier_value` | `STRING(512)` | The identifier value (**encrypted if PHI**) |
 | `sensitivity` | `STRING(32)` DEFAULT `'INTERNAL'` | `PUBLIC`, `INTERNAL`, `PHI` |
 | `created_at` | `TIMESTAMPTZ` | |
@@ -1146,8 +1182,14 @@ accumulates over time as more sources confirm the same connection.
 
 ### Evidence accumulation lifecycle
 
+Evidence accumulation works identically across all domains — the same
+canonical upsert pattern applies whether the source is a biomedical paper,
+a sports statistics file, or a CS benchmark result.
+
+**Example (biomedical domain):**
+
 ```
-First extraction finds "MED13 → ASSOCIATED_WITH → Cardiomyopathy":
+First paper finds "MED13 → ASSOCIATED_WITH → Cardiomyopathy":
   → relations row created:     aggregate_confidence = 0.88, source_count = 1
   → relation_evidence row 1:   confidence 0.88, tier LITERATURE, PMID 123
 
@@ -1160,6 +1202,18 @@ Graph Connection Agent discovers cross-document support:
   → relation_evidence row 3:   confidence 0.75, tier COMPUTATIONAL, agent run XYZ
 ```
 
+**Example (sports domain):**
+
+```
+Batting stats CSV finds "Mike Trout → PLAYS_FOR → Angels":
+  → relations row created:     aggregate_confidence = 0.99, source_count = 1
+  → relation_evidence row 1:   confidence 0.99, tier STRUCTURED_DATA, batting_stats.csv
+
+ESPN trade tracker confirms the same player-team link:
+  → relations row UPSERTED:    aggregate_confidence = 0.9999, source_count = 2
+  → relation_evidence row 2:   confidence 0.96, tier STRUCTURED_DATA, espn_trades.json
+```
+
 **Aggregate confidence formula:** `1 - ∏(1 - confidence_i)` — each independent
 source raises the aggregate, and diverse evidence tiers strengthen the signal.
 
@@ -1169,7 +1223,7 @@ source raises the aggregate, and diverse evidence tiers strengthen the signal.
 |---|---|
 | `source_count = 1` AND `aggregate_confidence < 0.90` | Stays `DRAFT` — weakest signal, prioritised for human review |
 | `source_count >= 3` AND `aggregate_confidence >= 0.95` | Auto-promote to `APPROVED` — strong multi-source consensus |
-| `source_count >= 2` AND `highest_evidence_tier in (CLINICAL, EXPERIMENTAL)` | Auto-promote to `APPROVED` — high-quality evidence types |
+| `source_count >= 2` AND high-quality evidence tier (configurable per domain) | Auto-promote to `APPROVED` — e.g. `CLINICAL`/`EXPERIMENTAL` for biomedical, `STRUCTURED_DATA`/`OFFICIAL_STATISTICS` for sports |
 | Any `APPROVED` relation where new contradicting evidence arrives | Move to `UNDER_REVIEW` — re-evaluation needed |
 
 Relations start as `DRAFT` and accumulate evidence.  The system auto-promotes
@@ -1211,17 +1265,21 @@ the source, extraction method, AI model, mapping confidence, and the raw input.
 
 Tier 3's Extraction Agent creates relations that are **explicitly stated** in a
 single document — e.g. a paper says "MED13 variants cause dilated
-cardiomyopathy", producing a `GENE → CAUSES → PHENOTYPE` triple.
+cardiomyopathy" (`GENE → CAUSES → PHENOTYPE`), or a trade record says "Mike
+Trout traded to Yankees" (`PLAYER → TRADED_TO → TEAM`).
 
 But many valuable connections in the knowledge graph are **implicit** — they
-emerge from cross-document patterns that no single paper states outright:
+emerge from cross-document or cross-source patterns that no single record
+states outright:
 
-- Two genes that co-occur in the same pathway across 15 papers but are never
-  linked in any one paper.
-- A phenotype described in a clinical case and a variant described in a
-  functional study that share the same molecular mechanism.
-- A drug that targets a protein in one paper and that protein is implicated in
-  a disease in another — yielding a drug-disease hypothesis.
+- **Biomedical:** Two genes co-occur in the same pathway across 15 papers but
+  are never directly linked in any one paper.
+- **Sports:** A player's post-trade OPS correlates with the new team's win rate
+  across multiple season datasets — suggesting a roster impact connection.
+- **CS benchmarking:** An algorithm outperforms baselines on datasets that share
+  a structural property — suggesting a generalisation advantage.
+- **Cross-domain:** A drug targets a protein in one paper and that protein is
+  implicated in a disease in another — yielding a drug-disease hypothesis.
 
 These cross-document, evidence-aggregated connections require a dedicated
 **Graph Connection Agent**.
@@ -1238,7 +1296,7 @@ flowchart TB
     direction TB
     SEED[Select seed entity or entity pair] --> QUERY["Graph neighbourhood query\n(entities, relations, observations)"]
     QUERY --> SEARCH["Unified Dictionary search\nfor related variables and entity types"]
-    SEARCH --> PATTERNS["Pattern detection:\n- co-occurrence\n- shared pathways\n- transitive chains\n- phenotype overlap"]
+    SEARCH --> PATTERNS["Pattern detection:\n- co-occurrence across sources\n- shared categories/pathways\n- transitive chains\n- observation correlation"]
     PATTERNS --> EVALUATE["Evaluate evidence strength:\n- # supporting documents\n- confidence aggregation\n- evidence tier diversity"]
     EVALUATE --> DECIDE{Sufficient evidence?}
     DECIDE -->|Yes| PROPOSE["Create relation with\nconfidence + evidence_summary\n+ evidence_tier = COMPUTATIONAL"]
@@ -1361,17 +1419,21 @@ All agent-proposed relations follow the **canonical upsert** pattern:
 ### Problem
 
 The knowledge graph stores entities, observations, and relations — but
-querying it meaningfully requires more than SQL filters:
+querying it meaningfully requires more than SQL filters.  Researchers in any
+domain need to ask natural-language questions that span entities, observations,
+and relations:
 
-- A researcher asks: "What genes are associated with cardiac phenotypes in
-  MED13 studies?" — this requires understanding that "cardiac phenotypes"
-  maps to a set of Dictionary variables, traversing entity→relation→entity
-  paths, and aggregating evidence.
-- "Show me all observations where the ejection fraction was abnormally low" —
-  requires knowing the variable definition, its constraints, and what counts
-  as "abnormally low" in context.
-- "Find entities similar to this variant" — requires semantic similarity
-  across observations, not just exact type matching.
+- **Biomedical:** "What genes are associated with cardiac phenotypes in MED13
+  studies?" — requires mapping "cardiac phenotypes" to a set of Dictionary
+  variables, traversing entity→relation→entity paths, and aggregating evidence.
+- **Sports:** "Which players had the highest OPS after being traded in 2025?" —
+  requires joining `TRADED_TO` relations with `VAR_OPS` observations and
+  filtering by date.
+- **CS benchmarking:** "What algorithms outperform the baseline on NLP datasets
+  with more than 10K samples?" — requires understanding dataset size
+  constraints and comparative observation queries.
+- **Any domain:** "Find entities similar to this one" — requires semantic
+  similarity across observations, not just exact type matching.
 
 ### Solution — Graph Search Agent (Flujo)
 
@@ -1397,7 +1459,8 @@ flowchart TB
 - **Natural language understanding** — mapping researcher questions to graph
   traversals is a reasoning task, not a keyword match.
 - **Unified Dictionary search** — the agent uses `dictionary_search` to resolve
-  vague terms ("cardiac phenotypes") to specific Dictionary variables
+  vague terms ("cardiac phenotypes", "batting stats", "accuracy metrics") to
+  specific Dictionary variables
   (`VAR_CARDIOMYOPATHY`, `VAR_EJECTION_FRACTION`, `VAR_LV_NONCOMPACTION`, etc.)
   before querying the graph.
 - **Evidence-first contracts** — every search result carries provenance chains
@@ -1552,7 +1615,7 @@ Every row in the kernel graph carries a `research_space_id` FK.  Research spaces
 are the fundamental isolation boundary:
 
 ```
-Research Space (e.g. "MED13 Cardiology Study")
+Research Space (e.g. "MED13 Cardiology Study", "MLB 2025 Season", "NLP Benchmark Suite")
   ├── entities      (scoped)
   ├── observations  (scoped)
   ├── relations     (scoped)
@@ -1586,12 +1649,16 @@ All Flujo agent tools are scoped to a `research_space_id`:
   space or global scope.
 - Agent provenance records include `research_space_id` for audit trail scoping.
 
-The Dictionary is **global** (shared vocabulary across all spaces) but the graph
-data (entities, observations, relations) is **space-scoped** (isolated per
-research space).  This means a Dictionary variable like `VAR_EJECTION_FRACTION`
-is defined once and used across all spaces, but the actual ejection fraction
-observations belong to specific research spaces and are never visible across
-space boundaries.
+The Dictionary is **global** (shared vocabulary across all spaces and all
+domains) but the graph data (entities, observations, relations) is
+**space-scoped** (isolated per research space).  This means:
+
+- A Dictionary variable like `VAR_EJECTION_FRACTION` (clinical) and
+  `VAR_BATTING_AVERAGE` (sports) are both defined once and usable by any space.
+- Actual observations belong to specific research spaces and are never visible
+  across space boundaries.
+- An "MLB 2025 Season" space never sees data from a "MED13 Cardiology Study"
+  space — even though they share the same Dictionary and kernel infrastructure.
 
 ---
 
@@ -1730,7 +1797,7 @@ carry `domain_context` and `description_embedding`.  This means:
 
 | Column | Type | Purpose |
 |---|---|---|
-| `id` | `STRING(64)` PK | `clinical`, `genomics`, `cs_benchmarking`, `general` |
+| `id` | `STRING(64)` PK | `clinical`, `genomics`, `sports`, `cs_benchmarking`, `general` — agent-extensible |
 | `display_name` | `STRING(128)` | Human label |
 | `description` | `TEXT` | What this domain covers |
 
@@ -1774,7 +1841,7 @@ values with display labels, synonyms, and external references.
 
 | Column | Type | Purpose |
 |---|---|---|
-| `id` | `STRING(64)` PK | e.g. `VS_CLINVAR_CLASS`, `VS_EVIDENCE_TIER` |
+| `id` | `STRING(64)` PK | e.g. `VS_CLINVAR_CLASS`, `VS_EVIDENCE_TIER`, `VS_PLAYER_POSITION`, `VS_LEAGUE_DIVISION` |
 | `variable_id` | `STRING(64)` FK | Variable this set belongs to |
 | `name` | `STRING(128)` | Human-readable set name |
 | `description` | `TEXT` | What this set represents |
@@ -1792,7 +1859,7 @@ values with display labels, synonyms, and external references.
 | `code` | `STRING(128)` | The canonical code value stored in observations |
 | `display_label` | `STRING(255)` | Human-readable label |
 | `synonyms` | `JSONB` DEFAULT `[]` | Alternative strings that map to this code |
-| `external_ref` | `STRING(255)` NULL | External code (e.g. HPO ID, ClinVar class) |
+| `external_ref` | `STRING(255)` NULL | External code (e.g. HPO ID, ClinVar class, MLB position code) |
 | `sort_order` | `INT` DEFAULT `0` | Display ordering |
 | `is_active` | `BOOL` DEFAULT `TRUE` | Soft-delete |
 | `created_by` | `STRING(128)` | Provenance |
@@ -2069,7 +2136,7 @@ tracking, type safety, coded value enforcement, and search infrastructure
 the agent depends on.
 
 Phases **5, 6, and 7** can land incrementally after the agent is running
-but should be in place before scaling to new domains beyond genomics.
+but should be in place before deploying to additional domains.
 
 ---
 

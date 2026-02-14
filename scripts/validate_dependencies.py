@@ -120,35 +120,122 @@ class DependencyValidator:
 
     def _build_import_graph(self, file_path: Path) -> None:
         """Build graph of imports between files."""
+        parsed_module = self._parse_module(file_path)
+        if parsed_module is None:
+            return
+
+        relative_path, tree = parsed_module
+        self._record_file_layer(file_path=file_path, relative_path=relative_path)
+        parent_by_child = self._build_parent_lookup(tree)
+        import_modules = self._collect_import_modules(
+            tree=tree,
+            parent_by_child=parent_by_child,
+        )
+        self.import_graph[relative_path].update(import_modules)
+
+    def _parse_module(self, file_path: Path) -> tuple[str, ast.AST] | None:
+        """Parse a Python module and return relative path plus AST."""
         try:
             content = file_path.read_text(encoding="utf-8")
             tree = ast.parse(content, filename=str(file_path))
             relative_path = str(file_path.relative_to(self.root_path))
-
-            # Determine layer
-            layer = self._get_file_layer(file_path)
-            if layer:
-                self.file_to_layer[relative_path] = layer
-
-            # Extract imports
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom):
-                    if node.module and node.module.startswith("src."):
-                        # Convert module path to file path
-                        module_path = node.module.replace(".", "/")
-                        if module_path.startswith("src/"):
-                            self.import_graph[relative_path].add(module_path)
-
-                elif isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if alias.name.startswith("src."):
-                            module_path = alias.name.replace(".", "/")
-                            if module_path.startswith("src/"):
-                                self.import_graph[relative_path].add(module_path)
-
         except Exception:  # noqa: BLE001, S110
             # Skip files that can't be parsed (syntax errors, etc.)
-            pass
+            return None
+        else:
+            return relative_path, tree
+
+    def _record_file_layer(self, *, file_path: Path, relative_path: str) -> None:
+        """Record architecture layer metadata for a module file."""
+        layer = self._get_file_layer(file_path)
+        if layer is not None:
+            self.file_to_layer[relative_path] = layer
+
+    @staticmethod
+    def _build_parent_lookup(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+        """Build a parent lookup for AST nodes."""
+        parent_by_child: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parent_by_child[child] = parent
+        return parent_by_child
+
+    def _collect_import_modules(
+        self,
+        *,
+        tree: ast.AST,
+        parent_by_child: dict[ast.AST, ast.AST],
+    ) -> set[str]:
+        """Extract `src/*` import module paths from an AST."""
+        import_modules: set[str] = set()
+        for node in ast.walk(tree):
+            if self._is_type_checking_import(
+                node=node,
+                parent_by_child=parent_by_child,
+            ):
+                continue
+            import_modules.update(self._extract_node_import_modules(node))
+        return import_modules
+
+    @staticmethod
+    def _extract_node_import_modules(node: ast.AST) -> set[str]:
+        """Extract `src/*` import module paths from a single import node."""
+        if isinstance(node, ast.ImportFrom):
+            return DependencyValidator._extract_import_from_module(node)
+        if isinstance(node, ast.Import):
+            return DependencyValidator._extract_import_alias_modules(node)
+        return set()
+
+    @staticmethod
+    def _extract_import_from_module(node: ast.ImportFrom) -> set[str]:
+        """Extract module path from `from x import y` nodes."""
+        if node.module is None:
+            return set()
+        module_path = node.module.replace(".", "/")
+        if not module_path.startswith("src/"):
+            return set()
+        return {module_path}
+
+    @staticmethod
+    def _extract_import_alias_modules(node: ast.Import) -> set[str]:
+        """Extract module paths from `import x` nodes."""
+        import_modules: set[str] = set()
+        for alias in node.names:
+            module_path = alias.name.replace(".", "/")
+            if module_path.startswith("src/"):
+                import_modules.add(module_path)
+        return import_modules
+
+    @staticmethod
+    def _is_type_checking_guard(test_node: ast.expr) -> bool:
+        """Return True when the condition matches TYPE_CHECKING guards."""
+        return (
+            isinstance(test_node, ast.Name) and test_node.id == "TYPE_CHECKING"
+        ) or (
+            isinstance(test_node, ast.Attribute)
+            and isinstance(test_node.value, ast.Name)
+            and test_node.value.id == "typing"
+            and test_node.attr == "TYPE_CHECKING"
+        )
+
+    @staticmethod
+    def _is_type_checking_import(
+        *,
+        node: ast.AST,
+        parent_by_child: dict[ast.AST, ast.AST],
+    ) -> bool:
+        """Return True when an import is nested under an `if TYPE_CHECKING` block."""
+        current = parent_by_child.get(node)
+        while current is not None:
+            if isinstance(
+                current,
+                ast.If,
+            ) and DependencyValidator._is_type_checking_guard(
+                current.test,
+            ):
+                return True
+            current = parent_by_child.get(current)
+        return False
 
     def _check_circular_dependencies(self) -> None:
         """Detect circular dependencies using DFS."""

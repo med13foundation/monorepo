@@ -138,6 +138,12 @@ class PublicationUpdate(TypedDict, total=False):
 class ExtractionQueueUpdate(TypedDict, total=False):
     """Type-safe extraction queue update parameters."""
 
+    publication_id: int | None
+    pubmed_id: str | None
+    source_type: str
+    source_record_id: str
+    raw_storage_key: str | None
+    payload_ref: str | None
     status: str
     attempts: int
     last_error: str | None

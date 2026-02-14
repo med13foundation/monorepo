@@ -25,6 +25,19 @@ class IngestionRunContext:
     source_record_ledger_repository: SourceRecordLedgerRepository | None = None
 
 
+@dataclass(frozen=True)
+class IngestionExtractionTarget:
+    """Target record to enqueue for post-ingestion extraction."""
+
+    source_record_id: str
+    source_type: str
+    raw_storage_key: str | None = None
+    payload_ref: str | None = None
+    publication_id: int | None = None
+    pubmed_id: str | None = None
+    metadata: JSONObject | None = None
+
+
 class IngestionRunSummary(Protocol):
     """Protocol describing the summary returned by source ingestion services."""
 
@@ -49,12 +62,8 @@ class IngestionRunSummary(Protocol):
         """Number of publication records updated."""
 
     @property
-    def created_publication_ids(self) -> tuple[int, ...]:
-        """Publication IDs created during ingestion."""
-
-    @property
-    def updated_publication_ids(self) -> tuple[int, ...]:
-        """Publication IDs updated during ingestion."""
+    def extraction_targets(self) -> tuple[IngestionExtractionTarget, ...]:
+        """Source records to enqueue for extraction."""
 
     @property
     def executed_query(self) -> str | None:

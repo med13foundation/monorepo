@@ -25,7 +25,10 @@ from src.infrastructure.data_sources import (
     PubMedSourceGateway,
     SimplePubMedPdfGateway,
 )
-from src.infrastructure.extraction import RuleBasedPubMedExtractionProcessor
+from src.infrastructure.extraction import (
+    ClinVarExtractionProcessor,
+    RuleBasedPubMedExtractionProcessor,
+)
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
@@ -89,7 +92,10 @@ def build_ingestion_scheduling_service(
         queue_repository=extraction_queue_repository,
         publication_repository=publication_repository,  # type: ignore[arg-type]
         extraction_repository=extraction_repository,
-        processor=RuleBasedPubMedExtractionProcessor(),
+        processor_registry={
+            SourceType.PUBMED.value: RuleBasedPubMedExtractionProcessor(),
+            SourceType.CLINVAR.value: ClinVarExtractionProcessor(),
+        },
         storage_coordinator=storage_coordinator,
     )
 

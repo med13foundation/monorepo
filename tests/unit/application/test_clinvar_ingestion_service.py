@@ -176,6 +176,33 @@ async def test_ingest_runs_pipeline_and_returns_summary() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ingest_emits_source_record_extraction_targets() -> None:
+    gateway = StubGateway(
+        records=[
+            {
+                "clinvar_id": "1001",
+                "parsed_data": {"gene_symbol": "MED13"},
+            },
+            {
+                "clinvar_id": "1002",
+                "parsed_data": {"gene_symbol": "MED13"},
+            },
+        ],
+    )
+    pipeline = StubPipeline()
+    service = ClinVarIngestionService(gateway=gateway, pipeline=pipeline)
+
+    summary = await service.ingest(_build_source())
+
+    assert len(summary.extraction_targets) == 2
+    first_target = summary.extraction_targets[0]
+    assert first_target.source_type == SourceType.CLINVAR.value
+    assert first_target.source_record_id.startswith("clinvar:clinvar_id:")
+    assert first_target.metadata is not None
+    assert first_target.metadata.get("source_type") == SourceType.CLINVAR.value
+
+
+@pytest.mark.asyncio
 async def test_rejects_non_clinvar_source() -> None:
     gateway = StubGateway(records=[])
     pipeline = StubPipeline()

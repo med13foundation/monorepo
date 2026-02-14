@@ -6,7 +6,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.infrastructure.extraction import RuleBasedPubMedExtractionProcessor
+from src.domain.entities.user_data_source import SourceType
+from src.infrastructure.extraction import (
+    ClinVarExtractionProcessor,
+    RuleBasedPubMedExtractionProcessor,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -71,6 +75,9 @@ class CurationServiceFactoryMixin:
             queue_repository=queue_repository,
             publication_repository=publication_repository,  # type: ignore[arg-type]
             extraction_repository=extraction_repository,
-            processor=processor,
+            processor_registry={
+                SourceType.PUBMED.value: processor,
+                SourceType.CLINVAR.value: ClinVarExtractionProcessor(),
+            },
             storage_coordinator=storage_coordinator,
         )

@@ -16,6 +16,9 @@ depends_on = None
 
 def upgrade() -> None:
     """Add missing source type enum values for PubMed and ClinVar."""
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
     op.execute("ALTER TYPE sourcetypeenum ADD VALUE IF NOT EXISTS 'pubmed'")
     op.execute("ALTER TYPE sourcetypeenum ADD VALUE IF NOT EXISTS 'clinvar'")
     op.execute("ALTER TYPE usersourcetypeenum ADD VALUE IF NOT EXISTS 'clinvar'")

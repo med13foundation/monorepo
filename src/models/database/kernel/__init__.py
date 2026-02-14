@@ -14,7 +14,7 @@ from .dictionary import (
 from .entities import EntityIdentifierModel, EntityModel
 from .observations import ObservationModel
 from .provenance import ProvenanceModel
-from .relations import RelationModel
+from .relations import RelationEvidenceModel, RelationModel
 
 __all__ = [
     # Dictionary (Layer 1)
@@ -27,6 +27,7 @@ __all__ = [
     "EntityModel",
     "EntityIdentifierModel",
     "ObservationModel",
+    "RelationEvidenceModel",
     "RelationModel",
     "ProvenanceModel",
 ]

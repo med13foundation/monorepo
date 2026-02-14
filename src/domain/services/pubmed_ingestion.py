@@ -8,6 +8,7 @@ from uuid import UUID  # noqa: TCH003
 
 from src.domain.entities.data_source_configs import PubMedQueryConfig  # noqa: TCH001
 from src.domain.entities.source_sync_state import CheckpointKind  # noqa: TCH001
+from src.domain.services.ingestion import IngestionExtractionTarget  # noqa: TCH001
 from src.type_definitions.common import JSONObject, RawRecord  # noqa: TCH001
 
 
@@ -50,8 +51,7 @@ class PubMedIngestionSummary:
     parsed_publications: int
     created_publications: int
     updated_publications: int
-    created_publication_ids: tuple[int, ...] = ()
-    updated_publication_ids: tuple[int, ...] = ()
+    extraction_targets: tuple[IngestionExtractionTarget, ...] = ()
     executed_query: str | None = None
     query_generation_run_id: str | None = None
     query_generation_model: str | None = None

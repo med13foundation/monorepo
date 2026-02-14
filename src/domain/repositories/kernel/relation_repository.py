@@ -105,7 +105,7 @@ class KernelRelationRepository(ABC):
         *,
         limit: int = 20,
     ) -> list[KernelRelation]:
-        """Search relations in a research space by relation type / evidence summary."""
+        """Search relations in a research space by type, status, and evidence text."""
 
     # ── Curation lifecycle ────────────────────────────────────────────
 
