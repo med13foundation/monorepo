@@ -336,6 +336,7 @@ class ResearchSpaceSettings(TypedDict, total=False):
     auto_approve: bool
     require_review: bool
     review_threshold: float
+    dictionary_agent_creation_policy: Literal["ACTIVE", "PENDING_REVIEW"]
 
     # Data source settings
     max_data_sources: int

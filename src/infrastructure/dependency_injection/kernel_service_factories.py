@@ -11,12 +11,12 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from src.application.services.kernel import (
-        DictionaryService,
         KernelEntityService,
         KernelObservationService,
         KernelRelationService,
         ProvenanceService,
     )
+    from src.domain.ports import DictionaryPort
 
 
 class KernelServiceFactoryMixin:
@@ -43,7 +43,10 @@ class KernelServiceFactoryMixin:
         self,
         session: Session,
     ) -> KernelObservationService:
-        from src.application.services.kernel import KernelObservationService
+        from src.application.services.kernel import (
+            DictionaryManagementService,
+            KernelObservationService,
+        )
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyDictionaryRepository,
             SqlAlchemyKernelEntityRepository,
@@ -53,10 +56,13 @@ class KernelServiceFactoryMixin:
         observation_repo = SqlAlchemyKernelObservationRepository(session)
         entity_repo = SqlAlchemyKernelEntityRepository(session)
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
+        dictionary_service = DictionaryManagementService(
+            dictionary_repo=dictionary_repo,
+        )
         return KernelObservationService(
             observation_repo=observation_repo,
             entity_repo=entity_repo,
-            dictionary_repo=dictionary_repo,
+            dictionary_repo=dictionary_service,
         )
 
     def create_kernel_relation_service(
@@ -79,17 +85,17 @@ class KernelServiceFactoryMixin:
             dictionary_repo=dictionary_repo,
         )
 
-    def create_dictionary_service(
+    def create_dictionary_management_service(
         self,
         session: Session,
-    ) -> DictionaryService:
-        from src.application.services.kernel import DictionaryService
+    ) -> DictionaryPort:
+        from src.application.services.kernel import DictionaryManagementService
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyDictionaryRepository,
         )
 
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
-        return DictionaryService(dictionary_repo=dictionary_repo)
+        return DictionaryManagementService(dictionary_repo=dictionary_repo)
 
     def create_provenance_service(
         self,

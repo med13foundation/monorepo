@@ -12,15 +12,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.database import session as session_module
-from src.database.seeds.seeder import seed_entity_resolution_policies
+from src.database.seeds.seeder import (
+    seed_entity_resolution_policies,
+    seed_relation_constraints,
+)
 from src.domain.entities.user import UserRole
 from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
 from src.infrastructure.security.jwt_provider import JWTProvider
 from src.main import create_app
 from src.models.database.base import Base
-from src.models.database.kernel.dictionary import (
-    RelationConstraintModel,
-)
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
 from src.models.database.user_data_source import (
@@ -176,6 +176,9 @@ def test_kernel_entity_observation_relation_flow(
         },
     )
     assert resp.status_code == 201, resp.text
+    created_variable = resp.json()
+    assert created_variable["created_by"] == f"manual:{admin_user.id}"
+    assert created_variable["review_status"] == "ACTIVE"
 
     # 2) Create two entities in the space (researcher/owner)
     headers = _auth_headers(researcher_user)
@@ -236,18 +239,9 @@ def test_kernel_entity_observation_relation_flow(
     assert obs_payload["total"] == 1
     assert obs_payload["observations"][0]["value_text"] == "hello kernel"
 
-    # 4) Seed a relation constraint so the triple is allowed
+    # 4) Seed relation constraints so the triple is allowed
     with _session_for_api(db_session) as session:
-        session.add(
-            RelationConstraintModel(
-                source_type="GENE",
-                relation_type="ASSOCIATED_WITH",
-                target_type="PHENOTYPE",
-                is_allowed=True,
-                requires_evidence=True,
-            ),
-        )
-        session.commit()
+        seed_relation_constraints(session)
 
     # 5) Create a relation
     rel_resp = test_client.post(
@@ -291,6 +285,287 @@ def test_kernel_entity_observation_relation_flow(
     )
     assert curate.status_code == 200, curate.text
     assert curate.json()["curation_status"] == "APPROVED"
+
+
+def test_admin_dictionary_review_lifecycle(test_client, admin_user):
+    create_response = test_client.post(
+        "/admin/dictionary/variables",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "VAR_REVIEW_LIFECYCLE",
+            "canonical_name": "review_lifecycle",
+            "display_name": "Review Lifecycle",
+            "data_type": "STRING",
+            "domain_context": "general",
+            "sensitivity": "INTERNAL",
+            "constraints": {},
+            "description": "Variable used for review lifecycle tests",
+            "source_ref": "paper:pmid:12345",
+        },
+    )
+    assert create_response.status_code == 201, create_response.text
+    payload = create_response.json()
+    assert payload["source_ref"] == "paper:pmid:12345"
+    assert payload["review_status"] == "ACTIVE"
+
+    set_pending_response = test_client.patch(
+        "/admin/dictionary/variables/VAR_REVIEW_LIFECYCLE/review-status",
+        headers=_auth_headers(admin_user),
+        json={"review_status": "PENDING_REVIEW"},
+    )
+    assert set_pending_response.status_code == 200, set_pending_response.text
+    pending_payload = set_pending_response.json()
+    assert pending_payload["review_status"] == "PENDING_REVIEW"
+    assert pending_payload["reviewed_by"] == f"manual:{admin_user.id}"
+
+    revoke_response = test_client.post(
+        "/admin/dictionary/variables/VAR_REVIEW_LIFECYCLE/revoke",
+        headers=_auth_headers(admin_user),
+        json={"reason": "Deprecated variable"},
+    )
+    assert revoke_response.status_code == 200, revoke_response.text
+    revoked_payload = revoke_response.json()
+    assert revoked_payload["review_status"] == "REVOKED"
+    assert revoked_payload["revocation_reason"] == "Deprecated variable"
+
+    changelog_response = test_client.get(
+        "/admin/dictionary/changelog",
+        headers=_auth_headers(admin_user),
+        params={
+            "table_name": "variable_definitions",
+            "record_id": "VAR_REVIEW_LIFECYCLE",
+        },
+    )
+    assert changelog_response.status_code == 200, changelog_response.text
+    actions = {
+        str(entry["action"]) for entry in changelog_response.json()["changelog_entries"]
+    }
+    assert "CREATE" in actions
+    assert "UPDATE" in actions
+    assert "REVOKE" in actions
+
+
+def test_admin_dictionary_type_endpoints(test_client, admin_user):
+    create_entity_type_response = test_client.post(
+        "/admin/dictionary/entity-types",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "ENTITY_TEST_DOMAIN_ITEM",
+            "display_name": "Entity Test Domain Item",
+            "description": "Entity type created from integration test",
+            "domain_context": "general",
+            "expected_properties": {"required_keys": ["code"]},
+        },
+    )
+    assert (
+        create_entity_type_response.status_code == 201
+    ), create_entity_type_response.text
+    created_entity_payload = create_entity_type_response.json()
+    assert created_entity_payload["id"] == "ENTITY_TEST_DOMAIN_ITEM"
+    assert created_entity_payload["created_by"] == f"manual:{admin_user.id}"
+
+    create_relation_type_response = test_client.post(
+        "/admin/dictionary/relation-types",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "REL_TEST_LINKS_TO",
+            "display_name": "Test Links To",
+            "description": "Relation type created from integration test",
+            "domain_context": "general",
+            "is_directional": True,
+            "inverse_label": "Linked From",
+        },
+    )
+    assert (
+        create_relation_type_response.status_code == 201
+    ), create_relation_type_response.text
+    created_relation_payload = create_relation_type_response.json()
+    assert created_relation_payload["id"] == "REL_TEST_LINKS_TO"
+    assert created_relation_payload["created_by"] == f"manual:{admin_user.id}"
+
+    get_entity_type_response = test_client.get(
+        "/admin/dictionary/entity-types/ENTITY_TEST_DOMAIN_ITEM",
+        headers=_auth_headers(admin_user),
+    )
+    assert get_entity_type_response.status_code == 200, get_entity_type_response.text
+    assert get_entity_type_response.json()["id"] == "ENTITY_TEST_DOMAIN_ITEM"
+
+    get_relation_type_response = test_client.get(
+        "/admin/dictionary/relation-types/REL_TEST_LINKS_TO",
+        headers=_auth_headers(admin_user),
+    )
+    assert (
+        get_relation_type_response.status_code == 200
+    ), get_relation_type_response.text
+    assert get_relation_type_response.json()["id"] == "REL_TEST_LINKS_TO"
+
+    list_entity_types_response = test_client.get(
+        "/admin/dictionary/entity-types",
+        headers=_auth_headers(admin_user),
+        params={"domain_context": "general"},
+    )
+    assert (
+        list_entity_types_response.status_code == 200
+    ), list_entity_types_response.text
+    assert list_entity_types_response.json()["total"] >= 1
+
+    list_relation_types_response = test_client.get(
+        "/admin/dictionary/relation-types",
+        headers=_auth_headers(admin_user),
+        params={"domain_context": "general"},
+    )
+    assert (
+        list_relation_types_response.status_code == 200
+    ), list_relation_types_response.text
+    assert list_relation_types_response.json()["total"] >= 1
+
+    set_entity_review_status_response = test_client.patch(
+        "/admin/dictionary/entity-types/ENTITY_TEST_DOMAIN_ITEM/review-status",
+        headers=_auth_headers(admin_user),
+        json={"review_status": "PENDING_REVIEW"},
+    )
+    assert (
+        set_entity_review_status_response.status_code == 200
+    ), set_entity_review_status_response.text
+    assert set_entity_review_status_response.json()["review_status"] == "PENDING_REVIEW"
+
+    revoke_entity_type_response = test_client.post(
+        "/admin/dictionary/entity-types/ENTITY_TEST_DOMAIN_ITEM/revoke",
+        headers=_auth_headers(admin_user),
+        json={"reason": "No longer in use"},
+    )
+    assert (
+        revoke_entity_type_response.status_code == 200
+    ), revoke_entity_type_response.text
+    assert revoke_entity_type_response.json()["review_status"] == "REVOKED"
+
+    set_relation_review_status_response = test_client.patch(
+        "/admin/dictionary/relation-types/REL_TEST_LINKS_TO/review-status",
+        headers=_auth_headers(admin_user),
+        json={"review_status": "PENDING_REVIEW"},
+    )
+    assert (
+        set_relation_review_status_response.status_code == 200
+    ), set_relation_review_status_response.text
+    assert (
+        set_relation_review_status_response.json()["review_status"] == "PENDING_REVIEW"
+    )
+
+    revoke_relation_type_response = test_client.post(
+        "/admin/dictionary/relation-types/REL_TEST_LINKS_TO/revoke",
+        headers=_auth_headers(admin_user),
+        json={"reason": "No longer in use"},
+    )
+    assert (
+        revoke_relation_type_response.status_code == 200
+    ), revoke_relation_type_response.text
+    assert revoke_relation_type_response.json()["review_status"] == "REVOKED"
+
+
+def test_admin_dictionary_value_set_endpoints(test_client, admin_user):
+    create_variable_response = test_client.post(
+        "/admin/dictionary/variables",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "VAR_TEST_CODED_STATUS",
+            "canonical_name": "test_coded_status",
+            "display_name": "Test Coded Status",
+            "data_type": "CODED",
+            "domain_context": "general",
+            "sensitivity": "INTERNAL",
+            "constraints": {},
+            "description": "Coded variable for value set integration test",
+        },
+    )
+    assert create_variable_response.status_code == 201, create_variable_response.text
+
+    create_value_set_response = test_client.post(
+        "/admin/dictionary/value-sets",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "VS_TEST_CODED_STATUS",
+            "variable_id": "VAR_TEST_CODED_STATUS",
+            "name": "Test coded statuses",
+            "description": "Allowed coded statuses for integration tests",
+            "is_extensible": True,
+            "source_ref": "test:value-set",
+        },
+    )
+    assert create_value_set_response.status_code == 201, create_value_set_response.text
+    created_value_set = create_value_set_response.json()
+    assert created_value_set["id"] == "VS_TEST_CODED_STATUS"
+    assert created_value_set["variable_id"] == "VAR_TEST_CODED_STATUS"
+    assert created_value_set["review_status"] == "ACTIVE"
+    assert created_value_set["created_by"] == f"manual:{admin_user.id}"
+
+    list_value_sets_response = test_client.get(
+        "/admin/dictionary/value-sets",
+        headers=_auth_headers(admin_user),
+        params={"variable_id": "VAR_TEST_CODED_STATUS"},
+    )
+    assert list_value_sets_response.status_code == 200, list_value_sets_response.text
+    list_payload = list_value_sets_response.json()
+    assert list_payload["total"] == 1
+    assert list_payload["value_sets"][0]["id"] == "VS_TEST_CODED_STATUS"
+
+    create_item_response = test_client.post(
+        "/admin/dictionary/value-sets/VS_TEST_CODED_STATUS/items",
+        headers=_auth_headers(admin_user),
+        json={
+            "code": "APPROVED",
+            "display_label": "Approved",
+            "synonyms": ["approved", "ok_to_use"],
+            "sort_order": 10,
+            "source_ref": "test:value-set-item",
+        },
+    )
+    assert create_item_response.status_code == 201, create_item_response.text
+    created_item = create_item_response.json()
+    assert created_item["code"] == "APPROVED"
+    assert created_item["synonyms"] == ["approved", "ok_to_use"]
+    assert created_item["is_active"] is True
+
+    list_items_response = test_client.get(
+        "/admin/dictionary/value-sets/VS_TEST_CODED_STATUS/items",
+        headers=_auth_headers(admin_user),
+    )
+    assert list_items_response.status_code == 200, list_items_response.text
+    items_payload = list_items_response.json()
+    assert items_payload["total"] == 1
+    item_id = int(items_payload["items"][0]["id"])
+
+    deactivate_item_response = test_client.patch(
+        f"/admin/dictionary/value-set-items/{item_id}/active",
+        headers=_auth_headers(admin_user),
+        json={
+            "is_active": False,
+            "revocation_reason": "Deprecated code",
+        },
+    )
+    assert deactivate_item_response.status_code == 200, deactivate_item_response.text
+    deactivated_item = deactivate_item_response.json()
+    assert deactivated_item["is_active"] is False
+    assert deactivated_item["review_status"] == "REVOKED"
+    assert deactivated_item["revocation_reason"] == "Deprecated code"
+
+    list_active_items_response = test_client.get(
+        "/admin/dictionary/value-sets/VS_TEST_CODED_STATUS/items",
+        headers=_auth_headers(admin_user),
+    )
+    assert (
+        list_active_items_response.status_code == 200
+    ), list_active_items_response.text
+    assert list_active_items_response.json()["total"] == 0
+
+    list_all_items_response = test_client.get(
+        "/admin/dictionary/value-sets/VS_TEST_CODED_STATUS/items",
+        headers=_auth_headers(admin_user),
+        params={"include_inactive": True},
+    )
+    assert list_all_items_response.status_code == 200, list_all_items_response.text
+    all_items_payload = list_all_items_response.json()
+    assert all_items_payload["total"] == 1
+    assert all_items_payload["items"][0]["is_active"] is False
 
 
 def test_kernel_entity_rejects_unknown_type(

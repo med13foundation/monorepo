@@ -6,13 +6,14 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from src.application.services.kernel import (
-    DictionaryService,
+    DictionaryManagementService,
     KernelEntityService,
     KernelObservationService,
     KernelRelationService,
     ProvenanceService,
 )
 from src.database.session import get_session
+from src.domain.ports import DictionaryPort
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
@@ -28,10 +29,10 @@ from src.infrastructure.repositories.kernel import (
 
 def get_dictionary_service(
     session: Session = Depends(get_session),
-) -> DictionaryService:
+) -> DictionaryPort:
     """Kernel dictionary service (read/write)."""
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
-    return DictionaryService(dictionary_repo=dictionary_repo)
+    return DictionaryManagementService(dictionary_repo=dictionary_repo)
 
 
 def get_kernel_entity_service(
@@ -53,10 +54,11 @@ def get_kernel_observation_service(
     observation_repo = SqlAlchemyKernelObservationRepository(session)
     entity_repo = SqlAlchemyKernelEntityRepository(session)
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
+    dictionary_service = DictionaryManagementService(dictionary_repo=dictionary_repo)
     return KernelObservationService(
         observation_repo=observation_repo,
         entity_repo=entity_repo,
-        dictionary_repo=dictionary_repo,
+        dictionary_repo=dictionary_service,
     )
 
 

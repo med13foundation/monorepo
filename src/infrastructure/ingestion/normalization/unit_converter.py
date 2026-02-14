@@ -9,9 +9,7 @@ from typing import TYPE_CHECKING
 from src.infrastructure.ingestion.types import MappedObservation, NormalizedObservation
 
 if TYPE_CHECKING:
-    from src.domain.repositories.kernel.dictionary_repository import (
-        DictionaryRepository,
-    )
+    from src.domain.ports.dictionary_port import DictionaryPort
     from src.type_definitions.common import JSONValue
 
 
@@ -20,7 +18,7 @@ class UnitConverter:
     Normalizes values and units using the TransformRegistry.
     """
 
-    def __init__(self, dictionary_repository: DictionaryRepository) -> None:
+    def __init__(self, dictionary_repository: DictionaryPort) -> None:
         self.dictionary_repo = dictionary_repository
 
     def normalize(self, observation: MappedObservation) -> NormalizedObservation:

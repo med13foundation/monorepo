@@ -10,9 +10,7 @@ from typing import TYPE_CHECKING
 from src.infrastructure.ingestion.types import MappedObservation, RawRecord
 
 if TYPE_CHECKING:
-    from src.domain.repositories.kernel.dictionary_repository import (
-        DictionaryRepository,
-    )
+    from src.domain.ports.dictionary_port import DictionaryPort
     from src.type_definitions.common import JSONObject
 
 
@@ -21,7 +19,7 @@ class ExactMapper:
     Maps raw records to observations using exact synonym lookup in the dictionary.
     """
 
-    def __init__(self, dictionary_repository: DictionaryRepository) -> None:
+    def __init__(self, dictionary_repository: DictionaryPort) -> None:
         self.dictionary_repo = dictionary_repository
 
     def map(self, record: RawRecord) -> list[MappedObservation]:
@@ -38,7 +36,7 @@ class ExactMapper:
 
             # Try to find a variable definition matching the key
             # The repository method handles case-insensitivity
-            variable = self.dictionary_repo.find_variable_by_synonym(key)
+            variable = self.dictionary_repo.resolve_synonym(key)
 
             if variable:
                 # We found a match! Create an observation

@@ -13,9 +13,7 @@ from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
     from src.domain.entities.kernel.observations import KernelObservation
-    from src.domain.repositories.kernel.dictionary_repository import (
-        DictionaryRepository,
-    )
+    from src.domain.ports.dictionary_port import DictionaryPort
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
     from src.domain.repositories.kernel.observation_repository import (
         KernelObservationRepository,
@@ -46,7 +44,7 @@ class KernelObservationService:
         self,
         observation_repo: KernelObservationRepository,
         entity_repo: KernelEntityRepository,
-        dictionary_repo: DictionaryRepository,
+        dictionary_repo: DictionaryPort,
     ) -> None:
         self._observations = observation_repo
         self._entities = entity_repo

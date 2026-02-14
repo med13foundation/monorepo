@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import which
@@ -13,7 +14,7 @@ from uuid import uuid4
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_HEAD_REVISION = "008_pg_scheduler_tables"
+EXPECTED_HEAD_REVISION = "012_dictionary_value_sets"
 LEGACY_REVISION_ALIAS = "004_relation_evidence_and_extraction_queue_contract"
 ROLLOUT_MARKER_REVISION = "005_rel_evidence_rollout_marker"
 RAW_STORAGE_KEY_VALUE = "raw/clinvar/variant-1001.json"
@@ -23,12 +24,16 @@ PAYLOAD_REF_VALUE = "payload://clinvar/variant-1001"
 def _run_alembic_upgrade(*, database_url: str, revision: str) -> None:
     env = dict(os.environ)
     env["ALEMBIC_DATABASE_URL"] = database_url
-    alembic_executable = which("alembic")
-    if alembic_executable is None:
-        msg = "alembic executable not found on PATH"
-        raise RuntimeError(msg)
+    venv_alembic = Path(sys.executable).with_name("alembic")
+    command = [str(venv_alembic), "upgrade", revision]
+    if not venv_alembic.exists():
+        fallback_alembic = which("alembic")
+        if fallback_alembic is None:
+            msg = "alembic executable not found on PATH"
+            raise RuntimeError(msg)
+        command = [fallback_alembic, "upgrade", revision]
     subprocess.run(
-        [alembic_executable, "upgrade", revision],
+        command,
         check=True,
         cwd=REPOSITORY_ROOT,
         env=env,
@@ -149,3 +154,52 @@ def test_006_backfills_extraction_queue_payload_reference_columns(
 
     assert payload_columns["raw_storage_key"] == RAW_STORAGE_KEY_VALUE
     assert payload_columns["payload_ref"] == PAYLOAD_REF_VALUE
+
+
+def test_012_creates_dictionary_dimension_tables(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'dictionary_type_tables.db'}"
+    _run_alembic_upgrade(database_url=database_url, revision=EXPECTED_HEAD_REVISION)
+
+    engine = create_engine(database_url, future=True)
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+
+    assert "dictionary_changelog" in table_names
+    assert "dictionary_data_types" in table_names
+    assert "dictionary_domain_contexts" in table_names
+    assert "dictionary_sensitivity_levels" in table_names
+    assert "dictionary_entity_types" in table_names
+    assert "dictionary_relation_types" in table_names
+    assert "value_sets" in table_names
+    assert "value_set_items" in table_names
+
+    variable_fk_targets = {
+        fk["referred_table"]
+        for fk in inspector.get_foreign_keys("variable_definitions")
+    }
+    assert "dictionary_data_types" in variable_fk_targets
+    assert "dictionary_domain_contexts" in variable_fk_targets
+    assert "dictionary_sensitivity_levels" in variable_fk_targets
+
+    policy_fk_targets = {
+        fk["referred_table"]
+        for fk in inspector.get_foreign_keys("entity_resolution_policies")
+    }
+    assert "dictionary_entity_types" in policy_fk_targets
+
+    relation_fk_targets = {
+        fk["referred_table"]
+        for fk in inspector.get_foreign_keys("relation_constraints")
+    }
+    assert "dictionary_entity_types" in relation_fk_targets
+    assert "dictionary_relation_types" in relation_fk_targets
+
+    value_set_fk_targets = {
+        fk["referred_table"] for fk in inspector.get_foreign_keys("value_sets")
+    }
+    assert "variable_definitions" in value_set_fk_targets
+
+    value_set_item_fk_targets = {
+        fk["referred_table"] for fk in inspector.get_foreign_keys("value_set_items")
+    }
+    assert "value_sets" in value_set_item_fk_targets

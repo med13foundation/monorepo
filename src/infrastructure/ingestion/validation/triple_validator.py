@@ -9,9 +9,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.domain.repositories.kernel.dictionary_repository import (
-        DictionaryRepository,
-    )
+    from src.domain.ports.dictionary_port import DictionaryPort
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +19,7 @@ class TripleValidator:
     Validates relations (triples) against the relation constraints in the dictionary.
     """
 
-    def __init__(self, dictionary_repository: DictionaryRepository) -> None:
+    def __init__(self, dictionary_repository: DictionaryPort) -> None:
         self.dictionary_repo = dictionary_repository
 
     def validate(
@@ -33,7 +31,7 @@ class TripleValidator:
         """
         Check if the triple (Source -> Relation -> Target) is allowed.
         """
-        allowed = self.dictionary_repo.is_triple_allowed(
+        allowed = self.dictionary_repo.is_relation_allowed(
             source_type=source_type,
             relation_type=relation_type,
             target_type=target_type,

@@ -99,15 +99,16 @@ class IngestionPipeline:
                     normalized = self.normalizer.normalize(observation)
 
                     # 4. Validate
-                    if self.validator.validate(normalized):
+                    validated = self.validator.validate(normalized)
+                    if validated is not None:
                         # 5. Persist
                         self.observation_service.record_observation_value(
                             research_space_id=research_space_id,
                             subject_id=resolved_entity.id,
-                            variable_id=normalized.variable_id,
-                            value=normalized.value,
-                            unit=normalized.unit,
-                            observed_at=normalized.observed_at,
+                            variable_id=validated.variable_id,
+                            value=validated.value,
+                            unit=validated.unit,
+                            observed_at=validated.observed_at,
                             provenance_id=provenance_id,
                         )
                         result.observations_created += 1

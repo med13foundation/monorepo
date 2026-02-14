@@ -1,6 +1,6 @@
 # Data Sources Architecture Guide
 
-Last updated: 2026-02-13
+Last updated: 2026-02-14
 
 This guide documents how the platform handles external data sources end-to-end
 — from discovery and fetch through content enrichment, knowledge extraction,
@@ -20,28 +20,29 @@ journey from raw upstream data to the kernel knowledge graph.
 
 1. [Current Source Types](#current-source-types)
 2. [End-to-End Architecture Overview](#end-to-end-architecture-overview)
-3. [Tier 1 — Source Ingestion Pipeline (Implemented)](#tier-1--source-ingestion-pipeline-implemented)
-4. [Tier 2 — Content Enrichment Pipeline (Planned)](#tier-2--content-enrichment-pipeline-planned)
-5. [Tier 3 — Knowledge Extraction Pipeline (Planned)](#tier-3--knowledge-extraction-pipeline-planned)
-6. [The Document Store (Planned)](#the-document-store-planned)
-7. [Kernel Ingestion Pipeline (Implemented)](#kernel-ingestion-pipeline-implemented)
-8. [Domain Contracts](#domain-contracts-type-safe-and-source-specific)
-9. [Ingestion Pipelines](#ingestion-pipelines)
-10. [Shared Orchestration](#shared-orchestration)
-11. [AI Test Flow](#ai-test-flow-is-shared-but-connector-execution-is-not)
-12. [Current Observability and Run History](#current-observability-and-run-history)
-13. [Run Tracking Persistence Boundaries](#run-tracking-persistence-boundaries)
-14. [Suggested Idempotent Run Algorithm](#suggested-idempotent-run-algorithm)
-15. [New Source Onboarding Checklist](#new-source-onboarding-checklist)
-16. [Version 2 Status](#version-2-status)
-17. [Post-V2 Hardening Status](#post-v2-hardening-status)
-18. [The Knowledge Graph (Implemented)](#the-knowledge-graph-implemented)
-19. [Graph Connection Generation — Flujo Agent (Planned)](#graph-connection-generation--flujo-agent-planned)
-20. [Graph Search — Flujo Agent (Planned)](#graph-search--flujo-agent-planned)
-21. [PHI Isolation & Security](#phi-isolation--security)
-22. [Multi-Tenancy — Research Spaces](#multi-tenancy--research-spaces)
-23. [Autonomous Dictionary Evolution Plan](#autonomous-dictionary-evolution-plan)
-24. [Principles to Keep](#principles-to-keep)
+3. [Intelligence Service Layers](#intelligence-service-layers)
+4. [Tier 1 — Source Ingestion Pipeline (Implemented)](#tier-1--source-ingestion-pipeline-implemented)
+5. [Tier 2 — Content Enrichment Pipeline (Planned)](#tier-2--content-enrichment-pipeline-planned)
+6. [Tier 3 — Knowledge Extraction Pipeline (Planned)](#tier-3--knowledge-extraction-pipeline-planned)
+7. [The Document Store (Planned)](#the-document-store-planned)
+8. [Kernel Ingestion Pipeline (Implemented)](#kernel-ingestion-pipeline-implemented)
+9. [Domain Contracts](#domain-contracts-type-safe-and-source-specific)
+10. [Ingestion Pipelines](#ingestion-pipelines)
+11. [Shared Orchestration](#shared-orchestration)
+12. [AI Test Flow](#ai-test-flow-is-shared-but-connector-execution-is-not)
+13. [Current Observability and Run History](#current-observability-and-run-history)
+14. [Run Tracking Persistence Boundaries](#run-tracking-persistence-boundaries)
+15. [Suggested Idempotent Run Algorithm](#suggested-idempotent-run-algorithm)
+16. [New Source Onboarding Checklist](#new-source-onboarding-checklist)
+17. [Version 2 Status](#version-2-status)
+18. [Post-V2 Hardening Status](#post-v2-hardening-status)
+19. [The Knowledge Graph (Implemented)](#the-knowledge-graph-implemented)
+20. [Graph Connection Generation — Flujo Agent (Planned)](#graph-connection-generation--flujo-agent-planned)
+21. [Graph Search — Flujo Agent (Planned)](#graph-search--flujo-agent-planned)
+22. [PHI Isolation & Security](#phi-isolation--security)
+23. [Multi-Tenancy — Research Spaces](#multi-tenancy--research-spaces)
+24. [Autonomous Dictionary Evolution Plan](#autonomous-dictionary-evolution-plan)
+25. [Principles to Keep](#principles-to-keep)
 
 ---
 
@@ -116,8 +117,16 @@ flowchart TB
     direction LR
     ERA[Entity Recognition Agent]
     EXA[Extraction Agent]
-    GOV[Governance Gate]
-    ERA --> EXA --> GOV
+    ERA --> EXA
+  end
+
+  subgraph ISL["Intelligence Service Layers (Shared Substrate)"]
+    direction LR
+    SL["Semantic Layer\n(Dictionary Management)"]
+    IL["Identity Layer\n(Entity Resolution)"]
+    TL["Truth Layer\n(Evidence Aggregation)"]
+    GL["Governance Layer\n(HITL · Audit · Routing)"]
+    IL2["Interface Layer\n(Intent Parsing)"]
   end
 
   subgraph KERNEL["Kernel Ingestion Pipeline (Implemented)"]
@@ -131,7 +140,7 @@ flowchart TB
 
   subgraph GRAPH_LAYER["Graph Layer (Planned · Flujo Agents)"]
     direction LR
-    GCA[Graph Connection Agent] -->|cross-document\nrelation discovery| GRAPH_GOV[Governance Gate]
+    GCA[Graph Connection Agent] -->|cross-document\nrelation discovery| GRAPH_RESULTS[Proposed Relations]
     GSA[Graph Search Agent] -->|natural language\nresearch queries| RESULTS[Structured Results\n+ Evidence]
   end
 
@@ -139,9 +148,22 @@ flowchart TB
   DOCSTORE -->|documents ready for enrichment| TIER2
   TIER2 -->|enriched documents| DOCSTORE
   DOCSTORE -->|enriched content| TIER3
-  TIER3 -->|structured RawRecords| KERNEL
+  TIER3 -->|structured RawRecords| GL
+  GL -->|approved RawRecords| KERNEL
   KERNEL -->|populated graph| GRAPH_LAYER
-  GRAPH_LAYER -->|new relations| KERNEL
+  GRAPH_LAYER -->|new relations| GL
+
+  %% Intelligence Layer consumption
+  ERA -.->|search · create| SL
+  ERA -.->|resolve mentions| IL
+  EXA -.->|validate constraints| SL
+  GCA -.->|search Dictionary| SL
+  GSA -.->|resolve terms| SL
+  GSA -.->|parse intent| IL2
+  KERNEL -.->|resolve entities| IL
+  KERNEL -.->|validate observations| SL
+  KERNEL -.->|aggregate evidence| TL
+  GL -.->|provenance| PROV
 ```
 
 ### Tier boundaries
@@ -152,9 +174,226 @@ flowchart TB
 | Document Store → Tier 2 | Document Store queue | Content Enrichment Agent | Documents with `enrichment_status = PENDING` |
 | Tier 2 → Document Store | Content Enrichment Agent | Document Store | Full-text content written to blob; `enrichment_status = ENRICHED` |
 | Document Store → Tier 3 | Document Store queue | Knowledge Extraction Pipeline | Enriched documents with `extraction_status = PENDING` |
-| Tier 3 → Kernel | Governance Gate output | `IngestionPipeline.run()` | Typed `RawRecord` objects ready for Map → Normalize → Resolve → Validate |
-| Kernel → Graph Layer | Persisted graph data | Graph Connection Agent / Graph Search Agent | Agents query `entities`, `observations`, `relations` via scoped tools |
-| Graph Layer → Kernel | Graph Connection Agent | `relations` table via Governance Gate | New `DRAFT` relations with `evidence_tier = COMPUTATIONAL` |
+| Tier 3 → Governance Layer | Extraction Agent output | `GovernanceService.evaluate()` | Agent contract outputs routed by confidence (auto-approve / review / block) |
+| Governance Layer → Kernel | Governance Layer approved output | `IngestionPipeline.run()` | Typed `RawRecord` objects ready for Map → Normalize → Resolve → Validate |
+| Kernel → Graph Layer | Persisted graph data | Graph Connection Agent / Graph Search Agent | Agents query `entities`, `observations`, `relations` via scoped tools; Dictionary access via Semantic Layer |
+| Graph Layer → Governance Layer | Graph Connection Agent output | `GovernanceService.evaluate()` | Proposed relations routed by confidence |
+| Governance Layer → Kernel | Governance Layer approved relations | `relations` table via canonical upsert | New `DRAFT` relations with `evidence_tier = COMPUTATIONAL` |
+
+---
+
+## Intelligence Service Layers
+
+The platform's intelligence is organized into **five centralized service
+layers** that sit alongside — not inside — the Tiers and Graph Agents.  Every
+agent, pipeline stage, and admin endpoint consumes these layers through clean
+**Ports** (interfaces defined in the domain layer, implementations in
+infrastructure).  No agent reimplements search, resolution, validation,
+governance, or provenance logic — it delegates to the appropriate layer.
+
+This separation is the key architectural decision that keeps agents **thin
+orchestrators** while the intelligence layers form a **reusable, auditable,
+evolvable substrate**.
+
+### Layer overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Intelligence Service Layers                          │
+│                                                                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │
+│  │  1. Semantic  │  │ 2. Identity  │  │   3. Truth   │                  │
+│  │    Layer      │  │    Layer     │  │    Layer     │                  │
+│  │  (Dictionary) │  │ (Resolution) │  │  (Evidence)  │                  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                  │
+│         │                 │                  │                           │
+│  ┌──────────────┐  ┌──────────────┐                                     │
+│  │ 4. Governance│  │ 5. Interface │                                     │
+│  │    Layer     │  │    Layer     │                                     │
+│  │ (HITL/Audit) │  │   (Intent)  │                                     │
+│  └──────┬───────┘  └──────┬───────┘                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+              ▲               ▲               ▲
+              │               │               │
+    ┌─────────┴───┐   ┌──────┴─────┐   ┌─────┴──────┐
+    │ Tier 3      │   │ Kernel     │   │ Graph      │
+    │ Agents      │   │ Pipeline   │   │ Agents     │
+    └─────────────┘   └────────────┘   └────────────┘
+```
+
+### 1. Semantic Layer — Dictionary Management
+
+**Application Service:** `DictionaryManagementService`
+**Port:** `DictionaryPort` (domain layer)
+
+The single source of truth for all Dictionary operations across the four
+dimensions: **variables**, **entity types**, **relation types**, and
+**constraints**.
+
+**Deterministic core (90% of calls):**
+
+- `search(terms, dimensions, filters)` — unified search: exact/synonym → fuzzy
+  (trigram) → vector (pgvector on description embeddings).  Returns ranked
+  results with full metadata, match method, and similarity score.
+- `search_by_domain(domain_context, limit)` — list definitions in a domain
+  across all dimension tables.
+- `create_variable(...)` / `create_entity_type(...)` / `create_relation_type(...)`
+  / `create_relation_constraint(...)` — validated creation with provenance,
+  embedding computation, and immediate usability.
+- `create_synonym(...)` — register synonyms for faster future exact-match.
+- `validate_observation(variable_id, value, unit)` — check against variable
+  constraints and preferred unit.
+- `validate_triple(source_type, relation_type, target_type)` — check against
+  `relation_constraints`.
+- `revoke(id, reason)` / `set_review_status(id, status, reviewed_by)` —
+  governance lifecycle.
+
+**Agent overlay (10% — reasoning-heavy operations):**
+
+- Suggest variables for a text passage (Entity Recognition Agent).
+- Propose merge of near-duplicate definitions.
+- Bootstrap Dictionary content for a brand-new domain (cold-start).
+- Decide whether a novel concept matches an existing entry or requires a new one.
+
+**Consumers:** Entity Recognition Agent, Extraction Agent, Graph Connection
+Agent, Graph Search Agent, Kernel Pipeline (Map + Validate stages), Admin UI.
+
+### 2. Identity Layer — Entity Resolution
+
+**Application Service:** `EntityResolutionService`
+**Port:** `EntityResolutionPort` (domain layer)
+
+Centralizes the logic for mapping raw mentions to kernel `entities` — the
+"who/what is this?" question.
+
+**Deterministic core:**
+
+- `resolve(anchor, entity_type, research_space_id)` — match subject anchors to
+  existing entities via `entity_resolution_policies`; create new entities when
+  allowed.  Currently implemented by `EntityResolver` in the Kernel Pipeline.
+- `merge(entity_id_a, entity_id_b, reason)` — merge two entities that are
+  determined to be the same (re-link observations, relations, provenance).
+- `split(entity_id, criteria)` — split an erroneously merged entity.
+
+**Agent overlay (ambiguous resolution):**
+
+- When the deterministic resolver produces a low-confidence match (e.g. fuzzy
+  name match across variant nomenclatures), an LLM Judge mapper decides.
+- The `HybridMapper` chain (`ExactMapper` → `VectorMapper` → `LLMJudgeMapper`)
+  is the agent overlay — it calls the Identity Layer's deterministic core first
+  and escalates to the LLM only for ambiguous cases.
+
+**Consumers:** Kernel Pipeline (Resolve stage), Entity Recognition Agent (when
+it creates entities), Graph Connection Agent (when it proposes relations between
+entities that may need resolution).
+
+### 3. Truth Layer — Evidence & Consensus Aggregation
+
+**Application Service:** `EvidenceAggregationService`
+**Port:** `EvidenceAggregationPort` (domain layer)
+
+Centralizes the logic for computing aggregate confidence, evidence tiering, and
+auto-promotion of relations from `DRAFT` to `APPROVED`.
+
+**Deterministic core (no agent overlay — pure computation):**
+
+- `aggregate_confidence(evidence_items)` — compute
+  `1 - ∏(1 - evidence_i.confidence)`.
+- `compute_highest_tier(evidence_items)` — determine
+  `EXPERT_CURATED > CLINICAL > EXPERIMENTAL > LITERATURE > COMPUTATIONAL`.
+- `should_auto_promote(relation)` — evaluate configurable thresholds
+  (e.g. `source_count >= 3` AND `aggregate_confidence >= 0.95`).
+- `upsert_relation_evidence(relation_id, evidence)` — add evidence, recompute
+  aggregate, and trigger auto-promotion if thresholds are met.
+
+**Consumers:** Kernel Pipeline (Persist stage — relation upserts), Graph
+Connection Agent (when proposing new relations), Admin UI (displaying evidence
+strength).
+
+### 4. Governance Layer — HITL, Audit & Routing
+
+**Application Service:** `GovernanceService`
+**Port:** `GovernancePort` (domain layer)
+
+Centralizes confidence-based routing, review queue management, PHI scrubbing,
+cost limits, and provenance recording.  Extends the existing `GovernanceConfig`
+(already in `src/infrastructure/llm/config/governance.py`) into a full
+Application Service with endpoints.
+
+**Deterministic core:**
+
+- `evaluate(contract: BaseAgentContract) -> GovernanceDecision` — apply
+  confidence thresholds:
+  - `≥ 0.90` → auto-approve → forward to downstream.
+  - `0.70 – 0.89` → forward + queue for post-hoc review.
+  - `< 0.70` → block → human escalation.
+  - Agent-created Dictionary entries → forward immediately + log to audit view.
+- `record_provenance(source_type, source_ref, extraction_run_id, ...)` —
+  unified provenance recording for every decision.
+- `queue_for_review(item, reason)` — add to the centralized review queue.
+- `get_review_queue(filters)` — single queue for curators covering all agent
+  outputs (Dictionary creations, extractions, graph connections).
+- `is_tool_allowed(tool_id)` / `check_cost_limits(usage)` — existing governance
+  checks.
+
+**Agent overlay:** None initially — governance is deterministic.  A future
+"Governance Advisor" agent could suggest threshold adjustments based on
+historical accuracy.
+
+**Consumers:** Tier 3 (output routing), Graph Connection Agent (output routing),
+Graph Search Agent (evidence attribution), Admin UI (review queue, audit trail),
+all agents (cost limit checks).
+
+### 5. Interface Layer — Intent Parsing
+
+**Application Service:** `ResearchQueryService`
+**Port:** `ResearchQueryPort` (domain layer)
+
+Centralizes the translation of natural-language research questions into
+structured query plans that span the graph and Dictionary.
+
+**Agent-powered (this layer is primarily reasoning):**
+
+- `parse_intent(question, research_space_id)` — decompose a natural-language
+  question into target entity types, filter variables, traversal depth, and
+  aggregation needs.
+- `resolve_terms(terms, domain_context)` — map vague terms ("cardiac
+  phenotypes", "batting stats") to specific Dictionary variables via the
+  Semantic Layer.
+- `build_query_plan(intent)` — translate parsed intent into graph query
+  operations.
+- `execute_and_synthesize(plan)` — run queries and produce ranked results with
+  evidence.
+
+**Consumers:** Graph Search Agent (primary consumer), Admin UI (research query
+interface), future programmatic APIs.
+
+### Architectural principles for the layers
+
+1. **Logical centralization first, physical later.** Each layer is an
+   Application Service in the same repository.  No microservice overhead.
+   Services communicate in-process via Ports.  If a layer needs to become a
+   separate service later, the Port boundary makes that straightforward.
+
+2. **Deterministic core + optional Agent overlay.** Most operations (search,
+   validate, aggregate, route) are deterministic.  LLM agents are used only
+   for the minority of calls that require reasoning (ambiguous resolution,
+   term suggestion, cold-start bootstrapping).  This keeps costs low and
+   latency predictable.
+
+3. **Agents are thin orchestrators.** A Tier 3 agent reads a document, calls
+   the Semantic Layer to search/create, calls the Identity Layer to resolve
+   entities, and emits a contract.  The Governance Layer routes the output.
+   The agent does not reimplement any of these — it composes layer calls.
+
+4. **One audit surface.** All provenance, review queues, and cost tracking
+   flow through the Governance Layer.  Curators see a single review queue
+   regardless of which agent or pipeline produced the item.
+
+5. **Cache-friendly.** The Semantic Layer caches embedding lookups and
+   exact-match results.  The Identity Layer caches resolved entities within a
+   pipeline run.  This prevents the centralized layers from becoming
+   performance bottlenecks.
 
 ---
 
@@ -308,11 +547,11 @@ flowchart TB
     subgraph ERA["1. Entity Recognition Agent"]
       direction TB
       ERA_READ[Read document sections] --> ERA_TERMS[Propose search terms per mention]
-      ERA_TERMS --> ERA_SEARCH["Unified Dictionary search: exact + synonym + vector on descriptions"]
+      ERA_TERMS --> ERA_SEARCH["Semantic Layer: unified Dictionary search"]
       ERA_SEARCH --> ERA_EVAL["Read ALL results — descriptions, similarity scores, metadata"]
       ERA_EVAL --> ERA_MATCH{Adequate match?}
       ERA_MATCH -->|Yes| ERA_MAP[Map to existing variable + register synonym]
-      ERA_MATCH -->|No| ERA_CREATE[Create new Dictionary entry + synonym]
+      ERA_MATCH -->|No| ERA_CREATE["Semantic Layer: create new Dictionary entry"]
       ERA_CREATE --> ERA_AUDIT[Log creation with rationale + evidence]
     end
 
@@ -322,13 +561,13 @@ flowchart TB
       direction TB
       EXA_OBS[Extract observations — typed values mapped to variables]
       EXA_REL[Extract relations — entity → relation_type → entity]
-      EXA_OBS --> EXA_VAL[Validate against variable constraints]
-      EXA_REL --> EXA_TRIPLE[Validate triple against relation_constraints]
+      EXA_OBS --> EXA_VAL["Semantic Layer: validate against constraints"]
+      EXA_REL --> EXA_TRIPLE["Semantic Layer: validate triple"]
     end
 
     EXA --> GOV
 
-    subgraph GOV["3. Governance Gate"]
+    subgraph GOV["3. Governance Layer (GovernanceService)"]
       direction TB
       GOV_HIGH["confidence ≥ 0.90 → auto-approve"]
       GOV_MED["0.70 ≤ confidence < 0.90 → queue for review"]
@@ -421,7 +660,7 @@ agent sees exact matches **and** semantically similar descriptions side by
 side — with full prose and similarity scores — it can make strongly informed
 decisions and avoid creating duplicates.
 
-**Tools available:**
+**Tools available (provided by Intelligence Service Layers):**
 
 The Entity Recognition Agent can search and extend **all four Dictionary
 dimensions** — variables, entity types, relation types, and constraints.
@@ -429,42 +668,52 @@ This makes the Dictionary a **universal schema engine**: the agent fills in
 domain-specific content on the fly for any domain (genomics, clinical,
 sports, CS benchmarking) without code changes.
 
+All tools below delegate to the **Semantic Layer** (`DictionaryManagementService`)
+and the **Identity Layer** (`EntityResolutionService`).  The agent does not
+reimplement search, validation, or creation logic — it composes calls to these
+centralized services.
+
 - `dictionary_search(terms: list[str], dimensions: list[str] | None)` —
-  **unified search** across **all Dictionary dimensions**: `variable_definitions`,
-  `variable_synonyms`, `dictionary_entity_types`, `dictionary_relation_types`,
-  and `relation_constraints`.  Uses three strategies in one call: exact/synonym
-  match, fuzzy text match, and **pgvector cosine similarity on description
-  embeddings**.  Returns matching entries with their **full metadata,
-  descriptions, match method, and similarity score** so the agent can
-  evaluate semantic fit.  Results are ranked by match quality
-  (exact > synonym > fuzzy > vector).  The optional `dimensions` parameter
-  filters to specific tables (e.g. `["variables"]`, `["relation_types"]`);
-  when omitted, all dimensions are searched.
-- `dictionary_search_by_domain(domain_context: str, limit: int)` — list
-  existing definitions in a domain across all Dictionary tables.  Used by
-  the agent to learn naming conventions, existing entity types, relation
-  types, and constraint patterns before creating new entries.
-- `create_variable(...)` — **create a new variable definition** in the
-  Dictionary.  The agent must populate every required field following the
-  standardised creation schema (see below).  The entry becomes immediately
-  usable as a mapping target.
-- `create_synonym(variable_id, synonym, source)` — register a new synonym
-  for an existing or just-created variable.
+  **Semantic Layer** · unified search across **all Dictionary dimensions**:
+  `variable_definitions`, `variable_synonyms`, `dictionary_entity_types`,
+  `dictionary_relation_types`, and `relation_constraints`.  Uses three
+  strategies in one call: exact/synonym match, fuzzy text match, and
+  **pgvector cosine similarity on description embeddings**.  Returns matching
+  entries with their **full metadata, descriptions, match method, and
+  similarity score** so the agent can evaluate semantic fit.  Results are
+  ranked by match quality (exact > synonym > fuzzy > vector).  The optional
+  `dimensions` parameter filters to specific tables
+  (e.g. `["variables"]`, `["relation_types"]`); when omitted, all dimensions
+  are searched.
+- `dictionary_search_by_domain(domain_context: str, limit: int)` —
+  **Semantic Layer** · list existing definitions in a domain across all
+  Dictionary tables.  Used by the agent to learn naming conventions, existing
+  entity types, relation types, and constraint patterns before creating new
+  entries.
+- `create_variable(...)` — **Semantic Layer** · create a new variable
+  definition in the Dictionary.  The agent must populate every required field
+  following the standardised creation schema (see below).  The Semantic Layer
+  validates the entry, computes its embedding, records provenance, and makes
+  it immediately usable as a mapping target.
+- `create_synonym(variable_id, synonym, source)` — **Semantic Layer** ·
+  register a new synonym for an existing or just-created variable.
 - `create_entity_type(entity_type, description, resolution_policy,
-  required_anchors, domain_context)` — register a new entity type with its
-  resolution policy.  The agent must provide a clear `description` of what
-  the entity type represents and the `domain_context` it belongs to.
+  required_anchors, domain_context)` — **Semantic Layer** · register a new
+  entity type with its resolution policy.  The agent must provide a clear
+  `description` of what the entity type represents and the `domain_context`
+  it belongs to.
 - `create_relation_type(relation_type, description, is_directional,
-  domain_context)` — **create a new relation type** in
+  domain_context)` — **Semantic Layer** · create a new relation type in
   `dictionary_relation_types`.  The agent must provide the semantics of the
   relationship, whether it is directional (A→B differs from B→A), and its
   domain context.  The entry becomes immediately usable in constraints and
   extractions.
 - `create_relation_constraint(source_type, relation_type, target_type,
-  requires_evidence)` — **register a new allowed triple pattern** in
-  `relation_constraints`.  The agent creates this after ensuring the source
-  entity type, relation type, and target entity type already exist (or were
-  just created).  The constraint becomes immediately active for validation.
+  requires_evidence)` — **Semantic Layer** · register a new allowed triple
+  pattern in `relation_constraints`.  The agent creates this after ensuring
+  the source entity type, relation type, and target entity type already exist
+  (or were just created).  The constraint becomes immediately active for
+  validation.
 
 **Standardised Dictionary Creation Schema**
 
@@ -546,14 +795,14 @@ to correct the agent's decisions after the fact.
 **Flujo primitive:** `GranularStep` — multi-turn extraction with tool calls
 to validate each extracted fact before emitting it.
 
-**Tools available:**
+**Tools available (provided by Intelligence Service Layers):**
 
-- `validate_observation(variable_id, value, unit)` — check against variable
-  constraints and preferred unit.
-- `validate_triple(source_type, relation_type, target_type)` — check against
-  `relation_constraints` in the Dictionary.
-- `lookup_transform(input_unit, output_unit)` — find a registered transform
-  in `transform_registry` for unit conversion.
+- `validate_observation(variable_id, value, unit)` — **Semantic Layer** ·
+  check against variable constraints and preferred unit.
+- `validate_triple(source_type, relation_type, target_type)` — **Semantic
+  Layer** · check against `relation_constraints` in the Dictionary.
+- `lookup_transform(input_unit, output_unit)` — **Semantic Layer** · find a
+  registered transform in `transform_registry` for unit conversion.
 
 **Contract:**
 
@@ -585,13 +834,15 @@ new canonical edge is created with its first evidence item.  This means the
 same relation found across multiple documents strengthens the signal
 automatically — no duplicate edges, just accumulated evidence.
 
-#### 3. Governance Gate
+#### 3. Governance Gate (provided by the Governance Layer)
 
-**Purpose:** Apply confidence-based routing to all extraction outputs before
-they reach the kernel pipeline.
+**Purpose:** Apply confidence-based routing to all agent outputs before they
+reach the kernel pipeline.
 
-This is not an LLM agent but a **deterministic policy layer** that inspects
-the `confidence_score` on each contract output:
+This is **not** an LLM agent — it is the **Governance Layer**
+(`GovernanceService`), a deterministic policy service shared by all agents
+and pipeline stages across the platform.  The Tier 3 extraction pipeline
+calls `GovernanceService.evaluate(contract)` on each agent output:
 
 | Confidence | Action |
 |---|---|
@@ -607,9 +858,16 @@ extractions (below 0.70) are held for escalation, because at that level the
 agent is effectively guessing and the cost of a wrong entry outweighs
 throughput.
 
+**Centralized review queue:** The Governance Layer manages a **single review
+queue** that curators use to see everything needing attention — whether it came
+from Tier 3 extraction, Graph Connection Agent proposals, or Dictionary
+creation.  This replaces the pattern of separate per-agent review views with
+one unified curation surface.
+
 **Provenance:** Every governance decision (auto-approve, forward-for-review,
-block) is recorded in the `provenance` table with the agent's
-`confidence_score`, `rationale`, and `evidence` for full auditability.
+block) is recorded via `GovernanceService.record_provenance(...)` in the
+`provenance` table with the agent's `confidence_score`, `rationale`, and
+`evidence` for full auditability.
 
 ### Integration with existing extraction infrastructure
 
@@ -710,19 +968,25 @@ The kernel ingestion pipeline is the **terminal stage** that all tiers
 ultimately feed into.  It is fully implemented and takes typed `RawRecord`
 objects through a strict four-step process.
 
+Each pipeline stage delegates to the appropriate **Intelligence Service Layer**
+for search, resolution, validation, evidence aggregation, and provenance —
+ensuring consistent behavior regardless of whether the `RawRecord` came from
+Tier 1 (direct ingestion), Tier 3 (agent extraction), or the Graph Connection
+Agent.
+
 ### Pipeline stages
 
 ```
 RawRecord → Map → Normalize → Resolve → Validate → Persist
 ```
 
-| Stage | Component | Location | What it does |
+| Stage | Component | Intelligence Layer | What it does |
 |---|---|---|---|
-| **Map** | `HybridMapper` → `ExactMapper` (+ future Vector/LLM mappers) | `src/infrastructure/ingestion/mapping/` | Match record fields to `variable_definitions` via synonym lookup |
-| **Normalize** | `CompositeNormalizer` → `UnitConverter` + `ValueCaster` | `src/infrastructure/ingestion/normalization/` | Convert units via `transform_registry`; cast values to target `data_type` |
-| **Resolve** | `EntityResolver` | `src/infrastructure/ingestion/resolution/` | Match subject anchors to existing entities via `entity_resolution_policies`; create new entities when allowed |
-| **Validate** | `ObservationValidator` + `TripleValidator` | `src/infrastructure/ingestion/validation/` | Check values against variable `constraints`; check triples against `relation_constraints` |
-| **Persist** | `KernelObservationService` + `ProvenanceTracker` | `src/application/services/kernel/` + `src/infrastructure/ingestion/provenance/` | Write `observations`, `entities`, `relations` to Postgres with full provenance |
+| **Map** | `HybridMapper` → `ExactMapper` (+ future Vector/LLM mappers) | **Semantic Layer** (`DictionaryManagementService.search`) | Match record fields to `variable_definitions` via synonym lookup; future mappers use vector/LLM search from the same layer |
+| **Normalize** | `CompositeNormalizer` → `UnitConverter` + `ValueCaster` | **Semantic Layer** (`DictionaryManagementService.lookup_transform`) | Convert units via `transform_registry`; cast values to target `data_type` |
+| **Resolve** | `EntityResolver` | **Identity Layer** (`EntityResolutionService.resolve`) | Match subject anchors to existing entities via `entity_resolution_policies`; create new entities when allowed |
+| **Validate** | `ObservationValidator` + `TripleValidator` | **Semantic Layer** (`DictionaryManagementService.validate_observation` / `.validate_triple`) | Check values against variable `constraints`; check triples against `relation_constraints` |
+| **Persist** | `KernelObservationService` + `ProvenanceTracker` | **Truth Layer** (`EvidenceAggregationService.upsert_relation_evidence`) + **Governance Layer** (`GovernanceService.record_provenance`) | Write `observations`, `entities`, `relations` to Postgres; aggregate evidence on relation upserts; record full provenance |
 
 ### Interfaces (Protocol classes)
 
@@ -750,9 +1014,15 @@ infrastructure) so domain/application layers can depend on them:
 `HybridMapper` chains multiple `Mapper` implementations in sequence.  Currently
 only `ExactMapper` (synonym lookup) is wired.  The architecture is designed for:
 
-1. `ExactMapper` — deterministic synonym match (implemented)
-2. `VectorMapper` — pgvector similarity search (planned, part of Tier 3)
-3. `LLMJudgeMapper` — Flujo agent for ambiguous cases (planned, part of Tier 3)
+1. `ExactMapper` — deterministic synonym match via **Semantic Layer** (implemented)
+2. `VectorMapper` — pgvector similarity search via **Semantic Layer** (planned, part of Tier 3)
+3. `LLMJudgeMapper` — Flujo agent for ambiguous cases via **Identity Layer** agent overlay (planned, part of Tier 3)
+
+All three mappers delegate to the same centralized Semantic Layer for search —
+they differ only in which search strategy they use (exact, vector, LLM).  This
+is a textbook example of the "deterministic core + agent overlay" pattern: the
+first two mappers are fast and cheap; the LLM mapper is invoked only for the
+small fraction of mentions that the deterministic strategies cannot resolve.
 
 When Tier 3 agents are implemented, they will **produce `RawRecord` objects**
 that flow through this same pipeline.  The agents handle the reasoning;
@@ -1396,13 +1666,13 @@ flowchart TB
   subgraph GCA["Graph Connection Agent (Flujo GranularStep)"]
     direction TB
     SEED[Select seed entity or entity pair] --> QUERY["Graph neighbourhood query\n(entities, relations, observations)"]
-    QUERY --> SEARCH["Unified Dictionary search\nfor related variables and entity types"]
+    QUERY --> SEARCH["Semantic Layer:\nUnified Dictionary search\nfor related variables and entity types"]
     SEARCH --> PATTERNS["Pattern detection:\n- co-occurrence across sources\n- shared categories/pathways\n- transitive chains\n- observation correlation"]
     PATTERNS --> EVALUATE["Evaluate evidence strength:\n- # supporting documents\n- confidence aggregation\n- evidence tier diversity"]
     EVALUATE --> DECIDE{Sufficient evidence?}
-    DECIDE -->|Yes| PROPOSE["Create relation with\nconfidence + evidence_summary\n+ evidence_tier = COMPUTATIONAL"]
+    DECIDE -->|Yes| PROPOSE["Truth Layer:\nupsert relation with\nconfidence + evidence"]
     DECIDE -->|No| SKIP[Skip — insufficient evidence]
-    PROPOSE --> GOV_GATE["Governance Gate:\nconfidence-based routing"]
+    PROPOSE --> GOV_GATE["Governance Layer:\nconfidence-based routing"]
   end
 ```
 
@@ -1415,11 +1685,13 @@ Graph connection generation follows the same pattern as knowledge extraction:
 - **Evidence-first contracts** — every proposed connection must carry
   `confidence_score`, `rationale`, and `evidence` (the list of supporting
   observations, relations, and provenance chains).
-- **Unified Dictionary search** — the agent uses the same `dictionary_search`
-  tool (exact + synonym + fuzzy + vector) to understand variable semantics
-  and avoid creating redundant or contradictory relations.
-- **Governance gate** — the same confidence-based routing applies: >= 0.90
-  auto-approve, 0.70–0.89 forward + review, < 0.70 block.
+- **Semantic Layer** — the agent uses the same `dictionary_search` tool from
+  the centralized Semantic Layer (exact + synonym + fuzzy + vector) to
+  understand variable semantics and avoid creating redundant or contradictory
+  relations.
+- **Governance Layer** — the same confidence-based routing applies via
+  `GovernanceService.evaluate()`: >= 0.90 auto-approve, 0.70–0.89 forward +
+  review, < 0.70 block.
 
 #### Flujo primitives
 
@@ -1455,34 +1727,40 @@ class ProposedRelation(BaseModel):
     reasoning: str  # why this connection exists
 ```
 
-#### Tools available
+#### Tools available (provided by Intelligence Service Layers)
 
-The Graph Connection Agent has access to the same **unified Dictionary search**
-tool as the Entity Recognition Agent, plus graph-specific query tools:
+The Graph Connection Agent consumes the same centralized **Semantic Layer** as
+all other agents, plus graph-specific query tools and the **Truth Layer** for
+evidence upserts:
 
-- `dictionary_search(terms, dimensions)` — unified search (exact + synonym +
-  fuzzy + vector) across **all Dictionary dimensions** (variables, entity types,
-  relation types, constraints).  Used to understand semantics when reasoning
-  about connections.
-- `dictionary_search_by_domain(domain_context, limit)` — list definitions in a
-  domain to find related variables, entity types, and relation types.
-- `graph_query_neighbourhood(entity_id, depth, relation_types)` — return all
-  entities and relations within N hops of a seed entity, within the same
-  research space.  Includes `source_count` and `aggregate_confidence` on
-  each relation edge.
-- `graph_query_shared_subjects(entity_id_a, entity_id_b)` — find entities that
-  have observations linking to both A and B (co-occurrence).
-- `graph_query_observations(entity_id, variable_ids)` — return observations
-  for an entity, filtered by variable types.
-- `graph_query_relation_evidence(relation_id)` — return all evidence items
-  for a canonical relation, with provenance chains and evidence tiers.
+- `dictionary_search(terms, dimensions)` — **Semantic Layer** · unified search
+  (exact + synonym + fuzzy + vector) across **all Dictionary dimensions**
+  (variables, entity types, relation types, constraints).  Used to understand
+  semantics when reasoning about connections.
+- `dictionary_search_by_domain(domain_context, limit)` — **Semantic Layer** ·
+  list definitions in a domain to find related variables, entity types, and
+  relation types.
+- `graph_query_neighbourhood(entity_id, depth, relation_types)` — **Graph
+  Query Port** · return all entities and relations within N hops of a seed
+  entity, within the same research space.  Includes `source_count` and
+  `aggregate_confidence` on each relation edge.
+- `graph_query_shared_subjects(entity_id_a, entity_id_b)` — **Graph Query
+  Port** · find entities that have observations linking to both A and B
+  (co-occurrence).
+- `graph_query_observations(entity_id, variable_ids)` — **Graph Query Port** ·
+  return observations for an entity, filtered by variable types.
+- `graph_query_relation_evidence(relation_id)` — **Graph Query Port** · return
+  all evidence items for a canonical relation, with provenance chains and
+  evidence tiers.
 - `upsert_relation(source_id, relation_type, target_id, confidence,
-  evidence_summary, evidence_tier, provenance_ids)` — **canonical upsert**:
-  if the edge already exists, add a `relation_evidence` row and recompute
-  `aggregate_confidence` and `source_count`.  If new, create the canonical
-  edge with `curation_status = DRAFT` and `evidence_tier = COMPUTATIONAL`.
-- `validate_triple(source_type, relation_type, target_type)` — check against
-  `relation_constraints` before creating.
+  evidence_summary, evidence_tier, provenance_ids)` — **Truth Layer**
+  (`EvidenceAggregationService.upsert_relation_evidence`) · **canonical
+  upsert**: if the edge already exists, add a `relation_evidence` row and
+  recompute `aggregate_confidence` and `source_count`.  If new, create the
+  canonical edge with `curation_status = DRAFT` and
+  `evidence_tier = COMPUTATIONAL`.
+- `validate_triple(source_type, relation_type, target_type)` — **Semantic
+  Layer** · check against `relation_constraints` before creating.
 
 #### Execution triggers
 
@@ -1495,16 +1773,19 @@ The Graph Connection Agent runs:
 3. **Scheduled** — periodic sweeps over entities with high observation counts
    but low relation counts (under-connected nodes).
 
-#### Governance and curation
+#### Governance and curation (via the Governance Layer)
 
-All agent-proposed relations follow the **canonical upsert** pattern:
+All agent-proposed relations follow the **canonical upsert** pattern and are
+routed through the **same Governance Layer** (`GovernanceService`) as Tier 3
+extractions:
 
 - If the edge already exists (from a previous extraction or agent run), the
   Graph Connection Agent's evidence is added as a new `relation_evidence` row
-  with `evidence_tier = COMPUTATIONAL`.  The `aggregate_confidence` and
-  `source_count` are recomputed — strengthening the signal.
+  with `evidence_tier = COMPUTATIONAL`.  The **Truth Layer** recomputes
+  `aggregate_confidence` and `source_count` — strengthening the signal.
 - If the edge is new, it is created with `curation_status = DRAFT`.
-- All edges pass through the **same Governance Gate** as Tier 3 extractions.
+- All edges pass through `GovernanceService.evaluate()` — the same
+  confidence-based routing as Tier 3 extractions.
 - Edges that accumulate enough evidence (configurable: e.g. `source_count >= 3`
   AND `aggregate_confidence >= 0.95`) are **auto-promoted** to `APPROVED`.
 - All edges are visible in a dedicated "Agent-Proposed Connections" view in the
@@ -1546,10 +1827,10 @@ and confidence.
 flowchart TB
   subgraph GSA["Graph Search Agent (Flujo GranularStep)"]
     direction TB
-    NLQ[Natural language research question] --> PARSE["Parse intent:\n- target entity types\n- filter variables\n- traversal depth\n- aggregation needs"]
-    PARSE --> DICT_SEARCH["Unified Dictionary search\nfor mentioned variables and entities"]
-    DICT_SEARCH --> PLAN["Build query plan:\n- entity filters\n- observation constraints\n- relation traversals\n- result ranking"]
-    PLAN --> EXECUTE["Execute graph queries\nagainst kernel tables"]
+    NLQ[Natural language research question] --> PARSE["Interface Layer:\nparse intent\n- target entity types\n- filter variables\n- traversal depth"]
+    PARSE --> DICT_SEARCH["Semantic Layer:\nUnified Dictionary search\nfor mentioned variables and entities"]
+    DICT_SEARCH --> PLAN["Interface Layer:\nbuild query plan\n- entity filters\n- observation constraints\n- relation traversals"]
+    PLAN --> EXECUTE["Graph Query Port:\nexecute graph queries\nagainst kernel tables"]
     EXECUTE --> SYNTHESIZE["Synthesise results:\n- rank by relevance\n- aggregate evidence\n- summarise findings"]
     SYNTHESIZE --> RESPOND["Return structured results\nwith evidence + confidence"]
   end
@@ -1558,10 +1839,11 @@ flowchart TB
 #### Why a Flujo agent (same strategy)
 
 - **Natural language understanding** — mapping researcher questions to graph
-  traversals is a reasoning task, not a keyword match.
-- **Unified Dictionary search** — the agent uses `dictionary_search` to resolve
-  vague terms ("cardiac phenotypes", "batting stats", "accuracy metrics") to
-  specific Dictionary variables
+  traversals is a reasoning task, not a keyword match.  The **Interface Layer**
+  (`ResearchQueryService`) centralizes intent parsing and query plan construction.
+- **Semantic Layer** — the agent uses `dictionary_search` from the centralized
+  Semantic Layer to resolve vague terms ("cardiac phenotypes", "batting stats",
+  "accuracy metrics") to specific Dictionary variables
   (`VAR_CARDIOMYOPATHY`, `VAR_EJECTION_FRACTION`, `VAR_LV_NONCOMPACTION`, etc.)
   before querying the graph.
 - **Evidence-first contracts** — every search result carries provenance chains
@@ -1601,23 +1883,33 @@ class GraphSearchResult(BaseModel):
     explanation: str  # why this result matches the query
 ```
 
-#### Tools available
+#### Tools available (provided by Intelligence Service Layers)
 
-- `dictionary_search(terms)` — unified search (exact + synonym + fuzzy + vector).
-  Resolves natural language terms to Dictionary variables and entity types.
-- `dictionary_search_by_domain(domain_context, limit)` — list definitions in a
-  domain for contextual understanding.
-- `graph_query_entities(entity_type, research_space_id, filters)` — query
-  entities with optional metadata filters.
-- `graph_query_observations(entity_id, variable_ids, date_range)` — query
-  observations for an entity.
+The Graph Search Agent consumes the **Semantic Layer** for term resolution, the
+**Interface Layer** for intent parsing, and **Graph Query Ports** for structured
+graph access:
+
+- `dictionary_search(terms)` — **Semantic Layer** · unified search (exact +
+  synonym + fuzzy + vector).  Resolves natural language terms to Dictionary
+  variables and entity types.
+- `dictionary_search_by_domain(domain_context, limit)` — **Semantic Layer** ·
+  list definitions in a domain for contextual understanding.
+- `graph_query_entities(entity_type, research_space_id, filters)` — **Graph
+  Query Port** · query entities with optional metadata filters.
+- `graph_query_observations(entity_id, variable_ids, date_range)` — **Graph
+  Query Port** · query observations for an entity.
 - `graph_query_relations(entity_id, relation_types, direction, depth)` —
-  traverse the graph from an entity.
+  **Graph Query Port** · traverse the graph from an entity.
 - `graph_query_by_observation(variable_id, operator, value, research_space_id)` —
-  find entities with observations matching a condition (e.g. "ejection fraction
-  < 35").
-- `graph_aggregate(variable_id, entity_type, aggregation)` — compute
-  aggregates (count, mean, distribution) across observations.
+  **Graph Query Port** · find entities with observations matching a condition
+  (e.g. "ejection fraction < 35").
+- `graph_aggregate(variable_id, entity_type, aggregation)` — **Graph Query
+  Port** · compute aggregates (count, mean, distribution) across observations.
+
+The Graph Search Agent is the primary consumer of the **Interface Layer**
+(`ResearchQueryService`), which handles intent parsing and query plan
+construction.  The agent orchestrates calls to the Interface Layer for planning
+and the Graph Query Port for execution, then synthesizes results.
 
 #### Integration with the admin UI
 
@@ -1764,6 +2056,14 @@ domains) but the graph data (entities, observations, relations) is
 ---
 
 ## Autonomous Dictionary Evolution Plan
+
+> **Relationship to Intelligence Service Layers:** This plan is the
+> **implementation roadmap for the Semantic Layer**
+> (`DictionaryManagementService`).  Each phase adds capabilities that the
+> Semantic Layer exposes to all consumers — agents, the Kernel Pipeline, and the
+> Admin UI — through a single `DictionaryPort` interface.  Completing these
+> phases turns the Dictionary from a passive lookup list into the centralized,
+> governed, searchable substrate that every other Intelligence Layer depends on.
 
 The Dictionary is the semantic backbone of the entire platform.  Every
 observation, entity, and relation in the graph must map to a Dictionary
@@ -2241,21 +2541,30 @@ but should be in place before deploying to additional domains.
 
 ---
 
-### Impact on Entity Recognition Agent tools
+### Impact on Intelligence Service Layer tools
 
-After these phases, the agent's tools evolve to cover **all four Dictionary
-dimensions** — making the Dictionary a universal, domain-agnostic schema engine:
+After these phases, the **Semantic Layer** (`DictionaryManagementService`)
+evolves to cover **all four Dictionary dimensions** — making the Dictionary a
+universal, domain-agnostic schema engine.  All tools listed below are provided
+by the Semantic Layer; agents and the Kernel Pipeline consume them through the
+`DictionaryPort` interface.
 
-| Tool | Current | After Dictionary Evolution |
-|---|---|---|
-| `dictionary_search(terms, dimensions)` | Not implemented | Universal search across **all dimensions** (variables, entity types, relation types, constraints).  Exact + synonym + fuzzy (trigram) + vector (pgvector on descriptions).  Returns `dimension`, `match_method`, `similarity_score`, full descriptions. |
-| `dictionary_search_by_domain(domain)` | Not implemented | Reads from `dictionary_domain_contexts` + filters all dimension tables by domain.  Agent learns naming conventions for variables, entity types, and relation types in the target domain. |
-| `create_variable(...)` | `DictionaryRepository.create_variable` (basic) | Validates `data_type` against `dictionary_data_types`, `domain_context` against `dictionary_domain_contexts`, `sensitivity` against `dictionary_sensitivity_levels`, `constraints` against type-specific Pydantic schema.  Sets `created_by='agent:{run_id}'`, computes embedding, returns full entry. |
-| `create_synonym(...)` | Exists (basic insert) | Sets `source='ai_mapped'`, `created_by='agent:{run_id}'`. |
-| `create_entity_type(...)` | Not implemented | Inserts into `dictionary_entity_types` with `domain_context`, `description`, provenance, and embedding.  Creates matching `entity_resolution_policies` row. |
-| `create_relation_type(...)` | Does not exist | Inserts into `dictionary_relation_types` with `domain_context`, `description`, `is_directional`, `inverse_label`, provenance, and embedding.  Immediately usable in constraints and extractions. |
-| `create_relation_constraint(...)` | Does not exist | Inserts into `relation_constraints` with provenance.  Validates that `source_type`, `relation_type`, and `target_type` all exist in their respective type tables.  The constraint becomes immediately active. |
-| `create_value_set_item(...)` | Does not exist | For extensible value sets, adds a new coded item with provenance. |
+| Tool | Provided by | Current | After Dictionary Evolution |
+|---|---|---|---|
+| `dictionary_search(terms, dimensions)` | **Semantic Layer** | Not implemented | Universal search across **all dimensions** (variables, entity types, relation types, constraints).  Exact + synonym + fuzzy (trigram) + vector (pgvector on descriptions).  Returns `dimension`, `match_method`, `similarity_score`, full descriptions. |
+| `dictionary_search_by_domain(domain)` | **Semantic Layer** | Not implemented | Reads from `dictionary_domain_contexts` + filters all dimension tables by domain.  Agent learns naming conventions for variables, entity types, and relation types in the target domain. |
+| `create_variable(...)` | **Semantic Layer** | `DictionaryRepository.create_variable` (basic) | Validates `data_type` against `dictionary_data_types`, `domain_context` against `dictionary_domain_contexts`, `sensitivity` against `dictionary_sensitivity_levels`, `constraints` against type-specific Pydantic schema.  Sets `created_by='agent:{run_id}'`, computes embedding, returns full entry. |
+| `create_synonym(...)` | **Semantic Layer** | Exists (basic insert) | Sets `source='ai_mapped'`, `created_by='agent:{run_id}'`. |
+| `create_entity_type(...)` | **Semantic Layer** | Not implemented | Inserts into `dictionary_entity_types` with `domain_context`, `description`, provenance, and embedding.  Creates matching `entity_resolution_policies` row. |
+| `create_relation_type(...)` | **Semantic Layer** | Does not exist | Inserts into `dictionary_relation_types` with `domain_context`, `description`, `is_directional`, `inverse_label`, provenance, and embedding.  Immediately usable in constraints and extractions. |
+| `create_relation_constraint(...)` | **Semantic Layer** | Does not exist | Inserts into `relation_constraints` with provenance.  Validates that `source_type`, `relation_type`, and `target_type` all exist in their respective type tables.  The constraint becomes immediately active. |
+| `create_value_set_item(...)` | **Semantic Layer** | Does not exist | For extensible value sets, adds a new coded item with provenance. |
+| `validate_observation(...)` | **Semantic Layer** | Exists (in Kernel Validate stage) | Validates value against variable constraints, data type, and unit.  Used by Extraction Agent and Kernel Pipeline. |
+| `validate_triple(...)` | **Semantic Layer** | Exists (in Kernel Validate stage) | Validates source_type → relation_type → target_type against `relation_constraints`.  Used by Extraction Agent, Graph Connection Agent, and Kernel Pipeline. |
+| `revoke(id, reason)` | **Semantic Layer** | Does not exist | Deactivates a Dictionary entry, flags downstream data for re-extraction.  Used by Admin UI curators. |
+| `resolve(anchor, entity_type, space_id)` | **Identity Layer** | `EntityResolver` (in Kernel Resolve stage) | Match subject anchors to existing entities via policies; create new entities when allowed.  Used by Kernel Pipeline and agents. |
+| `upsert_relation_evidence(...)` | **Truth Layer** | Inline in Kernel Persist stage | Canonical upsert: add evidence, recompute aggregate confidence, trigger auto-promotion.  Used by Kernel Pipeline and Graph Connection Agent. |
+| `evaluate(contract)` | **Governance Layer** | `GovernanceConfig.should_auto_approve()` | Full confidence-based routing + centralized review queue + provenance recording.  Used by all agents via Governance Gate. |
 
 ---
 
@@ -2302,3 +2611,14 @@ dimensions** — making the Dictionary a universal, domain-agnostic schema engin
     same relation, evidence accumulates on the existing edge — strengthening the
     signal.  Edges auto-promote from `DRAFT` to `APPROVED` when evidence crosses
     configurable thresholds.  Curators focus review on weak-signal edges.
+15. **Centralized Intelligence Layers.** Cross-cutting intelligence — Dictionary
+    search and management (Semantic Layer), entity resolution (Identity Layer),
+    evidence aggregation (Truth Layer), governance routing and audit (Governance
+    Layer), and intent parsing (Interface Layer) — is implemented once in
+    dedicated Application Services with clean Ports.  Agents and pipelines
+    consume these services through the Port interfaces; they never reimplement
+    search, resolution, validation, evidence aggregation, or provenance logic.
+    This ensures consistent behavior across all consumers, a single audit
+    surface for curators, and a single place to evolve each capability.  Agents
+    remain thin orchestrators; the Intelligence Layers form the reusable,
+    evolvable substrate.

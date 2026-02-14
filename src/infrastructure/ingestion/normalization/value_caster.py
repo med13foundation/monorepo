@@ -9,9 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.domain.repositories.kernel.dictionary_repository import (
-        DictionaryRepository,
-    )
+    from src.domain.ports.dictionary_port import DictionaryPort
     from src.infrastructure.ingestion.types import (
         IngestedValue,
         MappedObservation,
@@ -22,7 +20,7 @@ if TYPE_CHECKING:
 class ValueCaster:
     """Casts raw values to target types based on dictionary definitions."""
 
-    def __init__(self, dictionary_repository: DictionaryRepository) -> None:
+    def __init__(self, dictionary_repository: DictionaryPort) -> None:
         self.dictionary_repo = dictionary_repository
 
     def cast(  # noqa: C901, PLR0911, PLR0912

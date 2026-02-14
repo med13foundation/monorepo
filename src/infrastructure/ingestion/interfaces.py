@@ -52,6 +52,9 @@ class Resolver(Protocol):
 class Validator(Protocol):
     """Validates observations and relations against constraints."""
 
-    def validate(self, observation: NormalizedObservation) -> bool:
-        """Validate an observation against variable constraints."""
+    def validate(
+        self,
+        observation: NormalizedObservation,
+    ) -> NormalizedObservation | None:
+        """Validate and optionally normalize an observation."""
         ...

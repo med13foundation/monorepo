@@ -38,6 +38,11 @@ Content Enrichment Agent picks up the document:
 
 ### Entity Recognition Agent
 
+> All `dictionary_search`, `create_*`, and `create_synonym` calls below are
+> provided by the **Semantic Layer** (`DictionaryManagementService`).  The agent
+> does not implement search or creation logic — it composes calls to the
+> centralized service.
+
 The agent reads the Results section:
 
 > *"Patient III-2 carried a heterozygous c.1366C>T (p.Arg456Trp) variant in MED13 and presented with dilated cardiomyopathy (DCM) and an ejection fraction of 28%."*
@@ -161,7 +166,9 @@ Using the resolved mappings, extracts:
 
 ---
 
-### Governance Gate
+### Governance Layer (`GovernanceService.evaluate()`)
+
+All extraction outputs are routed through the centralized **Governance Layer**:
 
 | Output | Confidence | Action |
 |---|---|---|
@@ -173,11 +180,21 @@ Using the resolved mappings, extracts:
 | Dict: `VAR_DILATED_CARDIOMYOPATHY` | — | Flows through, audit log |
 | Dict: `DISRUPTS` relation type | — | Flows through, audit log |
 
+All review items enter the **centralized review queue** — the same queue that
+curators use for Graph Connection Agent proposals and Dictionary audits.
+
 ---
 
-### Kernel Pipeline
+### Kernel Pipeline (consuming Identity, Semantic, and Truth Layers)
 
-For each relation, the pipeline performs a **canonical upsert**:
+For each approved output, the pipeline delegates to the Intelligence Layers:
+
+- **Identity Layer** (`EntityResolutionService.resolve`) resolves entity mentions
+  to kernel entities (GENE MED13, VARIANT c.1366C>T, etc.).
+- **Semantic Layer** (`DictionaryManagementService.validate_observation`) validates
+  observations against variable constraints.
+- **Truth Layer** (`EvidenceAggregationService.upsert_relation_evidence`) performs
+  **canonical upserts** on relations:
 
 **Relation 1** (variant CAUSES DCM):
 
@@ -233,16 +250,19 @@ Extracts:
 
 ---
 
-### Kernel Pipeline — Evidence Accumulation
+### Kernel Pipeline — Evidence Accumulation (via Truth Layer)
+
+The **Truth Layer** (`EvidenceAggregationService`) handles all evidence
+accumulation and auto-promotion logic:
 
 **Relation 1** (MED13 ASSOCIATED_WITH DCM):
 
 - Check: does `(gene_med13, ASSOCIATED_WITH, phenotype_dcm, space_123)` exist? **Yes** (from Paper A).
-- **Upsert**: add `relation_evidence` row #2: confidence 0.93, tier `LITERATURE`, PMID 39098765
+- **Upsert** via `EvidenceAggregationService.upsert_relation_evidence`: add `relation_evidence` row #2: confidence 0.93, tier `LITERATURE`, PMID 39098765
 - Recompute: `aggregate_confidence = 1 - (1-0.91)(1-0.93) = 1 - 0.0063 = 0.9937`
 - Update: `source_count = 2`, `highest_evidence_tier = LITERATURE`
 
-**Auto-promotion check:**
+**Auto-promotion check** (via `EvidenceAggregationService.should_auto_promote`):
 - `source_count = 2` AND `aggregate_confidence = 0.9937 >= 0.95` → **auto-promote to `APPROVED`**
 
 The MED13 → DCM connection is now `APPROVED` — no curator intervention needed. Two independent papers confirmed it with high confidence.
@@ -255,6 +275,10 @@ The MED13 → DCM connection is now `APPROVED` — no curator intervention neede
 ---
 
 ## Graph Connection Agent (runs after extraction)
+
+> Graph query tools are provided by the **Graph Query Port**, Dictionary search
+> by the **Semantic Layer**, and relation upserts by the **Truth Layer**.  The
+> Governance Layer routes outputs by confidence.
 
 The agent detects new entities in the MED13 neighbourhood and analyses:
 
@@ -274,11 +298,15 @@ The agent reasons:
 
 Calls `upsert_relation(pathway_wnt, ASSOCIATED_WITH, phenotype_dcm, confidence=0.72, evidence_tier=COMPUTATIONAL, ...)`.
 
-Creates a new canonical edge with `source_count = 1`, `evidence_tier = COMPUTATIONAL`, `curation_status = DRAFT`. The governance gate forwards it and queues for review (0.72 is in the review band).
+Creates a new canonical edge via the **Truth Layer** with `source_count = 1`, `evidence_tier = COMPUTATIONAL`, `curation_status = DRAFT`. The **Governance Layer** forwards it and queues for review (0.72 is in the review band).
 
 ---
 
 ## Graph Search Agent (researcher query)
+
+> The Graph Search Agent uses the **Interface Layer** for intent parsing, the
+> **Semantic Layer** for term resolution, and the **Graph Query Port** for
+> structured queries.
 
 The researcher types in the admin UI:
 
@@ -286,9 +314,9 @@ The researcher types in the admin UI:
 
 The Graph Search Agent:
 
-1. **Parses intent**: target = phenotypes linked to MED13 via any relation.
-2. **Dictionary search**: `dictionary_search(["MED13"])` → finds GENE entity "MED13".
-3. **Graph traversal**: `graph_query_relations(gene_med13, direction="outgoing", depth=1)`.
+1. **Parses intent** (via Interface Layer): target = phenotypes linked to MED13 via any relation.
+2. **Dictionary search** (via Semantic Layer): `dictionary_search(["MED13"])` → finds GENE entity "MED13".
+3. **Graph traversal** (via Graph Query Port): `graph_query_relations(gene_med13, direction="outgoing", depth=1)`.
 4. **Results**:
 
 | Phenotype | Relation | Aggregate Confidence | Sources | Status | Evidence |
@@ -319,15 +347,15 @@ The curator's highest-priority review items are the **weakest signals** — the 
 
 ## The key takeaways
 
-1. **Universal Dictionary** — the agent created a new relation type (`DISRUPTS`) and its constraint on the fly, without code changes. The same mechanism would work for `PLAYS_FOR` in a sports domain.
+1. **Universal Dictionary via Semantic Layer** — the agent created a new relation type (`DISRUPTS`) and its constraint on the fly, without code changes, through the centralized `DictionaryManagementService`. The same mechanism works for `PLAYS_FOR` in a sports domain.
 
-2. **Evidence accumulation** — Paper B didn't create a duplicate edge. It strengthened the existing MED13→DCM connection from 0.91 (1 source, DRAFT) to 0.9937 (2 sources, auto-APPROVED).
+2. **Evidence accumulation via Truth Layer** — Paper B didn't create a duplicate edge. The `EvidenceAggregationService` strengthened the existing MED13→DCM connection from 0.91 (1 source, DRAFT) to 0.9937 (2 sources, auto-APPROVED).
 
-3. **Graph Connection Agent** — discovered an implicit pathway→phenotype link that no single paper stated, using cross-document reasoning on the populated graph.
+3. **Graph Connection Agent** — discovered an implicit pathway→phenotype link that no single paper stated, using cross-document reasoning on the populated graph. Used the same Semantic Layer and Governance Layer as the extraction agents.
 
-4. **Graph Search Agent** — translated a natural language question into a structured graph traversal, returning results ranked by evidence strength.
+4. **Graph Search Agent** — translated a natural language question into a structured graph traversal via the Interface Layer, returning results ranked by evidence strength.
 
-5. **Curator efficiency** — the auto-promotion threshold eliminated review work for the strongest connection. The curator's attention goes to the 3 weaker edges that need human judgment.
+5. **Curator efficiency via Governance Layer** — the auto-promotion threshold eliminated review work for the strongest connection. The centralized review queue shows the curator the 3 weaker edges that need human judgment — regardless of which agent produced them.
 
 ---
 ---
@@ -402,6 +430,11 @@ This is where the universal Dictionary shines.  The agent encounters a domain
 with **no existing Dictionary entries**.
 
 ### Entity Recognition Agent
+
+> All `dictionary_search`, `create_*`, and `create_synonym` calls below are
+> provided by the **Semantic Layer** (`DictionaryManagementService`).  The agent
+> bootstraps an entire domain's Dictionary content through the same centralized
+> service used by the MED13 genomics agents — no code changes needed.
 
 The agent reads the first record (Mike Trout) and starts identifying what the
 Dictionary needs.
@@ -610,7 +643,9 @@ headers) — no NLP interpretation needed.
 
 ---
 
-### Governance Gate
+### Governance Layer
+
+All outputs routed through `GovernanceService.evaluate()`:
 
 All observations and relations: confidence >= 0.99 → **auto-approve**.
 All Dictionary creations: flow through, visible in audit log.
@@ -690,6 +725,9 @@ but the new `PLAYS_FOR → Yankees` edge reflects the current state.
 
 ## Graph Connection Agent
 
+> Uses the **Semantic Layer** for Dictionary search, the **Graph Query Port** for
+> neighbourhood queries, and the **Governance Layer** for output routing.
+
 After both sources are ingested, the Graph Connection Agent analyses the
 Yankees' neighbourhood:
 
@@ -727,18 +765,21 @@ The agent skips it and logs the observation for future consideration.
 
 ## Graph Search Agent
 
+> Uses the **Interface Layer** for intent parsing, the **Semantic Layer** for
+> term resolution, and the **Graph Query Port** for structured queries.
+
 The researcher asks:
 
 > "Which players had the highest OPS after being traded in 2025?"
 
 The Graph Search Agent:
 
-1. **Parses intent**: find PLAYERs with `TRADED_TO` relations AND high
-   `VAR_OPS` observations, filtered to 2025 season.
-2. **Dictionary search**: `dictionary_search(["OPS", "traded"])` →
+1. **Parses intent** (via Interface Layer): find PLAYERs with `TRADED_TO`
+   relations AND high `VAR_OPS` observations, filtered to 2025 season.
+2. **Dictionary search** (via Semantic Layer): `dictionary_search(["OPS", "traded"])` →
    finds `VAR_ON_BASE_PLUS_SLUGGING` (synonym "ops") and `TRADED_TO`
    (relation type).
-3. **Query plan**:
+3. **Query plan** (via Interface Layer):
    - Find all entities with a `TRADED_TO` relation (any target)
    - For those entities, get `VAR_OPS` observations
    - Rank by `value_numeric` descending
@@ -770,9 +811,10 @@ type — all existing edges update automatically via the FK.
 
 ## The point
 
-**Zero code changes.** The same platform that builds a MED13 cardiac knowledge
-graph also builds an MLB analytics graph.  The only difference is which
-Dictionary entries exist:
+**Zero code changes.** The same platform — and the same **Intelligence Service
+Layers** (Semantic, Identity, Truth, Governance, Interface) — that builds a
+MED13 cardiac knowledge graph also builds an MLB analytics graph.  The only
+difference is which Dictionary entries exist:
 
 | Aspect | MED13 Cardiac Study | MLB 2025 Season |
 |---|---|---|
@@ -783,4 +825,5 @@ Dictionary entries exist:
 | Domain context | `clinical`, `genomics` | `sports` |
 | Evidence tiers | LITERATURE, EXPERIMENTAL | Structured data (confidence 1.0) |
 
-The Dictionary is the schema.  The agent fills it in.  The pipeline stays the same.
+The Dictionary is the schema.  The Semantic Layer manages it.  The agents fill
+it in.  The Intelligence Layers and pipeline stay the same.

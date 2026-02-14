@@ -8,7 +8,6 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from src.application.services.kernel.dictionary_service import DictionaryService
 from src.application.services.kernel.kernel_entity_service import KernelEntityService
 from src.application.services.kernel.kernel_observation_service import (
     KernelObservationService,
@@ -18,6 +17,7 @@ from src.application.services.membership_management_service import (
 )
 from src.database.session import get_session
 from src.domain.entities.user import User
+from src.domain.ports import DictionaryPort
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
@@ -75,7 +75,7 @@ def create_kernel_observation(
     request: KernelObservationCreateRequest,
     current_user: User = Depends(get_current_active_user),
     membership_service: MembershipManagementService = Depends(get_membership_service),
-    dictionary_service: DictionaryService = Depends(get_dictionary_service),
+    dictionary_service: DictionaryPort = Depends(get_dictionary_service),
     observation_service: KernelObservationService = Depends(
         get_kernel_observation_service,
     ),

@@ -5,9 +5,17 @@
 # dictionary + fact tables (entities/observations/relations/provenance).
 
 from .dictionary import (
+    DictionaryChangelogModel,
+    DictionaryDataTypeModel,
+    DictionaryDomainContextModel,
+    DictionaryEntityTypeModel,
+    DictionaryRelationTypeModel,
+    DictionarySensitivityLevelModel,
     EntityResolutionPolicyModel,
     RelationConstraintModel,
     TransformRegistryModel,
+    ValueSetItemModel,
+    ValueSetModel,
     VariableDefinitionModel,
     VariableSynonymModel,
 )
@@ -18,9 +26,17 @@ from .relations import RelationEvidenceModel, RelationModel
 
 __all__ = [
     # Dictionary (Layer 1)
+    "DictionaryChangelogModel",
+    "DictionaryDataTypeModel",
+    "DictionaryDomainContextModel",
+    "DictionaryEntityTypeModel",
+    "DictionaryRelationTypeModel",
+    "DictionarySensitivityLevelModel",
     "VariableDefinitionModel",
     "VariableSynonymModel",
     "TransformRegistryModel",
+    "ValueSetModel",
+    "ValueSetItemModel",
     "EntityResolutionPolicyModel",
     "RelationConstraintModel",
     # Core Data (Layer 2)

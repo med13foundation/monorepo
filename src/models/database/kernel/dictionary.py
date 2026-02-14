@@ -7,14 +7,454 @@ unless it maps to a definition here.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime  # noqa: TC003
 
-from sqlalchemy import Float, ForeignKey, Index, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.database.base import Base
 from src.type_definitions.common import JSONObject  # noqa: TC001
+
+
+class DictionaryDataTypeModel(Base):
+    """Reference table for allowed variable data types."""
+
+    __tablename__ = "dictionary_data_types"
+
+    id: Mapped[str] = mapped_column(
+        String(32),
+        primary_key=True,
+        doc="Data type ID, e.g. STRING, FLOAT, DATE",
+    )
+    display_name: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        doc="Human-readable label for the data type",
+    )
+    python_type_hint: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        doc="Python type hint for this data type",
+    )
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Optional semantic description for this data type",
+    )
+    constraint_schema: Mapped[JSONObject] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default="{}",
+        doc="JSON schema defining supported constraints for this data type",
+    )
+
+    __table_args__ = ({"comment": "First-class dictionary data types"},)
+
+
+class DictionaryDomainContextModel(Base):
+    """Reference table for dictionary domain contexts."""
+
+    __tablename__ = "dictionary_domain_contexts"
+
+    id: Mapped[str] = mapped_column(
+        String(64),
+        primary_key=True,
+        doc="Domain context ID, e.g. genomics, clinical, sports",
+    )
+    display_name: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        doc="Human-readable domain label",
+    )
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Optional description of the domain context",
+    )
+
+    __table_args__ = ({"comment": "First-class dictionary domain contexts"},)
+
+
+class DictionarySensitivityLevelModel(Base):
+    """Reference table for sensitivity classifications."""
+
+    __tablename__ = "dictionary_sensitivity_levels"
+
+    id: Mapped[str] = mapped_column(
+        String(32),
+        primary_key=True,
+        doc="Sensitivity ID, e.g. PUBLIC, INTERNAL, PHI",
+    )
+    display_name: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        doc="Human-readable sensitivity label",
+    )
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Optional handling guidance for this sensitivity level",
+    )
+
+    __table_args__ = ({"comment": "First-class dictionary sensitivity levels"},)
+
+
+class DictionaryEntityTypeModel(Base):
+    """Reference table for first-class entity types."""
+
+    __tablename__ = "dictionary_entity_types"
+
+    id: Mapped[str] = mapped_column(
+        String(64),
+        primary_key=True,
+        doc="Entity type ID, e.g. GENE, VARIANT",
+    )
+    display_name: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        doc="Human-readable entity type label",
+    )
+    description: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        doc="Semantic description of this entity type",
+    )
+    domain_context: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("dictionary_domain_contexts.id"),
+        nullable=False,
+        index=True,
+        doc="Domain context for this entity type",
+    )
+    external_ontology_ref: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        doc="Optional external ontology URI or identifier",
+    )
+    expected_properties: Mapped[JSONObject] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default="{}",
+        doc="Expected properties schema for entity metadata",
+    )
+    description_embedding: Mapped[list[float] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        doc="Embedding placeholder for semantic search (Phase 4 vector migration)",
+    )
+    created_by: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        server_default="seed",
+        doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference for entry creation",
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="ACTIVE",
+        doc="Review status: ACTIVE, PENDING_REVIEW, REVOKED",
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Reviewer identifier",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when review status was updated",
+    )
+    revocation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Reason for revocation when review_status is REVOKED",
+    )
+
+    __table_args__ = (
+        Index("idx_enttype_domain", "domain_context"),
+        {"comment": "First-class entity types with semantic metadata"},
+    )
+
+
+class DictionaryRelationTypeModel(Base):
+    """Reference table for first-class relation types."""
+
+    __tablename__ = "dictionary_relation_types"
+
+    id: Mapped[str] = mapped_column(
+        String(64),
+        primary_key=True,
+        doc="Relation type ID, e.g. ASSOCIATED_WITH, CAUSES",
+    )
+    display_name: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        doc="Human-readable relation type label",
+    )
+    description: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        doc="Semantic description of this relation type",
+    )
+    domain_context: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("dictionary_domain_contexts.id"),
+        nullable=False,
+        index=True,
+        doc="Domain context for this relation type",
+    )
+    is_directional: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="true",
+        doc="Whether A->B differs semantically from B->A",
+    )
+    inverse_label: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Optional label for the inverse direction",
+    )
+    description_embedding: Mapped[list[float] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        doc="Embedding placeholder for semantic search (Phase 4 vector migration)",
+    )
+    created_by: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        server_default="seed",
+        doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference for entry creation",
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="ACTIVE",
+        doc="Review status: ACTIVE, PENDING_REVIEW, REVOKED",
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Reviewer identifier",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when review status was updated",
+    )
+    revocation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Reason for revocation when review_status is REVOKED",
+    )
+
+    __table_args__ = (
+        Index("idx_reltype_domain", "domain_context"),
+        {"comment": "First-class relation types with semantic metadata"},
+    )
+
+
+class ValueSetModel(Base):
+    """Enumeration set for values of a single CODED variable."""
+
+    __tablename__ = "value_sets"
+
+    id: Mapped[str] = mapped_column(
+        String(64),
+        primary_key=True,
+        doc="Value set ID, e.g. VS_CLINVAR_CLASS",
+    )
+    variable_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+        index=True,
+        doc="Variable this value set belongs to",
+    )
+    variable_data_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="CODED",
+        doc="Mirrors variable_definitions.data_type and must be CODED",
+    )
+    name: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        doc="Human-readable value set name",
+    )
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="What the value set represents",
+    )
+    external_ref: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        doc="Optional external ontology/standard reference",
+    )
+    is_extensible: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+        doc="Whether agents may add new items automatically",
+    )
+    created_by: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        server_default="seed",
+        doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference for entry creation",
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="ACTIVE",
+        doc="Review status: ACTIVE, PENDING_REVIEW, REVOKED",
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Reviewer identifier",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when review status was updated",
+    )
+    revocation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Reason for revocation when review_status is REVOKED",
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["variable_id", "variable_data_type"],
+            ["variable_definitions.id", "variable_definitions.data_type"],
+            name="fk_value_sets_variable_coded",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "variable_data_type = 'CODED'",
+            name="value_sets_variable_data_type_coded",
+        ),
+        {"comment": "Enumerated value sets for CODED variables"},
+    )
+
+
+class ValueSetItemModel(Base):
+    """Allowed canonical code entries for a dictionary value set."""
+
+    __tablename__ = "value_set_items"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+    value_set_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("value_sets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        doc="Parent value set ID",
+    )
+    code: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        doc="Canonical code persisted in observations",
+    )
+    display_label: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        doc="Human-readable label for this code",
+    )
+    synonyms: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default="[]",
+        doc="Alternative strings that map to this code",
+    )
+    external_ref: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        doc="Optional external code reference",
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        doc="Display ordering within the value set",
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="true",
+        doc="Soft-delete flag",
+    )
+    created_by: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        server_default="seed",
+        doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference for entry creation",
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="ACTIVE",
+        doc="Review status: ACTIVE, PENDING_REVIEW, REVOKED",
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Reviewer identifier",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when review status was updated",
+    )
+    revocation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Reason for revocation when review_status is REVOKED",
+    )
+
+    __table_args__ = (
+        Index(
+            "idx_value_set_item_unique_code",
+            "value_set_id",
+            "code",
+            unique=True,
+        ),
+        {"comment": "Allowed canonical codes and synonyms per value set"},
+    )
 
 
 class VariableDefinitionModel(Base):
@@ -44,6 +484,7 @@ class VariableDefinitionModel(Base):
     )
     data_type: Mapped[str] = mapped_column(
         String(32),
+        ForeignKey("dictionary_data_types.id"),
         nullable=False,
         doc="Data type: INTEGER, FLOAT, STRING, DATE, CODED, BOOLEAN, JSON",
     )
@@ -60,6 +501,7 @@ class VariableDefinitionModel(Base):
     )
     domain_context: Mapped[str] = mapped_column(
         String(64),
+        ForeignKey("dictionary_domain_contexts.id"),
         nullable=False,
         server_default="general",
         index=True,
@@ -67,6 +509,7 @@ class VariableDefinitionModel(Base):
     )
     sensitivity: Mapped[str] = mapped_column(
         String(32),
+        ForeignKey("dictionary_sensitivity_levels.id"),
         nullable=False,
         server_default="INTERNAL",
         doc="Sensitivity: PUBLIC, INTERNAL, PHI",
@@ -76,10 +519,42 @@ class VariableDefinitionModel(Base):
         nullable=True,
         doc="Optional longer description",
     )
+    created_by: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        server_default="seed",
+        doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference for entry creation",
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="ACTIVE",
+        doc="Review status: ACTIVE, PENDING_REVIEW, REVOKED",
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Reviewer identifier",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when review status was updated",
+    )
+    revocation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Reason for revocation when review_status is REVOKED",
+    )
 
     __table_args__ = (
         Index("idx_vardef_domain", "domain_context"),
         Index("idx_vardef_data_type", "data_type"),
+        UniqueConstraint("id", "data_type", name="uq_vardef_id_data_type"),
         {"comment": "Master dictionary of allowed data variables"},
     )
 
@@ -114,6 +589,37 @@ class VariableSynonymModel(Base):
         String(64),
         nullable=True,
         doc="Source of synonym: manual, ai_mapped",
+    )
+    created_by: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        server_default="seed",
+        doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference for entry creation",
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="ACTIVE",
+        doc="Review status: ACTIVE, PENDING_REVIEW, REVOKED",
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Reviewer identifier",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when review status was updated",
+    )
+    revocation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Reason for revocation when review_status is REVOKED",
     )
 
     __table_args__ = (
@@ -163,6 +669,37 @@ class TransformRegistryModel(Base):
         server_default="ACTIVE",
         doc="ACTIVE or DEPRECATED",
     )
+    created_by: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        server_default="seed",
+        doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference for entry creation",
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="ACTIVE",
+        doc="Review status: ACTIVE, PENDING_REVIEW, REVOKED",
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Reviewer identifier",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when review status was updated",
+    )
+    revocation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Reason for revocation when review_status is REVOKED",
+    )
 
     __table_args__ = (
         Index("idx_transform_units", "input_unit", "output_unit"),
@@ -181,6 +718,7 @@ class EntityResolutionPolicyModel(Base):
 
     entity_type: Mapped[str] = mapped_column(
         String(64),
+        ForeignKey("dictionary_entity_types.id"),
         primary_key=True,
         doc="Entity type, e.g. PATIENT, GENE, PAPER",
     )
@@ -201,9 +739,36 @@ class EntityResolutionPolicyModel(Base):
         server_default="1.0",
         doc="Similarity threshold for auto-merge (1.0 = exact only)",
     )
-    created_at: Mapped[datetime] = mapped_column(
+    created_by: Mapped[str] = mapped_column(
+        String(128),
         nullable=False,
-        default=lambda: datetime.now(UTC),
+        server_default="seed",
+        doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference for entry creation",
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="ACTIVE",
+        doc="Review status: ACTIVE, PENDING_REVIEW, REVOKED",
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Reviewer identifier",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when review status was updated",
+    )
+    revocation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Reason for revocation when review_status is REVOKED",
     )
 
     __table_args__ = ({"comment": "Entity deduplication policies by type"},)
@@ -224,16 +789,19 @@ class RelationConstraintModel(Base):
     )
     source_type: Mapped[str] = mapped_column(
         String(64),
+        ForeignKey("dictionary_entity_types.id"),
         nullable=False,
         doc="Source entity type, e.g. GENE",
     )
     relation_type: Mapped[str] = mapped_column(
         String(64),
+        ForeignKey("dictionary_relation_types.id"),
         nullable=False,
         doc="Relation type, e.g. ASSOCIATED_WITH",
     )
     target_type: Mapped[str] = mapped_column(
         String(64),
+        ForeignKey("dictionary_entity_types.id"),
         nullable=False,
         doc="Target entity type, e.g. DISEASE",
     )
@@ -247,6 +815,37 @@ class RelationConstraintModel(Base):
         default=True,
         doc="Whether an evidence reference is mandatory",
     )
+    created_by: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        server_default="seed",
+        doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference for entry creation",
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="ACTIVE",
+        doc="Review status: ACTIVE, PENDING_REVIEW, REVOKED",
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Reviewer identifier",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when review status was updated",
+    )
+    revocation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Reason for revocation when review_status is REVOKED",
+    )
 
     __table_args__ = (
         Index(
@@ -257,4 +856,58 @@ class RelationConstraintModel(Base):
             unique=True,
         ),
         {"comment": "Allowed triple patterns for graph edges"},
+    )
+
+
+class DictionaryChangelogModel(Base):
+    """Immutable changelog entries for dictionary mutations."""
+
+    __tablename__ = "dictionary_changelog"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+    table_name: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        index=True,
+        doc="Dictionary table name that changed",
+    )
+    record_id: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        index=True,
+        doc="Primary identifier of the changed record",
+    )
+    action: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        doc="Mutation type: CREATE, UPDATE, REVOKE",
+    )
+    before_snapshot: Mapped[JSONObject | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        doc="JSON snapshot before mutation",
+    )
+    after_snapshot: Mapped[JSONObject | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        doc="JSON snapshot after mutation",
+    )
+    changed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Actor responsible for the mutation",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference associated with the mutation",
+    )
+
+    __table_args__ = (
+        Index("idx_dictionary_changelog_table_record", "table_name", "record_id"),
+        {"comment": "Immutable audit log for dictionary mutations"},
     )

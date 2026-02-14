@@ -7,10 +7,19 @@ SQLAlchemy models so that the domain layer remains infrastructure-agnostic.
 """
 
 from .dictionary import (
+    DictionaryChangelog,
+    DictionaryDataType,
+    DictionaryDomainContext,
+    DictionaryEntityType,
+    DictionaryRelationType,
+    DictionarySensitivityLevel,
     EntityResolutionPolicy,
     RelationConstraint,
     TransformRegistry,
+    ValueSet,
+    ValueSetItem,
     VariableDefinition,
+    VariableSynonym,
 )
 from .entities import KernelEntity, KernelEntityIdentifier
 from .observations import KernelObservation
@@ -18,6 +27,12 @@ from .provenance import KernelProvenanceRecord
 from .relations import KernelRelation
 
 __all__ = [
+    "DictionaryChangelog",
+    "DictionaryDataType",
+    "DictionaryDomainContext",
+    "DictionaryEntityType",
+    "DictionaryRelationType",
+    "DictionarySensitivityLevel",
     "EntityResolutionPolicy",
     "KernelEntity",
     "KernelEntityIdentifier",
@@ -26,5 +41,8 @@ __all__ = [
     "KernelRelation",
     "RelationConstraint",
     "TransformRegistry",
+    "ValueSet",
+    "ValueSetItem",
     "VariableDefinition",
+    "VariableSynonym",
 ]

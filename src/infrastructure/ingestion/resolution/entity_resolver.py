@@ -16,9 +16,7 @@ from src.infrastructure.ingestion.resolution.strategies import (
 from src.infrastructure.ingestion.types import ResolvedEntity
 
 if TYPE_CHECKING:
-    from src.domain.repositories.kernel.dictionary_repository import (
-        DictionaryRepository,
-    )
+    from src.domain.ports.dictionary_port import DictionaryPort
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
     from src.type_definitions.common import JSONObject
 
@@ -32,7 +30,7 @@ class EntityResolver:
 
     def __init__(
         self,
-        dictionary_repository: DictionaryRepository,
+        dictionary_repository: DictionaryPort,
         entity_repository: KernelEntityRepository,
     ) -> None:
         self.dict_repo = dictionary_repository

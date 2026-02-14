@@ -6,6 +6,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.application.services.kernel.dictionary_management_service import (
+    DictionaryManagementService,
+)
 from src.application.services.kernel.kernel_observation_service import (
     KernelObservationService,
 )
@@ -44,30 +47,34 @@ def create_ingestion_pipeline(session: Session) -> IngestionPipeline:
     Create a fully wired ingestion pipeline.
     """
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
+    dictionary_service = DictionaryManagementService(dictionary_repo=dictionary_repo)
     entity_repo = SqlAlchemyKernelEntityRepository(session)
     observation_repo = SqlAlchemyKernelObservationRepository(session)
     provenance_repo = SqlAlchemyProvenanceRepository(session)
 
     # Mapper
-    exact_mapper = ExactMapper(dictionary_repo)
+    exact_mapper = ExactMapper(dictionary_service)
     mapper = HybridMapper([exact_mapper])
 
     # Normalizer
-    unit_converter = UnitConverter(dictionary_repo)
-    value_caster = ValueCaster(dictionary_repo)
+    unit_converter = UnitConverter(dictionary_service)
+    value_caster = ValueCaster(dictionary_service)
     normalizer = CompositeNormalizer(unit_converter, value_caster)
 
     # Resolver
-    resolver = EntityResolver(dictionary_repo, entity_repo)
+    resolver = EntityResolver(dictionary_service, entity_repo)
 
     # Validator
-    validator = ObservationValidator(dictionary_repo)
+    # NOTE: Triple validation is enforced in KernelRelationService when
+    # relation edges are created. This ingestion pipeline currently persists
+    # observations only.
+    validator = ObservationValidator(dictionary_service)
 
     # Services
     observation_service = KernelObservationService(
         observation_repo,
         entity_repo,
-        dictionary_repo,
+        dictionary_service,
     )
     provenance_tracker = ProvenanceTracker(provenance_repo)
 

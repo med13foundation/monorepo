@@ -19,6 +19,7 @@ export interface ResearchSpaceSettings {
   auto_approve?: boolean
   require_review?: boolean
   review_threshold?: number
+  dictionary_agent_creation_policy?: 'ACTIVE' | 'PENDING_REVIEW'
   max_data_sources?: number
   allowed_source_types?: string[]
   public_read?: boolean
