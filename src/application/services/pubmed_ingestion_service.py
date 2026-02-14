@@ -24,7 +24,11 @@ if TYPE_CHECKING:
         StorageConfigurationService,
     )
     from src.domain.agents.ports.query_agent_port import QueryAgentPort
-    from src.domain.repositories import PublicationRepository, ResearchSpaceRepository
+    from src.domain.repositories import (
+        PublicationRepository,
+        ResearchSpaceRepository,
+        SourceDocumentRepository,
+    )
     from src.domain.services.ingestion import IngestionRunContext
     from src.type_definitions.common import JSONObject, SourceMetadata
 
@@ -38,28 +42,42 @@ class _LedgerDedupOutcome:
     unchanged_records: int
 
 
+@dataclass(frozen=True)
+class PubMedIngestionDependencies:
+    """Optional collaborators for PubMed ingestion orchestration."""
+
+    publication_repository: PublicationRepository | None = None
+    transformer: PubMedRecordTransformer | None = None
+    storage_service: StorageConfigurationService | None = None
+    query_agent: QueryAgentPort | None = None
+    research_space_repository: ResearchSpaceRepository | None = None
+    source_document_repository: SourceDocumentRepository | None = None
+
+
 class PubMedIngestionService(PubMedIngestionServiceHelpers):
     """Coordinate fetching, transforming, and persisting PubMed data per source."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         gateway: PubMedGateway,
         pipeline: IngestionPipelinePort,
-        publication_repository: (
-            PublicationRepository | None
-        ) = None,  # Optional/Deprecated
-        transformer: PubMedRecordTransformer | None = None,  # Optional/Deprecated
-        storage_service: StorageConfigurationService | None = None,
-        query_agent: QueryAgentPort | None = None,
-        research_space_repository: ResearchSpaceRepository | None = None,
+        dependencies: PubMedIngestionDependencies | None = None,
     ) -> None:
+        resolved_dependencies = dependencies or PubMedIngestionDependencies()
         self._gateway = gateway
         self._pipeline = pipeline
-        self._publication_repository = publication_repository
-        self._transformer = transformer or PubMedRecordTransformer()
-        self._storage_service = storage_service
-        self._query_agent = query_agent
-        self._research_space_repository = research_space_repository
+        self._publication_repository = resolved_dependencies.publication_repository
+        self._transformer = (
+            resolved_dependencies.transformer or PubMedRecordTransformer()
+        )
+        self._storage_service = resolved_dependencies.storage_service
+        self._query_agent = resolved_dependencies.query_agent
+        self._research_space_repository = (
+            resolved_dependencies.research_space_repository
+        )
+        self._source_document_repository = (
+            resolved_dependencies.source_document_repository
+        )
 
     async def ingest(
         self,
@@ -103,8 +121,15 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
         )
         filtered_records = dedup_outcome.filtered_records
 
+        raw_storage_key: str | None = None
         if self._storage_service:
-            await self._persist_raw_records(filtered_records, source)
+            raw_storage_key = await self._persist_raw_records(raw_records_data, source)
+        self._upsert_source_documents(
+            records=raw_records_data,
+            source=source,
+            context=context,
+            raw_storage_key=raw_storage_key,
+        )
 
         raw_records = self._to_pipeline_records(
             filtered_records,

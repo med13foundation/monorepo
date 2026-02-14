@@ -34,7 +34,9 @@ from src.models.database.user import UserModel  # noqa: F401
 # Support pytest-xdist by using unique database files per worker
 
 worker_id = os.environ.get("PYTEST_XDIST_WORKER", "")
-db_filename = f"test_med13_{worker_id}.db" if worker_id else "test_med13.db"
+process_id = os.getpid()
+db_suffix_parts = [part for part in (worker_id, str(process_id)) if part]
+db_filename = f"test_med13_{'_'.join(db_suffix_parts)}.db"
 TEST_DB_PATH = Path.cwd() / db_filename
 TEST_DATABASE_URL = f"sqlite:///{TEST_DB_PATH}"
 

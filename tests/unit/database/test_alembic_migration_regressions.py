@@ -13,7 +13,7 @@ from uuid import uuid4
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_HEAD_REVISION = "006_queue_payload_refs"
+EXPECTED_HEAD_REVISION = "008_pg_scheduler_tables"
 LEGACY_REVISION_ALIAS = "004_relation_evidence_and_extraction_queue_contract"
 ROLLOUT_MARKER_REVISION = "005_rel_evidence_rollout_marker"
 RAW_STORAGE_KEY_VALUE = "raw/clinvar/variant-1001.json"
@@ -78,7 +78,7 @@ def test_006_backfills_extraction_queue_payload_reference_columns(
     )
 
     engine = create_engine(database_url, future=True)
-    queued_at = datetime.now(UTC)
+    queued_at_iso = datetime.now(UTC).isoformat()
     queue_item_id = str(uuid4())
 
     with engine.begin() as connection:
@@ -114,10 +114,10 @@ def test_006_backfills_extraction_queue_payload_reference_columns(
                         "payload_ref": PAYLOAD_REF_VALUE,
                     },
                 ),
-                "queued_at": queued_at,
+                "queued_at": queued_at_iso,
                 "started_at": None,
                 "completed_at": None,
-                "updated_at": queued_at,
+                "updated_at": queued_at_iso,
             },
         )
 

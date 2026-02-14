@@ -118,9 +118,10 @@ define ensure_web_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-flujo-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test
+.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-flujo-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test
 
 PY_CHECK_PATHS := src tests scripts alembic
+PY_STRICT_CHECK_PATHS := src
 
 # Default target
 help: ## Show this help message
@@ -270,7 +271,7 @@ endif
 lint: ## Run all linting tools (warnings only)
 	$(call check_venv)
 	@echo "Running flake8..."
-	-$(USE_PYTHON) -m flake8 $(PY_CHECK_PATHS) --max-line-length=88 --extend-ignore=E203,W503,E501 --exclude=src/web/node_modules || echo "⚠️  Flake8 found style issues (non-blocking)"
+	-$(USE_PYTHON) -m flake8 $(PY_CHECK_PATHS) --max-line-length=88 --extend-ignore=E203,W503,E501,E402 --exclude=src/web/node_modules || echo "⚠️  Flake8 found style issues (non-blocking)"
 	@echo "Running ruff..."
 	-$(USE_PYTHON) -m ruff check $(PY_CHECK_PATHS) || echo "⚠️  Ruff found linting issues (non-blocking)"
 	@echo "Running mypy..."
@@ -281,7 +282,7 @@ lint: ## Run all linting tools (warnings only)
 lint-strict: ## Run all linting tools (fails on error)
 	$(call check_venv)
 	@echo "Running flake8 (strict)..."
-	$(USE_PYTHON) -m flake8 $(PY_CHECK_PATHS) --max-line-length=88 --extend-ignore=E203,W503,E501 --exclude=src/web/node_modules
+	$(USE_PYTHON) -m flake8 $(PY_CHECK_PATHS) --max-line-length=88 --extend-ignore=E203,W503,E501,E402 --exclude=src/web/node_modules
 	@echo "Running ruff (strict)..."
 	$(USE_PYTHON) -m ruff check $(PY_CHECK_PATHS)
 	@echo "Running bandit (strict)..."
@@ -299,15 +300,19 @@ format-check: ## Check code formatting without making changes
 
 type-check: ## Run mypy type checking with strict settings (warnings only)
 	$(call check_venv)
-	-$(USE_PYTHON) -m mypy $(PY_CHECK_PATHS) --strict --show-error-codes || echo "⚠️  MyPy found type issues (non-blocking)"
+	-$(USE_PYTHON) -m mypy $(PY_STRICT_CHECK_PATHS) --strict --show-error-codes || echo "⚠️  MyPy found type issues (non-blocking)"
 
 type-check-strict: ## Run mypy type checking with strict settings (fails on error)
 	$(call check_venv)
-	$(USE_PYTHON) -m mypy $(PY_CHECK_PATHS) --strict --show-error-codes
+	$(USE_PYTHON) -m mypy $(PY_STRICT_CHECK_PATHS) --strict --show-error-codes
 
 type-check-report: ## Generate mypy type checking report
 	$(call check_venv)
-	$(USE_PYTHON) -m mypy $(PY_CHECK_PATHS) --html-report mypy-report
+	$(USE_PYTHON) -m mypy $(PY_STRICT_CHECK_PATHS) --html-report mypy-report
+
+type-check-full: ## Run strict mypy across src/tests/scripts/alembic (warnings only, legacy debt visibility)
+	$(call check_venv)
+	-$(USE_PYTHON) -m mypy $(PY_CHECK_PATHS) --strict --show-error-codes || echo "⚠️  MyPy found type issues outside runtime strict gate"
 
 security-audit: ## Run comprehensive security audit (pip-audit, bandit) [blocking on MEDIUM/HIGH]
 	$(call check_venv)

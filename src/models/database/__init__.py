@@ -13,8 +13,11 @@ from . import (
     data_source_activation,
     extraction_queue,
     ingestion_job,
+    ingestion_scheduler_job,
+    ingestion_source_lock,
     research_space,
     session,
+    source_document,
     source_record_ledger,
     source_sync_state,
     source_template,
@@ -54,6 +57,12 @@ IngestionJobModel = ingestion_job.IngestionJobModel
 ExtractionQueueItemModel = extraction_queue.ExtractionQueueItemModel
 SourceSyncStateModel = source_sync_state.SourceSyncStateModel
 SourceRecordLedgerModel = source_record_ledger.SourceRecordLedgerModel
+SourceDocumentModel = source_document.SourceDocumentModel
+IngestionSchedulerJobModel = ingestion_scheduler_job.IngestionSchedulerJobModel
+IngestionSourceLockModel = ingestion_source_lock.IngestionSourceLockModel
+DocumentFormatEnum = source_document.DocumentFormatEnum
+EnrichmentStatusEnum = source_document.EnrichmentStatusEnum
+DocumentExtractionStatusEnum = source_document.DocumentExtractionStatusEnum
 
 ResearchSpaceModel = research_space.ResearchSpaceModel
 ResearchSpaceMembershipModel = research_space.ResearchSpaceMembershipModel
@@ -108,6 +117,12 @@ __all__ = [
     "ExtractionQueueItemModel",
     "SourceSyncStateModel",
     "SourceRecordLedgerModel",
+    "SourceDocumentModel",
+    "IngestionSchedulerJobModel",
+    "IngestionSourceLockModel",
+    "DocumentFormatEnum",
+    "EnrichmentStatusEnum",
+    "DocumentExtractionStatusEnum",
     # Restored ResearchSpace
     "ResearchSpaceModel",
     "ResearchSpaceMembershipModel",

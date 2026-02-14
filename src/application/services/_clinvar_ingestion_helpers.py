@@ -1,4 +1,4 @@
-"""Helper mixin for PubMed ingestion orchestration details."""
+"""Helper mixin for ClinVar ingestion orchestration details."""
 
 # mypy: disable-error-code="misc"
 
@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,169 +13,83 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from src.domain.entities import source_document
-from src.domain.entities.source_record_ledger import SourceRecordLedgerEntry
-from src.domain.entities.source_sync_state import CheckpointKind
-from src.domain.services import pubmed_ingestion
-from src.domain.services.ingestion import IngestionExtractionTarget, IngestionRunContext
-from src.type_definitions.ingestion import RawRecord as IngestionRawRecord
-from src.type_definitions.storage import StorageUseCase
+from src import type_definitions
+from src.domain.entities import (
+    source_document,
+    source_record_ledger,
+    source_sync_state,
+    user_data_source,
+)
+from src.domain.services import clinvar_ingestion, ingestion
 
 if TYPE_CHECKING:
-    from src.application.services.pubmed_ingestion_service import (
-        PubMedIngestionService,
+    from src.application.services.clinvar_ingestion_service import (
+        ClinVarIngestionService,
     )
-    from src.domain.entities import data_source_configs, user_data_source
-    from src.type_definitions.common import JSONObject, RawRecord
-
-
-logger = logging.getLogger(__name__)
-LOW_CONFIDENCE_THRESHOLD = 0.5
+    from src.domain.entities import data_source_configs
 
 
 @dataclass(frozen=True)
 class _LedgerDedupOutcome:
     """Result of applying record-ledger deduplication to fetched records."""
 
-    filtered_records: list[JSONObject]
-    entries_to_upsert: list[SourceRecordLedgerEntry]
+    filtered_records: list[type_definitions.common.JSONObject]
+    entries_to_upsert: list[source_record_ledger.SourceRecordLedgerEntry]
     new_records: int
     updated_records: int
     unchanged_records: int
 
 
-@dataclass(frozen=True)
-class _QueryResolution:
-    """Resolved query configuration and AI generation metadata."""
-
-    config: data_source_configs.PubMedQueryConfig
-    query_generation_decision: str
-    query_generation_confidence: float
-    query_generation_run_id: str | None
-
-
-class PubMedIngestionServiceHelpers:
-    """Private helpers for PubMed ingestion orchestration."""
+class ClinVarIngestionServiceHelpers:
+    """Private helpers for ClinVar ingestion orchestration."""
 
     def _build_extraction_targets(
-        self: PubMedIngestionService,
-        records: list[JSONObject],
+        self: ClinVarIngestionService,
+        records: list[type_definitions.common.JSONObject],
         *,
         source_type: user_data_source.SourceType,
-    ) -> tuple[IngestionExtractionTarget, ...]:
-        targets: list[IngestionExtractionTarget] = []
+    ) -> tuple[ingestion.IngestionExtractionTarget, ...]:
+        targets: list[ingestion.IngestionExtractionTarget] = []
         seen_source_record_ids: set[str] = set()
         for record in records:
             source_record_id = self._extract_external_record_id(record)
             if source_record_id in seen_source_record_ids:
                 continue
             seen_source_record_ids.add(source_record_id)
-            metadata_payload: JSONObject = {
-                "raw_record": dict(record),
+            metadata_payload: type_definitions.common.JSONObject = {
+                "raw_record": self._extract_pipeline_payload(record),
                 "source_record_id": source_record_id,
                 "source_type": source_type.value,
             }
             targets.append(
-                IngestionExtractionTarget(
+                ingestion.IngestionExtractionTarget(
                     source_record_id=source_record_id,
                     source_type=source_type.value,
                     publication_id=None,
-                    pubmed_id=self._extract_pubmed_id(record),
+                    pubmed_id=None,
                     metadata=metadata_payload,
                 ),
             )
         return tuple(targets)
 
-    @staticmethod
-    def _extract_pubmed_id(record: JSONObject) -> str | None:
-        for key in ("pmid", "pubmed_id"):
-            value = record.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-            if isinstance(value, int):
-                return str(value)
-        return None
-
-    async def _resolve_query_configuration(
-        self: PubMedIngestionService,
-        *,
-        source: user_data_source.UserDataSource,
-        config: data_source_configs.PubMedQueryConfig,
-    ) -> _QueryResolution:
-        """Resolve AI-managed query overrides and associated metadata."""
-        query_generation_decision = "skipped"
-        query_generation_confidence = 0.0
-        query_generation_run_id: str | None = None
-
-        if (
-            not config.agent_config.is_ai_managed
-            or self._query_agent is None
-            or self._research_space_repository is None
-        ):
-            return _QueryResolution(
-                config=config,
-                query_generation_decision=query_generation_decision,
-                query_generation_confidence=query_generation_confidence,
-                query_generation_run_id=query_generation_run_id,
-            )
-
-        research_space_description = ""
-        if config.agent_config.use_research_space_context and source.research_space_id:
-            space = self._research_space_repository.find_by_id(source.research_space_id)
-            if space:
-                research_space_description = space.description
-
-        contract = await self._query_agent.generate_query(
-            research_space_description=research_space_description,
-            user_instructions=config.agent_config.agent_prompt,
-            source_type="pubmed",
-            model_id=config.agent_config.model_id,
-        )
-        query_generation_decision = contract.decision
-        query_generation_confidence = contract.confidence_score
-        query_generation_run_id = self._extract_query_generation_run_id()
-
-        resolved_config = config
-        if contract.decision == "generated" and contract.query:
-            resolved_config = config.model_copy(update={"query": contract.query})
-        elif contract.decision == "escalate":
-            logger.warning(
-                "AI query generation escalated: %s (confidence=%.2f)",
-                contract.rationale,
-                contract.confidence_score,
-            )
-        elif contract.confidence_score < LOW_CONFIDENCE_THRESHOLD:
-            logger.warning(
-                "Low confidence AI query (%.2f): %s",
-                contract.confidence_score,
-                contract.rationale,
-            )
-
-        return _QueryResolution(
-            config=resolved_config,
-            query_generation_decision=query_generation_decision,
-            query_generation_confidence=query_generation_confidence,
-            query_generation_run_id=query_generation_run_id,
-        )
-
     async def _fetch_records_with_checkpoint(
-        self: PubMedIngestionService,
+        self: ClinVarIngestionService,
         *,
-        config: data_source_configs.PubMedQueryConfig,
-        checkpoint_before: JSONObject | None,
-    ) -> pubmed_ingestion.PubMedGatewayFetchResult:
-        if isinstance(self._gateway, pubmed_ingestion.PubMedIncrementalGateway):
+        config: data_source_configs.ClinVarQueryConfig,
+        checkpoint_before: type_definitions.common.JSONObject | None,
+    ) -> clinvar_ingestion.ClinVarGatewayFetchResult:
+        if isinstance(self._gateway, clinvar_ingestion.ClinVarIncrementalGateway):
             return await self._gateway.fetch_records_incremental(
                 config,
                 checkpoint=checkpoint_before,
             )
 
         records = await self._gateway.fetch_records(config)
-        return pubmed_ingestion.PubMedGatewayFetchResult(
+        return clinvar_ingestion.ClinVarGatewayFetchResult(
             records=records,
             fetched_records=len(records),
             checkpoint_after=None,
-            checkpoint_kind=CheckpointKind.NONE,
+            checkpoint_kind=source_sync_state.CheckpointKind.NONE,
         )
 
     @staticmethod
@@ -184,8 +97,8 @@ class PubMedIngestionServiceHelpers:
         *,
         fetched_records: int,
         processed_records: int,
-    ) -> JSONObject:
-        checkpoint_after: JSONObject = {
+    ) -> type_definitions.common.JSONObject:
+        checkpoint_after: type_definitions.common.JSONObject = {
             "last_processed_at": datetime.now(UTC).isoformat(),
             "fetched_records": fetched_records,
             "processed_records": processed_records,
@@ -193,37 +106,47 @@ class PubMedIngestionServiceHelpers:
         return checkpoint_after
 
     def _to_pipeline_records(
-        self: PubMedIngestionService,
-        records: list[JSONObject],
+        self: ClinVarIngestionService,
+        records: list[type_definitions.common.JSONObject],
         *,
         original_source_id: str,
-    ) -> list[IngestionRawRecord]:
-        raw_records: list[IngestionRawRecord] = []
+    ) -> list[type_definitions.ingestion.RawRecord]:
+        """Adapt ClinVar JSON records into the kernel ingestion pipeline format."""
+        raw_records: list[type_definitions.ingestion.RawRecord] = []
         for record in records:
-            pmid = record.get("pmid")
-            record_id = pmid if isinstance(pmid, str) and pmid.strip() else str(uuid4())
+            clinvar_id = record.get("clinvar_id")
+            record_id = (
+                clinvar_id
+                if isinstance(clinvar_id, str) and clinvar_id.strip()
+                else str(uuid4())
+            )
+            payload = self._extract_pipeline_payload(record)
 
             raw_records.append(
-                IngestionRawRecord(
+                type_definitions.ingestion.RawRecord(
                     source_id=record_id,
-                    data=record,
+                    data=payload,
                     metadata={
                         "original_source_id": original_source_id,
-                        "type": "pubmed",
-                        "entity_type": "PUBLICATION",
-                        "pmid": record.get("pmid"),
-                        "doi": record.get("doi"),
+                        "type": "clinvar",
+                        "entity_type": "VARIANT",
+                        "clinvar_id": payload.get("clinvar_id"),
+                        "gene_symbol": payload.get("gene_symbol"),
+                        "clinical_significance": payload.get(
+                            "clinical_significance",
+                        ),
                     },
                 ),
             )
+
         return raw_records
 
     def _build_ledger_dedup_outcome(
-        self: PubMedIngestionService,
+        self: ClinVarIngestionService,
         *,
         source: user_data_source.UserDataSource,
-        records: list[JSONObject],
-        context: IngestionRunContext | None,
+        records: list[type_definitions.common.JSONObject],
+        context: ingestion.IngestionRunContext | None,
     ) -> _LedgerDedupOutcome:
         if context is None or context.source_record_ledger_repository is None:
             return _LedgerDedupOutcome(
@@ -250,11 +173,11 @@ class PubMedIngestionServiceHelpers:
         )
 
         now = datetime.now(UTC)
-        current_entries: dict[str, SourceRecordLedgerEntry] = dict(
+        current_entries: dict[str, source_record_ledger.SourceRecordLedgerEntry] = dict(
             existing_by_external_id,
         )
-        filtered_records: list[JSONObject] = []
-        entries_to_upsert: list[SourceRecordLedgerEntry] = []
+        filtered_records: list[type_definitions.common.JSONObject] = []
+        entries_to_upsert: list[source_record_ledger.SourceRecordLedgerEntry] = []
         new_records = 0
         updated_records = 0
         unchanged_records = 0
@@ -264,7 +187,7 @@ class PubMedIngestionServiceHelpers:
             if existing_entry is None:
                 new_records += 1
                 filtered_records.append(record)
-                new_entry = SourceRecordLedgerEntry(
+                new_entry = source_record_ledger.SourceRecordLedgerEntry(
                     source_id=source.id,
                     external_record_id=external_id,
                     payload_hash=payload_hash,
@@ -303,22 +226,32 @@ class PubMedIngestionServiceHelpers:
         )
 
     @staticmethod
-    def _extract_external_record_id(record: JSONObject) -> str:
-        for key in ("pmid", "pubmed_id", "doi"):
+    def _extract_external_record_id(
+        record: type_definitions.common.JSONObject,
+    ) -> str:
+        for key in ("clinvar_id", "variation_id", "accession"):
             value = record.get(key)
             if isinstance(value, str) and value.strip():
-                normalized = value.strip()
-                if key == "doi":
-                    normalized = normalized.lower()
-                return f"pubmed:{key}:{normalized}"
+                return f"clinvar:{key}:{value.strip()}"
             if isinstance(value, int):
-                return f"pubmed:{key}:{value}"
+                return f"clinvar:{key}:{value}"
 
-        payload_hash = PubMedIngestionServiceHelpers._compute_payload_hash(record)
-        return f"pubmed:hash:{payload_hash}"
+        parsed_data_raw = record.get("parsed_data")
+        if isinstance(parsed_data_raw, dict):
+            for key in ("clinvar_id", "variation_id", "accession"):
+                value = parsed_data_raw.get(key)
+                if isinstance(value, str) and value.strip():
+                    return f"clinvar:{key}:{value.strip()}"
+                if isinstance(value, int):
+                    return f"clinvar:{key}:{value}"
+
+        payload_hash = ClinVarIngestionServiceHelpers._compute_payload_hash(record)
+        return f"clinvar:hash:{payload_hash}"
 
     @staticmethod
-    def _compute_payload_hash(record: JSONObject) -> str:
+    def _compute_payload_hash(
+        record: type_definitions.common.JSONObject,
+    ) -> str:
         serialized = json.dumps(
             record,
             sort_keys=True,
@@ -328,7 +261,9 @@ class PubMedIngestionServiceHelpers:
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _extract_source_updated_at(record: JSONObject) -> datetime | None:
+    def _extract_source_updated_at(
+        record: type_definitions.common.JSONObject,
+    ) -> datetime | None:
         for key in ("fetched_at", "updated_at", "last_updated"):
             value = record.get(key)
             if isinstance(value, str):
@@ -358,27 +293,58 @@ class PubMedIngestionServiceHelpers:
         )
         return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _extract_pipeline_payload(
+        record: type_definitions.common.JSONObject,
+    ) -> type_definitions.common.JSONObject:
+        payload: type_definitions.common.JSONObject = {}
+        parsed_data = record.get("parsed_data")
+        if isinstance(parsed_data, dict):
+            for key, value in parsed_data.items():
+                payload[str(key)] = type_definitions.json_utils.to_json_value(value)
+
+        for key in (
+            "clinvar_id",
+            "source",
+            "fetched_at",
+            "gene_symbol",
+            "variant_type",
+            "clinical_significance",
+            "review_status",
+        ):
+            value = record.get(key)
+            if value is not None:
+                payload[key] = type_definitions.json_utils.to_json_value(value)
+
+        if payload:
+            return payload
+
+        for key, value in record.items():
+            payload[str(key)] = type_definitions.json_utils.to_json_value(value)
+        return payload
+
     async def _persist_raw_records(
-        self: PubMedIngestionService,
-        records: list[RawRecord],
+        self: ClinVarIngestionService,
+        records: list[type_definitions.common.JSONObject],
         source: user_data_source.UserDataSource,
     ) -> str | None:
+        """Persist raw records to storage if backend is available."""
         if not self._storage_service:
             return None
 
         backend = self._storage_service.resolve_backend_for_use_case(
-            StorageUseCase.RAW_SOURCE,
+            type_definitions.storage.StorageUseCase.RAW_SOURCE,
         )
         if not backend:
             return None
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
-            json.dump(records, tmp, default=str)
+            json.dump(list(records), tmp, default=str)
             tmp_path = Path(tmp.name)
 
         try:
             timestamp = source.updated_at.strftime("%Y%m%d_%H%M%S")
-            key = f"pubmed/{source.id}/raw/{timestamp}_{uuid4().hex[:8]}.json"
+            key = f"clinvar/{source.id}/raw/{timestamp}_{uuid4().hex[:8]}.json"
 
             operation = await self._storage_service.record_store_operation(
                 configuration=backend,
@@ -393,14 +359,15 @@ class PubMedIngestionServiceHelpers:
             )
             return operation.key
         finally:
-            tmp_path.unlink(missing_ok=True)
+            if tmp_path.exists():
+                tmp_path.unlink()
 
     def _upsert_source_documents(
-        self: PubMedIngestionService,
+        self: ClinVarIngestionService,
         *,
-        records: list[JSONObject],
+        records: list[type_definitions.common.JSONObject],
         source: user_data_source.UserDataSource,
-        context: IngestionRunContext | None,
+        context: ingestion.IngestionRunContext | None,
         raw_storage_key: str | None,
     ) -> None:
         if self._source_document_repository is None or not records:
@@ -413,7 +380,7 @@ class PubMedIngestionServiceHelpers:
             if external_record_id in seen_external_ids:
                 continue
             seen_external_ids.add(external_record_id)
-            metadata_payload: JSONObject = {
+            metadata_payload: type_definitions.common.JSONObject = {
                 "raw_record": dict(record),
             }
             documents.append(
@@ -424,7 +391,7 @@ class PubMedIngestionServiceHelpers:
                     ingestion_job_id=context.ingestion_job_id if context else None,
                     external_record_id=external_record_id,
                     source_type=source.source_type,
-                    document_format=source_document.DocumentFormat.MEDLINE_XML,
+                    document_format=source_document.DocumentFormat.CLINVAR_XML,
                     raw_storage_key=raw_storage_key,
                     enrichment_status=source_document.EnrichmentStatus.PENDING,
                     extraction_status=(
@@ -437,13 +404,3 @@ class PubMedIngestionServiceHelpers:
             )
         if documents:
             self._source_document_repository.upsert_many(documents)
-
-    def _extract_query_generation_run_id(self: PubMedIngestionService) -> str | None:
-        """Extract the latest query-generation run id from the query agent."""
-        if self._query_agent is None:
-            return None
-        provider = getattr(self._query_agent, "get_last_run_id", None)
-        if callable(provider):
-            run_id = provider()
-            return run_id if isinstance(run_id, str) and run_id.strip() else None
-        return None

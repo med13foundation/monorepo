@@ -20,7 +20,10 @@ from src.application.services.pubmed_discovery_service import (
     PubmedDownloadRequest,
     RunPubmedSearchRequest,
 )
-from src.application.services.pubmed_ingestion_service import PubMedIngestionService
+from src.application.services.pubmed_ingestion_service import (
+    PubMedIngestionDependencies,
+    PubMedIngestionService,
+)
 from src.application.services.storage_configuration_service import (
     StorageConfigurationService,
 )
@@ -84,9 +87,11 @@ class TestPubMedIngestionStorage:
         )
         service = PubMedIngestionService(
             gateway=mock_gateway,
-            publication_repository=mock_repo,
-            storage_service=mock_storage_service,
             pipeline=Mock(),
+            dependencies=PubMedIngestionDependencies(
+                publication_repository=mock_repo,
+                storage_service=mock_storage_service,
+            ),
         )
         source = UserDataSource(
             id=uuid4(),
@@ -126,9 +131,11 @@ class TestPubMedIngestionStorage:
     ) -> None:
         service = PubMedIngestionService(
             gateway=mock_gateway,
-            publication_repository=mock_repo,
-            storage_service=None,
             pipeline=Mock(),
+            dependencies=PubMedIngestionDependencies(
+                publication_repository=mock_repo,
+                storage_service=None,
+            ),
         )
         source = UserDataSource(
             id=uuid4(),

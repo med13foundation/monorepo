@@ -1022,6 +1022,89 @@ All previously listed post-V2 hardening items are now implemented:
    - `IngestionJobMapper` now enforces typed normalization of known metadata sections
      on persistence and hydration, preserving unknown keys.
 
+### Tier 1 Production Runtime Profile (Postgres-only, no new source types)
+
+Scope for this phase is intentionally narrow:
+
+- Keep source ingestion coverage fixed to `pubmed` and `clinvar`.
+- Do not add new `SourceType` values, connectors, or onboarding flows.
+- Harden scheduler/runtime semantics only.
+
+#### Exact configuration values
+
+Use these values as the production baseline:
+
+| Config | API pods | Scheduler worker | Notes |
+|---|---|---|---|
+| `MED13_DISABLE_INGESTION_SCHEDULER` | `1` | `0` | Scheduler loop runs only in dedicated worker process |
+| `MED13_INGESTION_SCHEDULER_BACKEND` | `postgres` | `postgres` | New env key; backend selection in scheduler factory |
+| `MED13_INGESTION_SCHEDULER_INTERVAL_SECONDS` | `30` | `30` | Poll cadence (`run_due_jobs`) |
+| `MED13_INGESTION_SCHEDULER_HEARTBEAT_SECONDS` | `30` | `30` | New env key; lock heartbeat interval while a run is active |
+| `MED13_INGESTION_SCHEDULER_LEASE_TTL_SECONDS` | `120` | `120` | New env key; lock lease expiry window |
+| `MED13_INGESTION_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS` | `300` | `300` | New env key; stale-run recovery threshold |
+| `MED13_INGESTION_JOB_HARD_TIMEOUT_SECONDS` | `7200` | `7200` | New env key; hard fail ingestion job after 2 hours |
+
+Deployment topology value:
+
+- `scheduler` deployment replica count: `1`.
+- `api` deployment replica count: scalable (scheduler disabled in all API pods).
+
+#### Implementation tasks (exact, file-level)
+
+1. Introduce Postgres scheduler backend selection.
+   - Update `src/infrastructure/factories/ingestion_scheduler_factory.py` to replace
+     module-global `SCHEDULER_BACKEND = InMemoryScheduler()` with runtime backend
+     resolution from `MED13_INGESTION_SCHEDULER_BACKEND`.
+   - Keep `InMemoryScheduler` for local/dev tests only.
+2. Implement Postgres scheduler adapter (`SchedulerPort`).
+   - Add `src/infrastructure/scheduling/postgres_scheduler.py`.
+   - Export from `src/infrastructure/scheduling/__init__.py`.
+   - Ensure `register_job`, `get_due_jobs`, `get_job`, `remove_job` are durable
+     across process restarts and support cron/hourly/daily/weekly/monthly cadence.
+3. Add scheduler persistence + locking tables (Alembic migration).
+   - Add migration under `alembic/versions/` for:
+     - `ingestion_scheduler_jobs` (persisted schedule state and next run timestamps).
+     - `ingestion_source_locks` (one lease row per source for cross-process mutual exclusion).
+   - Add indexes on `next_run_at`, `lease_expires_at`, and `source_id`.
+4. Add SQLAlchemy models and repositories for new scheduler tables.
+   - Add models in `src/models/database/`.
+   - Add domain repository contracts in `src/domain/repositories/`.
+   - Add SQLAlchemy adapters in `src/infrastructure/repositories/`.
+5. Enforce atomic source lock acquisition in scheduler execution path.
+   - Update `src/application/services/_ingestion_scheduling_core_helpers.py`:
+     - Acquire source lease before starting run.
+     - Heartbeat lease during run.
+     - Release lease in `finally`.
+     - If lock exists but lease expired, take over safely.
+   - Remove reliance on non-atomic `find_by_source(... limit=10)` as the primary overlap guard.
+6. Add stale-running recovery + hard timeout behavior.
+   - Extend `IngestionSchedulingOptions` in
+     `src/application/services/ingestion_scheduling_service.py` with:
+     - `scheduler_heartbeat_seconds=30`
+     - `scheduler_lease_ttl_seconds=120`
+     - `scheduler_stale_running_timeout_seconds=300`
+     - `ingestion_job_hard_timeout_seconds=7200`
+   - Apply timeout around ingestion invocation and fail timed-out jobs with explicit error metadata.
+7. Separate runtime roles for API vs scheduler worker.
+   - Update `src/main.py` to support role-based startup (API pods do not run ingestion scheduler loop).
+   - Retain backward compatibility for `MED13_DISABLE_INGESTION_SCHEDULER`.
+8. Add verification tests for production scheduler semantics.
+   - Unit:
+     - `tests/unit/infrastructure/scheduling/test_postgres_scheduler.py`
+     - additional lock/timeout cases in `tests/unit/application/test_ingestion_scheduling_service.py`
+   - Integration:
+     - restart durability (jobs survive process restart)
+     - dual-worker race (two workers, one source, exactly one active run)
+     - stale lock takeover and timeout failure path.
+
+#### Acceptance criteria
+
+- Scheduled jobs continue after worker restart without re-registration.
+- Two scheduler workers cannot execute the same source concurrently.
+- Stale `RUNNING` jobs are marked failed and recovered automatically.
+- Hard timeout produces deterministic failure metadata (`error_type = timeout`).
+- API pods never run scheduler loop in production.
+
 ## The Knowledge Graph (Implemented)
 
 The kernel graph is the **terminal state** of all data that passes through the

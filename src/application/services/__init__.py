@@ -78,6 +78,7 @@ PublicationExtractionService = (
     publication_extraction_service.PublicationExtractionService
 )
 PubMedDiscoveryService = pubmed_discovery_service.PubMedDiscoveryService
+PubMedIngestionDependencies = pubmed_ingestion_service.PubMedIngestionDependencies
 PubMedIngestionService = pubmed_ingestion_service.PubMedIngestionService
 PubMedQueryBuilder = pubmed_query_builder.PubMedQueryBuilder
 PubmedDownloadRequest = pubmed_discovery_service.PubmedDownloadRequest
@@ -134,6 +135,7 @@ __all__ = [
     "IngestionSchedulingOptions",
     "MembershipManagementService",
     "PubMedDiscoveryService",
+    "PubMedIngestionDependencies",
     "PubMedIngestionService",
     "PubMedQueryBuilder",
     "PubmedDownloadRequest",

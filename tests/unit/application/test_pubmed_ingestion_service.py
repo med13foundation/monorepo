@@ -8,11 +8,20 @@ from uuid import uuid4
 
 import pytest
 
-from src.application.services.pubmed_ingestion_service import PubMedIngestionService
+from src.application.services.pubmed_ingestion_service import (
+    PubMedIngestionDependencies,
+    PubMedIngestionService,
+)
 from src.application.services.storage_configuration_service import (
     StorageConfigurationService,
 )
 from src.domain.entities.publication import Publication, PublicationType
+from src.domain.entities.source_document import (
+    DocumentExtractionStatus,
+    DocumentFormat,
+    EnrichmentStatus,
+    SourceDocument,
+)
 from src.domain.entities.source_record_ledger import (
     SourceRecordLedgerEntry,  # noqa: TC001
 )
@@ -24,6 +33,9 @@ from src.domain.entities.user_data_source import (
     UserDataSource,
 )
 from src.domain.repositories.publication_repository import PublicationRepository
+from src.domain.repositories.source_document_repository import (
+    SourceDocumentRepository,
+)
 from src.domain.repositories.source_record_ledger_repository import (
     SourceRecordLedgerRepository,
 )
@@ -294,6 +306,103 @@ class StubLedgerRepository(SourceRecordLedgerRepository):
         return 0
 
 
+class StubSourceDocumentRepository(SourceDocumentRepository):
+    def __init__(self) -> None:
+        self._documents: dict[tuple[str, str], SourceDocument] = {}
+
+    def get_by_id(self, document_id: UUID) -> SourceDocument | None:
+        for document in self._documents.values():
+            if document.id == document_id:
+                return document
+        return None
+
+    def get_by_source_external_record(
+        self,
+        *,
+        source_id: UUID,
+        external_record_id: str,
+    ) -> SourceDocument | None:
+        return self._documents.get((str(source_id), external_record_id))
+
+    def upsert(self, document: SourceDocument) -> SourceDocument:
+        persisted = self.upsert_many([document])
+        return persisted[0]
+
+    def upsert_many(
+        self,
+        documents: list[SourceDocument],
+    ) -> list[SourceDocument]:
+        persisted: list[SourceDocument] = []
+        for document in documents:
+            key = (str(document.source_id), document.external_record_id)
+            existing = self._documents.get(key)
+            if existing is None:
+                self._documents[key] = document
+                persisted.append(document)
+                continue
+            updated = document.model_copy(update={"id": existing.id})
+            self._documents[key] = updated
+            persisted.append(updated)
+        return persisted
+
+    def list_pending_enrichment(
+        self,
+        *,
+        limit: int = 100,
+        source_id: UUID | None = None,
+        research_space_id: UUID | None = None,
+    ) -> list[SourceDocument]:
+        pending = [
+            document
+            for document in self._documents.values()
+            if document.enrichment_status == EnrichmentStatus.PENDING
+        ]
+        if source_id is not None:
+            pending = [
+                document for document in pending if document.source_id == source_id
+            ]
+        if research_space_id is not None:
+            pending = [
+                document
+                for document in pending
+                if document.research_space_id == research_space_id
+            ]
+        return pending[: max(limit, 1)]
+
+    def list_pending_extraction(
+        self,
+        *,
+        limit: int = 100,
+        source_id: UUID | None = None,
+        research_space_id: UUID | None = None,
+    ) -> list[SourceDocument]:
+        pending = [
+            document
+            for document in self._documents.values()
+            if document.extraction_status == DocumentExtractionStatus.PENDING
+        ]
+        if source_id is not None:
+            pending = [
+                document for document in pending if document.source_id == source_id
+            ]
+        if research_space_id is not None:
+            pending = [
+                document
+                for document in pending
+                if document.research_space_id == research_space_id
+            ]
+        return pending[: max(limit, 1)]
+
+    def delete_by_source(self, source_id: UUID) -> int:
+        keys = [key for key in self._documents if key[0] == str(source_id)]
+        for key in keys:
+            self._documents.pop(key, None)
+        return len(keys)
+
+    def count_for_source(self, source_id: UUID) -> int:
+        return sum(1 for key in self._documents if key[0] == str(source_id))
+
+
 def _build_source(metadata: dict) -> UserDataSource:
     return UserDataSource(
         id=uuid4(),
@@ -329,13 +438,19 @@ async def test_ingest_stores_raw_records_if_configured() -> None:
     mock_storage = Mock(spec=StorageConfigurationService)
     mock_config = Mock(spec=StorageConfiguration)
     mock_storage.resolve_backend_for_use_case.return_value = mock_config
-    mock_storage.record_store_operation = AsyncMock()
+    mock_store_operation = Mock()
+    mock_store_operation.key = "pubmed/raw/batch.json"
+    mock_storage.record_store_operation = AsyncMock(return_value=mock_store_operation)
+    source_document_repository = StubSourceDocumentRepository()
 
     service = PubMedIngestionService(
         gateway=gateway,
         pipeline=Mock(),
-        publication_repository=repository,
-        storage_service=mock_storage,
+        dependencies=PubMedIngestionDependencies(
+            publication_repository=repository,
+            storage_service=mock_storage,
+            source_document_repository=source_document_repository,
+        ),
     )
     source = _build_source({"query": "MED13"})
 
@@ -353,6 +468,15 @@ async def test_ingest_stores_raw_records_if_configured() -> None:
     assert call_args.kwargs["content_type"] == "application/json"
     assert call_args.kwargs["user_id"] == source.owner_id
     assert "raw/" in call_args.kwargs["key"]
+    saved_document = source_document_repository.get_by_source_external_record(
+        source_id=source.id,
+        external_record_id="pubmed:pubmed_id:100",
+    )
+    assert saved_document is not None
+    assert saved_document.document_format == DocumentFormat.MEDLINE_XML
+    assert saved_document.raw_storage_key == "pubmed/raw/batch.json"
+    assert saved_document.enrichment_status == EnrichmentStatus.PENDING
+    assert saved_document.extraction_status == DocumentExtractionStatus.PENDING
 
 
 @pytest.mark.asyncio
@@ -362,7 +486,9 @@ async def test_rejects_non_pubmed_source() -> None:
     service = PubMedIngestionService(
         gateway=gateway,
         pipeline=Mock(),
-        publication_repository=repository,
+        dependencies=PubMedIngestionDependencies(
+            publication_repository=repository,
+        ),
     )
 
     source = _build_source({"query": "MED13"}).model_copy(
@@ -382,7 +508,9 @@ async def test_ingest_skips_unchanged_records_using_ledger() -> None:
     service = PubMedIngestionService(
         gateway=gateway,
         pipeline=pipeline,
-        publication_repository=StubPublicationRepository(),
+        dependencies=PubMedIngestionDependencies(
+            publication_repository=StubPublicationRepository(),
+        ),
     )
 
     source = _build_source({"query": "MED13"}).model_copy(

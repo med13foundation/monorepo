@@ -109,7 +109,7 @@ print_issue_block() {
     echo ""
     echo "$heading for $issue_type in $step_name:"
     echo "  $step_name"
-    grep -Ei "$pattern" "$log_file" | head -n 8 | sed 's/^/   - /'
+    grep -Ei "$pattern" "$log_file" | sed -n '1,8p' | sed 's/^/   - /'
 }
 
 run_all_steps() {

@@ -9,6 +9,14 @@ from .ingestion_job import (
     IngestionTrigger,
     JobMetrics,
 )
+from .ingestion_scheduler_job import IngestionSchedulerJob
+from .ingestion_source_lock import IngestionSourceLock
+from .source_document import (
+    DocumentExtractionStatus,
+    DocumentFormat,
+    EnrichmentStatus,
+    SourceDocument,
+)
 from .source_record_ledger import SourceRecordLedgerEntry
 from .source_sync_state import CheckpointKind, SourceSyncState
 from .source_template import (
@@ -36,18 +44,24 @@ from .user_data_source import (
 __all__ = [
     "ActivationScope",
     "DataSourceActivation",
+    "DocumentExtractionStatus",
+    "DocumentFormat",
+    "EnrichmentStatus",
     "ExtractionQueueItem",
     "ExtractionStatus",
     "IngestionError",
     "IngestionJob",
     "IngestionSchedule",
+    "IngestionSchedulerJob",
     "IngestionStatus",
+    "IngestionSourceLock",
     "IngestionTrigger",
     "JobMetrics",
     "CheckpointKind",
     "QualityMetrics",
     "SourceRecordLedgerEntry",
     "SourceConfiguration",
+    "SourceDocument",
     "SourceStatus",
     "SourceSyncState",
     "SourceTemplate",

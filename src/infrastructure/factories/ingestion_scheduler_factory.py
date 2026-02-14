@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
@@ -12,12 +13,14 @@ from src.application.services import (
     IngestionSchedulingOptions,
     IngestionSchedulingService,
     PubMedDiscoveryService,
+    PubMedIngestionDependencies,
     PubMedIngestionService,
     PubMedQueryBuilder,
     StorageConfigurationService,
     StorageOperationCoordinator,
 )
 from src.database.session import SessionLocal
+from src.database.url_resolver import resolve_sync_database_url
 from src.domain.entities.user_data_source import SourceType, UserDataSource
 from src.infrastructure.data_sources import (
     ClinVarSourceGateway,
@@ -37,16 +40,18 @@ from src.infrastructure.repositories import (
     SQLAlchemyDiscoverySearchJobRepository,
     SqlAlchemyExtractionQueueRepository,
     SqlAlchemyIngestionJobRepository,
+    SqlAlchemyIngestionSourceLockRepository,
     SqlAlchemyPublicationExtractionRepository,
     SqlAlchemyPublicationRepository,
     SqlAlchemyResearchSpaceRepository,
+    SqlAlchemySourceDocumentRepository,
     SqlAlchemySourceRecordLedgerRepository,
     SqlAlchemySourceSyncStateRepository,
     SqlAlchemyStorageConfigurationRepository,
     SqlAlchemyStorageOperationRepository,
     SqlAlchemyUserDataSourceRepository,
 )
-from src.infrastructure.scheduling import InMemoryScheduler
+from src.infrastructure.scheduling import InMemoryScheduler, PostgresScheduler
 from src.infrastructure.storage import initialize_storage_plugins
 
 if TYPE_CHECKING:
@@ -57,7 +62,72 @@ if TYPE_CHECKING:
     from src.application.services.ports.scheduler_port import SchedulerPort
     from src.domain.services.ingestion import IngestionRunContext, IngestionRunSummary
 
-SCHEDULER_BACKEND = InMemoryScheduler()
+_INMEMORY_SCHEDULER = InMemoryScheduler()
+_POSTGRES_PREFIXES = (
+    "postgresql://",
+    "postgresql+psycopg2://",
+    "postgresql+psycopg://",
+    "postgresql+asyncpg://",
+)
+_BACKEND_INMEMORY = "inmemory"
+_BACKEND_POSTGRES = "postgres"
+_ENV_SCHEDULER_HEARTBEAT_SECONDS = "MED13_INGESTION_SCHEDULER_HEARTBEAT_SECONDS"
+_ENV_SCHEDULER_LEASE_TTL_SECONDS = "MED13_INGESTION_SCHEDULER_LEASE_TTL_SECONDS"
+_ENV_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS = (
+    "MED13_INGESTION_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS"
+)
+_ENV_INGESTION_JOB_HARD_TIMEOUT_SECONDS = "MED13_INGESTION_JOB_HARD_TIMEOUT_SECONDS"
+_DEFAULT_SCHEDULER_HEARTBEAT_SECONDS = 30
+_DEFAULT_SCHEDULER_LEASE_TTL_SECONDS = 120
+_DEFAULT_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS = 300
+_DEFAULT_INGESTION_JOB_HARD_TIMEOUT_SECONDS = 7200
+
+
+def _get_configured_scheduler_backend_name() -> str:
+    configured = os.getenv(
+        "MED13_INGESTION_SCHEDULER_BACKEND",
+        _BACKEND_INMEMORY,
+    ).strip()
+    normalized = configured.lower()
+    if normalized in {"in-memory", "memory"}:
+        return _BACKEND_INMEMORY
+    if normalized in {_BACKEND_INMEMORY, _BACKEND_POSTGRES}:
+        return normalized
+    msg = (
+        "Unsupported MED13_INGESTION_SCHEDULER_BACKEND value. "
+        "Use 'inmemory' or 'postgres'."
+    )
+    raise ValueError(msg)
+
+
+def _resolve_scheduler_backend() -> SchedulerPort:
+    backend_name = _get_configured_scheduler_backend_name()
+    if backend_name == _BACKEND_INMEMORY:
+        return _INMEMORY_SCHEDULER
+
+    database_url = resolve_sync_database_url()
+    if not database_url.startswith(_POSTGRES_PREFIXES):
+        msg = (
+            "Postgres scheduler backend requires a Postgres DATABASE_URL. "
+            f"Resolved URL: {database_url}"
+        )
+        raise ValueError(msg)
+    return PostgresScheduler(session_factory=SessionLocal)
+
+
+def _read_positive_int_env(env_key: str, *, default: int) -> int:
+    raw_value = os.getenv(env_key)
+    if raw_value is None or not raw_value.strip():
+        return default
+    try:
+        parsed_value = int(raw_value.strip())
+    except ValueError as exc:
+        msg = f"{env_key} must be a positive integer (received: {raw_value!r})"
+        raise ValueError(msg) from exc
+    if parsed_value <= 0:
+        msg = f"{env_key} must be a positive integer (received: {raw_value!r})"
+        raise ValueError(msg)
+    return parsed_value
 
 
 def build_ingestion_scheduling_service(
@@ -66,6 +136,8 @@ def build_ingestion_scheduling_service(
     scheduler: SchedulerPort | None = None,
 ) -> IngestionSchedulingService:
     """Create a fully wired ingestion scheduling service for the current session."""
+    resolved_scheduler = scheduler or _resolve_scheduler_backend()
+
     publication_repository = SqlAlchemyPublicationRepository(session)
     user_source_repository = SqlAlchemyUserDataSourceRepository(session)
     job_repository = SqlAlchemyIngestionJobRepository(session)
@@ -77,6 +149,8 @@ def build_ingestion_scheduling_service(
     storage_operation_repository = SqlAlchemyStorageOperationRepository(session)
     source_sync_state_repository = SqlAlchemySourceSyncStateRepository(session)
     source_record_ledger_repository = SqlAlchemySourceRecordLedgerRepository(session)
+    source_lock_repository = SqlAlchemyIngestionSourceLockRepository(session)
+    source_document_repository = SqlAlchemySourceDocumentRepository(session)
     storage_service = StorageConfigurationService(
         configuration_repository=storage_configuration_repository,
         operation_repository=storage_operation_repository,
@@ -107,15 +181,19 @@ def build_ingestion_scheduling_service(
     pubmed_service = PubMedIngestionService(
         gateway=PubMedSourceGateway(),
         pipeline=pipeline,
-        publication_repository=publication_repository,  # type: ignore[arg-type]
-        storage_service=storage_service,
-        query_agent=query_agent,
-        research_space_repository=research_space_repository,
+        dependencies=PubMedIngestionDependencies(
+            publication_repository=publication_repository,  # type: ignore[arg-type]
+            storage_service=storage_service,
+            query_agent=query_agent,
+            research_space_repository=research_space_repository,
+            source_document_repository=source_document_repository,
+        ),
     )
     clinvar_service = ClinVarIngestionService(
         gateway=ClinVarSourceGateway(),
         pipeline=pipeline,
         storage_service=storage_service,
+        source_document_repository=source_document_repository,
     )
 
     discovery_job_repository = SQLAlchemyDiscoverySearchJobRepository(session)
@@ -144,6 +222,23 @@ def build_ingestion_scheduling_service(
     ) -> IngestionRunSummary:
         return await clinvar_service.ingest(source, context=context)
 
+    scheduler_heartbeat_seconds = _read_positive_int_env(
+        _ENV_SCHEDULER_HEARTBEAT_SECONDS,
+        default=_DEFAULT_SCHEDULER_HEARTBEAT_SECONDS,
+    )
+    scheduler_lease_ttl_seconds = _read_positive_int_env(
+        _ENV_SCHEDULER_LEASE_TTL_SECONDS,
+        default=_DEFAULT_SCHEDULER_LEASE_TTL_SECONDS,
+    )
+    scheduler_stale_running_timeout_seconds = _read_positive_int_env(
+        _ENV_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS,
+        default=_DEFAULT_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS,
+    )
+    ingestion_job_hard_timeout_seconds = _read_positive_int_env(
+        _ENV_INGESTION_JOB_HARD_TIMEOUT_SECONDS,
+        default=_DEFAULT_INGESTION_JOB_HARD_TIMEOUT_SECONDS,
+    )
+
     ingestion_services: dict[
         SourceType,
         Callable[..., Awaitable[IngestionRunSummary]],
@@ -153,7 +248,7 @@ def build_ingestion_scheduling_service(
     }
 
     return IngestionSchedulingService(
-        scheduler=scheduler or SCHEDULER_BACKEND,
+        scheduler=resolved_scheduler,
         source_repository=user_source_repository,
         job_repository=job_repository,
         ingestion_services=ingestion_services,
@@ -164,6 +259,13 @@ def build_ingestion_scheduling_service(
             extraction_runner_service=extraction_runner_service,
             source_sync_state_repository=source_sync_state_repository,
             source_record_ledger_repository=source_record_ledger_repository,
+            source_lock_repository=source_lock_repository,
+            scheduler_heartbeat_seconds=scheduler_heartbeat_seconds,
+            scheduler_lease_ttl_seconds=scheduler_lease_ttl_seconds,
+            scheduler_stale_running_timeout_seconds=(
+                scheduler_stale_running_timeout_seconds
+            ),
+            ingestion_job_hard_timeout_seconds=ingestion_job_hard_timeout_seconds,
         ),
     )
 

@@ -3,7 +3,12 @@
 from .data_source_activation_repository import SqlAlchemyDataSourceActivationRepository
 from .extraction_queue_repository import SqlAlchemyExtractionQueueRepository
 from .ingestion_job_repository import SqlAlchemyIngestionJobRepository
+from .ingestion_scheduler_job_repository import (
+    SqlAlchemyIngestionSchedulerJobRepository,
+)
+from .ingestion_source_lock_repository import SqlAlchemyIngestionSourceLockRepository
 from .research_space_repository import SqlAlchemyResearchSpaceRepository
+from .source_document_repository import SqlAlchemySourceDocumentRepository
 from .source_record_ledger_repository import SqlAlchemySourceRecordLedgerRepository
 from .source_sync_state_repository import SqlAlchemySourceSyncStateRepository
 from .source_template_repository import SqlAlchemySourceTemplateRepository
@@ -20,7 +25,10 @@ __all__ = [
     "SqlAlchemyDataSourceActivationRepository",
     "SqlAlchemyExtractionQueueRepository",
     "SqlAlchemyIngestionJobRepository",
+    "SqlAlchemyIngestionSchedulerJobRepository",
+    "SqlAlchemyIngestionSourceLockRepository",
     "SqlAlchemyResearchSpaceRepository",
+    "SqlAlchemySourceDocumentRepository",
     "SqlAlchemySourceRecordLedgerRepository",
     "SqlAlchemySourceSyncStateRepository",
     "SqlAlchemySourceTemplateRepository",

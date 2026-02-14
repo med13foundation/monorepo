@@ -36,6 +36,9 @@ if TYPE_CHECKING:
         user_data_source_repository,
     )
     from src.domain.repositories import (
+        ingestion_source_lock_repository as source_lock_repo,
+    )
+    from src.domain.repositories import (
         source_record_ledger_repository as source_record_ledger_repo,
     )
     from src.domain.repositories import (
@@ -58,6 +61,15 @@ class IngestionSchedulingOptions:
     source_record_ledger_repository: (
         source_record_ledger_repo.SourceRecordLedgerRepository | None
     ) = None
+    scheduler_heartbeat_seconds: int = 30
+    scheduler_lease_ttl_seconds: int = 120
+    scheduler_stale_running_timeout_seconds: int = 300
+    ingestion_job_hard_timeout_seconds: int = 7200
+    # Backward-compatible aliases retained while transitioning option names.
+    source_lock_repository: source_lock_repo.IngestionSourceLockRepository | None = None
+    source_lock_lease_ttl_seconds: int | None = None
+    source_lock_heartbeat_seconds: int | None = None
+    source_lock_owner: str = "ingestion-scheduler"
     source_ledger_retention_days: int | None = 180
     source_ledger_cleanup_batch_size: int = 1000
     retry_batch_size: int = 25
@@ -97,6 +109,36 @@ class IngestionSchedulingService(
         )
         self._source_record_ledger_repository = (
             resolved_options.source_record_ledger_repository
+        )
+        self._scheduler_stale_running_timeout_seconds = max(
+            resolved_options.scheduler_stale_running_timeout_seconds,
+            1,
+        )
+        self._ingestion_job_hard_timeout_seconds = max(
+            resolved_options.ingestion_job_hard_timeout_seconds,
+            1,
+        )
+        self._source_lock_repository = resolved_options.source_lock_repository
+        resolved_lease_ttl_seconds = (
+            resolved_options.source_lock_lease_ttl_seconds
+            if resolved_options.source_lock_lease_ttl_seconds is not None
+            else resolved_options.scheduler_lease_ttl_seconds
+        )
+        resolved_heartbeat_seconds = (
+            resolved_options.source_lock_heartbeat_seconds
+            if resolved_options.source_lock_heartbeat_seconds is not None
+            else resolved_options.scheduler_heartbeat_seconds
+        )
+        self._source_lock_lease_ttl_seconds = max(
+            resolved_lease_ttl_seconds,
+            1,
+        )
+        self._source_lock_heartbeat_seconds = max(
+            resolved_heartbeat_seconds,
+            1,
+        )
+        self._source_lock_owner = (
+            resolved_options.source_lock_owner.strip() or "ingestion-scheduler"
         )
         if resolved_options.source_ledger_retention_days is None:
             self._source_ledger_retention_days = None
@@ -143,6 +185,7 @@ class IngestionSchedulingService(
 
     async def run_due_jobs(self, *, as_of: datetime | None = None) -> None:
         """Execute all jobs that are due as of the provided timestamp."""
+        self._recover_stale_running_jobs()
         due_jobs = self._scheduler.get_due_jobs(as_of=as_of)
         for job in due_jobs:
             await self._execute_job(job)
@@ -161,5 +204,4 @@ class IngestionSchedulingService(
         if not source.ingestion_schedule.requires_scheduler:
             msg = "Source must have an enabled non-manual ingestion schedule"
             raise ValueError(msg)
-        self._ensure_source_not_running(source.id)
         return await self._run_ingestion_for_source(source)

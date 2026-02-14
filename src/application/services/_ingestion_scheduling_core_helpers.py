@@ -4,15 +4,17 @@
 
 from __future__ import annotations
 
-import hashlib
+import asyncio
 import inspect
-import json
 import logging
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from src.domain.entities import ingestion_job, user_data_source
-from src.domain.entities.source_sync_state import CheckpointKind, SourceSyncState
-from src.domain.services.ingestion import IngestionRunContext, IngestionRunSummary
+
+from ._ingestion_scheduling_state_helpers import _IngestionSchedulingStateHelpers
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -22,14 +24,17 @@ if TYPE_CHECKING:
         IngestionSchedulingService,
     )
     from src.application.services.ports.scheduler_port import ScheduledJob
+    from src.domain.services.ingestion import IngestionRunContext, IngestionRunSummary
+    from src.type_definitions.common import JSONObject
 
 logger = logging.getLogger(__name__)
 
 MIN_POSITIONAL_PARAMETERS_WITH_CONTEXT = 2
 DEDUP_WARNING_THRESHOLD = 0.9
+ALREADY_RUNNING_ERROR_FRAGMENT = "already running"
 
 
-class _IngestionSchedulingCoreHelpers:
+class _IngestionSchedulingCoreHelpers(_IngestionSchedulingStateHelpers):
     """Helpers for orchestrating ingestion execution and summary metadata."""
 
     async def _execute_job(
@@ -44,100 +49,328 @@ class _IngestionSchedulingCoreHelpers:
             == user_data_source.ScheduleFrequency.MANUAL
         ):
             return
-        if self._source_has_running_job(source.id):
-            logger.info(
-                "Skipping scheduled ingestion because source already has a running job",
-                extra={"source_id": str(source.id)},
-            )
-            return
-        await self._run_ingestion_for_source(source)
+        try:
+            await self._run_ingestion_for_source(source)
+        except ValueError as exc:
+            if ALREADY_RUNNING_ERROR_FRAGMENT in str(exc).lower():
+                logger.info(
+                    "Skipping scheduled ingestion because source lock is held",
+                    extra={"source_id": str(source.id)},
+                )
+                return
+            raise
 
     async def _run_ingestion_for_source(
         self: IngestionSchedulingService,
         source: user_data_source.UserDataSource,
     ) -> IngestionRunSummary:
-        self._ensure_source_not_running(source.id)
+        self._recover_stale_running_jobs(source_id=source.id)
         self._assert_extraction_contract(source)
         service = self._get_ingestion_service(source)
-
-        job = self._job_repository.save(self._create_ingestion_job(source))
-        running = self._job_repository.save(job.start_execution())
-        sync_state_before = self._prepare_sync_state_for_attempt(source)
-        run_context = self._build_run_context(
-            source=source,
-            ingestion_job_id=running.id,
-            sync_state=sync_state_before,
+        lock_token = self._acquire_source_lock(source.id)
+        lock_heartbeat_task = self._start_source_lock_heartbeat(
+            source_id=source.id,
+            lock_token=lock_token,
         )
-        try:
-            summary = await self._invoke_ingestion_service(
-                service=service,
-                source=source,
-                context=run_context,
-            )
-            self._emit_dedup_telemetry(source_id=source.id, summary=summary)
-            sync_state_after = self._persist_sync_state_on_success(
-                sync_state=sync_state_before,
-                ingestion_job_id=running.id,
-                summary=summary,
-            )
-            skipped_records = self._int_summary_field(summary, "skipped_records") + (
-                self._int_summary_field(summary, "unchanged_records")
-            )
-            metrics = ingestion_job.JobMetrics(
-                records_processed=summary.created_publications
-                + summary.updated_publications,
-                records_failed=0,
-                records_skipped=skipped_records,
-                bytes_processed=0,
-                api_calls_made=0,
-                duration_seconds=None,
-                records_per_second=None,
-            )
-            metadata = self._build_source_metadata(
-                running=running,
-                summary=summary,
-                sync_state_before=sync_state_before,
-                sync_state_after=sync_state_after,
-            )
 
-            extraction_metadata = self._enqueue_extraction(
+        try:
+            job = self._job_repository.save(self._create_ingestion_job(source))
+            running = self._job_repository.save(job.start_execution())
+            sync_state_before = self._prepare_sync_state_for_attempt(source)
+            run_context = self._build_run_context(
                 source=source,
                 ingestion_job_id=running.id,
-                summary=summary,
+                sync_state=sync_state_before,
             )
-            if extraction_metadata:
-                metadata = metadata.model_copy(
-                    update={"extraction_queue": extraction_metadata},
+            try:
+                summary = await asyncio.wait_for(
+                    self._invoke_ingestion_service(
+                        service=service,
+                        source=source,
+                        context=run_context,
+                    ),
+                    timeout=self._ingestion_job_hard_timeout_seconds,
                 )
-                extraction_run = await self._run_extraction(
+                self._emit_dedup_telemetry(source_id=source.id, summary=summary)
+                sync_state_after = self._persist_sync_state_on_success(
+                    sync_state=sync_state_before,
+                    ingestion_job_id=running.id,
+                    summary=summary,
+                )
+                skipped_records = self._int_summary_field(
+                    summary,
+                    "skipped_records",
+                ) + self._int_summary_field(summary, "unchanged_records")
+                metrics = ingestion_job.JobMetrics(
+                    records_processed=summary.created_publications
+                    + summary.updated_publications,
+                    records_failed=0,
+                    records_skipped=skipped_records,
+                    bytes_processed=0,
+                    api_calls_made=0,
+                    duration_seconds=None,
+                    records_per_second=None,
+                )
+                metadata = self._build_source_metadata(
+                    running=running,
+                    summary=summary,
+                    sync_state_before=sync_state_before,
+                    sync_state_after=sync_state_after,
+                )
+
+                extraction_metadata = self._enqueue_extraction(
                     source=source,
                     ingestion_job_id=running.id,
-                    queued_count=extraction_metadata.queued,
+                    summary=summary,
                 )
-                if extraction_run:
+                if extraction_metadata:
                     metadata = metadata.model_copy(
-                        update={"extraction_run": extraction_run},
+                        update={"extraction_queue": extraction_metadata},
                     )
+                    extraction_run = await self._run_extraction(
+                        source=source,
+                        ingestion_job_id=running.id,
+                        queued_count=extraction_metadata.queued,
+                    )
+                    if extraction_run:
+                        metadata = metadata.model_copy(
+                            update={"extraction_run": extraction_run},
+                        )
 
-            completed = running.model_copy(
-                update={"metadata": metadata.to_json_object()},
-            ).complete_successfully(metrics)
-        except Exception as exc:
-            error = ingestion_job.IngestionError(
-                error_type="scheduler_failure",
-                error_message=str(exc),
-                record_id=None,
-            )
-            failed = running.fail(error)
-            self._job_repository.save(failed)
-            raise
+                completed = running.model_copy(
+                    update={"metadata": metadata.to_json_object()},
+                ).complete_successfully(metrics)
+            except TimeoutError:
+                self._mark_running_job_as_timeout_failure(
+                    running=running,
+                    timeout_seconds=self._ingestion_job_hard_timeout_seconds,
+                    timeout_scope="ingestion_job_hard_timeout",
+                    timeout_message=(
+                        "Ingestion invocation exceeded the hard timeout window"
+                    ),
+                )
+                raise
+            except Exception as exc:
+                error = ingestion_job.IngestionError(
+                    error_type="scheduler_failure",
+                    error_message=str(exc),
+                    record_id=None,
+                )
+                failed = running.fail(error)
+                self._job_repository.save(failed)
+                raise
+            else:
+                self._job_repository.save(completed)
+                updated_source = (
+                    self._source_repository.record_ingestion(source.id) or source
+                )
+                self._update_schedule_after_run(updated_source)
+                return summary
+        finally:
+            if lock_heartbeat_task is not None:
+                lock_heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await lock_heartbeat_task
+            if lock_token is not None:
+                self._release_source_lock(source_id=source.id, lock_token=lock_token)
+
+    def _recover_stale_running_jobs(
+        self: IngestionSchedulingService,
+        *,
+        source_id: UUID | None = None,
+        as_of: datetime | None = None,
+    ) -> int:
+        reference = self._normalize_datetime(as_of or datetime.now(UTC))
+        timeout_seconds = self._scheduler_stale_running_timeout_seconds
+        if source_id is None:
+            candidates = self._job_repository.find_running_jobs(limit=200)
         else:
-            self._job_repository.save(completed)
-            updated_source = (
-                self._source_repository.record_ingestion(source.id) or source
+            recent_jobs = self._job_repository.find_by_source(source_id, limit=50)
+            candidates = [
+                job
+                for job in recent_jobs
+                if job.status == ingestion_job.IngestionStatus.RUNNING
+            ]
+
+        stale_jobs = [
+            job
+            for job in candidates
+            if self._is_stale_running_job(job=job, as_of=reference)
+        ]
+        for stale_job in stale_jobs:
+            self._mark_running_job_as_timeout_failure(
+                running=stale_job,
+                timeout_seconds=timeout_seconds,
+                timeout_scope="stale_running_recovery",
+                timeout_message=(
+                    "Ingestion job remained in RUNNING state beyond stale timeout "
+                    "threshold and was recovered automatically"
+                ),
+                timed_out_at=reference,
             )
-            self._update_schedule_after_run(updated_source)
-            return summary
+        return len(stale_jobs)
+
+    def _is_stale_running_job(
+        self: IngestionSchedulingService,
+        *,
+        job: ingestion_job.IngestionJob,
+        as_of: datetime,
+    ) -> bool:
+        if job.status != ingestion_job.IngestionStatus.RUNNING:
+            return False
+        started_at = self._normalize_datetime(job.started_at or job.triggered_at)
+        elapsed_seconds = (as_of - started_at).total_seconds()
+        return elapsed_seconds >= self._scheduler_stale_running_timeout_seconds
+
+    def _mark_running_job_as_timeout_failure(
+        self: IngestionSchedulingService,
+        *,
+        running: ingestion_job.IngestionJob,
+        timeout_seconds: int,
+        timeout_scope: str,
+        timeout_message: str,
+        timed_out_at: datetime | None = None,
+    ) -> None:
+        failure_time = self._normalize_datetime(timed_out_at or datetime.now(UTC))
+        failure_payload: JSONObject = {
+            "error_type": "timeout",
+            "timeout_seconds": timeout_seconds,
+            "timeout_scope": timeout_scope,
+            "timed_out_at": failure_time.isoformat(timespec="seconds"),
+        }
+        error = ingestion_job.IngestionError(
+            error_type="timeout",
+            error_message=(
+                f"{timeout_message} (timeout_seconds={timeout_seconds}, "
+                f"scope={timeout_scope})"
+            ),
+            error_details=failure_payload,
+            record_id=None,
+        )
+        failed = running.model_copy(
+            update={
+                "metadata": self._with_failure_metadata(
+                    running.metadata,
+                    failure_payload=failure_payload,
+                ),
+            },
+        ).fail(error)
+        self._job_repository.save(failed)
+        logger.warning(
+            "Ingestion job marked as failed due to timeout",
+            extra={
+                "job_id": str(running.id),
+                "source_id": str(running.source_id),
+                "timeout_scope": timeout_scope,
+                "timeout_seconds": timeout_seconds,
+            },
+        )
+
+    @staticmethod
+    def _with_failure_metadata(
+        metadata: object,
+        *,
+        failure_payload: JSONObject,
+    ) -> JSONObject:
+        if not isinstance(metadata, dict):
+            normalized_metadata: JSONObject = {}
+        else:
+            normalized_metadata = {str(key): value for key, value in metadata.items()}
+        normalized_metadata["failure"] = dict(failure_payload)
+        return normalized_metadata
+
+    @staticmethod
+    def _normalize_datetime(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    def _acquire_source_lock(
+        self: IngestionSchedulingService,
+        source_id: UUID,
+    ) -> str | None:
+        repository = self._source_lock_repository
+        if repository is None:
+            self._ensure_source_not_running(source_id)
+            return None
+
+        now = datetime.now(UTC)
+        lock_token = uuid4().hex
+        lease_expires_at = now + timedelta(seconds=self._source_lock_lease_ttl_seconds)
+        lock = repository.try_acquire(
+            source_id=source_id,
+            lock_token=lock_token,
+            lease_expires_at=lease_expires_at,
+            heartbeat_at=now,
+            acquired_by=self._source_lock_owner,
+        )
+        if lock is None:
+            msg = f"Ingestion already running for source {source_id}"
+            raise ValueError(msg)
+        return lock_token
+
+    def _start_source_lock_heartbeat(
+        self: IngestionSchedulingService,
+        *,
+        source_id: UUID,
+        lock_token: str | None,
+    ) -> asyncio.Task[None] | None:
+        if lock_token is None or self._source_lock_repository is None:
+            return None
+        return asyncio.create_task(
+            self._run_source_lock_heartbeat(
+                source_id=source_id,
+                lock_token=lock_token,
+            ),
+            name=f"ingestion-source-lock-heartbeat-{source_id}",
+        )
+
+    async def _run_source_lock_heartbeat(
+        self: IngestionSchedulingService,
+        *,
+        source_id: UUID,
+        lock_token: str,
+    ) -> None:
+        repository = self._source_lock_repository
+        if repository is None:
+            return
+        while True:
+            await asyncio.sleep(self._source_lock_heartbeat_seconds)
+            heartbeat_at = datetime.now(UTC)
+            lease_expires_at = heartbeat_at + timedelta(
+                seconds=self._source_lock_lease_ttl_seconds,
+            )
+            refreshed = repository.refresh_lease(
+                source_id=source_id,
+                lock_token=lock_token,
+                lease_expires_at=lease_expires_at,
+                heartbeat_at=heartbeat_at,
+            )
+            if refreshed is None:
+                logger.warning(
+                    "Lost source ingestion lock lease before run completed",
+                    extra={"source_id": str(source_id)},
+                )
+                return
+
+    def _release_source_lock(
+        self: IngestionSchedulingService,
+        *,
+        source_id: UUID,
+        lock_token: str,
+    ) -> None:
+        repository = self._source_lock_repository
+        if repository is None:
+            return
+        released = repository.release(
+            source_id=source_id,
+            lock_token=lock_token,
+        )
+        if not released:
+            logger.warning(
+                "Source ingestion lock release skipped because ownership no longer matched",
+                extra={"source_id": str(source_id)},
+            )
 
     def _source_has_running_job(
         self: IngestionSchedulingService,
@@ -190,83 +423,6 @@ class _IngestionSchedulingCoreHelpers:
             )
             raise ValueError(msg)
 
-    def _prepare_sync_state_for_attempt(
-        self: IngestionSchedulingService,
-        source: user_data_source.UserDataSource,
-    ) -> SourceSyncState | None:
-        repository = self._source_sync_state_repository
-        if repository is None:
-            return None
-
-        query_signature = self._build_query_signature(source)
-        default_checkpoint_kind = self._default_checkpoint_kind(source.source_type)
-        existing = repository.get_by_source(source.id)
-        if existing is None:
-            existing = SourceSyncState(
-                source_id=source.id,
-                source_type=source.source_type,
-                checkpoint_kind=default_checkpoint_kind,
-                query_signature=query_signature,
-            )
-        elif (
-            existing.checkpoint_kind == CheckpointKind.NONE
-            and default_checkpoint_kind != CheckpointKind.NONE
-        ):
-            existing = existing.model_copy(
-                update={"checkpoint_kind": default_checkpoint_kind},
-            )
-        if (
-            existing.query_signature is not None
-            and existing.query_signature != query_signature
-        ):
-            logger.warning(
-                "Source query signature changed; resetting checkpoint payload",
-                extra={
-                    "source_id": str(source.id),
-                    "source_type": source.source_type.value,
-                    "previous_signature": existing.query_signature,
-                    "new_signature": query_signature,
-                },
-            )
-            existing = existing.model_copy(
-                update={
-                    "checkpoint_payload": {},
-                    "checkpoint_kind": default_checkpoint_kind,
-                },
-            )
-        attempted = existing.mark_attempt().model_copy(
-            update={"query_signature": query_signature},
-        )
-        return repository.upsert(attempted)
-
-    def _build_run_context(
-        self: IngestionSchedulingService,
-        *,
-        source: user_data_source.UserDataSource,
-        ingestion_job_id: UUID,
-        sync_state: SourceSyncState | None,
-    ) -> IngestionRunContext | None:
-        if (
-            self._source_sync_state_repository is None
-            and self._source_record_ledger_repository is None
-        ):
-            return None
-
-        resolved_state = sync_state or SourceSyncState(
-            source_id=source.id,
-            source_type=source.source_type,
-            query_signature=self._build_query_signature(source),
-        )
-        query_signature = resolved_state.query_signature or self._build_query_signature(
-            source,
-        )
-        return IngestionRunContext(
-            ingestion_job_id=ingestion_job_id,
-            source_sync_state=resolved_state,
-            query_signature=query_signature,
-            source_record_ledger_repository=self._source_record_ledger_repository,
-        )
-
     async def _invoke_ingestion_service(
         self: IngestionSchedulingService,
         *,
@@ -300,38 +456,6 @@ class _IngestionSchedulingCoreHelpers:
         )
         return positional_count >= MIN_POSITIONAL_PARAMETERS_WITH_CONTEXT
 
-    def _persist_sync_state_on_success(
-        self: IngestionSchedulingService,
-        *,
-        sync_state: SourceSyncState | None,
-        ingestion_job_id: UUID,
-        summary: IngestionRunSummary,
-    ) -> SourceSyncState | None:
-        repository = self._source_sync_state_repository
-        if repository is None or sync_state is None:
-            return None
-
-        checkpoint_after_raw = getattr(summary, "checkpoint_after", None)
-        if isinstance(checkpoint_after_raw, dict):
-            checkpoint_after = dict(checkpoint_after_raw)
-        else:
-            checkpoint_after = dict(sync_state.checkpoint_payload)
-
-        updated = sync_state.mark_success(
-            successful_job_id=ingestion_job_id,
-            checkpoint_payload=checkpoint_after,
-        )
-        checkpoint_kind = self._resolve_checkpoint_kind(
-            raw_value=getattr(summary, "checkpoint_kind", None),
-            fallback=sync_state.checkpoint_kind,
-        )
-        query_signature = getattr(summary, "query_signature", None)
-        update_payload: dict[str, object] = {"checkpoint_kind": checkpoint_kind}
-        if isinstance(query_signature, str) and query_signature.strip():
-            update_payload["query_signature"] = query_signature
-        updated = updated.model_copy(update=update_payload)
-        return repository.upsert(updated)
-
     def _emit_dedup_telemetry(
         self: IngestionSchedulingService,
         *,
@@ -360,44 +484,3 @@ class _IngestionSchedulingCoreHelpers:
             )
             return
         logger.info("Source ingestion dedup telemetry", extra=log_extra)
-
-    @staticmethod
-    def _resolve_checkpoint_kind(
-        *,
-        raw_value: object,
-        fallback: CheckpointKind,
-    ) -> CheckpointKind:
-        if isinstance(raw_value, CheckpointKind):
-            return raw_value
-        if isinstance(raw_value, str):
-            normalized = raw_value.strip().lower()
-            for kind in CheckpointKind:
-                if kind.value == normalized:
-                    return kind
-        return fallback
-
-    @staticmethod
-    def _default_checkpoint_kind(
-        source_type: user_data_source.SourceType,
-    ) -> CheckpointKind:
-        if source_type in (
-            user_data_source.SourceType.PUBMED,
-            user_data_source.SourceType.CLINVAR,
-        ):
-            return CheckpointKind.CURSOR
-        return CheckpointKind.NONE
-
-    @staticmethod
-    def _build_query_signature(
-        source: user_data_source.UserDataSource,
-    ) -> str:
-        canonical_payload = json.dumps(
-            {
-                "source_type": source.source_type.value,
-                "configuration": source.configuration.model_dump(mode="json"),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        )
-        return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()

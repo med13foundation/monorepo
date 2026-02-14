@@ -56,6 +56,9 @@ disallow_any_expr = true
 max-line-length = 88
 extend-ignore = [ "E203", "W503", "E501",]
 exclude = [ ".git", "__pycache__", "build", "dist", "*.egg-info", ".venv", ".tox", "migrations", "src/web/node_modules",]
+per-file-ignores = [
+  "scripts/*.py:E402",
+]
 
 [tool.ruff]
 line-length = 88
