@@ -41,6 +41,9 @@ class KernelEntityIdentifier(BaseModel):
     entity_id: UUID
     namespace: str = Field(..., min_length=1, max_length=64)
     identifier_value: str = Field(..., min_length=1, max_length=512)
+    identifier_blind_index: str | None = Field(None, max_length=64)
+    encryption_key_version: str | None = Field(None, max_length=32)
+    blind_index_version: str | None = Field(None, max_length=32)
     sensitivity: str = Field(..., min_length=1, max_length=32)
     created_at: datetime
     updated_at: datetime

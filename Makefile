@@ -118,7 +118,7 @@ define ensure_web_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-flujo-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test
+.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-flujo-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test phi-backfill-dry-run phi-backfill-commit
 
 PY_CHECK_PATHS := src tests scripts alembic
 PY_STRICT_CHECK_PATHS := src
@@ -327,6 +327,14 @@ security-audit: ## Run comprehensive security audit (pip-audit, bandit) [blockin
 	@$(USE_PYTHON) -m bandit -r $(PY_CHECK_PATHS) --severity-level medium -f json -o bandit-results.json 2>&1 | grep -vEi "(Test in comment|Unknown test found)" || true
 
 security-full: security-audit ## Full security assessment with all tools
+
+phi-backfill-dry-run: ## Dry-run PHI identifier encryption backfill
+	$(call check_venv)
+	$(USE_PYTHON) scripts/backfill_phi_identifiers.py
+
+phi-backfill-commit: ## Commit PHI identifier encryption backfill changes
+	$(call check_venv)
+	$(USE_PYTHON) scripts/backfill_phi_identifiers.py --commit
 
 # Local Development
 run-local: ## Run the application locally

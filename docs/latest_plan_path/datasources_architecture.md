@@ -1934,8 +1934,8 @@ The Graph Search Agent powers the **research query interface** in the admin UI:
 | **Sensitivity tagging** | Implemented | `sensitivity` column: `PUBLIC`, `INTERNAL`, `PHI` |
 | **Application-layer access control** | Implemented | `AuthorizationService` (RBAC) + research space membership checks |
 | **Row-Level Security (RLS)** | Implemented | Database-level policies enabled in migration `016_enable_kernel_rls` for `entities`, `entity_identifiers`, `observations`, `relations`, `relation_evidence`, and `provenance`; request sessions set `app.current_user_id` / `app.has_phi_access`, with explicit admin/system bypass controls |
-| **Column-level encryption** | **Not implemented** | PHI values stored in plaintext; depends on Cloud SQL encryption at rest |
-| **Audit logging** | Partial | Basic middleware logs PHI reads; missing IP, user agent, detailed access tracking |
+| **Column-level encryption** | Implemented | Application-layer AES-GCM encryption + blind-index lookups for PHI identifiers (`entity_identifiers.identifier_value`) with key-provider abstraction (local env / GCP Secret Manager) |
+| **Audit logging** | Implemented | Middleware logs read/mutation access with request metadata; admin audit query/export APIs and retention cleanup are implemented |
 
 ### Implemented RLS policies
 
@@ -2014,15 +2014,19 @@ CREATE POLICY rls_entity_identifiers_access ON entity_identifiers
   );
 ```
 
-### Planned encryption
+### Implemented encryption
 
 - **Column-level encryption** for `entity_identifiers.identifier_value` where
-  `sensitivity = 'PHI'`, using `pgcrypto` or application-layer AES-256.
-- **Key management** via GCP Secret Manager — encryption keys never stored in
-  the database or codebase.
-- **Transparent to queries** — the `EntityResolver` handles encrypt/decrypt
-  transparently so resolution policies work on cleartext while storage is
-  encrypted.
+  `sensitivity = 'PHI'` using application-layer AES-GCM.
+- **Blind-index lookup** via deterministic HMAC (`identifier_blind_index`) so
+  equality resolution works without storing plaintext PHI.
+- **Key management abstraction** via provider interfaces (`LocalKeyProvider`
+  and `SecretManagerKeyProvider`) so production deployments can source keys
+  from GCP Secret Manager.
+- **Transparent to queries** — entity resolution and repository lookups accept
+  cleartext identifiers while PHI values are stored encrypted at rest.
+- **Operational backfill utility** via `scripts/backfill_phi_identifiers.py`
+  supports dry-run and batch commit modes to migrate legacy plaintext PHI rows.
 
 ### Security agent interaction
 

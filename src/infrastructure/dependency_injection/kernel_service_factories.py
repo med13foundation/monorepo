@@ -17,10 +17,31 @@ if TYPE_CHECKING:
         ProvenanceService,
     )
     from src.domain.ports import DictionaryPort
+    from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
 
 
 class KernelServiceFactoryMixin:
     """Provides factory methods for kernel-related application services."""
+
+    @staticmethod
+    def _build_entity_repository(session: Session) -> KernelEntityRepository:
+        from src.infrastructure.repositories.kernel import (
+            SqlAlchemyKernelEntityRepository,
+        )
+        from src.infrastructure.security.phi_encryption import (
+            build_phi_encryption_service_from_env,
+            is_phi_encryption_enabled,
+        )
+
+        enable_phi_encryption = is_phi_encryption_enabled()
+        phi_encryption_service = (
+            build_phi_encryption_service_from_env() if enable_phi_encryption else None
+        )
+        return SqlAlchemyKernelEntityRepository(
+            session,
+            phi_encryption_service=phi_encryption_service,
+            enable_phi_encryption=enable_phi_encryption,
+        )
 
     def create_kernel_entity_service(
         self,
@@ -29,10 +50,9 @@ class KernelServiceFactoryMixin:
         from src.application.services.kernel import KernelEntityService
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyDictionaryRepository,
-            SqlAlchemyKernelEntityRepository,
         )
 
-        entity_repo = SqlAlchemyKernelEntityRepository(session)
+        entity_repo = self._build_entity_repository(session)
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
         return KernelEntityService(
             entity_repo=entity_repo,
@@ -50,12 +70,11 @@ class KernelServiceFactoryMixin:
         from src.infrastructure.embeddings import HybridTextEmbeddingProvider
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyDictionaryRepository,
-            SqlAlchemyKernelEntityRepository,
             SqlAlchemyKernelObservationRepository,
         )
 
         observation_repo = SqlAlchemyKernelObservationRepository(session)
-        entity_repo = SqlAlchemyKernelEntityRepository(session)
+        entity_repo = self._build_entity_repository(session)
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
         dictionary_service = DictionaryManagementService(
             dictionary_repo=dictionary_repo,
@@ -74,12 +93,11 @@ class KernelServiceFactoryMixin:
         from src.application.services.kernel import KernelRelationService
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyDictionaryRepository,
-            SqlAlchemyKernelEntityRepository,
             SqlAlchemyKernelRelationRepository,
         )
 
         relation_repo = SqlAlchemyKernelRelationRepository(session)
-        entity_repo = SqlAlchemyKernelEntityRepository(session)
+        entity_repo = self._build_entity_repository(session)
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
         return KernelRelationService(
             relation_repo=relation_repo,

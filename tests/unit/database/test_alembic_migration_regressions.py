@@ -14,10 +14,11 @@ from uuid import uuid4
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_HEAD_REVISION = "016_enable_kernel_rls"
+EXPECTED_HEAD_REVISION = "017_phi_identifier_encryption"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"
+PRE_PHI_ENCRYPTION_REVISION = "016_enable_kernel_rls"
 LEGACY_REVISION_ALIAS = "004_relation_evidence_and_extraction_queue_contract"
 ROLLOUT_MARKER_REVISION = "005_rel_evidence_rollout_marker"
 RAW_STORAGE_KEY_VALUE = "raw/clinvar/variant-1001.json"
@@ -512,3 +513,25 @@ def test_016_rls_migration_is_safe_on_sqlite(tmp_path: Path) -> None:
     assert "relations" in table_names
     assert "relation_evidence" in table_names
     assert "provenance" in table_names
+
+
+def test_017_phi_identifier_encryption_columns_on_sqlite(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'phi_identifier_encryption_sqlite.db'}"
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision=PRE_PHI_ENCRYPTION_REVISION,
+    )
+    _run_alembic_upgrade(database_url=database_url, revision=EXPECTED_HEAD_REVISION)
+
+    engine = create_engine(database_url, future=True)
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("entity_identifiers")}
+    assert "identifier_blind_index" in columns
+    assert "encryption_key_version" in columns
+    assert "blind_index_version" in columns
+
+    index_names = {
+        index["name"] for index in inspector.get_indexes("entity_identifiers")
+    }
+    assert "idx_identifier_blind_lookup" in index_names
+    assert "idx_identifier_entity_ns_blind_unique" in index_names

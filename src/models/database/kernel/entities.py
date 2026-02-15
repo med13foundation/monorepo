@@ -114,6 +114,21 @@ class EntityIdentifierModel(Base):
         nullable=False,
         doc="Identifier value (encrypted if PHI)",
     )
+    identifier_blind_index: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Deterministic blind index for encrypted PHI equality lookup",
+    )
+    encryption_key_version: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+        doc="Key version used to encrypt identifier_value",
+    )
+    blind_index_version: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+        doc="Key version used to generate identifier_blind_index",
+    )
     sensitivity: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -132,10 +147,22 @@ class EntityIdentifierModel(Base):
             "identifier_value",
         ),
         Index(
+            "idx_identifier_blind_lookup",
+            "namespace",
+            "identifier_blind_index",
+        ),
+        Index(
             "idx_identifier_entity_ns_unique",
             "entity_id",
             "namespace",
             "identifier_value",
+            unique=True,
+        ),
+        Index(
+            "idx_identifier_entity_ns_blind_unique",
+            "entity_id",
+            "namespace",
+            "identifier_blind_index",
             unique=True,
         ),
         {"comment": "PHI-isolated entity identifiers for secure lookup"},

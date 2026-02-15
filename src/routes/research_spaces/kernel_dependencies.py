@@ -26,6 +26,22 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelRelationRepository,
     SqlAlchemyProvenanceRepository,
 )
+from src.infrastructure.security.phi_encryption import (
+    build_phi_encryption_service_from_env,
+    is_phi_encryption_enabled,
+)
+
+
+def _build_entity_repository(session: Session) -> SqlAlchemyKernelEntityRepository:
+    enable_phi_encryption = is_phi_encryption_enabled()
+    phi_encryption_service = (
+        build_phi_encryption_service_from_env() if enable_phi_encryption else None
+    )
+    return SqlAlchemyKernelEntityRepository(
+        session,
+        phi_encryption_service=phi_encryption_service,
+        enable_phi_encryption=enable_phi_encryption,
+    )
 
 
 def get_dictionary_service(
@@ -43,7 +59,7 @@ def get_kernel_entity_service(
     session: Session = Depends(get_session),
 ) -> KernelEntityService:
     """Kernel entity CRUD + resolution service."""
-    entity_repo = SqlAlchemyKernelEntityRepository(session)
+    entity_repo = _build_entity_repository(session)
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
     return KernelEntityService(
         entity_repo=entity_repo,
@@ -56,7 +72,7 @@ def get_kernel_observation_service(
 ) -> KernelObservationService:
     """Kernel observation service (typed fact writes/reads)."""
     observation_repo = SqlAlchemyKernelObservationRepository(session)
-    entity_repo = SqlAlchemyKernelEntityRepository(session)
+    entity_repo = _build_entity_repository(session)
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
     dictionary_service = DictionaryManagementService(
         dictionary_repo=dictionary_repo,
@@ -74,7 +90,7 @@ def get_kernel_relation_service(
 ) -> KernelRelationService:
     """Kernel relation service (graph edges + curation lifecycle)."""
     relation_repo = SqlAlchemyKernelRelationRepository(session)
-    entity_repo = SqlAlchemyKernelEntityRepository(session)
+    entity_repo = _build_entity_repository(session)
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
     return KernelRelationService(
         relation_repo=relation_repo,

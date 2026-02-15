@@ -37,6 +37,10 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelObservationRepository,
     SqlAlchemyProvenanceRepository,
 )
+from src.infrastructure.security.phi_encryption import (
+    build_phi_encryption_service_from_env,
+    is_phi_encryption_enabled,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -61,7 +65,15 @@ def create_ingestion_pipeline(
         dictionary_repo=dictionary_repo,
         embedding_provider=HybridTextEmbeddingProvider(),
     )
-    entity_repo = SqlAlchemyKernelEntityRepository(session)
+    enable_phi_encryption = is_phi_encryption_enabled()
+    phi_encryption_service = (
+        build_phi_encryption_service_from_env() if enable_phi_encryption else None
+    )
+    entity_repo = SqlAlchemyKernelEntityRepository(
+        session,
+        phi_encryption_service=phi_encryption_service,
+        enable_phi_encryption=enable_phi_encryption,
+    )
     observation_repo = SqlAlchemyKernelObservationRepository(session)
     provenance_repo = SqlAlchemyProvenanceRepository(session)
 
