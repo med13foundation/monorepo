@@ -1,6 +1,6 @@
 # Data Sources Architecture Guide
 
-Last updated: 2026-02-14
+Last updated: 2026-02-15
 
 This guide documents how the platform handles external data sources end-to-end
 — from discovery and fetch through content enrichment, knowledge extraction,
@@ -1933,48 +1933,83 @@ The Graph Search Agent powers the **research query interface** in the admin UI:
 | **PHI schema isolation** | Implemented | `entity_identifiers` table separates PHI from `entities` |
 | **Sensitivity tagging** | Implemented | `sensitivity` column: `PUBLIC`, `INTERNAL`, `PHI` |
 | **Application-layer access control** | Implemented | `AuthorizationService` (RBAC) + research space membership checks |
-| **Row-Level Security (RLS)** | **Not implemented** | No database-level enforcement — all scoping is application-layer |
+| **Row-Level Security (RLS)** | Implemented | Database-level policies enabled in migration `016_enable_kernel_rls` for `entities`, `entity_identifiers`, `observations`, `relations`, `relation_evidence`, and `provenance`; request sessions set `app.current_user_id` / `app.has_phi_access`, with explicit admin/system bypass controls |
 | **Column-level encryption** | **Not implemented** | PHI values stored in plaintext; depends on Cloud SQL encryption at rest |
 | **Audit logging** | Partial | Basic middleware logs PHI reads; missing IP, user agent, detailed access tracking |
 
-### Planned RLS policies
+### Implemented RLS policies
 
 Row-Level Security provides **defense in depth**: even if application-layer
 checks are bypassed (misconfigured API, direct DB access, SQL injection), the
 database itself enforces access boundaries.
 
 ```sql
--- 1. Enable RLS on all kernel tables
+-- 1. Enable + force RLS on kernel tables
 ALTER TABLE entities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE entities FORCE ROW LEVEL SECURITY;
 ALTER TABLE entity_identifiers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE entity_identifiers FORCE ROW LEVEL SECURITY;
 ALTER TABLE observations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE observations FORCE ROW LEVEL SECURITY;
 ALTER TABLE relations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE relations FORCE ROW LEVEL SECURITY;
+ALTER TABLE relation_evidence ENABLE ROW LEVEL SECURITY;
+ALTER TABLE relation_evidence FORCE ROW LEVEL SECURITY;
 ALTER TABLE provenance ENABLE ROW LEVEL SECURITY;
+ALTER TABLE provenance FORCE ROW LEVEL SECURITY;
 
--- 2. Research space scoping — users only see data in their spaces
-CREATE POLICY space_isolation ON entities
-  USING (research_space_id IN (
-    SELECT rs.id FROM research_space_members rsm
-    JOIN research_spaces rs ON rs.id = rsm.research_space_id
-    WHERE rsm.user_id = current_setting('app.current_user_id')::UUID
-  ));
-
--- Apply same pattern to observations, relations, provenance
-
--- 3. PHI protection — entity_identifiers requires explicit PHI access
-CREATE POLICY phi_protection ON entity_identifiers
+-- 2. Space isolation + owner access + admin/system bypass
+-- Session settings used by policies:
+--   app.current_user_id (UUID string)
+--   app.has_phi_access  (boolean string)
+--   app.is_admin        (boolean string)
+--   app.bypass_rls      (boolean string)
+CREATE POLICY rls_entities_access ON entities
   USING (
-    entity_id IN (
-      SELECT id FROM entities
-      WHERE research_space_id IN (
-        SELECT rs.id FROM research_space_members rsm
-        JOIN research_spaces rs ON rs.id = rsm.research_space_id
-        WHERE rsm.user_id = current_setting('app.current_user_id')::UUID
+    COALESCE(NULLIF(current_setting('app.bypass_rls', true), '')::boolean, false)
+    OR COALESCE(NULLIF(current_setting('app.is_admin', true), '')::boolean, false)
+    OR (
+      NULLIF(current_setting('app.current_user_id', true), '')::uuid IS NOT NULL
+      AND research_space_id IN (
+        SELECT rsm.space_id
+        FROM research_space_memberships AS rsm
+        WHERE rsm.user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+          AND rsm.is_active = TRUE
+        UNION
+        SELECT rs.id
+        FROM research_spaces AS rs
+        WHERE rs.owner_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+      )
+    )
+  );
+
+-- Same policy shape on observations, relations, relation_evidence, provenance.
+
+-- 3. PHI protection — identifier rows require explicit PHI access for PHI data
+CREATE POLICY rls_entity_identifiers_access ON entity_identifiers
+  USING (
+    (
+      COALESCE(NULLIF(current_setting('app.bypass_rls', true), '')::boolean, false)
+      OR COALESCE(NULLIF(current_setting('app.is_admin', true), '')::boolean, false)
+      OR EXISTS (
+        SELECT 1
+        FROM entities AS e
+        WHERE e.id = entity_identifiers.entity_id
+          AND e.research_space_id IN (
+            SELECT rsm.space_id
+            FROM research_space_memberships AS rsm
+            WHERE rsm.user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+              AND rsm.is_active = TRUE
+            UNION
+            SELECT rs.id
+            FROM research_spaces AS rs
+            WHERE rs.owner_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+          )
       )
     )
     AND (
       sensitivity != 'PHI'
-      OR current_setting('app.has_phi_access', TRUE)::BOOLEAN = TRUE
+      OR COALESCE(NULLIF(current_setting('app.has_phi_access', true), '')::boolean, false)
     )
   );
 ```
@@ -2030,7 +2065,7 @@ A user can be a member of multiple research spaces.  Each space has independent:
 |---|---|---|
 | **API routes** | `verify_space_membership()` dependency | Rejects requests from non-members before any DB query |
 | **Application services** | Repository methods filter by `research_space_id` | Every query is scoped — no cross-space leaks in business logic |
-| **Database (planned)** | RLS policies on `research_space_id` | Defense in depth — even direct DB access respects space boundaries |
+| **Database (implemented)** | RLS policies on kernel tables using `app.current_user_id` and PHI/admin/bypass session flags | Defense in depth — even direct DB access respects space boundaries |
 
 ### Agent scoping
 

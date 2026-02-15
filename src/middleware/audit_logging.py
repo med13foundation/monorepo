@@ -9,7 +9,7 @@ from src.application.curation.repositories.audit_repository import (
     SqlAlchemyAuditRepository,
 )
 from src.application.services.audit_service import AuditTrailService
-from src.database.session import SessionLocal
+from src.database.session import SessionLocal, set_session_rls_context
 from src.domain.entities.user import User
 from src.infrastructure.observability.request_context import get_audit_context
 
@@ -64,6 +64,7 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         success = response.status_code < HTTP_ERROR_THRESHOLD
 
         db = SessionLocal()
+        set_session_rls_context(db, bypass_rls=True)
         try:
             self._audit_service.record_action(
                 db,

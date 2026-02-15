@@ -37,7 +37,14 @@ SYSTEM_ACTOR_ID = DEFAULT_OWNER_ID
 
 def get_db_session() -> Session:
     """Create a bare SQLAlchemy session for admin services."""
-    return session_module.SessionLocal()
+    session = session_module.SessionLocal()
+    session_module.set_session_rls_context(
+        session,
+        is_admin=True,
+        has_phi_access=True,
+        bypass_rls=False,
+    )
+    return session
 
 
 def get_admin_db_session() -> Generator[Session]:

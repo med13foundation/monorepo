@@ -21,7 +21,7 @@ from src.application.services import (
 from src.application.services.research_space_management_service import (
     ResearchSpaceManagementService,
 )
-from src.database.session import get_session
+from src.database.session import get_session, set_session_rls_context
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import UserRole
 from src.infrastructure.repositories import (
@@ -98,8 +98,17 @@ def verify_space_membership(
     Checks both explicit membership and ownership.
     Raises HTTPException if user is not a member or owner.
     """
+    is_admin_user = user_role == UserRole.ADMIN
+    set_session_rls_context(
+        session,
+        current_user_id=user_id,
+        has_phi_access=is_admin_user,
+        is_admin=is_admin_user,
+        bypass_rls=False,
+    )
+
     # Platform admins can access any space
-    if user_role == UserRole.ADMIN:
+    if is_admin_user:
         return
 
     # Check if user is an explicit member
@@ -132,7 +141,16 @@ def verify_space_role(
 
     Platform admins and space owners are always allowed.
     """
-    if user_role == UserRole.ADMIN:
+    is_admin_user = user_role == UserRole.ADMIN
+    set_session_rls_context(
+        session,
+        current_user_id=user_id,
+        has_phi_access=is_admin_user,
+        is_admin=is_admin_user,
+        bypass_rls=False,
+    )
+
+    if is_admin_user:
         return
 
     membership_role = membership_service.get_user_role(space_id, user_id)

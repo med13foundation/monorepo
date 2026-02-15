@@ -14,9 +14,10 @@ from uuid import uuid4
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_HEAD_REVISION = "015_dict_transforms_upgrade"
+EXPECTED_HEAD_REVISION = "016_enable_kernel_rls"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
+PRE_RLS_REVISION = "015_dict_transforms_upgrade"
 LEGACY_REVISION_ALIAS = "004_relation_evidence_and_extraction_queue_contract"
 ROLLOUT_MARKER_REVISION = "005_rel_evidence_rollout_marker"
 RAW_STORAGE_KEY_VALUE = "raw/clinvar/variant-1001.json"
@@ -491,3 +492,23 @@ def test_015_adds_transform_upgrade_columns(tmp_path: Path) -> None:
     assert transform_row["test_input"] is None
     assert transform_row["expected_output"] is None
     assert transform_row["description"] is None
+
+
+def test_016_rls_migration_is_safe_on_sqlite(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'kernel_rls_sqlite_compat.db'}"
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision=PRE_RLS_REVISION,
+    )
+    _run_alembic_upgrade(database_url=database_url, revision=EXPECTED_HEAD_REVISION)
+
+    engine = create_engine(database_url, future=True)
+    inspector = inspect(engine)
+
+    table_names = set(inspector.get_table_names())
+    assert "entities" in table_names
+    assert "entity_identifiers" in table_names
+    assert "observations" in table_names
+    assert "relations" in table_names
+    assert "relation_evidence" in table_names
+    assert "provenance" in table_names

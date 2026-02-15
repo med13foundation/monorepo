@@ -10,7 +10,7 @@ from src.application.services import (
     DataSourceAiTestService,
     DataSourceAiTestSettings,
 )
-from src.database.session import SessionLocal
+from src.database.session import SessionLocal, set_session_rls_context
 from src.domain.agents.models import ModelCapability
 from src.infrastructure.data_sources import ClinVarSourceGateway, PubMedSourceGateway
 from src.infrastructure.llm.adapters.query_agent_adapter import FlujoQueryAgentAdapter
@@ -72,6 +72,8 @@ def data_source_ai_test_service_context(
 ) -> Iterator[DataSourceAiTestService]:
     """Context manager that yields a test service and closes the session."""
     local_session = session or SessionLocal()
+    if session is None:
+        set_session_rls_context(local_session, bypass_rls=True)
     try:
         service = build_data_source_ai_test_service(session=local_session)
         yield service

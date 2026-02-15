@@ -19,7 +19,7 @@ from src.application.services import (
     StorageConfigurationService,
     StorageOperationCoordinator,
 )
-from src.database.session import SessionLocal
+from src.database.session import SessionLocal, set_session_rls_context
 from src.database.url_resolver import resolve_sync_database_url
 from src.domain.entities.user_data_source import SourceType, UserDataSource
 from src.infrastructure.data_sources import (
@@ -278,6 +278,8 @@ def ingestion_scheduling_service_context(
 ) -> Iterator[IngestionSchedulingService]:
     """Context manager that yields a scheduling service and closes the session."""
     local_session = session or SessionLocal()
+    if session is None:
+        set_session_rls_context(local_session, bypass_rls=True)
     try:
         service = build_ingestion_scheduling_service(
             session=local_session,
