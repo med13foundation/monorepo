@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Literal
 from flujo.domain.models import PipelineResult, StepResult
 from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
 
-from src.domain.agents.contracts.base import EvidenceItem
-from src.domain.agents.contracts.extraction import (
+from src.domain.agents.contracts import (
+    EvidenceItem,
     ExtractedObservation,
     ExtractedRelation,
     ExtractionContract,
@@ -23,14 +23,12 @@ from src.infrastructure.ingestion.types import NormalizedObservation
 from src.infrastructure.ingestion.validation.observation_validator import (
     ObservationValidator,
 )
-from src.infrastructure.llm.config.governance import GovernanceConfig
-from src.infrastructure.llm.config.model_registry import get_model_registry
+from src.infrastructure.llm.config import GovernanceConfig, get_model_registry
 from src.infrastructure.llm.pipelines.extraction_pipelines import (
     create_clinvar_extraction_pipeline,
 )
-from src.infrastructure.llm.skills.registry import build_extraction_validation_tools
-from src.infrastructure.llm.state.backend_manager import get_state_backend
-from src.infrastructure.llm.state.lifecycle import get_lifecycle_manager
+from src.infrastructure.llm.skills import build_extraction_validation_tools
+from src.infrastructure.llm.state import get_lifecycle_manager, get_state_backend
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:

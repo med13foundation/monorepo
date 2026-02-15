@@ -26,16 +26,10 @@ from src.infrastructure.ingestion.resolution.entity_resolver import EntityResolv
 from src.infrastructure.ingestion.validation.observation_validator import (
     ObservationValidator,
 )
-from src.infrastructure.repositories.kernel.kernel_dictionary_repository import (
+from src.infrastructure.repositories.kernel import (
     SqlAlchemyDictionaryRepository,
-)
-from src.infrastructure.repositories.kernel.kernel_entity_repository import (
     SqlAlchemyKernelEntityRepository,
-)
-from src.infrastructure.repositories.kernel.kernel_observation_repository import (
     SqlAlchemyKernelObservationRepository,
-)
-from src.infrastructure.repositories.kernel.kernel_provenance_repository import (
     SqlAlchemyProvenanceRepository,
 )
 

@@ -15,11 +15,13 @@ from src.infrastructure.llm.state.flujo_state_repository import (
 from src.infrastructure.llm.state.lifecycle import (
     FlujoLifecycleManager,
     flujo_lifespan,
+    get_lifecycle_manager,
 )
 
 __all__ = [
     "flujo_lifespan",
     "FlujoLifecycleManager",
+    "get_lifecycle_manager",
     "get_state_backend",
     "SqlAlchemyFlujoStateRepository",
     "StateBackendManager",

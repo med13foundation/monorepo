@@ -1,0 +1,82 @@
+{
+  "file_size": [
+    {
+      "path": "src/routes/admin_routes/dictionary_schemas.py",
+      "max_lines": 850,
+      "reason": "Dictionary schema split is planned as a dedicated API modularization task.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/routes/admin_routes/dictionary.py",
+      "max_lines": 850,
+      "reason": "Dictionary route handlers are temporarily co-located pending route module decomposition.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/infrastructure/repositories/kernel/kernel_dictionary_repository.py",
+      "max_lines": 1200,
+      "reason": "Repository extraction by concern (search/create/governance) is tracked as follow-up refactor work.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/infrastructure/repositories/kernel/dictionary_search.py",
+      "max_lines": 800,
+      "reason": "Search strategy consolidation is deferred until dictionary search behavior is stabilized.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/infrastructure/llm/skills/registry.py",
+      "max_lines": 950,
+      "reason": "Skill registration remains centralized until per-domain skill modules are extracted.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/services/kernel/dictionary_management_service.py",
+      "max_lines": 1050,
+      "reason": "Service is intentionally centralized while semantic layer APIs are still being finalized.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/agents/services/entity_recognition_service.py",
+      "max_lines": 1250,
+      "reason": "Entity recognition orchestration split is planned after contract and queue interfaces stabilize.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/models/database/kernel/dictionary.py",
+      "max_lines": 1000,
+      "reason": "Dictionary ORM model breakup is deferred to the schema package reorganization effort.",
+      "expires_on": "2026-12-31"
+    }
+  ],
+  "class_size": [
+    {
+      "path": "src/domain/ports/dictionary_port.py",
+      "class_name": "DictionaryPort",
+      "max_methods": 38,
+      "reason": "Port remains broad while dictionary capabilities are consolidated behind a single semantic layer boundary.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/domain/repositories/kernel/dictionary_repository.py",
+      "class_name": "DictionaryRepository",
+      "max_methods": 40,
+      "reason": "Repository surface is temporarily wide pending planned segmentation by dictionary dimension.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/infrastructure/repositories/kernel/kernel_dictionary_repository.py",
+      "class_name": "SqlAlchemyDictionaryRepository",
+      "max_methods": 48,
+      "reason": "Implementation is intentionally comprehensive until repository subcomponents are extracted.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/services/kernel/dictionary_management_service.py",
+      "class_name": "DictionaryManagementService",
+      "max_methods": 50,
+      "reason": "Service-level orchestration remains centralized while semantic layer interfaces are still evolving.",
+      "expires_on": "2026-12-31"
+    }
+  ]
+}

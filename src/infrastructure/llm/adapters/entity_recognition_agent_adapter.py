@@ -10,24 +10,20 @@ from typing import TYPE_CHECKING, Literal
 from flujo.domain.models import PipelineResult, StepResult
 from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
 
-from src.domain.agents.contracts.base import EvidenceItem
-from src.domain.agents.contracts.entity_recognition import (
+from src.domain.agents.contracts import (
     EntityRecognitionContract,
+    EvidenceItem,
     RecognizedEntityCandidate,
     RecognizedObservationCandidate,
 )
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.entity_recognition_port import EntityRecognitionPort
-from src.infrastructure.llm.config.governance import GovernanceConfig
-from src.infrastructure.llm.config.model_registry import get_model_registry
+from src.infrastructure.llm.config import GovernanceConfig, get_model_registry
 from src.infrastructure.llm.pipelines.entity_recognition_pipelines import (
     create_clinvar_entity_recognition_pipeline,
 )
-from src.infrastructure.llm.skills.registry import (
-    build_entity_recognition_dictionary_tools,
-)
-from src.infrastructure.llm.state.backend_manager import get_state_backend
-from src.infrastructure.llm.state.lifecycle import get_lifecycle_manager
+from src.infrastructure.llm.skills import build_entity_recognition_dictionary_tools
+from src.infrastructure.llm.state import get_lifecycle_manager, get_state_backend
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
