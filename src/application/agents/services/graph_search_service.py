@@ -447,7 +447,9 @@ class GraphSearchService:
             if item.provenance_id is not None
         }
         highest_tier = _highest_evidence_tier(evidence_chain)
-        quality_label = "well_supported" if governance.allow_write else "needs_review"
+        quality_label = (
+            "needs_review" if governance.requires_review else "well_supported"
+        )
         return (
             f"{quality_label}: relations={relation_count}, observations={observation_count}, "
             f"independent_sources={len(independent_sources)}, "

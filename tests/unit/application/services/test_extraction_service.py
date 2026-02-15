@@ -24,6 +24,7 @@ from src.domain.agents.contracts.entity_recognition import (
 )
 from src.domain.agents.contracts.extraction import (
     ExtractedObservation,
+    ExtractedRelation,
     ExtractionContract,
     RejectedFact,
 )
@@ -141,10 +142,26 @@ def _build_recognition_contract(document_id: str) -> EntityRecognitionContract:
     )
 
 
-def _build_extraction_contract(document_id: str) -> ExtractionContract:
+def _build_extraction_contract(
+    document_id: str,
+    *,
+    confidence_score: float = 0.92,
+    relation_types: tuple[str, ...] = (),
+) -> ExtractionContract:
+    relations = [
+        ExtractedRelation(
+            source_type="VARIANT",
+            relation_type=relation_type,
+            target_type="PHENOTYPE",
+            source_label="c.123A>G",
+            target_label="Dilated cardiomyopathy",
+            confidence=confidence_score,
+        )
+        for relation_type in relation_types
+    ]
     return ExtractionContract(
         decision="generated",
-        confidence_score=0.92,
+        confidence_score=confidence_score,
         rationale="Validated mapped observation",
         evidence=[
             EvidenceItem(
@@ -164,7 +181,7 @@ def _build_extraction_contract(document_id: str) -> ExtractionContract:
                 confidence=0.9,
             ),
         ],
-        relations=[],
+        relations=relations,
         rejected_facts=[
             RejectedFact(
                 fact_type="relation",
@@ -258,3 +275,90 @@ async def test_extract_from_entity_recognition_fails_without_research_space() ->
 
     assert outcome.status == "failed"
     assert outcome.reason == "missing_research_space_id"
+
+
+@pytest.mark.asyncio
+async def test_extract_from_entity_recognition_uses_relation_type_thresholds() -> None:
+    document = _build_document(with_research_space=True)
+    recognition = _build_recognition_contract(str(document.id))
+    extraction = _build_extraction_contract(
+        str(document.id),
+        confidence_score=0.86,
+        relation_types=("CAUSES",),
+    )
+    ingestion = StubIngestionPipeline(
+        IngestResult(success=True, entities_created=1, observations_created=1),
+    )
+    service = ExtractionService(
+        dependencies=ExtractionServiceDependencies(
+            extraction_agent=StubExtractionAgent(extraction),
+            ingestion_pipeline=ingestion,
+            governance_service=_build_governance_service(),
+        ),
+    )
+
+    outcome = await service.extract_from_entity_recognition(
+        document=document,
+        recognition_contract=recognition,
+        research_space_settings={
+            "review_threshold": 0.6,
+            "relation_review_thresholds": {"CAUSES": 0.9},
+        },
+    )
+
+    assert outcome.status == "extracted"
+    assert outcome.wrote_to_kernel is True
+    assert outcome.review_required is True
+    assert outcome.reason == "processed"
+    assert ingestion.calls
+
+
+@pytest.mark.asyncio
+async def test_extract_from_entity_recognition_enqueues_review_item() -> None:
+    document = _build_document(with_research_space=True)
+    recognition = _build_recognition_contract(str(document.id))
+    extraction = _build_extraction_contract(
+        str(document.id),
+        confidence_score=0.86,
+        relation_types=("CAUSES",),
+    )
+    ingestion = StubIngestionPipeline(
+        IngestResult(success=True, entities_created=1, observations_created=1),
+    )
+    queued_items: list[tuple[str, str, str | None, str]] = []
+
+    def submit_review_item(
+        entity_type: str,
+        entity_id: str,
+        research_space_id: str | None,
+        priority: str,
+    ) -> None:
+        queued_items.append((entity_type, entity_id, research_space_id, priority))
+
+    service = ExtractionService(
+        dependencies=ExtractionServiceDependencies(
+            extraction_agent=StubExtractionAgent(extraction),
+            ingestion_pipeline=ingestion,
+            governance_service=_build_governance_service(),
+            review_queue_submitter=submit_review_item,
+        ),
+    )
+
+    outcome = await service.extract_from_entity_recognition(
+        document=document,
+        recognition_contract=recognition,
+        research_space_settings={
+            "review_threshold": 0.6,
+            "relation_review_thresholds": {"CAUSES": 0.9},
+        },
+    )
+
+    assert outcome.review_required is True
+    assert queued_items == [
+        (
+            "extraction_document",
+            str(document.id),
+            str(document.research_space_id),
+            "medium",
+        ),
+    ]

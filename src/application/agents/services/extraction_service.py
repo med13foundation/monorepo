@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -14,6 +15,7 @@ from src.type_definitions.ingestion import RawRecord
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from uuid import UUID
 
     from src.application.services.ports.ingestion_pipeline_port import (
@@ -25,6 +27,8 @@ if TYPE_CHECKING:
     from src.domain.entities.source_document import SourceDocument
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class ExtractionServiceDependencies:
@@ -33,6 +37,7 @@ class ExtractionServiceDependencies:
     extraction_agent: ExtractionAgentPort
     ingestion_pipeline: IngestionPipelinePort
     governance_service: GovernanceService | None = None
+    review_queue_submitter: Callable[[str, str, str | None, str], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +66,7 @@ class ExtractionService:
         self._agent = dependencies.extraction_agent
         self._ingestion_pipeline = dependencies.ingestion_pipeline
         self._governance = dependencies.governance_service or GovernanceService()
+        self._review_queue_submitter = dependencies.review_queue_submitter
 
     async def extract_from_entity_recognition(  # noqa: PLR0913
         self,
@@ -108,7 +114,13 @@ class ExtractionService:
             decision=contract.decision,
             requested_shadow_mode=requested_shadow_mode,
             research_space_settings=research_space_settings,
+            relation_types=self._resolve_relation_types(contract),
         )
+        if governance.requires_review:
+            self._submit_review_item(
+                document=document,
+                reason=governance.reason,
+            )
         if governance.shadow_mode:
             return self._build_outcome(
                 document=document,
@@ -235,6 +247,53 @@ class ExtractionService:
                 ),
             )
         return records
+
+    @staticmethod
+    def _resolve_relation_types(
+        contract: ExtractionContract,
+    ) -> tuple[str, ...] | None:
+        relation_types: list[str] = []
+        for relation in contract.relations:
+            normalized = relation.relation_type.strip().upper()
+            if not normalized or normalized in relation_types:
+                continue
+            relation_types.append(normalized)
+        return tuple(relation_types) if relation_types else None
+
+    def _submit_review_item(
+        self,
+        *,
+        document: SourceDocument,
+        reason: str,
+    ) -> None:
+        submitter = self._review_queue_submitter
+        if submitter is None:
+            return
+        try:
+            submitter(
+                "extraction_document",
+                str(document.id),
+                (
+                    str(document.research_space_id)
+                    if document.research_space_id is not None
+                    else None
+                ),
+                self._review_priority_for_reason(reason),
+            )
+        except Exception as exc:  # noqa: BLE001 - never block extraction on queue write
+            logger.warning(
+                "Failed to enqueue extraction review item for document_id=%s: %s",
+                document.id,
+                exc,
+            )
+
+    @staticmethod
+    def _review_priority_for_reason(reason: str) -> str:
+        if reason in {"agent_requested_escalation", "evidence_required"}:
+            return "high"
+        if reason == "confidence_below_threshold":
+            return "medium"
+        return "low"
 
     @staticmethod
     def _build_outcome(  # noqa: PLR0913

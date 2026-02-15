@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
+from uuid import UUID
 
 from src.application.agents.services.governance_service import (
     GovernanceDecision,
@@ -13,10 +15,15 @@ from src.application.agents.services.governance_service import (
 from src.domain.agents.contexts.graph_connection_context import GraphConnectionContext
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.domain.agents.contracts.graph_connection import GraphConnectionContract
     from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
+    )
+    from src.domain.repositories.research_space_repository import (
+        ResearchSpaceRepository,
     )
     from src.type_definitions.common import ResearchSpaceSettings
 
@@ -30,6 +37,8 @@ class GraphConnectionServiceDependencies:
     graph_connection_agent: GraphConnectionPort
     relation_repository: KernelRelationRepository
     governance_service: GovernanceService | None = None
+    research_space_repository: ResearchSpaceRepository | None = None
+    review_queue_submitter: Callable[[str, str, str | None, str], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +66,8 @@ class GraphConnectionService:
         self._agent = dependencies.graph_connection_agent
         self._relations = dependencies.relation_repository
         self._governance = dependencies.governance_service or GovernanceService()
+        self._research_spaces = dependencies.research_space_repository
+        self._review_queue_submitter = dependencies.review_queue_submitter
 
     async def discover_connections_for_seed(  # noqa: PLR0913
         self,
@@ -72,12 +83,16 @@ class GraphConnectionService:
         pipeline_run_id: str | None = None,
     ) -> GraphConnectionOutcome:
         """Run one graph-connection discovery pass for a seed entity."""
+        resolved_settings = self._resolve_research_space_settings(
+            research_space_id=research_space_id,
+            provided_settings=research_space_settings,
+        )
         requested_shadow_mode = shadow_mode if isinstance(shadow_mode, bool) else False
         context = GraphConnectionContext(
             seed_entity_id=seed_entity_id,
             source_type=source_type,
             research_space_id=research_space_id,
-            research_space_settings=research_space_settings or {},
+            research_space_settings=resolved_settings or {},
             relation_types=relation_types,
             max_depth=max_depth,
             shadow_mode=requested_shadow_mode,
@@ -89,8 +104,15 @@ class GraphConnectionService:
             evidence_count=len(contract.evidence),
             decision=contract.decision,
             requested_shadow_mode=requested_shadow_mode,
-            research_space_settings=research_space_settings,
+            research_space_settings=resolved_settings,
+            relation_types=self._resolve_relation_types(contract),
         )
+        if governance.requires_review:
+            self._submit_review_item(
+                research_space_id=contract.research_space_id,
+                seed_entity_id=contract.seed_entity_id,
+                reason=governance.reason,
+            )
 
         if governance.shadow_mode:
             return self._build_outcome(
@@ -177,6 +199,115 @@ class GraphConnectionService:
     async def close(self) -> None:
         """Release resources held by the underlying graph-connection adapter."""
         await self._agent.close()
+
+    def _resolve_research_space_settings(
+        self,
+        *,
+        research_space_id: str,
+        provided_settings: ResearchSpaceSettings | None,
+    ) -> ResearchSpaceSettings | None:
+        if provided_settings is not None:
+            return provided_settings
+        if self._research_spaces is None:
+            return None
+        try:
+            space_uuid = UUID(research_space_id)
+        except ValueError:
+            return None
+        space = self._research_spaces.find_by_id(space_uuid)
+        if space is None:
+            return None
+        return self._normalize_research_space_settings(space.settings)
+
+    @staticmethod
+    def _normalize_research_space_settings(  # noqa: C901
+        raw_settings: Mapping[str, object],
+    ) -> ResearchSpaceSettings:
+        settings: ResearchSpaceSettings = {}
+
+        auto_approve = raw_settings.get("auto_approve")
+        if isinstance(auto_approve, bool):
+            settings["auto_approve"] = auto_approve
+
+        require_review = raw_settings.get("require_review")
+        if isinstance(require_review, bool):
+            settings["require_review"] = require_review
+
+        review_threshold = raw_settings.get("review_threshold")
+        if isinstance(review_threshold, float | int):
+            settings["review_threshold"] = max(0.0, min(float(review_threshold), 1.0))
+
+        relation_default_review_threshold = raw_settings.get(
+            "relation_default_review_threshold",
+        )
+        if isinstance(relation_default_review_threshold, float | int):
+            settings["relation_default_review_threshold"] = max(
+                0.0,
+                min(float(relation_default_review_threshold), 1.0),
+            )
+
+        raw_relation_thresholds = raw_settings.get("relation_review_thresholds")
+        if isinstance(raw_relation_thresholds, Mapping):
+            relation_thresholds: dict[str, float] = {}
+            for raw_relation_type, raw_threshold in raw_relation_thresholds.items():
+                if not isinstance(raw_relation_type, str):
+                    continue
+                normalized_relation_type = raw_relation_type.strip().upper()
+                if not normalized_relation_type:
+                    continue
+                if isinstance(raw_threshold, float | int):
+                    relation_thresholds[normalized_relation_type] = max(
+                        0.0,
+                        min(float(raw_threshold), 1.0),
+                    )
+            if relation_thresholds:
+                settings["relation_review_thresholds"] = relation_thresholds
+
+        return settings
+
+    @staticmethod
+    def _resolve_relation_types(
+        contract: GraphConnectionContract,
+    ) -> tuple[str, ...] | None:
+        relation_types: list[str] = []
+        for relation in contract.proposed_relations:
+            normalized = relation.relation_type.strip().upper()
+            if not normalized or normalized in relation_types:
+                continue
+            relation_types.append(normalized)
+        return tuple(relation_types) if relation_types else None
+
+    def _submit_review_item(
+        self,
+        *,
+        research_space_id: str,
+        seed_entity_id: str,
+        reason: str,
+    ) -> None:
+        submitter = self._review_queue_submitter
+        if submitter is None:
+            return
+        try:
+            submitter(
+                "graph_connection_seed",
+                seed_entity_id,
+                research_space_id,
+                self._review_priority_for_reason(reason),
+            )
+        except Exception as exc:  # noqa: BLE001 - do not block graph writes
+            logger.warning(
+                "Failed to enqueue graph-connection review item for seed=%s: %s",
+                seed_entity_id,
+                exc,
+            )
+
+    @staticmethod
+    def _review_priority_for_reason(reason: str) -> str:
+        if reason in {"agent_requested_escalation", "evidence_required"}:
+            return "high"
+        if reason == "confidence_below_threshold":
+            return "medium"
+        return "low"
 
     @staticmethod
     def _resolve_run_id(contract: GraphConnectionContract) -> str | None:

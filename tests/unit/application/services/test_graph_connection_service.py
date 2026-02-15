@@ -75,6 +75,7 @@ def _build_contract(
     *,
     decision: str = "generated",
     confidence_score: float = 0.9,
+    relation_type: str = "ASSOCIATED_WITH",
 ) -> GraphConnectionContract:
     return GraphConnectionContract(
         decision=decision,
@@ -94,7 +95,7 @@ def _build_contract(
         proposed_relations=[
             ProposedRelation(
                 source_id=str(uuid4()),
-                relation_type="ASSOCIATED_WITH",
+                relation_type=relation_type,
                 target_id=str(uuid4()),
                 confidence=0.87,
                 evidence_summary="Shared high-confidence neighbourhood pattern",
@@ -183,7 +184,83 @@ async def test_discover_connections_for_seed_requires_review_on_low_confidence()
         shadow_mode=False,
     )
 
-    assert outcome.status == "failed"
+    assert outcome.status == "discovered"
+    assert outcome.wrote_to_graph is True
     assert outcome.review_required is True
-    assert outcome.reason == "confidence_below_threshold"
-    assert relation_repository.calls == []
+    assert outcome.reason == "processed"
+    assert len(relation_repository.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_connections_for_seed_uses_relation_type_thresholds() -> None:
+    contract = _build_contract(confidence_score=0.86, relation_type="CAUSES")
+    relation_repository = StubRelationRepository()
+    service = GraphConnectionService(
+        dependencies=GraphConnectionServiceDependencies(
+            graph_connection_agent=StubGraphConnectionAgent(contract),
+            relation_repository=relation_repository,
+            governance_service=_build_governance_service(),
+        ),
+    )
+
+    outcome = await service.discover_connections_for_seed(
+        research_space_id=contract.research_space_id,
+        seed_entity_id=contract.seed_entity_id,
+        source_type="clinvar",
+        research_space_settings={
+            "review_threshold": 0.6,
+            "relation_review_thresholds": {"CAUSES": 0.9},
+        },
+        shadow_mode=False,
+    )
+
+    assert outcome.status == "discovered"
+    assert outcome.wrote_to_graph is True
+    assert outcome.review_required is True
+    assert outcome.reason == "processed"
+    assert len(relation_repository.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_connections_for_seed_enqueues_review_item() -> None:
+    contract = _build_contract(confidence_score=0.86, relation_type="CAUSES")
+    relation_repository = StubRelationRepository()
+    queued_items: list[tuple[str, str, str | None, str]] = []
+
+    def submit_review_item(
+        entity_type: str,
+        entity_id: str,
+        research_space_id: str | None,
+        priority: str,
+    ) -> None:
+        queued_items.append((entity_type, entity_id, research_space_id, priority))
+
+    service = GraphConnectionService(
+        dependencies=GraphConnectionServiceDependencies(
+            graph_connection_agent=StubGraphConnectionAgent(contract),
+            relation_repository=relation_repository,
+            governance_service=_build_governance_service(),
+            review_queue_submitter=submit_review_item,
+        ),
+    )
+
+    outcome = await service.discover_connections_for_seed(
+        research_space_id=contract.research_space_id,
+        seed_entity_id=contract.seed_entity_id,
+        source_type="clinvar",
+        research_space_settings={
+            "review_threshold": 0.6,
+            "relation_review_thresholds": {"CAUSES": 0.9},
+        },
+        shadow_mode=False,
+    )
+
+    assert outcome.review_required is True
+    assert queued_items == [
+        (
+            "graph_connection_seed",
+            contract.seed_entity_id,
+            contract.research_space_id,
+            "medium",
+        ),
+    ]

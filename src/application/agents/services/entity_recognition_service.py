@@ -543,7 +543,7 @@ class EntityRecognitionService(
             errors=tuple(ingestion_result.errors),
         )
 
-    def _resolve_research_space_settings(  # noqa: C901
+    def _resolve_research_space_settings(  # noqa: C901, PLR0912
         self,
         document: SourceDocument,
     ) -> ResearchSpaceSettings:
@@ -567,6 +567,35 @@ class EntityRecognitionService(
         if isinstance(review_threshold, float | int):
             normalized = max(0.0, min(float(review_threshold), 1.0))
             settings["review_threshold"] = normalized
+
+        relation_default_review_threshold = raw_settings.get(
+            "relation_default_review_threshold",
+        )
+        if isinstance(relation_default_review_threshold, float | int):
+            settings["relation_default_review_threshold"] = max(
+                0.0,
+                min(float(relation_default_review_threshold), 1.0),
+            )
+
+        raw_relation_review_thresholds = raw_settings.get("relation_review_thresholds")
+        if isinstance(raw_relation_review_thresholds, dict):
+            relation_review_thresholds: dict[str, float] = {}
+            for (
+                raw_relation_type,
+                raw_threshold,
+            ) in raw_relation_review_thresholds.items():
+                if not isinstance(raw_relation_type, str):
+                    continue
+                normalized_relation_type = raw_relation_type.strip().upper()
+                if not normalized_relation_type:
+                    continue
+                if isinstance(raw_threshold, float | int):
+                    relation_review_thresholds[normalized_relation_type] = max(
+                        0.0,
+                        min(float(raw_threshold), 1.0),
+                    )
+            if relation_review_thresholds:
+                settings["relation_review_thresholds"] = relation_review_thresholds
 
         creation_policy = raw_settings.get("dictionary_agent_creation_policy")
         if isinstance(creation_policy, str):

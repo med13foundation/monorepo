@@ -159,6 +159,13 @@ class _EntityRecognitionBootstrapHelpers:
             normalized["require_review"] = settings["require_review"]
         if "review_threshold" in settings:
             normalized["review_threshold"] = settings["review_threshold"]
+        if "relation_default_review_threshold" in settings:
+            normalized["relation_default_review_threshold"] = settings[
+                "relation_default_review_threshold"
+            ]
+        relation_review_thresholds = settings.get("relation_review_thresholds")
+        if isinstance(relation_review_thresholds, dict):
+            normalized["relation_review_thresholds"] = dict(relation_review_thresholds)
         if "max_data_sources" in settings:
             normalized["max_data_sources"] = settings["max_data_sources"]
         if "allowed_source_types" in settings:

@@ -40,6 +40,8 @@ from src.infrastructure.llm.adapters import (
 from src.infrastructure.llm.config.model_registry import get_model_registry
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.orm import Session
 
     from src.application.services import SystemStatusService
@@ -78,6 +80,43 @@ class ApplicationServiceFactoryMixin(
             model_spec = registry.get_default_model(ModelCapability.QUERY_GENERATION)
             self._query_agent = FlujoQueryAgentAdapter(model=model_spec.model_id)
         return self._query_agent
+
+    @staticmethod
+    def _build_review_queue_submitter(
+        session: Session,
+    ) -> Callable[[str, str, str | None, str], None]:
+        from src.application.curation.repositories.review_repository import (
+            SqlAlchemyReviewRepository,
+        )
+        from src.application.curation.services.review_service import ReviewService
+
+        repository = SqlAlchemyReviewRepository()
+        review_service = ReviewService(repository)
+
+        def submit_review_item(
+            entity_type: str,
+            entity_id: str,
+            research_space_id: str | None,
+            priority: str,
+        ) -> None:
+            existing = repository.find_by_entity(
+                session,
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+            if existing is not None:
+                existing_status = str(existing.get("status", "")).strip().lower()
+                if existing_status == "pending":
+                    return
+            review_service.submit(
+                session,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                priority=priority,
+                research_space_id=research_space_id,
+            )
+
+        return submit_review_item
 
     @staticmethod
     def _is_stage_enabled(flag_name: str) -> bool:
@@ -134,6 +173,7 @@ class ApplicationServiceFactoryMixin(
                 extraction_agent=extraction_agent,
                 ingestion_pipeline=ingestion_pipeline,
                 governance_service=governance_service,
+                review_queue_submitter=self._build_review_queue_submitter(session),
             ),
         )
 
@@ -164,6 +204,7 @@ class ApplicationServiceFactoryMixin(
                 extraction_agent=extraction_agent,
                 ingestion_pipeline=create_ingestion_pipeline(session),
                 governance_service=GovernanceService(),
+                review_queue_submitter=self._build_review_queue_submitter(session),
             ),
         )
 
@@ -174,6 +215,9 @@ class ApplicationServiceFactoryMixin(
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyGraphQueryRepository,
             SqlAlchemyKernelRelationRepository,
+        )
+        from src.infrastructure.repositories.research_space_repository import (
+            SqlAlchemyResearchSpaceRepository,
         )
 
         dictionary_service = self.create_dictionary_management_service(session)
@@ -194,6 +238,8 @@ class ApplicationServiceFactoryMixin(
                 graph_connection_agent=graph_connection_agent,
                 relation_repository=relation_repository,
                 governance_service=GovernanceService(),
+                research_space_repository=SqlAlchemyResearchSpaceRepository(session),
+                review_queue_submitter=self._build_review_queue_submitter(session),
             ),
         )
 
