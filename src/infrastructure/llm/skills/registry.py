@@ -29,9 +29,13 @@ from .extraction_tools import (
     make_validate_triple_tool,
 )
 from .graph_tools import (
+    make_graph_aggregate_tool,
+    make_graph_query_by_observation_tool,
+    make_graph_query_entities_tool,
     make_graph_query_neighbourhood_tool,
     make_graph_query_observations_tool,
     make_graph_query_relation_evidence_tool,
+    make_graph_query_relations_tool,
     make_graph_query_shared_subjects_tool,
     make_upsert_relation_tool,
 )
@@ -71,6 +75,14 @@ _GRAPH_CONNECTION_SKILL_IDS: tuple[str, ...] = (
     "graph_query_relation_evidence",
     "upsert_relation",
     "validate_triple",
+)
+_GRAPH_SEARCH_SKILL_IDS: tuple[str, ...] = (
+    "graph_query_entities",
+    "graph_query_relations",
+    "graph_query_observations",
+    "graph_query_by_observation",
+    "graph_aggregate",
+    "graph_query_relation_evidence",
 )
 
 
@@ -550,6 +562,22 @@ def register_all_skills() -> None:
         tags=["extraction", "normalization", "semantic-layer"],
     )
     registry.register(
+        skill_id="graph_query_entities",
+        factory=make_graph_query_entities_tool,
+        description="Query entities in a research space with optional text/type filters.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "entity_type": {"type": "string"},
+                "query_text": {"type": "string"},
+                "limit": {"type": "integer", "default": 200},
+            },
+        },
+        output_schema={"type": "array", "items": {"type": "object"}},
+        tags=["graph", "query", "read"],
+    )
+    registry.register(
         skill_id="graph_query_neighbourhood",
         factory=make_graph_query_neighbourhood_tool,
         description="Query relation neighbourhood around an entity in one space.",
@@ -560,6 +588,25 @@ def register_all_skills() -> None:
                 "entity_id": {"type": "string"},
                 "depth": {"type": "integer", "default": 1},
                 "relation_types": {"type": "array", "items": {"type": "string"}},
+                "limit": {"type": "integer", "default": 200},
+            },
+            "required": ["entity_id"],
+        },
+        output_schema={"type": "array", "items": {"type": "object"}},
+        tags=["graph", "query", "read"],
+    )
+    registry.register(
+        skill_id="graph_query_relations",
+        factory=make_graph_query_relations_tool,
+        description="Traverse graph relations from one entity with direction/depth.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "relation_types": {"type": "array", "items": {"type": "string"}},
+                "direction": {"type": "string", "default": "both"},
+                "depth": {"type": "integer", "default": 1},
                 "limit": {"type": "integer", "default": 200},
             },
             "required": ["entity_id"],
@@ -604,6 +651,24 @@ def register_all_skills() -> None:
         tags=["graph", "query", "read"],
     )
     registry.register(
+        skill_id="graph_query_by_observation",
+        factory=make_graph_query_by_observation_tool,
+        description="Find entities matching one observation predicate.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "variable_id": {"type": "string"},
+                "operator": {"type": "string", "default": "eq"},
+                "value": {},
+                "limit": {"type": "integer", "default": 200},
+            },
+            "required": ["variable_id"],
+        },
+        output_schema={"type": "array", "items": {"type": "object"}},
+        tags=["graph", "query", "read"],
+    )
+    registry.register(
         skill_id="graph_query_relation_evidence",
         factory=make_graph_query_relation_evidence_tool,
         description="Return all evidence rows for one canonical relation edge.",
@@ -617,6 +682,23 @@ def register_all_skills() -> None:
             "required": ["relation_id"],
         },
         output_schema={"type": "array", "items": {"type": "object"}},
+        tags=["graph", "query", "read"],
+    )
+    registry.register(
+        skill_id="graph_aggregate",
+        factory=make_graph_aggregate_tool,
+        description="Compute aggregate metrics for a variable within a space.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "variable_id": {"type": "string"},
+                "entity_type": {"type": "string"},
+                "aggregation": {"type": "string", "default": "count"},
+            },
+            "required": ["variable_id"],
+        },
+        output_schema={"type": "object"},
         tags=["graph", "query", "read"],
     )
     registry.register(
@@ -718,6 +800,31 @@ def build_graph_connection_tools(  # noqa: PLR0913
             dictionary_service=dictionary_service,
             graph_query_service=graph_query_service,
             relation_repository=relation_repository,
+            research_space_id=research_space_id,
+        )
+        if skill is None:
+            msg = f"Required skill '{skill_id}' is not registered"
+            raise LookupError(msg)
+        tools.append(skill)
+    return tools
+
+
+def build_graph_search_tools(
+    *,
+    graph_query_service: GraphQueryPort,
+    research_space_id: str,
+) -> list[SkillCallable]:
+    """
+    Build read-only graph toolset for Graph Search Agent workflows.
+    """
+    register_all_skills()
+    registry = get_skill_registry()
+
+    tools: list[SkillCallable] = []
+    for skill_id in _GRAPH_SEARCH_SKILL_IDS:
+        skill = registry.get_callable(
+            skill_id,
+            graph_query_service=graph_query_service,
             research_space_id=research_space_id,
         )
         if skill is None:

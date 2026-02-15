@@ -18,6 +18,7 @@ from src.infrastructure.llm.prompts.extraction import CLINVAR_EXTRACTION_SYSTEM_
 from src.infrastructure.llm.prompts.graph_connection import (
     CLINVAR_GRAPH_CONNECTION_SYSTEM_PROMPT,
 )
+from src.infrastructure.llm.prompts.graph_search import GRAPH_SEARCH_SYSTEM_PROMPT
 from src.infrastructure.llm.prompts.query.pubmed import PUBMED_QUERY_SYSTEM_PROMPT
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "CLINVAR_EXTRACTION_SYSTEM_PROMPT",
     "CLINVAR_ENTITY_RECOGNITION_SYSTEM_PROMPT",
     "CLINVAR_GRAPH_CONNECTION_SYSTEM_PROMPT",
+    "GRAPH_SEARCH_SYSTEM_PROMPT",
     "EVIDENCE_INSTRUCTION",
     "PUBMED_QUERY_SYSTEM_PROMPT",
 ]

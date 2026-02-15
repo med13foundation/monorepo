@@ -8,12 +8,13 @@ from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import Literal
 
     from src.domain.ports.graph_query_port import GraphQueryPort
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
-    from src.type_definitions.common import JSONObject
+    from src.type_definitions.common import JSONObject, JSONValue
 
 
 def _model_to_json(model: object) -> JSONObject:
@@ -66,6 +67,31 @@ def make_graph_query_neighbourhood_tool(
     return graph_query_neighbourhood
 
 
+def make_graph_query_entities_tool(
+    *,
+    graph_query_service: GraphQueryPort,
+    research_space_id: str | None = None,
+    **_: object,
+) -> Callable[[str | None, str | None, int], list[JSONObject]]:
+    """Build a graph_query_entities tool callable."""
+    space_id = _normalize_space_id(research_space_id)
+
+    def graph_query_entities(
+        entity_type: str | None = None,
+        query_text: str | None = None,
+        limit: int = 200,
+    ) -> list[JSONObject]:
+        entities = graph_query_service.graph_query_entities(
+            research_space_id=space_id,
+            entity_type=entity_type,
+            query_text=query_text,
+            limit=limit,
+        )
+        return [_model_to_json(entity) for entity in entities]
+
+    return graph_query_entities
+
+
 def make_graph_query_shared_subjects_tool(
     *,
     graph_query_service: GraphQueryPort,
@@ -89,6 +115,38 @@ def make_graph_query_shared_subjects_tool(
         return [_model_to_json(entity) for entity in entities]
 
     return graph_query_shared_subjects
+
+
+def make_graph_query_relations_tool(
+    *,
+    graph_query_service: GraphQueryPort,
+    research_space_id: str | None = None,
+    **_: object,
+) -> Callable[
+    [str, list[str] | None, Literal["outgoing", "incoming", "both"], int, int],
+    list[JSONObject],
+]:
+    """Build a graph_query_relations tool callable."""
+    space_id = _normalize_space_id(research_space_id)
+
+    def graph_query_relations(
+        entity_id: str,
+        relation_types: list[str] | None = None,
+        direction: Literal["outgoing", "incoming", "both"] = "both",
+        depth: int = 1,
+        limit: int = 200,
+    ) -> list[JSONObject]:
+        relations = graph_query_service.graph_query_relations(
+            research_space_id=space_id,
+            entity_id=entity_id,
+            relation_types=relation_types,
+            direction=direction,
+            depth=depth,
+            limit=limit,
+        )
+        return [_model_to_json(relation) for relation in relations]
+
+    return graph_query_relations
 
 
 def make_graph_query_observations_tool(
@@ -116,6 +174,36 @@ def make_graph_query_observations_tool(
     return graph_query_observations
 
 
+def make_graph_query_by_observation_tool(
+    *,
+    graph_query_service: GraphQueryPort,
+    research_space_id: str | None = None,
+    **_: object,
+) -> Callable[
+    [str, Literal["eq", "lt", "lte", "gt", "gte", "contains"], JSONValue | None, int],
+    list[JSONObject],
+]:
+    """Build a graph_query_by_observation tool callable."""
+    space_id = _normalize_space_id(research_space_id)
+
+    def graph_query_by_observation(
+        variable_id: str,
+        operator: Literal["eq", "lt", "lte", "gt", "gte", "contains"] = "eq",
+        value: JSONValue | None = None,
+        limit: int = 200,
+    ) -> list[JSONObject]:
+        entities = graph_query_service.graph_query_by_observation(
+            research_space_id=space_id,
+            variable_id=variable_id,
+            operator=operator,
+            value=value,
+            limit=limit,
+        )
+        return [_model_to_json(entity) for entity in entities]
+
+    return graph_query_by_observation
+
+
 def make_graph_query_relation_evidence_tool(
     *,
     graph_query_service: GraphQueryPort,
@@ -137,6 +225,30 @@ def make_graph_query_relation_evidence_tool(
         return [_model_to_json(evidence) for evidence in evidences]
 
     return graph_query_relation_evidence
+
+
+def make_graph_aggregate_tool(
+    *,
+    graph_query_service: GraphQueryPort,
+    research_space_id: str | None = None,
+    **_: object,
+) -> Callable[[str, str | None, Literal["count", "mean", "min", "max"]], JSONObject]:
+    """Build a graph_aggregate tool callable."""
+    space_id = _normalize_space_id(research_space_id)
+
+    def graph_aggregate(
+        variable_id: str,
+        entity_type: str | None = None,
+        aggregation: Literal["count", "mean", "min", "max"] = "count",
+    ) -> JSONObject:
+        return graph_query_service.graph_aggregate(
+            research_space_id=space_id,
+            variable_id=variable_id,
+            entity_type=entity_type,
+            aggregation=aggregation,
+        )
+
+    return graph_aggregate
 
 
 def make_upsert_relation_tool(
@@ -173,8 +285,12 @@ def make_upsert_relation_tool(
 
 
 __all__ = [
+    "make_graph_aggregate_tool",
+    "make_graph_query_by_observation_tool",
+    "make_graph_query_entities_tool",
     "make_graph_query_neighbourhood_tool",
     "make_graph_query_observations_tool",
+    "make_graph_query_relations_tool",
     "make_graph_query_relation_evidence_tool",
     "make_graph_query_shared_subjects_tool",
     "make_upsert_relation_tool",

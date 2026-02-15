@@ -12,6 +12,7 @@ from src.domain.entities.kernel.observations import KernelObservation
 from src.domain.entities.kernel.relations import KernelRelation, KernelRelationEvidence
 from src.infrastructure.llm.skills.registry import (
     build_graph_connection_tools,
+    build_graph_search_tools,
     get_skill_registry,
     register_all_skills,
 )
@@ -104,8 +105,12 @@ def test_register_all_skills_includes_graph_skills() -> None:
     registry = get_skill_registry()
     available = set(registry.list_skills())
     assert "graph_query_neighbourhood" in available
+    assert "graph_query_entities" in available
+    assert "graph_query_relations" in available
     assert "graph_query_shared_subjects" in available
     assert "graph_query_observations" in available
+    assert "graph_query_by_observation" in available
+    assert "graph_aggregate" in available
     assert "graph_query_relation_evidence" in available
     assert "upsert_relation" in available
 
@@ -163,3 +168,46 @@ def test_build_graph_connection_tools_calls_dependencies() -> None:
     triple_validation = validate_triple("GENE", "ASSOCIATED_WITH", "PHENOTYPE")
     assert triple_validation["allowed"] is True
     assert triple_validation["requires_evidence"] is True
+
+
+def test_build_graph_search_tools_calls_dependencies() -> None:
+    graph_query_service = Mock()
+    graph_query_service.graph_query_entities.return_value = [_build_entity()]
+    graph_query_service.graph_query_relations.return_value = [_build_relation()]
+    graph_query_service.graph_query_observations.return_value = [_build_observation()]
+    graph_query_service.graph_query_by_observation.return_value = [_build_entity()]
+    graph_query_service.graph_aggregate.return_value = {
+        "aggregation": "count",
+        "value": 1,
+    }
+    graph_query_service.graph_query_relation_evidence.return_value = [_build_evidence()]
+
+    tools = build_graph_search_tools(
+        graph_query_service=graph_query_service,
+        research_space_id=str(uuid4()),
+    )
+
+    entities_tool = _tool_by_name(tools, "graph_query_entities")
+    relations_tool = _tool_by_name(tools, "graph_query_relations")
+    observations_tool = _tool_by_name(tools, "graph_query_observations")
+    by_observation_tool = _tool_by_name(tools, "graph_query_by_observation")
+    aggregate_tool = _tool_by_name(tools, "graph_aggregate")
+    evidence_tool = _tool_by_name(tools, "graph_query_relation_evidence")
+
+    entities = entities_tool(entity_type="GENE")
+    assert entities[0]["entity_type"] == "GENE"
+
+    relations = relations_tool("entity-1")
+    assert relations[0]["relation_type"] == "ASSOCIATED_WITH"
+
+    observations = observations_tool("entity-1")
+    assert observations[0]["variable_id"] == "VAR_TEST"
+
+    by_observation = by_observation_tool("VAR_TEST", operator="contains", value="med13")
+    assert by_observation[0]["entity_type"] == "GENE"
+
+    aggregate = aggregate_tool("VAR_TEST", aggregation="count")
+    assert aggregate["value"] == 1
+
+    evidence = evidence_tool("relation-1")
+    assert evidence[0]["evidence_tier"] == "COMPUTATIONAL"

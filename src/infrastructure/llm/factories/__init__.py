@@ -27,6 +27,10 @@ from src.infrastructure.llm.factories.graph_connection_agent_factory import (
     create_clinvar_graph_connection_agent,
     create_graph_connection_agent_for_source,
 )
+from src.infrastructure.llm.factories.graph_search_agent_factory import (
+    GraphSearchAgentFactory,
+    create_graph_search_agent,
+)
 from src.infrastructure.llm.factories.query_agent_factory import (
     QueryAgentFactory,
     create_clinvar_query_agent,
@@ -41,11 +45,13 @@ __all__ = [
     "create_clinvar_extraction_agent",
     "create_graph_connection_agent_for_source",
     "create_clinvar_graph_connection_agent",
+    "create_graph_search_agent",
     "FlujoAgent",
     "create_pubmed_query_agent",
     "create_clinvar_query_agent",
     "EntityRecognitionAgentFactory",
     "ExtractionAgentFactory",
     "GraphConnectionAgentFactory",
+    "GraphSearchAgentFactory",
     "QueryAgentFactory",
 ]

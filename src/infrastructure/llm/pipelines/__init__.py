@@ -24,6 +24,9 @@ from src.infrastructure.llm.pipelines.extraction_pipelines import (
 from src.infrastructure.llm.pipelines.graph_connection_pipelines import (
     create_clinvar_graph_connection_pipeline,
 )
+from src.infrastructure.llm.pipelines.graph_search_pipelines import (
+    create_graph_search_pipeline,
+)
 from src.infrastructure.llm.pipelines.query_pipelines.clinvar_pipeline import (
     create_clinvar_query_pipeline,
 )
@@ -39,6 +42,7 @@ __all__ = [
     "create_clinvar_entity_recognition_pipeline",
     "create_clinvar_extraction_pipeline",
     "create_clinvar_graph_connection_pipeline",
+    "create_graph_search_pipeline",
     "create_pubmed_query_pipeline",
     "create_clinvar_query_pipeline",
     "get_usage_limits_dict",

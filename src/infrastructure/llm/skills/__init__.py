@@ -14,6 +14,7 @@ from src.infrastructure.llm.skills.registry import (
     build_entity_recognition_dictionary_tools,
     build_extraction_validation_tools,
     build_graph_connection_tools,
+    build_graph_search_tools,
     get_skill_registry,
     register_all_skills,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "build_extraction_validation_tools",
     "build_entity_recognition_dictionary_tools",
     "build_graph_connection_tools",
+    "build_graph_search_tools",
     "get_skill_registry",
     "register_all_skills",
     "SkillRegistry",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from src.application.agents.services.graph_search_service import (
@@ -10,10 +11,18 @@ from src.application.agents.services.graph_search_service import (
     GraphSearchServiceDependencies,
 )
 from src.application.services.research_query_service import ResearchQueryService
+from src.domain.agents.contracts.base import EvidenceItem
+from src.domain.agents.contracts.graph_search import (
+    GraphSearchContract,
+    GraphSearchResultEntry,
+)
 from src.domain.entities.kernel.dictionary import DictionarySearchResult
 from src.domain.entities.kernel.entities import KernelEntity
 from src.domain.entities.kernel.observations import KernelObservation
 from src.domain.entities.kernel.relations import KernelRelation, KernelRelationEvidence
+
+if TYPE_CHECKING:
+    from src.domain.agents.contexts.graph_search_context import GraphSearchContext
 
 
 class StubDictionaryService:
@@ -269,6 +278,65 @@ class StubGraphQueryService:
         return {"aggregation": aggregation, "value": 1}
 
 
+class StubGraphSearchAgent:
+    """Simple async graph-search port stub used by service tests."""
+
+    def __init__(self, contract: GraphSearchContract) -> None:
+        self._contract = contract
+        self.calls = 0
+
+    async def search(
+        self,
+        context: GraphSearchContext,
+        *,
+        model_id: str | None = None,
+    ) -> GraphSearchContract:
+        _ = context
+        _ = model_id
+        self.calls += 1
+        return self._contract
+
+    async def close(self) -> None:
+        return None
+
+
+def _build_agent_contract(research_space_id: str) -> GraphSearchContract:
+    return GraphSearchContract(
+        decision="generated",
+        confidence_score=0.92,
+        rationale="Agent synthesized graph evidence for the query.",
+        evidence=[
+            EvidenceItem(
+                source_type="tool",
+                locator=f"research_space:{research_space_id}",
+                excerpt="Tool-backed graph traversal and evidence synthesis.",
+                relevance=0.9,
+            ),
+        ],
+        research_space_id=research_space_id,
+        original_query="What evidence links MED13 to cardiomyopathy?",
+        interpreted_intent="Find MED13 evidence linked to cardiomyopathy phenotypes.",
+        query_plan_summary="Agent traversed MED13 neighborhood and ranked supports.",
+        total_results=1,
+        results=[
+            GraphSearchResultEntry(
+                entity_id=str(uuid4()),
+                entity_type="GENE",
+                display_label="MED13",
+                relevance_score=0.95,
+                matching_observation_ids=[],
+                matching_relation_ids=[],
+                evidence_chain=[],
+                explanation="Strong matching relation and observation evidence.",
+                support_summary="well_supported: independent_sources=1, confidence=0.95",
+            ),
+        ],
+        executed_path="agent",
+        warnings=[],
+        agent_run_id="run-graph-search-1",
+    )
+
+
 async def test_graph_search_service_returns_ranked_results() -> None:
     graph_query_service = StubGraphQueryService()
     search_service = GraphSearchService(
@@ -320,3 +388,85 @@ async def test_graph_search_force_agent_falls_back_when_unconfigured() -> None:
             contract.warnings,
         )
     )
+
+
+async def test_graph_search_uses_agent_when_deterministic_has_no_results() -> None:
+    class EmptyGraphQueryService(StubGraphQueryService):
+        def graph_query_entities(
+            self,
+            *,
+            research_space_id: str,
+            entity_type: str | None = None,
+            query_text: str | None = None,
+            limit: int = 200,
+        ) -> list[KernelEntity]:
+            _ = research_space_id
+            _ = entity_type
+            _ = query_text
+            _ = limit
+            return []
+
+        def graph_query_by_observation(
+            self,
+            *,
+            research_space_id: str,
+            variable_id: str,
+            operator: str = "eq",
+            value: object = None,
+            limit: int = 200,
+        ) -> list[KernelEntity]:
+            _ = research_space_id
+            _ = variable_id
+            _ = operator
+            _ = value
+            _ = limit
+            return []
+
+    graph_query_service = EmptyGraphQueryService()
+    agent = StubGraphSearchAgent(
+        _build_agent_contract(str(graph_query_service.research_space_id)),
+    )
+    search_service = GraphSearchService(
+        dependencies=GraphSearchServiceDependencies(
+            research_query_service=ResearchQueryService(
+                dictionary_service=StubDictionaryService(),
+            ),
+            graph_query_service=graph_query_service,
+            graph_search_agent=agent,
+        ),
+    )
+
+    contract = await search_service.search(
+        question="What evidence links MED13 to cardiomyopathy?",
+        research_space_id=str(graph_query_service.research_space_id),
+    )
+
+    assert contract.executed_path == "agent"
+    assert contract.total_results == 1
+    assert agent.calls == 1
+
+
+async def test_graph_search_force_agent_prefers_agent_results() -> None:
+    graph_query_service = StubGraphQueryService()
+    agent = StubGraphSearchAgent(
+        _build_agent_contract(str(graph_query_service.research_space_id)),
+    )
+    search_service = GraphSearchService(
+        dependencies=GraphSearchServiceDependencies(
+            research_query_service=ResearchQueryService(
+                dictionary_service=StubDictionaryService(),
+            ),
+            graph_query_service=graph_query_service,
+            graph_search_agent=agent,
+        ),
+    )
+
+    contract = await search_service.search(
+        question="Find MED13 evidence",
+        research_space_id=str(graph_query_service.research_space_id),
+        force_agent=True,
+    )
+
+    assert contract.executed_path == "agent"
+    assert contract.total_results == 1
+    assert agent.calls == 1

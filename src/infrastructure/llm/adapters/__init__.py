@@ -19,11 +19,15 @@ from src.infrastructure.llm.adapters.extraction_agent_adapter import (
 from src.infrastructure.llm.adapters.graph_connection_agent_adapter import (
     FlujoGraphConnectionAdapter,
 )
+from src.infrastructure.llm.adapters.graph_search_agent_adapter import (
+    FlujoGraphSearchAdapter,
+)
 from src.infrastructure.llm.adapters.query_agent_adapter import FlujoQueryAgentAdapter
 
 __all__ = [
     "FlujoEntityRecognitionAdapter",
     "FlujoExtractionAdapter",
     "FlujoGraphConnectionAdapter",
+    "FlujoGraphSearchAdapter",
     "FlujoQueryAgentAdapter",
 ]

@@ -23,6 +23,7 @@ __all__ = [
     "FlujoEntityRecognitionAdapter",
     "FlujoExtractionAdapter",
     "FlujoGraphConnectionAdapter",
+    "FlujoGraphSearchAdapter",
     "FlujoQueryAgentAdapter",
     # Config
     "FlujoModelRegistry",
@@ -40,6 +41,8 @@ __all__ = [
     "create_graph_connection_agent_for_source",
     "create_clinvar_graph_connection_agent",
     "GraphConnectionAgentFactory",
+    "create_graph_search_agent",
+    "GraphSearchAgentFactory",
     "create_pubmed_query_agent",
     "create_clinvar_query_agent",
     "QueryAgentFactory",
@@ -47,12 +50,14 @@ __all__ = [
     "create_clinvar_entity_recognition_pipeline",
     "create_clinvar_extraction_pipeline",
     "create_clinvar_graph_connection_pipeline",
+    "create_graph_search_pipeline",
     "create_pubmed_query_pipeline",
     "create_clinvar_query_pipeline",
     # Skills
     "build_extraction_validation_tools",
     "build_entity_recognition_dictionary_tools",
     "build_graph_connection_tools",
+    "build_graph_search_tools",
     "get_skill_registry",
     "register_all_skills",
     "SkillRegistry",
@@ -77,6 +82,10 @@ _EXPORT_MAP: dict[str, tuple[str, str]] = {
     "FlujoGraphConnectionAdapter": (
         "src.infrastructure.llm.adapters.graph_connection_agent_adapter",
         "FlujoGraphConnectionAdapter",
+    ),
+    "FlujoGraphSearchAdapter": (
+        "src.infrastructure.llm.adapters.graph_search_agent_adapter",
+        "FlujoGraphSearchAdapter",
     ),
     "FlujoQueryAgentAdapter": (
         "src.infrastructure.llm.adapters.query_agent_adapter",
@@ -135,6 +144,14 @@ _EXPORT_MAP: dict[str, tuple[str, str]] = {
         "src.infrastructure.llm.factories.graph_connection_agent_factory",
         "GraphConnectionAgentFactory",
     ),
+    "create_graph_search_agent": (
+        "src.infrastructure.llm.factories.graph_search_agent_factory",
+        "create_graph_search_agent",
+    ),
+    "GraphSearchAgentFactory": (
+        "src.infrastructure.llm.factories.graph_search_agent_factory",
+        "GraphSearchAgentFactory",
+    ),
     "create_pubmed_query_agent": (
         "src.infrastructure.llm.factories.query_agent_factory",
         "create_pubmed_query_agent",
@@ -159,6 +176,10 @@ _EXPORT_MAP: dict[str, tuple[str, str]] = {
         "src.infrastructure.llm.pipelines.graph_connection_pipelines.clinvar_pipeline",
         "create_clinvar_graph_connection_pipeline",
     ),
+    "create_graph_search_pipeline": (
+        "src.infrastructure.llm.pipelines.graph_search_pipelines.default_pipeline",
+        "create_graph_search_pipeline",
+    ),
     "create_pubmed_query_pipeline": (
         "src.infrastructure.llm.pipelines.query_pipelines.pubmed_pipeline",
         "create_pubmed_query_pipeline",
@@ -178,6 +199,10 @@ _EXPORT_MAP: dict[str, tuple[str, str]] = {
     "build_graph_connection_tools": (
         "src.infrastructure.llm.skills.registry",
         "build_graph_connection_tools",
+    ),
+    "build_graph_search_tools": (
+        "src.infrastructure.llm.skills.registry",
+        "build_graph_search_tools",
     ),
     "get_skill_registry": (
         "src.infrastructure.llm.skills.registry",

@@ -204,11 +204,26 @@ class ApplicationServiceFactoryMixin(
         research_query_service = ResearchQueryService(
             dictionary_service=dictionary_service,
         )
+        graph_search_agent = None
+        import os
+
+        if os.getenv("MED13_ENABLE_GRAPH_SEARCH_AGENT", "0") == "1":
+            from src.infrastructure.llm.adapters.graph_search_agent_adapter import (
+                FlujoGraphSearchAdapter,
+            )
+
+            registry = get_model_registry()
+            model_spec = registry.get_default_model(ModelCapability.QUERY_GENERATION)
+            graph_search_agent = FlujoGraphSearchAdapter(
+                model=model_spec.model_id,
+                graph_query_service=graph_query_service,
+            )
+
         return GraphSearchService(
             dependencies=GraphSearchServiceDependencies(
                 research_query_service=research_query_service,
                 graph_query_service=graph_query_service,
-                graph_search_agent=None,
+                graph_search_agent=graph_search_agent,
                 governance_service=GovernanceService(),
             ),
         )
