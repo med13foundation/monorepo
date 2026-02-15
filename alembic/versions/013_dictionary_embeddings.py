@@ -39,6 +39,28 @@ def _has_table(table_name: str) -> bool:
 def _has_column(table_name: str, column_name: str) -> bool:
     if not _has_table(table_name):
         return False
+    if _is_postgres():
+        exists = (
+            _bind()
+            .execute(
+                sa.text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = :table_name
+                      AND column_name = :column_name
+                      AND table_schema = ANY(current_schemas(false))
+                    LIMIT 1
+                    """,
+                ),
+                {
+                    "table_name": table_name,
+                    "column_name": column_name,
+                },
+            )
+            .scalar_one_or_none()
+        )
+        return exists is not None
     return column_name in {
         column["name"] for column in _inspector().get_columns(table_name)
     }

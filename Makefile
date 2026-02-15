@@ -237,8 +237,8 @@ validate-dependencies: ## Validate dependency graph and layer boundaries (fails 
 
 validate-dependencies-warn: ## Validate dependencies (warnings only, doesn't fail)
 	$(call check_venv)
-	@echo "🔍 Validating dependencies (warnings only)..."
-	-$(USE_PYTHON) scripts/validate_dependencies.py || echo "⚠️  Dependency validation found issues (see docs/known-architectural-debt.md)"
+	@echo "🔍 Validating dependencies (non-blocking)..."
+	@$(USE_PYTHON) scripts/validate_dependencies.py || echo "Dependency validation found issues (see docs/known-architectural-debt.md)"
 
 test-verbose: ## Run tests with verbose output
 	$(call check_venv)
@@ -282,16 +282,16 @@ lint: ## Run all linting tools (warnings only)
 lint-strict: ## Run all linting tools (fails on error)
 	$(call check_venv)
 	@echo "Running flake8 (strict)..."
-	$(USE_PYTHON) -m flake8 $(PY_CHECK_PATHS) --max-line-length=88 --extend-ignore=E203,W503,E501,E402 --exclude=src/web/node_modules
+	@$(USE_PYTHON) -m flake8 $(PY_CHECK_PATHS) --max-line-length=88 --extend-ignore=E203,W503,E501,E402 --exclude=src/web/node_modules
 	@echo "Running ruff (strict)..."
-	$(USE_PYTHON) -m ruff check $(PY_CHECK_PATHS)
+	@$(USE_PYTHON) -m ruff check $(PY_CHECK_PATHS)
 	@echo "Running bandit (strict)..."
-	$(USE_PYTHON) -m bandit -r $(PY_CHECK_PATHS) -f json -o bandit-results.json 2>&1 | grep -vE "(WARNING.*Test in comment|WARNING.*Unknown test found)" || true
+	@$(USE_PYTHON) -m bandit -r $(PY_CHECK_PATHS) -f json -o bandit-results.json 2>&1 | grep -vEi "(Test in comment|Unknown test found)" || true
 
 format: ## Format code with Black and sort imports with ruff
 	$(call check_venv)
-	$(USE_PYTHON) -m black $(PY_CHECK_PATHS)
-	-$(USE_PYTHON) -m ruff check --fix $(PY_CHECK_PATHS) || echo "⚠️  Ruff found linting issues (non-blocking)"
+	@$(USE_PYTHON) -m black $(PY_CHECK_PATHS)
+	@$(USE_PYTHON) -m ruff check --fix $(PY_CHECK_PATHS) || echo "Ruff found linting issues (non-blocking)"
 
 format-check: ## Check code formatting without making changes
 	$(call check_venv)
@@ -304,7 +304,7 @@ type-check: ## Run mypy type checking with strict settings (warnings only)
 
 type-check-strict: ## Run mypy type checking with strict settings (fails on error)
 	$(call check_venv)
-	$(USE_PYTHON) -m mypy $(PY_STRICT_CHECK_PATHS) --strict --show-error-codes
+	@$(USE_PYTHON) -m mypy $(PY_STRICT_CHECK_PATHS) --strict --show-error-codes
 
 type-check-report: ## Generate mypy type checking report
 	$(call check_venv)
@@ -317,14 +317,14 @@ type-check-full: ## Run strict mypy across src/tests/scripts/alembic (warnings o
 security-audit: ## Run comprehensive security audit (pip-audit, bandit) [blocking on MEDIUM/HIGH]
 	$(call check_venv)
 	@echo "Running pip-audit..."
-	$(USE_PIP) install pip-audit --quiet || true
-	pip-audit $(PIP_AUDIT_IGNORE_FLAGS) --format json > pip-audit-results.json || true
+	@$(USE_PIP) install pip-audit --quiet || true
+	@pip-audit $(PIP_AUDIT_IGNORE_FLAGS) --format json > pip-audit-results.json || true
 	@if [ -n "$$SAFETY_API_KEY" ]; then \
 		echo "Running safety..."; \
 		SAFETY_API_KEY="$$SAFETY_API_KEY" safety --stage development scan --save-as json safety-results.json --use-server-matching || true; \
 	fi
 	@echo "Running bandit (blocking on MEDIUM/HIGH)..."
-	$(USE_PYTHON) -m bandit -r $(PY_CHECK_PATHS) --severity-level medium -f json -o bandit-results.json 2>&1 | grep -vE "(WARNING.*Test in comment|WARNING.*Unknown test found)" || true
+	@$(USE_PYTHON) -m bandit -r $(PY_CHECK_PATHS) --severity-level medium -f json -o bandit-results.json 2>&1 | grep -vEi "(Test in comment|Unknown test found)" || true
 
 security-full: security-audit ## Full security assessment with all tools
 
@@ -833,11 +833,11 @@ check-env: ## Check if development environment is properly set up
 	@echo "   Python Executable: $(USE_PYTHON)"
 	@echo ""
 	@echo "Checking Python version..."
-	$(USE_PYTHON) --version
+	@$(USE_PYTHON) --version
 	@echo "Checking pip version..."
-	$(USE_PIP) --version
+	@$(USE_PIP) --version
 	@echo "Checking if requirements are installed..."
-	$(USE_PYTHON) -c "import fastapi, uvicorn, sqlalchemy, pydantic; print('✅ Core dependencies OK')" 2>/dev/null || echo "❌ Core dependencies missing - run 'make install-dev'"
+	@$(USE_PYTHON) -c "import fastapi, uvicorn, sqlalchemy, pydantic; print('✅ Core dependencies OK')" 2>/dev/null || echo "Core dependencies missing - run 'make install-dev'"
 	@echo "Checking pre-commit..."
 	@if command -v pre-commit >/dev/null 2>&1; then \
 		echo "pre-commit available"; \

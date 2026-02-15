@@ -48,6 +48,30 @@ def _expected_properties_payload(
     }
 
 
+def _normalized_string(value: object, *, default: str) -> str:
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized:
+            return normalized
+    return default
+
+
+def _optional_string(value: object) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    return None
+
+
+def _optional_constraints(value: object) -> JSONObject | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return {str(key): to_json_value(raw) for key, raw in value.items()}
+    msg = "constraints must be a JSON object when provided"
+    raise TypeError(msg)
+
+
 def make_dictionary_search_tool(
     *,
     dictionary_service: DictionaryPort,
@@ -110,22 +134,18 @@ def make_create_variable_tool(
     research_space_settings: ResearchSpaceSettings | None = None,
     **_: object,
 ) -> Callable[
-    [str, str, str, str, str, str, str | None, JSONObject | None, str | None],
+    [str, str, str, str],
     JSONObject,
 ]:
     """Build the create_variable tool callable."""
     actor = _normalized_created_by(created_by)
 
-    def create_variable(  # noqa: PLR0913
+    def create_variable(
         variable_id: str,
         canonical_name: str,
         display_name: str,
         data_type: str,
-        domain_context: str = "general",
-        sensitivity: str = "INTERNAL",
-        preferred_unit: str | None = None,
-        constraints: JSONObject | None = None,
-        description: str | None = None,
+        **optional_params: object,
     ) -> JSONObject:
         """
         Create a new dictionary variable definition.
@@ -137,11 +157,19 @@ def make_create_variable_tool(
             canonical_name=canonical_name,
             display_name=display_name,
             data_type=data_type,
-            domain_context=domain_context,
-            sensitivity=sensitivity,
-            preferred_unit=preferred_unit,
-            constraints=_constraints_payload(constraints),
-            description=description,
+            domain_context=_normalized_string(
+                optional_params.get("domain_context"),
+                default="general",
+            ),
+            sensitivity=_normalized_string(
+                optional_params.get("sensitivity"),
+                default="INTERNAL",
+            ),
+            preferred_unit=_optional_string(optional_params.get("preferred_unit")),
+            constraints=_constraints_payload(
+                _optional_constraints(optional_params.get("constraints")),
+            ),
+            description=_optional_string(optional_params.get("description")),
             created_by=actor,
             source_ref=source_ref,
             research_space_settings=research_space_settings,

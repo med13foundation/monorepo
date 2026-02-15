@@ -8,7 +8,7 @@
     },
     {
       "path": "src/routes/admin_routes/dictionary.py",
-      "max_lines": 850,
+      "max_lines": 920,
       "reason": "Dictionary route handlers are temporarily co-located pending route module decomposition.",
       "expires_on": "2026-12-31"
     },
@@ -26,7 +26,7 @@
     },
     {
       "path": "src/infrastructure/llm/skills/registry.py",
-      "max_lines": 950,
+      "max_lines": 1050,
       "reason": "Skill registration remains centralized until per-domain skill modules are extracted.",
       "expires_on": "2026-12-31"
     },

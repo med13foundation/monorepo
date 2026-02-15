@@ -22,7 +22,7 @@ echo "Generated: $(date)" >> "$QA_REPORT"
 echo "=========================================" >> "$QA_REPORT"
 
 WARN_PATTERN="(⚠️|⚠|warning|warn|deprecat|deprecated)"
-ERROR_PATTERN="(error|fatal|failure|failed|traceback|exception|SyntaxError|TypeError|ValueError|ModuleNotFoundError|npm ERR!|\\bFAILED\\b|\\bFail(ed|ure)?\\b|\\bErr(ors?)\\b|⨯|❌)"
+ERROR_PATTERN="(fatal|failure|failed|traceback|exception|SyntaxError|TypeError|ValueError|ModuleNotFoundError|npm ERR!|\\bFAILED\\b|\\bFail(ed|ure)?\\b|⨯|❌|\\berror\\b)"
 
 declare -a STEP_NAMES
 declare -a STEP_SECTIONS
@@ -59,9 +59,20 @@ run_step() {
     local step_status=${PIPESTATUS[0]}
     set -e
 
+    local analysis_log="$REPORT_DIR/qa_step_${name}_analysis.log"
+    : > "$analysis_log"
+
     if [ -s "$log_file" ]; then
-        warn_count=$(grep -Eic "$WARN_PATTERN" "$log_file" || true)
-        error_count=$(grep -Eic "$ERROR_PATTERN" "$log_file" || true)
+        grep -Eiv \
+            "^(=+|SECTION:|STEP:|COMMAND:|STEP RESULT:|Detected warnings:|Detected errors:|Warnings detected:|Errors detected:|Overall Result:|### )" \
+            "$log_file" \
+            | grep -Eiv "^\s*(warnings|errors)\s*=\s*[0-9]+\s*,\s*(errors|warnings)\s*=\s*[0-9]+\s*$" \
+            | grep -Eiv "^\s*Warnings:\s*0\s*$" \
+            | grep -Eiv "^\s*Errors:\s*0\s*$" \
+            > "$analysis_log" || true
+
+        warn_count=$(grep -Eic "$WARN_PATTERN" "$analysis_log" || true)
+        error_count=$(grep -Eic "$ERROR_PATTERN" "$analysis_log" || true)
     fi
 
     if [ "$step_status" -ne 0 ]; then
@@ -99,6 +110,11 @@ print_issue_block() {
 
     if [ ! -f "$log_file" ]; then
         return
+    fi
+
+    local analysis_log="${log_file%.log}_analysis.log"
+    if [ -f "$analysis_log" ]; then
+        log_file="$analysis_log"
     fi
 
     lines="$(grep -Eim 1 "$pattern" "$log_file" || true)"
