@@ -20,6 +20,8 @@ depends_on = None
 _VERSIONED_TABLES: tuple[str, ...] = (
     "variable_definitions",
     "variable_synonyms",
+    "dictionary_domain_contexts",
+    "dictionary_sensitivity_levels",
     "dictionary_entity_types",
     "dictionary_relation_types",
     "entity_resolution_policies",
@@ -98,45 +100,73 @@ def _add_versioning_columns(table_name: str) -> None:
             )
 
 
-def _backfill_versioning_state(table_name: str) -> None:
+def _backfill_versioning_state(table_name: str) -> None:  # noqa: C901
     if not _has_table(table_name):
         return
 
+    has_review_status = _has_column(table_name, "review_status")
+    has_created_at = _has_column(table_name, "created_at")
+    has_reviewed_at = _has_column(table_name, "reviewed_at")
+    has_updated_at = _has_column(table_name, "updated_at")
+
+    columns: list[sa.ColumnClause[object]] = [
+        sa.column("is_active", sa.Boolean()),
+        sa.column("valid_from", sa.TIMESTAMP(timezone=True)),
+        sa.column("valid_to", sa.TIMESTAMP(timezone=True)),
+    ]
+    if has_review_status:
+        columns.append(sa.column("review_status", sa.String()))
+    if has_created_at:
+        columns.append(sa.column("created_at", sa.TIMESTAMP(timezone=True)))
+    if has_reviewed_at:
+        columns.append(sa.column("reviewed_at", sa.TIMESTAMP(timezone=True)))
+    if has_updated_at:
+        columns.append(sa.column("updated_at", sa.TIMESTAMP(timezone=True)))
+
     table = sa.table(
         table_name,
-        sa.column("is_active", sa.Boolean()),
-        sa.column("review_status", sa.String()),
-        sa.column("valid_from", sa.TIMESTAMP(timezone=True)),
-        sa.column("created_at", sa.TIMESTAMP(timezone=True)),
-        sa.column("valid_to", sa.TIMESTAMP(timezone=True)),
-        sa.column("reviewed_at", sa.TIMESTAMP(timezone=True)),
-        sa.column("updated_at", sa.TIMESTAMP(timezone=True)),
+        *columns,
     )
+
+    is_active_expr: sa.ColumnElement[bool] = sa.func.coalesce(
+        table.c.is_active,
+        sa.true(),
+    )
+    if has_review_status:
+        is_active_expr = sa.case(
+            (table.c.review_status == "REVOKED", sa.false()),
+            else_=is_active_expr,
+        )
+
+    valid_from_candidates: list[sa.ColumnElement[object]] = [table.c.valid_from]
+    if has_created_at:
+        valid_from_candidates.append(table.c.created_at)
+    valid_from_candidates.append(sa.func.now())
+    valid_from_expr = sa.func.coalesce(*valid_from_candidates)
+
+    if has_review_status:
+        revoked_valid_to_candidates: list[sa.ColumnElement[object]] = [table.c.valid_to]
+        if has_reviewed_at:
+            revoked_valid_to_candidates.append(table.c.reviewed_at)
+        if has_updated_at:
+            revoked_valid_to_candidates.append(table.c.updated_at)
+        revoked_valid_to_candidates.append(sa.func.now())
+        valid_to_expr: sa.ColumnElement[object] = sa.case(
+            (
+                table.c.review_status == "REVOKED",
+                sa.func.coalesce(*revoked_valid_to_candidates),
+            ),
+            else_=sa.null(),
+        )
+    else:
+        valid_to_expr = sa.null()
 
     # Align versioning fields with existing review lifecycle where available.
     op.execute(
         sa.update(table).values(
-            is_active=sa.case(
-                (table.c.review_status == "REVOKED", sa.false()),
-                else_=sa.func.coalesce(table.c.is_active, sa.true()),
-            ),
-            valid_from=sa.func.coalesce(
-                table.c.valid_from,
-                table.c.created_at,
-                sa.func.now(),
-            ),
-            valid_to=sa.case(
-                (
-                    table.c.review_status == "REVOKED",
-                    sa.func.coalesce(
-                        table.c.valid_to,
-                        table.c.reviewed_at,
-                        table.c.updated_at,
-                        sa.func.now(),
-                    ),
-                ),
-                else_=sa.null(),
-            ),
+            is_active=is_active_expr,
+            valid_from=valid_from_expr,
+            valid_to=valid_to_expr,
         ),
     )
 

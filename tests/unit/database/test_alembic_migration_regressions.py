@@ -15,6 +15,7 @@ from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_HEAD_REVISION = "014_dict_version_validity"
+PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 LEGACY_REVISION_ALIAS = "004_relation_evidence_and_extraction_queue_contract"
 ROLLOUT_MARKER_REVISION = "005_rel_evidence_rollout_marker"
 RAW_STORAGE_KEY_VALUE = "raw/clinvar/variant-1001.json"
@@ -222,3 +223,198 @@ def test_013_creates_dictionary_dimension_tables(tmp_path: Path) -> None:
     }
     assert "embedded_at" in relation_type_columns
     assert "embedding_model" in relation_type_columns
+
+
+def test_014_backfills_versioning_and_constraints(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'dictionary_versioning_validity.db'}"
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision=PRE_VERSIONING_REVISION,
+    )
+
+    engine = create_engine(database_url, future=True)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO dictionary_data_types
+                    (id, display_name, python_type_hint, description, constraint_schema)
+                VALUES
+                    ('STRING', 'String', 'str', 'String values', '{}')
+                """,
+            ),
+        )
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO dictionary_domain_contexts
+                    (id, display_name, description)
+                VALUES
+                    ('general', 'General', 'General domain context')
+                """,
+            ),
+        )
+        connection.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO dictionary_sensitivity_levels
+                    (id, display_name, description)
+                VALUES
+                    ('INTERNAL', 'Internal', 'Internal sensitivity level')
+                """,
+            ),
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO variable_definitions
+                    (id, canonical_name, display_name, data_type, constraints,
+                     domain_context, sensitivity, created_by, review_status)
+                VALUES
+                    ('VAR_VERSIONING_ACTIVE', 'versioning_active', 'Versioning Active',
+                     'STRING', '{}', 'general', 'INTERNAL', 'seed', 'ACTIVE')
+                """,
+            ),
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO variable_definitions
+                    (id, canonical_name, display_name, data_type, constraints,
+                     domain_context, sensitivity, created_by, review_status,
+                     reviewed_at, revocation_reason)
+                VALUES
+                    ('VAR_VERSIONING_REVOKED', 'versioning_revoked', 'Versioning Revoked',
+                     'STRING', '{}', 'general', 'INTERNAL', 'seed', 'REVOKED',
+                     CURRENT_TIMESTAMP, 'legacy revoked row')
+                """,
+            ),
+        )
+
+    _run_alembic_upgrade(database_url=database_url, revision=EXPECTED_HEAD_REVISION)
+
+    inspector = inspect(engine)
+    variable_columns = {
+        column["name"] for column in inspector.get_columns("variable_definitions")
+    }
+    assert "is_active" in variable_columns
+    assert "valid_from" in variable_columns
+    assert "valid_to" in variable_columns
+    assert "superseded_by" in variable_columns
+
+    domain_columns = {
+        column["name"] for column in inspector.get_columns("dictionary_domain_contexts")
+    }
+    assert "is_active" in domain_columns
+    assert "valid_from" in domain_columns
+    assert "valid_to" in domain_columns
+    assert "superseded_by" in domain_columns
+
+    sensitivity_columns = {
+        column["name"]
+        for column in inspector.get_columns("dictionary_sensitivity_levels")
+    }
+    assert "is_active" in sensitivity_columns
+    assert "valid_from" in sensitivity_columns
+    assert "valid_to" in sensitivity_columns
+    assert "superseded_by" in sensitivity_columns
+
+    variable_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("variable_definitions")
+    }
+    assert any(
+        "ck_variable_definitions_active_validity" in constraint_name
+        for constraint_name in variable_constraints
+    )
+
+    domain_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("dictionary_domain_contexts")
+    }
+    assert any(
+        "ck_dictionary_domain_contexts_active_validity" in constraint_name
+        for constraint_name in domain_constraints
+    )
+
+    sensitivity_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints(
+            "dictionary_sensitivity_levels",
+        )
+    }
+    assert any(
+        "ck_dictionary_sensitivity_levels_active_validity" in constraint_name
+        for constraint_name in sensitivity_constraints
+    )
+
+    with engine.connect() as connection:
+        active_row = (
+            connection.execute(
+                text(
+                    """
+                SELECT is_active, valid_from, valid_to
+                FROM variable_definitions
+                WHERE id = 'VAR_VERSIONING_ACTIVE'
+                """,
+                ),
+            )
+            .mappings()
+            .one()
+        )
+        revoked_row = (
+            connection.execute(
+                text(
+                    """
+                SELECT is_active, valid_from, valid_to
+                FROM variable_definitions
+                WHERE id = 'VAR_VERSIONING_REVOKED'
+                """,
+                ),
+            )
+            .mappings()
+            .one()
+        )
+        domain_row = (
+            connection.execute(
+                text(
+                    """
+                SELECT is_active, valid_from, valid_to
+                FROM dictionary_domain_contexts
+                WHERE id = 'general'
+                """,
+                ),
+            )
+            .mappings()
+            .one()
+        )
+        sensitivity_row = (
+            connection.execute(
+                text(
+                    """
+                SELECT is_active, valid_from, valid_to
+                FROM dictionary_sensitivity_levels
+                WHERE id = 'INTERNAL'
+                """,
+                ),
+            )
+            .mappings()
+            .one()
+        )
+
+    assert bool(active_row["is_active"]) is True
+    assert active_row["valid_from"] is not None
+    assert active_row["valid_to"] is None
+
+    assert bool(revoked_row["is_active"]) is False
+    assert revoked_row["valid_from"] is not None
+    assert revoked_row["valid_to"] is not None
+
+    assert bool(domain_row["is_active"]) is True
+    assert domain_row["valid_from"] is not None
+    assert domain_row["valid_to"] is None
+
+    assert bool(sensitivity_row["is_active"]) is True
+    assert sensitivity_row["valid_from"] is not None
+    assert sensitivity_row["valid_to"] is None

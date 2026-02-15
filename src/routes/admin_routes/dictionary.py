@@ -30,6 +30,7 @@ from .dictionary_schemas import (
     DictionaryEntityTypeCreateRequest,
     DictionaryEntityTypeListResponse,
     DictionaryEntityTypeResponse,
+    DictionaryMergeRequest,
     DictionaryReembedRequest,
     DictionaryReembedResponse,
     DictionaryRelationTypeCreateRequest,
@@ -280,6 +281,35 @@ async def revoke_dictionary_entity_type(
         ) from e
 
 
+@router.post(
+    "/dictionary/entity-types/{entity_type_id}/merge",
+    response_model=DictionaryEntityTypeResponse,
+    summary="Merge dictionary entity type into another",
+)
+async def merge_dictionary_entity_type(
+    entity_type_id: str,
+    request: DictionaryMergeRequest,
+    current_user: User = Depends(require_admin_user),
+    session: Session = Depends(get_admin_db_session),
+    service: DictionaryPort = Depends(get_dictionary_service),
+) -> DictionaryEntityTypeResponse:
+    try:
+        entity_type = service.merge_entity_type(
+            entity_type_id,
+            request.target_id,
+            reason=request.reason,
+            reviewed_by=f"manual:{current_user.id}",
+        )
+        session.commit()
+        return DictionaryEntityTypeResponse.from_model(entity_type)
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
 @router.get(
     "/dictionary/relation-types",
     response_model=DictionaryRelationTypeListResponse,
@@ -399,6 +429,35 @@ async def revoke_dictionary_relation_type(
     try:
         relation_type = service.revoke_relation_type(
             relation_type_id,
+            reason=request.reason,
+            reviewed_by=f"manual:{current_user.id}",
+        )
+        session.commit()
+        return DictionaryRelationTypeResponse.from_model(relation_type)
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
+@router.post(
+    "/dictionary/relation-types/{relation_type_id}/merge",
+    response_model=DictionaryRelationTypeResponse,
+    summary="Merge dictionary relation type into another",
+)
+async def merge_dictionary_relation_type(
+    relation_type_id: str,
+    request: DictionaryMergeRequest,
+    current_user: User = Depends(require_admin_user),
+    session: Session = Depends(get_admin_db_session),
+    service: DictionaryPort = Depends(get_dictionary_service),
+) -> DictionaryRelationTypeResponse:
+    try:
+        relation_type = service.merge_relation_type(
+            relation_type_id,
+            request.target_id,
             reason=request.reason,
             reviewed_by=f"manual:{current_user.id}",
         )
@@ -782,6 +841,35 @@ async def revoke_dictionary_variable(
     try:
         variable = service.revoke_variable(
             variable_id,
+            reason=request.reason,
+            reviewed_by=f"manual:{current_user.id}",
+        )
+        session.commit()
+        return VariableDefinitionResponse.from_model(variable)
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
+@router.post(
+    "/dictionary/variables/{variable_id}/merge",
+    response_model=VariableDefinitionResponse,
+    summary="Merge dictionary variable into another",
+)
+async def merge_dictionary_variable(
+    variable_id: str,
+    request: DictionaryMergeRequest,
+    current_user: User = Depends(require_admin_user),
+    session: Session = Depends(get_admin_db_session),
+    service: DictionaryPort = Depends(get_dictionary_service),
+) -> VariableDefinitionResponse:
+    try:
+        variable = service.merge_variable_definition(
+            variable_id,
+            request.target_id,
             reason=request.reason,
             reviewed_by=f"manual:{current_user.id}",
         )

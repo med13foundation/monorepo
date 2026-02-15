@@ -91,6 +91,10 @@ class DictionaryDomainContext(BaseModel):
     id: str = Field(..., min_length=1, max_length=64)
     display_name: str = Field(..., min_length=1, max_length=128)
     description: str | None = None
+    is_active: bool = True
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    superseded_by: str | None = Field(default=None, max_length=64)
     created_at: datetime
     updated_at: datetime
 
@@ -103,6 +107,10 @@ class DictionarySensitivityLevel(BaseModel):
     id: str = Field(..., min_length=1, max_length=32)
     display_name: str = Field(..., min_length=1, max_length=64)
     description: str | None = None
+    is_active: bool = True
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    superseded_by: str | None = Field(default=None, max_length=64)
     created_at: datetime
     updated_at: datetime
 

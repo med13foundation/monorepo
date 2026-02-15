@@ -87,8 +87,34 @@ class DictionaryDomainContextModel(Base):
         nullable=True,
         doc="Optional description of the domain context",
     )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Soft-delete flag for temporal validity",
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        doc="Timestamp when this row became valid",
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when this row stopped being valid",
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Replacement domain context identifier when superseded",
+    )
 
-    __table_args__ = ({"comment": "First-class dictionary domain contexts"},)
+    __table_args__ = (
+        CheckConstraint(
+            "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
+            name="ck_dictionary_domain_contexts_active_validity",
+        ),
+        {"comment": "First-class dictionary domain contexts"},
+    )
 
 
 class DictionarySensitivityLevelModel(Base):
@@ -111,8 +137,34 @@ class DictionarySensitivityLevelModel(Base):
         nullable=True,
         doc="Optional handling guidance for this sensitivity level",
     )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Soft-delete flag for temporal validity",
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        doc="Timestamp when this row became valid",
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when this row stopped being valid",
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Replacement sensitivity identifier when superseded",
+    )
 
-    __table_args__ = ({"comment": "First-class dictionary sensitivity levels"},)
+    __table_args__ = (
+        CheckConstraint(
+            "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
+            name="ck_dictionary_sensitivity_levels_active_validity",
+        ),
+        {"comment": "First-class dictionary sensitivity levels"},
+    )
 
 
 class DictionaryEntityTypeModel(Base):

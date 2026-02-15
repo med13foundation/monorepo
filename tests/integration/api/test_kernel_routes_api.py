@@ -479,6 +479,165 @@ def test_admin_dictionary_type_endpoints(test_client, admin_user):
     assert revoke_relation_type_response.json()["valid_to"] is not None
 
 
+def test_admin_dictionary_merge_endpoints(test_client, admin_user):
+    source_variable_response = test_client.post(
+        "/admin/dictionary/variables",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "VAR_MERGE_SOURCE",
+            "canonical_name": "merge_source",
+            "display_name": "Merge Source",
+            "data_type": "STRING",
+            "domain_context": "general",
+            "sensitivity": "INTERNAL",
+            "constraints": {},
+            "description": "Source variable for merge integration test",
+        },
+    )
+    assert source_variable_response.status_code == 201, source_variable_response.text
+
+    target_variable_response = test_client.post(
+        "/admin/dictionary/variables",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "VAR_MERGE_TARGET",
+            "canonical_name": "merge_target",
+            "display_name": "Merge Target",
+            "data_type": "STRING",
+            "domain_context": "general",
+            "sensitivity": "INTERNAL",
+            "constraints": {},
+            "description": "Target variable for merge integration test",
+        },
+    )
+    assert target_variable_response.status_code == 201, target_variable_response.text
+
+    merge_variable_response = test_client.post(
+        "/admin/dictionary/variables/VAR_MERGE_SOURCE/merge",
+        headers=_auth_headers(admin_user),
+        json={
+            "target_id": "VAR_MERGE_TARGET",
+            "reason": "Duplicate variable definition",
+        },
+    )
+    assert merge_variable_response.status_code == 200, merge_variable_response.text
+    merged_variable_payload = merge_variable_response.json()
+    assert merged_variable_payload["review_status"] == "REVOKED"
+    assert merged_variable_payload["is_active"] is False
+    assert merged_variable_payload["superseded_by"] == "VAR_MERGE_TARGET"
+    assert merged_variable_payload["valid_to"] is not None
+
+    source_entity_type_response = test_client.post(
+        "/admin/dictionary/entity-types",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "ENTITY_MERGE_SOURCE",
+            "display_name": "Entity Merge Source",
+            "description": "Source entity type for merge integration test",
+            "domain_context": "general",
+            "expected_properties": {},
+        },
+    )
+    assert (
+        source_entity_type_response.status_code == 201
+    ), source_entity_type_response.text
+
+    target_entity_type_response = test_client.post(
+        "/admin/dictionary/entity-types",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "ENTITY_MERGE_TARGET",
+            "display_name": "Entity Merge Target",
+            "description": "Target entity type for merge integration test",
+            "domain_context": "general",
+            "expected_properties": {},
+        },
+    )
+    assert (
+        target_entity_type_response.status_code == 201
+    ), target_entity_type_response.text
+
+    merge_entity_type_response = test_client.post(
+        "/admin/dictionary/entity-types/ENTITY_MERGE_SOURCE/merge",
+        headers=_auth_headers(admin_user),
+        json={
+            "target_id": "ENTITY_MERGE_TARGET",
+            "reason": "Duplicate entity type",
+        },
+    )
+    assert (
+        merge_entity_type_response.status_code == 200
+    ), merge_entity_type_response.text
+    merged_entity_type_payload = merge_entity_type_response.json()
+    assert merged_entity_type_payload["review_status"] == "REVOKED"
+    assert merged_entity_type_payload["is_active"] is False
+    assert merged_entity_type_payload["superseded_by"] == "ENTITY_MERGE_TARGET"
+    assert merged_entity_type_payload["valid_to"] is not None
+
+    source_relation_type_response = test_client.post(
+        "/admin/dictionary/relation-types",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "REL_MERGE_SOURCE",
+            "display_name": "Relation Merge Source",
+            "description": "Source relation type for merge integration test",
+            "domain_context": "general",
+            "is_directional": True,
+            "inverse_label": "Merged From",
+        },
+    )
+    assert (
+        source_relation_type_response.status_code == 201
+    ), source_relation_type_response.text
+
+    target_relation_type_response = test_client.post(
+        "/admin/dictionary/relation-types",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "REL_MERGE_TARGET",
+            "display_name": "Relation Merge Target",
+            "description": "Target relation type for merge integration test",
+            "domain_context": "general",
+            "is_directional": True,
+            "inverse_label": "Merged To",
+        },
+    )
+    assert (
+        target_relation_type_response.status_code == 201
+    ), target_relation_type_response.text
+
+    merge_relation_type_response = test_client.post(
+        "/admin/dictionary/relation-types/REL_MERGE_SOURCE/merge",
+        headers=_auth_headers(admin_user),
+        json={
+            "target_id": "REL_MERGE_TARGET",
+            "reason": "Duplicate relation type",
+        },
+    )
+    assert (
+        merge_relation_type_response.status_code == 200
+    ), merge_relation_type_response.text
+    merged_relation_type_payload = merge_relation_type_response.json()
+    assert merged_relation_type_payload["review_status"] == "REVOKED"
+    assert merged_relation_type_payload["is_active"] is False
+    assert merged_relation_type_payload["superseded_by"] == "REL_MERGE_TARGET"
+    assert merged_relation_type_payload["valid_to"] is not None
+
+    changelog_response = test_client.get(
+        "/admin/dictionary/changelog",
+        headers=_auth_headers(admin_user),
+        params={
+            "table_name": "variable_definitions",
+            "record_id": "VAR_MERGE_SOURCE",
+        },
+    )
+    assert changelog_response.status_code == 200, changelog_response.text
+    changelog_actions = {
+        str(entry["action"]) for entry in changelog_response.json()["changelog_entries"]
+    }
+    assert "MERGE" in changelog_actions
+
+
 def test_admin_dictionary_value_set_endpoints(test_client, admin_user):
     create_variable_response = test_client.post(
         "/admin/dictionary/variables",

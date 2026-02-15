@@ -834,3 +834,10 @@ class VariableDefinitionRevokeRequest(BaseModel):
     """Request payload for explicit variable revocation operations."""
 
     reason: str = Field(..., min_length=1)
+
+
+class DictionaryMergeRequest(BaseModel):
+    """Request payload for dictionary merge operations."""
+
+    target_id: str = Field(..., min_length=1, max_length=64)
+    reason: str = Field(..., min_length=1)
