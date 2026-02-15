@@ -15,9 +15,13 @@ from src.type_definitions.common import JSONObject  # noqa: TC001
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
+    from src.domain.agents.contexts.content_enrichment_context import (
+        ContentEnrichmentContext,
+    )
     from src.domain.agents.contracts.content_enrichment import (
         ContentEnrichmentContract,
     )
+    from src.domain.entities.source_document import SourceDocument
 
 PASS_THROUGH_SOURCE_TYPES = frozenset(
     {
@@ -44,6 +48,26 @@ def extract_structured_payload(metadata: JSONObject) -> JSONObject:
     if isinstance(raw_record, dict):
         return {str(key): to_json_value(value) for key, value in raw_record.items()}
     return {str(key): to_json_value(value) for key, value in metadata.items()}
+
+
+def build_content_enrichment_context(
+    document: SourceDocument,
+) -> ContentEnrichmentContext:
+    """Build an agent context payload from a source document."""
+    from src.domain.agents.contexts.content_enrichment_context import (
+        ContentEnrichmentContext,
+    )
+
+    return ContentEnrichmentContext(
+        document_id=str(document.id),
+        source_type=document.source_type.value,
+        external_record_id=document.external_record_id,
+        research_space_id=(
+            str(document.research_space_id) if document.research_space_id else None
+        ),
+        raw_storage_key=document.raw_storage_key,
+        existing_metadata=document.metadata,
+    )
 
 
 def serialize_contract_payload(contract: ContentEnrichmentContract) -> bytes | None:
@@ -143,6 +167,7 @@ __all__ = [
     "PASS_THROUGH_SOURCE_TYPES",
     "StorageResult",
     "build_metadata_patch",
+    "build_content_enrichment_context",
     "compute_character_count",
     "extract_structured_payload",
     "infer_storage_format",

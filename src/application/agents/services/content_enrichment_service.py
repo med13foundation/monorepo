@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from src.application.agents.services._content_enrichment_helpers import (
     PASS_THROUGH_SOURCE_TYPES,
     StorageResult,
+    build_content_enrichment_context,
     build_metadata_patch,
     compute_character_count,
     extract_structured_payload,
@@ -20,9 +21,6 @@ from src.application.agents.services._content_enrichment_helpers import (
     serialize_contract_payload,
     try_parse_uuid,
     write_temp_payload,
-)
-from src.domain.agents.contexts.content_enrichment_context import (
-    ContentEnrichmentContext,
 )
 from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.content_enrichment import ContentEnrichmentContract
@@ -44,8 +42,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ContentEnrichmentServiceDependencies:
-    content_enrichment_agent: ContentEnrichmentPort
     source_document_repository: SourceDocumentRepository
+    content_enrichment_agent: ContentEnrichmentPort | None = None
     storage_coordinator: StorageOperationCoordinator | None = None
 
 
@@ -142,7 +140,8 @@ class ContentEnrichmentService:
         )
 
     async def close(self) -> None:
-        await self._agent.close()
+        if self._agent is not None:
+            await self._agent.close()
 
     async def _process_document(
         self,
@@ -162,8 +161,9 @@ class ContentEnrichmentService:
             contract = await self._build_contract(document=document, model_id=model_id)
         except Exception as exc:  # noqa: BLE001
             failure_reason = "agent_execution_failed"
-            self._persist_failed_document(
+            self._persist_document_with_status(
                 document=document,
+                status=EnrichmentStatus.FAILED,
                 run_uuid=None,
                 acquisition_method="skipped",
                 metadata_patch={
@@ -182,8 +182,9 @@ class ContentEnrichmentService:
         run_uuid = try_parse_uuid(run_id)
 
         if contract.decision == "skipped":
-            self._persist_skipped_document(
+            self._persist_document_with_status(
                 document=document,
+                status=EnrichmentStatus.SKIPPED,
                 run_uuid=run_uuid,
                 acquisition_method=contract.acquisition_method,
                 metadata_patch=build_metadata_patch(
@@ -203,8 +204,9 @@ class ContentEnrichmentService:
             )
 
         if contract.decision == "failed":
-            self._persist_failed_document(
+            self._persist_document_with_status(
                 document=document,
+                status=EnrichmentStatus.FAILED,
                 run_uuid=run_uuid,
                 acquisition_method=contract.acquisition_method,
                 metadata_patch=build_metadata_patch(
@@ -231,8 +233,9 @@ class ContentEnrichmentService:
         )
         if storage_result is None:
             failure_reason = "missing_enriched_content"
-            self._persist_failed_document(
+            self._persist_document_with_status(
                 document=document,
+                status=EnrichmentStatus.FAILED,
                 run_uuid=run_uuid,
                 acquisition_method=contract.acquisition_method,
                 metadata_patch=build_metadata_patch(
@@ -296,21 +299,32 @@ class ContentEnrichmentService:
     ) -> ContentEnrichmentContract:
         if document.source_type in PASS_THROUGH_SOURCE_TYPES:
             return self._build_pass_through_contract(document=document)
-        context = self._build_context(document)
+        if self._agent is None:
+            return ContentEnrichmentContract(
+                decision="skipped",
+                confidence_score=1.0,
+                rationale=(
+                    "Content-enrichment agent is disabled "
+                    "(MED13_ENABLE_CONTENT_ENRICHMENT_AGENT != 1)."
+                ),
+                evidence=[
+                    EvidenceItem(
+                        source_type="note",
+                        locator=f"document:{document.id}",
+                        excerpt="Tier-2 agent execution skipped by configuration flag.",
+                        relevance=1.0,
+                    ),
+                ],
+                document_id=str(document.id),
+                source_type=document.source_type.value,
+                acquisition_method="skipped",
+                content_format="text",
+                content_length_chars=0,
+                warning="Content-enrichment agent is disabled by configuration.",
+                agent_run_id=None,
+            )
+        context = build_content_enrichment_context(document)
         return await self._agent.enrich(context, model_id=model_id)
-
-    @staticmethod
-    def _build_context(document: SourceDocument) -> ContentEnrichmentContext:
-        return ContentEnrichmentContext(
-            document_id=str(document.id),
-            source_type=document.source_type.value,
-            external_record_id=document.external_record_id,
-            research_space_id=(
-                str(document.research_space_id) if document.research_space_id else None
-            ),
-            raw_storage_key=document.raw_storage_key,
-            existing_metadata=document.metadata,
-        )
 
     @staticmethod
     def _build_pass_through_contract(
@@ -422,43 +436,25 @@ class ContentEnrichmentService:
             content_length_chars=compute_character_count(contract, payload),
         )
 
-    def _persist_skipped_document(
+    def _persist_document_with_status(
         self,
         *,
         document: SourceDocument,
+        status: EnrichmentStatus,
         run_uuid: UUID | None,
         acquisition_method: str,
         metadata_patch: JSONObject,
     ) -> None:
-        skipped = document.model_copy(
+        updated = document.model_copy(
             update={
-                "enrichment_status": EnrichmentStatus.SKIPPED,
+                "enrichment_status": status,
                 "enrichment_method": acquisition_method,
                 "enrichment_agent_run_id": run_uuid,
                 "updated_at": datetime.now(UTC),
                 "metadata": merge_metadata(document.metadata, metadata_patch),
             },
         )
-        self._source_documents.upsert(skipped)
-
-    def _persist_failed_document(
-        self,
-        *,
-        document: SourceDocument,
-        run_uuid: UUID | None,
-        acquisition_method: str,
-        metadata_patch: JSONObject,
-    ) -> None:
-        failed = document.model_copy(
-            update={
-                "enrichment_status": EnrichmentStatus.FAILED,
-                "enrichment_method": acquisition_method,
-                "enrichment_agent_run_id": run_uuid,
-                "updated_at": datetime.now(UTC),
-                "metadata": merge_metadata(document.metadata, metadata_patch),
-            },
-        )
-        self._source_documents.upsert(failed)
+        self._source_documents.upsert(updated)
 
     @staticmethod
     def _build_run_summary(

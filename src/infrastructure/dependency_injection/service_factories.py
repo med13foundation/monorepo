@@ -231,19 +231,23 @@ class ApplicationServiceFactoryMixin(
         self,
         session: Session,
     ) -> ContentEnrichmentService:
+        import os
+
         from src.infrastructure.repositories import SqlAlchemySourceDocumentRepository
 
-        registry = get_model_registry()
-        model_spec = registry.get_default_model(
-            ModelCapability.EVIDENCE_EXTRACTION,
-        )
-        content_enrichment_agent = FlujoContentEnrichmentAdapter(
-            model=model_spec.model_id,
-        )
+        content_enrichment_agent = None
+        if os.getenv("MED13_ENABLE_CONTENT_ENRICHMENT_AGENT", "0") == "1":
+            registry = get_model_registry()
+            model_spec = registry.get_default_model(
+                ModelCapability.EVIDENCE_EXTRACTION,
+            )
+            content_enrichment_agent = FlujoContentEnrichmentAdapter(
+                model=model_spec.model_id,
+            )
         return ContentEnrichmentService(
             dependencies=ContentEnrichmentServiceDependencies(
-                content_enrichment_agent=content_enrichment_agent,
                 source_document_repository=SqlAlchemySourceDocumentRepository(session),
+                content_enrichment_agent=content_enrichment_agent,
                 storage_coordinator=self.create_storage_operation_coordinator(session),
             ),
         )
