@@ -14,8 +14,9 @@ from uuid import uuid4
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_HEAD_REVISION = "014_dict_version_validity"
+EXPECTED_HEAD_REVISION = "015_dict_transforms_upgrade"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
+PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 LEGACY_REVISION_ALIAS = "004_relation_evidence_and_extraction_queue_contract"
 ROLLOUT_MARKER_REVISION = "005_rel_evidence_rollout_marker"
 RAW_STORAGE_KEY_VALUE = "raw/clinvar/variant-1001.json"
@@ -418,3 +419,75 @@ def test_014_backfills_versioning_and_constraints(tmp_path: Path) -> None:
     assert bool(sensitivity_row["is_active"]) is True
     assert sensitivity_row["valid_from"] is not None
     assert sensitivity_row["valid_to"] is None
+
+
+def test_015_adds_transform_upgrade_columns(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'dictionary_transform_upgrade.db'}"
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision=PRE_TRANSFORM_UPGRADE_REVISION,
+    )
+
+    engine = create_engine(database_url, future=True)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO transform_registry
+                    (id, input_unit, output_unit, implementation_ref, status, created_by)
+                VALUES
+                    (
+                        'TR_TEST_MG_TO_G',
+                        'mg',
+                        'g',
+                        'func:std_lib.convert.mg_to_g',
+                        'ACTIVE',
+                        'seed'
+                    )
+                """,
+            ),
+        )
+
+    _run_alembic_upgrade(database_url=database_url, revision=EXPECTED_HEAD_REVISION)
+
+    inspector = inspect(engine)
+    transform_columns = {
+        column["name"] for column in inspector.get_columns("transform_registry")
+    }
+    assert "category" in transform_columns
+    assert "input_data_type" in transform_columns
+    assert "output_data_type" in transform_columns
+    assert "is_deterministic" in transform_columns
+    assert "is_production_allowed" in transform_columns
+    assert "test_input" in transform_columns
+    assert "expected_output" in transform_columns
+    assert "description" in transform_columns
+
+    with engine.connect() as connection:
+        transform_row = (
+            connection.execute(
+                text(
+                    """
+                    SELECT
+                        category,
+                        is_deterministic,
+                        is_production_allowed,
+                        test_input,
+                        expected_output,
+                        description
+                    FROM transform_registry
+                    WHERE id = 'TR_TEST_MG_TO_G'
+                    """,
+                ),
+            )
+            .mappings()
+            .one()
+        )
+
+    assert transform_row["category"] == "UNIT_CONVERSION"
+    assert bool(transform_row["is_deterministic"]) is True
+    assert bool(transform_row["is_production_allowed"]) is False
+    assert transform_row["test_input"] is None
+    assert transform_row["expected_output"] is None
+    assert transform_row["description"] is None

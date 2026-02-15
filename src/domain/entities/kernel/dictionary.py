@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.type_definitions.common import JSONObject  # noqa: TC001
+from src.type_definitions.common import JSONObject, JSONValue  # noqa: TC001
 
 
 class VariableSynonym(BaseModel):
@@ -256,7 +256,17 @@ class TransformRegistry(BaseModel):
     id: str = Field(..., min_length=1, max_length=64)
     input_unit: str = Field(..., min_length=1, max_length=64)
     output_unit: str = Field(..., min_length=1, max_length=64)
+    category: Literal["UNIT_CONVERSION", "NORMALIZATION", "DERIVATION"] = (
+        "UNIT_CONVERSION"
+    )
+    input_data_type: str | None = Field(default=None, max_length=32)
+    output_data_type: str | None = Field(default=None, max_length=32)
     implementation_ref: str = Field(..., min_length=1, max_length=255)
+    is_deterministic: bool = True
+    is_production_allowed: bool = False
+    test_input: JSONValue | None = None
+    expected_output: JSONValue | None = None
+    description: str | None = None
     status: str = Field(..., min_length=1, max_length=32)
     created_by: str = Field(default="seed", min_length=1, max_length=128)
     is_active: bool = True
@@ -270,6 +280,19 @@ class TransformRegistry(BaseModel):
     revocation_reason: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class TransformVerificationResult(BaseModel):
+    """Result of executing a transform against its verification fixture."""
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    transform_id: str = Field(..., min_length=1, max_length=64)
+    passed: bool
+    message: str = Field(..., min_length=1)
+    actual_output: JSONValue | None = None
+    expected_output: JSONValue | None = None
+    checked_at: datetime
 
 
 class EntityResolutionPolicy(BaseModel):
@@ -331,6 +354,7 @@ __all__ = [
     "EntityResolutionPolicy",
     "RelationConstraint",
     "TransformRegistry",
+    "TransformVerificationResult",
     "ValueSet",
     "ValueSetItem",
     "VariableDefinition",

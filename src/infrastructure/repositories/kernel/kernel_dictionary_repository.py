@@ -25,12 +25,17 @@ from src.domain.entities.kernel.dictionary import (
     EntityResolutionPolicy,
     RelationConstraint,
     TransformRegistry,
+    TransformVerificationResult,
     ValueSet,
     ValueSetItem,
     VariableDefinition,
     VariableSynonym,
 )
 from src.domain.repositories.kernel.dictionary_repository import DictionaryRepository
+from src.infrastructure.ingestion.normalization.transform_runtime import (
+    is_supported_transform,
+    verify_transform_fixture,
+)
 from src.infrastructure.repositories.kernel.dictionary_search import (
     search_dictionary_entries,
     search_dictionary_entries_by_domain,
@@ -1141,6 +1146,7 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         output_unit: str,
         *,
         include_inactive: bool = False,
+        require_production: bool = False,
     ) -> TransformRegistry | None:
         stmt = select(TransformRegistryModel).where(
             and_(
@@ -1151,6 +1157,8 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         )
         if not include_inactive:
             stmt = stmt.where(TransformRegistryModel.is_active.is_(True))
+        if require_production:
+            stmt = stmt.where(TransformRegistryModel.is_production_allowed.is_(True))
         model = self._session.scalars(stmt).first()
         return TransformRegistry.model_validate(model) if model is not None else None
 
@@ -1159,16 +1167,113 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         *,
         status: str = "ACTIVE",
         include_inactive: bool = False,
+        production_only: bool = False,
     ) -> list[TransformRegistry]:
         stmt = select(TransformRegistryModel).where(
             TransformRegistryModel.status == status,
         )
         if not include_inactive:
             stmt = stmt.where(TransformRegistryModel.is_active.is_(True))
+        if production_only:
+            stmt = stmt.where(TransformRegistryModel.is_production_allowed.is_(True))
         return [
             TransformRegistry.model_validate(model)
             for model in self._session.scalars(stmt).all()
         ]
+
+    def verify_transform(self, transform_id: str) -> TransformVerificationResult:
+        model = self._session.get(TransformRegistryModel, transform_id)
+        checked_at = datetime.now(UTC)
+        if model is None:
+            msg = f"Transform '{transform_id}' not found"
+            raise ValueError(msg)
+
+        if model.test_input is None or model.expected_output is None:
+            return TransformVerificationResult(
+                transform_id=model.id,
+                passed=False,
+                message="Verification fixture is missing test_input and/or expected_output",
+                actual_output=None,
+                expected_output=model.expected_output,
+                checked_at=checked_at,
+            )
+
+        if not is_supported_transform(model.implementation_ref):
+            return TransformVerificationResult(
+                transform_id=model.id,
+                passed=False,
+                message=(
+                    "Unsupported implementation_ref; no runtime transform function "
+                    "is registered"
+                ),
+                actual_output=None,
+                expected_output=model.expected_output,
+                checked_at=checked_at,
+            )
+
+        passed, message, actual_output = verify_transform_fixture(
+            implementation_ref=model.implementation_ref,
+            test_input=_to_json_value(model.test_input),
+            expected_output=_to_json_value(model.expected_output),
+        )
+        return TransformVerificationResult(
+            transform_id=model.id,
+            passed=passed,
+            message=message,
+            actual_output=actual_output,
+            expected_output=_to_json_value(model.expected_output),
+            checked_at=checked_at,
+        )
+
+    def verify_all_transforms(
+        self,
+        *,
+        status: str = "ACTIVE",
+        include_inactive: bool = False,
+    ) -> list[TransformVerificationResult]:
+        stmt = select(TransformRegistryModel).where(
+            TransformRegistryModel.status == status,
+        )
+        if not include_inactive:
+            stmt = stmt.where(TransformRegistryModel.is_active.is_(True))
+        models = self._session.scalars(stmt).all()
+        return [
+            self.verify_transform(model.id)
+            for model in models
+            if model.test_input is not None and model.expected_output is not None
+        ]
+
+    def promote_transform(
+        self,
+        transform_id: str,
+        *,
+        reviewed_by: str,
+    ) -> TransformRegistry:
+        model = self._session.get(TransformRegistryModel, transform_id)
+        if model is None:
+            msg = f"Transform '{transform_id}' not found"
+            raise ValueError(msg)
+        if not model.is_active:
+            msg = f"Transform '{transform_id}' must be active to promote"
+            raise ValueError(msg)
+
+        verification_result = self.verify_transform(transform_id)
+        if not verification_result.passed:
+            msg = (
+                f"Transform '{transform_id}' failed verification and cannot be promoted: "
+                f"{verification_result.message}"
+            )
+            raise ValueError(msg)
+
+        model.is_production_allowed = True
+        model.reviewed_by = reviewed_by
+        model.reviewed_at = datetime.now(UTC)
+        model.review_status = "ACTIVE"
+        if model.revocation_reason:
+            model.revocation_reason = None
+
+        self._session.flush()
+        return TransformRegistry.model_validate(model)
 
     def merge_variable_definition(
         self,

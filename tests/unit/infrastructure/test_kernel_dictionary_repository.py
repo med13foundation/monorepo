@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from src.infrastructure.repositories.kernel.kernel_dictionary_repository import (
     SqlAlchemyDictionaryRepository,
 )
+from src.models.database.kernel.dictionary import TransformRegistryModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -288,3 +289,69 @@ def test_set_relation_type_review_status_updates_validity_fields(
     assert reactivated.review_status == "ACTIVE"
     assert reactivated.is_active is True
     assert reactivated.valid_to is None
+
+
+def test_transform_production_filter_and_promotion(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    db_session.add(
+        TransformRegistryModel(
+            id="TR_REPO_PROMOTE",
+            input_unit="mg",
+            output_unit="g",
+            category="UNIT_CONVERSION",
+            implementation_ref="func:std_lib.convert.mg_to_g",
+            is_deterministic=True,
+            is_production_allowed=False,
+            test_input=1000,
+            expected_output=1.0,
+            status="ACTIVE",
+            created_by="manual:test",
+        ),
+    )
+    db_session.commit()
+
+    pre_promotion = repository.get_transform(
+        "mg",
+        "g",
+        require_production=True,
+    )
+    assert pre_promotion is None
+
+    promoted = repository.promote_transform(
+        "TR_REPO_PROMOTE",
+        reviewed_by="manual:test",
+    )
+    assert promoted.is_production_allowed is True
+
+    post_promotion = repository.get_transform(
+        "mg",
+        "g",
+        require_production=True,
+    )
+    assert post_promotion is not None
+    assert post_promotion.id == "TR_REPO_PROMOTE"
+
+
+def test_verify_transform_reports_failure_for_bad_fixture(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    db_session.add(
+        TransformRegistryModel(
+            id="TR_REPO_BAD_FIXTURE",
+            input_unit="kg",
+            output_unit="g",
+            category="UNIT_CONVERSION",
+            implementation_ref="func:std_lib.convert.g_to_mg",
+            is_deterministic=True,
+            is_production_allowed=False,
+            test_input=2,
+            expected_output=2,
+            status="ACTIVE",
+            created_by="manual:test",
+        ),
+    )
+    db_session.commit()
+
+    verification = repository.verify_transform("TR_REPO_BAD_FIXTURE")
+    assert verification.transform_id == "TR_REPO_BAD_FIXTURE"
+    assert verification.passed is False
+    assert verification.actual_output is not None

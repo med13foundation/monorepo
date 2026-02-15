@@ -29,7 +29,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.database.base import Base
 from src.models.database.types import VectorEmbedding
-from src.type_definitions.common import JSONObject  # noqa: TC001
+from src.type_definitions.common import JSONObject, JSONValue  # noqa: TC001
 
 
 class DictionaryDataTypeModel(Base):
@@ -842,10 +842,55 @@ class TransformRegistryModel(Base):
         nullable=False,
         doc="Target unit",
     )
+    category: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="UNIT_CONVERSION",
+        doc="Transform category: UNIT_CONVERSION, NORMALIZATION, DERIVATION",
+    )
+    input_data_type: Mapped[str | None] = mapped_column(
+        String(32),
+        ForeignKey("dictionary_data_types.id"),
+        nullable=True,
+        doc="Optional expected input kernel data type",
+    )
+    output_data_type: Mapped[str | None] = mapped_column(
+        String(32),
+        ForeignKey("dictionary_data_types.id"),
+        nullable=True,
+        doc="Optional output kernel data type",
+    )
     implementation_ref: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
         doc="Function reference, e.g. func:std_lib.convert.lbs_to_kg",
+    )
+    is_deterministic: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Whether transform is deterministic and side-effect free",
+    )
+    is_production_allowed: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
+        doc="Whether transform can be used by production normalization flows",
+    )
+    test_input: Mapped[JSONValue | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        doc="Verification input payload for runtime validation",
+    )
+    expected_output: Mapped[JSONValue | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        doc="Expected output payload for verification",
+    )
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Human-readable transform description",
     )
     status: Mapped[str] = mapped_column(
         String(32),
@@ -907,6 +952,12 @@ class TransformRegistryModel(Base):
 
     __table_args__ = (
         Index("idx_transform_units", "input_unit", "output_unit"),
+        Index("idx_transform_category", "category"),
+        Index("idx_transform_production", "is_production_allowed"),
+        CheckConstraint(
+            "category IN ('UNIT_CONVERSION', 'NORMALIZATION', 'DERIVATION')",
+            name="ck_transform_registry_category",
+        ),
         CheckConstraint(
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_transform_registry_active_validity",

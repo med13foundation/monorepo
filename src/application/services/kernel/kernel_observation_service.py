@@ -280,7 +280,11 @@ class KernelObservationService:
         # 2. Normalise unit via transform registry
         normalised_unit = unit
         if unit and variable.preferred_unit and unit != variable.preferred_unit:
-            transform = self._dictionary.get_transform(unit, variable.preferred_unit)
+            transform = self._dictionary.get_transform(
+                unit,
+                variable.preferred_unit,
+                require_production=True,
+            )
             if transform:
                 normalised_unit = variable.preferred_unit
                 logger.debug(

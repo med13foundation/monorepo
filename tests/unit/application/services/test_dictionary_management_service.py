@@ -963,3 +963,36 @@ def test_reembed_descriptions_updates_all_supported_dimensions(
     dictionary_repo.set_variable_embedding.assert_called_once()
     dictionary_repo.set_entity_type_embedding.assert_called_once()
     dictionary_repo.set_relation_type_embedding.assert_called_once()
+
+
+def test_get_transform_forwards_require_production_flag(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    service.get_transform(
+        "mg",
+        "g",
+        require_production=True,
+    )
+
+    dictionary_repo.get_transform.assert_called_once_with(
+        "mg",
+        "g",
+        include_inactive=False,
+        require_production=True,
+    )
+
+
+def test_verify_transform_delegates_to_repository(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    service.verify_transform("TR_TEST")
+    dictionary_repo.verify_transform.assert_called_once_with("TR_TEST")
+
+
+def test_promote_transform_requires_actor(
+    service: DictionaryManagementService,
+) -> None:
+    with pytest.raises(ValueError, match="reviewed_by is required"):
+        service.promote_transform("TR_TEST", reviewed_by=" ")

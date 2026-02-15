@@ -14,7 +14,6 @@ from src.domain.entities.kernel.dictionary import (
     DictionarySearchResult,
     EntityResolutionPolicy,
     RelationConstraint,
-    TransformRegistry,
     ValueSet,
     ValueSetItem,
     VariableDefinition,
@@ -176,63 +175,6 @@ class VariableDefinitionListResponse(BaseModel):
     model_config = ConfigDict(strict=True)
 
     variables: list[VariableDefinitionResponse]
-    total: int
-
-
-class TransformRegistryResponse(BaseModel):
-    """Response payload for a transform registry record."""
-
-    model_config = ConfigDict(strict=True)
-
-    id: str
-    input_unit: str
-    output_unit: str
-    implementation_ref: str
-    status: str
-    created_by: str
-    is_active: bool
-    valid_from: datetime | None
-    valid_to: datetime | None
-    superseded_by: str | None
-    source_ref: str | None
-    review_status: KernelReviewStatus
-    reviewed_by: str | None
-    reviewed_at: datetime | None
-    revocation_reason: str | None
-    created_at: datetime
-    updated_at: datetime
-
-    @classmethod
-    def from_model(cls, model: TransformRegistry) -> TransformRegistryResponse:
-        return cls(
-            id=str(model.id),
-            input_unit=str(model.input_unit),
-            output_unit=str(model.output_unit),
-            implementation_ref=str(model.implementation_ref),
-            status=str(model.status),
-            created_by=str(model.created_by),
-            is_active=bool(model.is_active),
-            valid_from=model.valid_from,
-            valid_to=model.valid_to,
-            superseded_by=str(model.superseded_by) if model.superseded_by else None,
-            source_ref=str(model.source_ref) if model.source_ref else None,
-            review_status=KernelReviewStatus(str(model.review_status)),
-            reviewed_by=str(model.reviewed_by) if model.reviewed_by else None,
-            reviewed_at=model.reviewed_at,
-            revocation_reason=(
-                str(model.revocation_reason) if model.revocation_reason else None
-            ),
-            created_at=model.created_at,
-            updated_at=model.updated_at,
-        )
-
-
-class TransformRegistryListResponse(BaseModel):
-    """List response payload for transform registry records."""
-
-    model_config = ConfigDict(strict=True)
-
-    transforms: list[TransformRegistryResponse]
     total: int
 
 

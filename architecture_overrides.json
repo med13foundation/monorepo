@@ -13,9 +13,15 @@
       "expires_on": "2026-12-31"
     },
     {
+      "path": "src/domain/repositories/kernel/dictionary_repository.py",
+      "max_lines": 650,
+      "reason": "Repository contract includes the full Semantic Layer surface, including transform verification/promotion methods; split by bounded context is tracked as follow-up.",
+      "expires_on": "2026-12-31"
+    },
+    {
       "path": "src/infrastructure/repositories/kernel/kernel_dictionary_repository.py",
-      "max_lines": 1400,
-      "reason": "Phase 6 versioning/validity additions expanded repository methods; extraction by concern (search/create/governance/versioning) remains tracked follow-up work.",
+      "max_lines": 1500,
+      "reason": "Phase 6 + Phase 7 (versioning/validity + transform governance) expanded repository methods; extraction by concern (search/create/governance/versioning/transforms) remains tracked follow-up work.",
       "expires_on": "2026-12-31"
     },
     {
@@ -44,8 +50,8 @@
     },
     {
       "path": "src/models/database/kernel/dictionary.py",
-      "max_lines": 1200,
-      "reason": "Dictionary ORM includes expanded versioning/validity fields across multiple tables; model breakup is deferred to schema package reorganization.",
+      "max_lines": 1300,
+      "reason": "Dictionary ORM includes expanded versioning/validity and transform-governance fields across multiple tables; model breakup is deferred to schema package reorganization.",
       "expires_on": "2026-12-31"
     }
   ],
@@ -53,15 +59,15 @@
     {
       "path": "src/domain/ports/dictionary_port.py",
       "class_name": "DictionaryPort",
-      "max_methods": 38,
-      "reason": "Port remains broad while dictionary capabilities are consolidated behind a single semantic layer boundary.",
+      "max_methods": 45,
+      "reason": "Port remains broad while dictionary capabilities are consolidated behind a single semantic layer boundary, including transform verification/promotion governance.",
       "expires_on": "2026-12-31"
     },
     {
       "path": "src/domain/repositories/kernel/dictionary_repository.py",
       "class_name": "DictionaryRepository",
-      "max_methods": 40,
-      "reason": "Repository surface is temporarily wide pending planned segmentation by dictionary dimension.",
+      "max_methods": 45,
+      "reason": "Repository surface is temporarily wide pending planned segmentation by dictionary dimension, including transform verification/promotion operations.",
       "expires_on": "2026-12-31"
     },
     {

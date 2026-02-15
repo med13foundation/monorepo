@@ -6,6 +6,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.infrastructure.ingestion.normalization.transform_runtime import (
+    execute_transform,
+)
 from src.infrastructure.ingestion.types import MappedObservation, NormalizedObservation
 
 if TYPE_CHECKING:
@@ -65,15 +68,33 @@ class UnitConverter:
             )
 
         # Look for a transform from source unit to target unit
-        transform = self.dictionary_repo.get_transform(observation.unit, target_unit)
+        transform = self.dictionary_repo.get_transform(
+            observation.unit,
+            target_unit,
+            require_production=True,
+        )
 
         if transform:
-            # Execute transform
-            # Placeholder for now:
+            if isinstance(observation.value, bool) or not isinstance(
+                observation.value,
+                int | float,
+            ):
+                return NormalizedObservation(
+                    subject_anchor=observation.subject_anchor,
+                    variable_id=observation.variable_id,
+                    value=observation.value,
+                    unit=observation.unit,
+                    observed_at=observation.observed_at,
+                    provenance=observation.provenance,
+                )
+            transformed_value = self._execute_transform(
+                transform.implementation_ref,
+                observation.value,
+            )
             return NormalizedObservation(
                 subject_anchor=observation.subject_anchor,
                 variable_id=observation.variable_id,
-                value=observation.value,  # No transform applied yet
+                value=transformed_value,
                 unit=target_unit,
                 observed_at=observation.observed_at,
                 provenance=observation.provenance,
@@ -90,5 +111,4 @@ class UnitConverter:
         )
 
     def _execute_transform(self, _ref: str, value: JSONValue) -> JSONValue:
-        # Placeholder for transform execution logic
-        return value
+        return execute_transform(_ref, value)

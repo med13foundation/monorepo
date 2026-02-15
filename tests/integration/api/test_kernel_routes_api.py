@@ -21,6 +21,7 @@ from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
 from src.infrastructure.security.jwt_provider import JWTProvider
 from src.main import create_app
 from src.models.database.base import Base
+from src.models.database.kernel.dictionary import TransformRegistryModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
 from src.models.database.user_data_source import (
@@ -827,6 +828,68 @@ def test_admin_dictionary_search_and_reembed_endpoints(test_client, admin_user):
     assert reembed_response.status_code == 200, reembed_response.text
     reembed_payload = reembed_response.json()
     assert reembed_payload["updated_records"] >= 3
+
+
+def test_admin_dictionary_transform_endpoints(
+    test_client,
+    db_session,
+    admin_user,
+) -> None:
+    with _session_for_api(db_session) as session:
+        session.add(
+            TransformRegistryModel(
+                id="TR_TEST_PROMOTE",
+                input_unit="mg",
+                output_unit="g",
+                category="UNIT_CONVERSION",
+                implementation_ref="func:std_lib.convert.mg_to_g",
+                status="ACTIVE",
+                is_deterministic=True,
+                is_production_allowed=False,
+                test_input=2500,
+                expected_output=2.5,
+                description="Integration-test transform",
+                created_by="seed",
+            ),
+        )
+        session.commit()
+
+    list_before = test_client.get(
+        "/admin/dictionary/transforms",
+        headers=_auth_headers(admin_user),
+    )
+    assert list_before.status_code == 200, list_before.text
+    list_before_payload = list_before.json()
+    assert list_before_payload["total"] >= 1
+    listed_ids = {item["id"] for item in list_before_payload["transforms"]}
+    assert "TR_TEST_PROMOTE" in listed_ids
+
+    verify_response = test_client.post(
+        "/admin/dictionary/transforms/TR_TEST_PROMOTE/verify",
+        headers=_auth_headers(admin_user),
+    )
+    assert verify_response.status_code == 200, verify_response.text
+    verify_payload = verify_response.json()
+    assert verify_payload["transform_id"] == "TR_TEST_PROMOTE"
+    assert verify_payload["passed"] is True
+
+    promote_response = test_client.patch(
+        "/admin/dictionary/transforms/TR_TEST_PROMOTE/promote",
+        headers=_auth_headers(admin_user),
+    )
+    assert promote_response.status_code == 200, promote_response.text
+    promoted = promote_response.json()
+    assert promoted["id"] == "TR_TEST_PROMOTE"
+    assert promoted["is_production_allowed"] is True
+
+    list_production_only = test_client.get(
+        "/admin/dictionary/transforms",
+        headers=_auth_headers(admin_user),
+        params={"production_only": True},
+    )
+    assert list_production_only.status_code == 200, list_production_only.text
+    production_ids = {item["id"] for item in list_production_only.json()["transforms"]}
+    assert "TR_TEST_PROMOTE" in production_ids
 
 
 def test_kernel_entity_rejects_unknown_type(

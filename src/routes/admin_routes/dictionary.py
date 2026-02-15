@@ -43,8 +43,6 @@ from .dictionary_schemas import (
     KernelDictionaryDimension,
     RelationConstraintListResponse,
     RelationConstraintResponse,
-    TransformRegistryListResponse,
-    TransformRegistryResponse,
     ValueSetCreateRequest,
     ValueSetItemActiveRequest,
     ValueSetItemCreateRequest,
@@ -711,22 +709,6 @@ async def reembed_dictionary_descriptions(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
-
-
-@router.get(
-    "/dictionary/transforms",
-    response_model=TransformRegistryListResponse,
-    summary="List transform registry",
-)
-async def list_transform_registry(
-    status_filter: str = Query("ACTIVE", alias="status"),
-    service: DictionaryPort = Depends(get_dictionary_service),
-) -> TransformRegistryListResponse:
-    transforms = service.list_transforms(status=status_filter)
-    return TransformRegistryListResponse(
-        transforms=[TransformRegistryResponse.from_model(t) for t in transforms],
-        total=len(transforms),
-    )
 
 
 @router.get(

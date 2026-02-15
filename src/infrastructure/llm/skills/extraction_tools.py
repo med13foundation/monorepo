@@ -121,7 +121,11 @@ def make_lookup_transform_tool(
         """
         Look up a registered transform between two units.
         """
-        transform = dictionary_service.get_transform(input_unit, output_unit)
+        transform = dictionary_service.get_transform(
+            input_unit,
+            output_unit,
+            require_production=True,
+        )
         if transform is None:
             return {
                 "found": False,

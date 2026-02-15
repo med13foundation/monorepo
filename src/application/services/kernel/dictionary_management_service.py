@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         EntityResolutionPolicy,
         RelationConstraint,
         TransformRegistry,
+        TransformVerificationResult,
         ValueSet,
         ValueSetItem,
         VariableDefinition,
@@ -1115,12 +1116,14 @@ class DictionaryManagementService(DictionaryPort):
         output_unit: str,
         *,
         include_inactive: bool = False,
+        require_production: bool = False,
     ) -> TransformRegistry | None:
         """Find a unit transformation."""
         return self._dictionary.get_transform(
             input_unit,
             output_unit,
             include_inactive=include_inactive,
+            require_production=require_production,
         )
 
     def list_transforms(
@@ -1128,11 +1131,53 @@ class DictionaryManagementService(DictionaryPort):
         *,
         status: str = "ACTIVE",
         include_inactive: bool = False,
+        production_only: bool = False,
     ) -> list[TransformRegistry]:
         """List all transforms."""
         return self._dictionary.find_transforms(
             status=status,
             include_inactive=include_inactive,
+            production_only=production_only,
+        )
+
+    def verify_transform(self, transform_id: str) -> TransformVerificationResult:
+        """Run verification fixture for one transform."""
+        normalized_id = transform_id.strip()
+        if not normalized_id:
+            msg = "transform_id is required"
+            raise ValueError(msg)
+        return self._dictionary.verify_transform(normalized_id)
+
+    def verify_all_transforms(
+        self,
+        *,
+        status: str = "ACTIVE",
+        include_inactive: bool = False,
+    ) -> list[TransformVerificationResult]:
+        """Run verification fixtures for all transforms that provide them."""
+        return self._dictionary.verify_all_transforms(
+            status=status,
+            include_inactive=include_inactive,
+        )
+
+    def promote_transform(
+        self,
+        transform_id: str,
+        *,
+        reviewed_by: str,
+    ) -> TransformRegistry:
+        """Promote a verified transform to production usage."""
+        normalized_id = transform_id.strip()
+        if not normalized_id:
+            msg = "transform_id is required"
+            raise ValueError(msg)
+        normalized_actor = reviewed_by.strip()
+        if not normalized_actor:
+            msg = "reviewed_by is required"
+            raise ValueError(msg)
+        return self._dictionary.promote_transform(
+            normalized_id,
+            reviewed_by=normalized_actor,
         )
 
 

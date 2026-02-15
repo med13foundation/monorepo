@@ -22,6 +22,7 @@ if TYPE_CHECKING:
         EntityResolutionPolicy,
         RelationConstraint,
         TransformRegistry,
+        TransformVerificationResult,
         ValueSet,
         ValueSetItem,
         VariableDefinition,
@@ -450,6 +451,7 @@ class DictionaryRepository(ABC):
         output_unit: str,
         *,
         include_inactive: bool = False,
+        require_production: bool = False,
     ) -> TransformRegistry | None:
         """Find a unit transformation between input and output units."""
 
@@ -459,8 +461,31 @@ class DictionaryRepository(ABC):
         *,
         status: str = "ACTIVE",
         include_inactive: bool = False,
+        production_only: bool = False,
     ) -> list[TransformRegistry]:
         """List all transforms, optionally filtered by status."""
+
+    @abstractmethod
+    def verify_transform(self, transform_id: str) -> TransformVerificationResult:
+        """Verify one transform against its test fixtures."""
+
+    @abstractmethod
+    def verify_all_transforms(
+        self,
+        *,
+        status: str = "ACTIVE",
+        include_inactive: bool = False,
+    ) -> list[TransformVerificationResult]:
+        """Verify all transforms that provide test fixtures."""
+
+    @abstractmethod
+    def promote_transform(
+        self,
+        transform_id: str,
+        *,
+        reviewed_by: str,
+    ) -> TransformRegistry:
+        """Mark a transform as production-allowed after verification."""
 
     @abstractmethod
     def merge_variable_definition(
