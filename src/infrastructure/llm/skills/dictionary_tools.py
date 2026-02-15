@@ -121,7 +121,6 @@ def make_create_variable_tool(
         canonical_name: str,
         display_name: str,
         data_type: str,
-        *,
         domain_context: str = "general",
         sensitivity: str = "INTERNAL",
         preferred_unit: str | None = None,

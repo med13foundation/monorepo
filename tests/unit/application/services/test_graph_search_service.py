@@ -26,11 +26,13 @@ class StubDictionaryService:
         dimensions: list[str] | None = None,
         domain_context: str | None = None,
         limit: int = 50,
+        include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
         _ = terms
         _ = dimensions
         _ = domain_context
         _ = limit
+        _ = include_inactive
         return [
             DictionarySearchResult(
                 dimension="entity_types",

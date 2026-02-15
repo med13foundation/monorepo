@@ -124,6 +124,10 @@ class VariableDefinitionResponse(BaseModel):
     embedded_at: datetime | None
     embedding_model: str | None
     created_by: str
+    is_active: bool
+    valid_from: datetime | None
+    valid_to: datetime | None
+    superseded_by: str | None
     source_ref: str | None
     review_status: KernelReviewStatus
     reviewed_by: str | None
@@ -150,6 +154,10 @@ class VariableDefinitionResponse(BaseModel):
                 str(model.embedding_model) if model.embedding_model else None
             ),
             created_by=str(model.created_by),
+            is_active=bool(model.is_active),
+            valid_from=model.valid_from,
+            valid_to=model.valid_to,
+            superseded_by=str(model.superseded_by) if model.superseded_by else None,
             source_ref=str(model.source_ref) if model.source_ref else None,
             review_status=KernelReviewStatus(str(model.review_status)),
             reviewed_by=str(model.reviewed_by) if model.reviewed_by else None,
@@ -182,6 +190,10 @@ class TransformRegistryResponse(BaseModel):
     implementation_ref: str
     status: str
     created_by: str
+    is_active: bool
+    valid_from: datetime | None
+    valid_to: datetime | None
+    superseded_by: str | None
     source_ref: str | None
     review_status: KernelReviewStatus
     reviewed_by: str | None
@@ -199,6 +211,10 @@ class TransformRegistryResponse(BaseModel):
             implementation_ref=str(model.implementation_ref),
             status=str(model.status),
             created_by=str(model.created_by),
+            is_active=bool(model.is_active),
+            valid_from=model.valid_from,
+            valid_to=model.valid_to,
+            superseded_by=str(model.superseded_by) if model.superseded_by else None,
             source_ref=str(model.source_ref) if model.source_ref else None,
             review_status=KernelReviewStatus(str(model.review_status)),
             reviewed_by=str(model.reviewed_by) if model.reviewed_by else None,
@@ -230,6 +246,10 @@ class EntityResolutionPolicyResponse(BaseModel):
     required_anchors: list[str]
     auto_merge_threshold: float
     created_by: str
+    is_active: bool
+    valid_from: datetime | None
+    valid_to: datetime | None
+    superseded_by: str | None
     source_ref: str | None
     review_status: KernelReviewStatus
     reviewed_by: str | None
@@ -252,6 +272,10 @@ class EntityResolutionPolicyResponse(BaseModel):
             required_anchors=[str(a) for a in anchors],
             auto_merge_threshold=float(model.auto_merge_threshold),
             created_by=str(model.created_by),
+            is_active=bool(model.is_active),
+            valid_from=model.valid_from,
+            valid_to=model.valid_to,
+            superseded_by=str(model.superseded_by) if model.superseded_by else None,
             source_ref=str(model.source_ref) if model.source_ref else None,
             review_status=KernelReviewStatus(str(model.review_status)),
             reviewed_by=str(model.reviewed_by) if model.reviewed_by else None,
@@ -285,6 +309,10 @@ class RelationConstraintResponse(BaseModel):
     is_allowed: bool
     requires_evidence: bool
     created_by: str
+    is_active: bool
+    valid_from: datetime | None
+    valid_to: datetime | None
+    superseded_by: str | None
     source_ref: str | None
     review_status: KernelReviewStatus
     reviewed_by: str | None
@@ -303,6 +331,10 @@ class RelationConstraintResponse(BaseModel):
             is_allowed=bool(model.is_allowed),
             requires_evidence=bool(model.requires_evidence),
             created_by=str(model.created_by),
+            is_active=bool(model.is_active),
+            valid_from=model.valid_from,
+            valid_to=model.valid_to,
+            superseded_by=str(model.superseded_by) if model.superseded_by else None,
             source_ref=str(model.source_ref) if model.source_ref else None,
             review_status=KernelReviewStatus(str(model.review_status)),
             reviewed_by=str(model.reviewed_by) if model.reviewed_by else None,
@@ -353,6 +385,10 @@ class DictionaryEntityTypeResponse(BaseModel):
     embedded_at: datetime | None
     embedding_model: str | None
     created_by: str
+    is_active: bool
+    valid_from: datetime | None
+    valid_to: datetime | None
+    superseded_by: str | None
     source_ref: str | None
     review_status: KernelReviewStatus
     reviewed_by: str | None
@@ -382,6 +418,10 @@ class DictionaryEntityTypeResponse(BaseModel):
                 str(model.embedding_model) if model.embedding_model else None
             ),
             created_by=str(model.created_by),
+            is_active=bool(model.is_active),
+            valid_from=model.valid_from,
+            valid_to=model.valid_to,
+            superseded_by=str(model.superseded_by) if model.superseded_by else None,
             source_ref=str(model.source_ref) if model.source_ref else None,
             review_status=KernelReviewStatus(str(model.review_status)),
             reviewed_by=str(model.reviewed_by) if model.reviewed_by else None,
@@ -432,6 +472,10 @@ class DictionaryRelationTypeResponse(BaseModel):
     embedded_at: datetime | None
     embedding_model: str | None
     created_by: str
+    is_active: bool
+    valid_from: datetime | None
+    valid_to: datetime | None
+    superseded_by: str | None
     source_ref: str | None
     review_status: KernelReviewStatus
     reviewed_by: str | None
@@ -458,6 +502,10 @@ class DictionaryRelationTypeResponse(BaseModel):
                 str(model.embedding_model) if model.embedding_model else None
             ),
             created_by=str(model.created_by),
+            is_active=bool(model.is_active),
+            valid_from=model.valid_from,
+            valid_to=model.valid_to,
+            superseded_by=str(model.superseded_by) if model.superseded_by else None,
             source_ref=str(model.source_ref) if model.source_ref else None,
             review_status=KernelReviewStatus(str(model.review_status)),
             reviewed_by=str(model.reviewed_by) if model.reviewed_by else None,

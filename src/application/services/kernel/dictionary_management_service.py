@@ -190,16 +190,26 @@ class DictionaryManagementService(DictionaryPort):
         *,
         domain_context: str | None = None,
         data_type: str | None = None,
+        include_inactive: bool = False,
     ) -> list[VariableDefinition]:
         """List variables, optionally filtered by domain and/or type."""
         return self._dictionary.find_variables(
             domain_context=domain_context,
             data_type=data_type,
+            include_inactive=include_inactive,
         )
 
-    def resolve_synonym(self, synonym: str) -> VariableDefinition | None:
+    def resolve_synonym(
+        self,
+        synonym: str,
+        *,
+        include_inactive: bool = False,
+    ) -> VariableDefinition | None:
         """Resolve a field name to its canonical variable."""
-        return self._dictionary.find_variable_by_synonym(synonym)
+        return self._dictionary.find_variable_by_synonym(
+            synonym,
+            include_inactive=include_inactive,
+        )
 
     def create_variable(  # noqa: PLR0913
         self,
@@ -496,6 +506,7 @@ class DictionaryManagementService(DictionaryPort):
         dimensions: list[str] | None = None,
         domain_context: str | None = None,
         limit: int = 50,
+        include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
         """Search dictionary entries with exact/fuzzy/vector matching."""
         normalized_terms = [term for term in terms if term.strip()]
@@ -520,6 +531,7 @@ class DictionaryManagementService(DictionaryPort):
             domain_context=domain_context,
             limit=limit,
             query_embeddings=query_embeddings,
+            include_inactive=include_inactive,
         )
 
     def dictionary_search_by_domain(
@@ -527,11 +539,13 @@ class DictionaryManagementService(DictionaryPort):
         *,
         domain_context: str,
         limit: int = 50,
+        include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
         """List dictionary entries scoped to one domain context."""
         return self._dictionary.search_dictionary_by_domain(
             domain_context=domain_context,
             limit=limit,
+            include_inactive=include_inactive,
         )
 
     def reembed_descriptions(  # noqa: C901,PLR0912
@@ -715,11 +729,13 @@ class DictionaryManagementService(DictionaryPort):
         *,
         source_type: str | None = None,
         relation_type: str | None = None,
+        include_inactive: bool = False,
     ) -> list[RelationConstraint]:
         """List constraints, optionally filtered."""
         return self._dictionary.get_constraints(
             source_type=source_type,
             relation_type=relation_type,
+            include_inactive=include_inactive,
         )
 
     # ── Resolution policies ───────────────────────────────────────────
@@ -727,13 +743,24 @@ class DictionaryManagementService(DictionaryPort):
     def get_resolution_policy(
         self,
         entity_type: str,
+        *,
+        include_inactive: bool = False,
     ) -> EntityResolutionPolicy | None:
         """Get the dedup strategy for an entity type."""
-        return self._dictionary.get_resolution_policy(entity_type)
+        return self._dictionary.get_resolution_policy(
+            entity_type,
+            include_inactive=include_inactive,
+        )
 
-    def list_resolution_policies(self) -> list[EntityResolutionPolicy]:
+    def list_resolution_policies(
+        self,
+        *,
+        include_inactive: bool = False,
+    ) -> list[EntityResolutionPolicy]:
         """List all entity resolution policies."""
-        return self._dictionary.find_resolution_policies()
+        return self._dictionary.find_resolution_policies(
+            include_inactive=include_inactive,
+        )
 
     def create_entity_type(  # noqa: PLR0913
         self,
@@ -780,13 +807,25 @@ class DictionaryManagementService(DictionaryPort):
         self,
         *,
         domain_context: str | None = None,
+        include_inactive: bool = False,
     ) -> list[DictionaryEntityType]:
         """List dictionary entity types."""
-        return self._dictionary.find_entity_types(domain_context=domain_context)
+        return self._dictionary.find_entity_types(
+            domain_context=domain_context,
+            include_inactive=include_inactive,
+        )
 
-    def get_entity_type(self, entity_type_id: str) -> DictionaryEntityType | None:
+    def get_entity_type(
+        self,
+        entity_type_id: str,
+        *,
+        include_inactive: bool = False,
+    ) -> DictionaryEntityType | None:
         """Get a dictionary entity type by ID."""
-        return self._dictionary.get_entity_type(entity_type_id)
+        return self._dictionary.get_entity_type(
+            entity_type_id,
+            include_inactive=include_inactive,
+        )
 
     def set_entity_type_review_status(
         self,
@@ -803,7 +842,10 @@ class DictionaryManagementService(DictionaryPort):
             raise ValueError(msg)
 
         target_status = self._normalize_review_status(review_status)
-        current = self._dictionary.get_entity_type(entity_type_id)
+        current = self._dictionary.get_entity_type(
+            entity_type_id,
+            include_inactive=True,
+        )
         if current is None:
             msg = f"Entity type '{entity_type_id}' not found"
             raise ValueError(msg)
@@ -890,16 +932,25 @@ class DictionaryManagementService(DictionaryPort):
         self,
         *,
         domain_context: str | None = None,
+        include_inactive: bool = False,
     ) -> list[DictionaryRelationType]:
         """List dictionary relation types."""
-        return self._dictionary.find_relation_types(domain_context=domain_context)
+        return self._dictionary.find_relation_types(
+            domain_context=domain_context,
+            include_inactive=include_inactive,
+        )
 
     def get_relation_type(
         self,
         relation_type_id: str,
+        *,
+        include_inactive: bool = False,
     ) -> DictionaryRelationType | None:
         """Get a dictionary relation type by ID."""
-        return self._dictionary.get_relation_type(relation_type_id)
+        return self._dictionary.get_relation_type(
+            relation_type_id,
+            include_inactive=include_inactive,
+        )
 
     def set_relation_type_review_status(
         self,
@@ -916,7 +967,10 @@ class DictionaryManagementService(DictionaryPort):
             raise ValueError(msg)
 
         target_status = self._normalize_review_status(review_status)
-        current = self._dictionary.get_relation_type(relation_type_id)
+        current = self._dictionary.get_relation_type(
+            relation_type_id,
+            include_inactive=True,
+        )
         if current is None:
             msg = f"Relation type '{relation_type_id}' not found"
             raise ValueError(msg)
@@ -958,6 +1012,87 @@ class DictionaryManagementService(DictionaryPort):
             revocation_reason=reason,
         )
 
+    def merge_variable_definition(
+        self,
+        source_variable_id: str,
+        target_variable_id: str,
+        *,
+        reason: str,
+        reviewed_by: str,
+    ) -> VariableDefinition:
+        """Supersede a variable definition with another."""
+        normalized_actor = reviewed_by.strip()
+        if not normalized_actor:
+            msg = "reviewed_by is required"
+            raise ValueError(msg)
+        normalized_reason = reason.strip()
+        if not normalized_reason:
+            msg = "reason is required"
+            raise ValueError(msg)
+        if source_variable_id.strip() == target_variable_id.strip():
+            msg = "source and target variable IDs must differ"
+            raise ValueError(msg)
+        return self._dictionary.merge_variable_definition(
+            source_variable_id,
+            target_variable_id,
+            reason=normalized_reason,
+            reviewed_by=normalized_actor,
+        )
+
+    def merge_entity_type(
+        self,
+        source_entity_type_id: str,
+        target_entity_type_id: str,
+        *,
+        reason: str,
+        reviewed_by: str,
+    ) -> DictionaryEntityType:
+        """Supersede an entity type with another."""
+        normalized_actor = reviewed_by.strip()
+        if not normalized_actor:
+            msg = "reviewed_by is required"
+            raise ValueError(msg)
+        normalized_reason = reason.strip()
+        if not normalized_reason:
+            msg = "reason is required"
+            raise ValueError(msg)
+        if source_entity_type_id.strip() == target_entity_type_id.strip():
+            msg = "source and target entity type IDs must differ"
+            raise ValueError(msg)
+        return self._dictionary.merge_entity_type(
+            source_entity_type_id,
+            target_entity_type_id,
+            reason=normalized_reason,
+            reviewed_by=normalized_actor,
+        )
+
+    def merge_relation_type(
+        self,
+        source_relation_type_id: str,
+        target_relation_type_id: str,
+        *,
+        reason: str,
+        reviewed_by: str,
+    ) -> DictionaryRelationType:
+        """Supersede a relation type with another."""
+        normalized_actor = reviewed_by.strip()
+        if not normalized_actor:
+            msg = "reviewed_by is required"
+            raise ValueError(msg)
+        normalized_reason = reason.strip()
+        if not normalized_reason:
+            msg = "reason is required"
+            raise ValueError(msg)
+        if source_relation_type_id.strip() == target_relation_type_id.strip():
+            msg = "source and target relation type IDs must differ"
+            raise ValueError(msg)
+        return self._dictionary.merge_relation_type(
+            source_relation_type_id,
+            target_relation_type_id,
+            reason=normalized_reason,
+            reviewed_by=normalized_actor,
+        )
+
     def list_changelog_entries(
         self,
         *,
@@ -978,17 +1113,27 @@ class DictionaryManagementService(DictionaryPort):
         self,
         input_unit: str,
         output_unit: str,
+        *,
+        include_inactive: bool = False,
     ) -> TransformRegistry | None:
         """Find a unit transformation."""
-        return self._dictionary.get_transform(input_unit, output_unit)
+        return self._dictionary.get_transform(
+            input_unit,
+            output_unit,
+            include_inactive=include_inactive,
+        )
 
     def list_transforms(
         self,
         *,
         status: str = "ACTIVE",
+        include_inactive: bool = False,
     ) -> list[TransformRegistry]:
         """List all transforms."""
-        return self._dictionary.find_transforms(status=status)
+        return self._dictionary.find_transforms(
+            status=status,
+            include_inactive=include_inactive,
+        )
 
 
 __all__ = ["DictionaryManagementService", "ReviewStatus"]

@@ -327,6 +327,19 @@ def test_admin_dictionary_review_lifecycle(test_client, admin_user):
     revoked_payload = revoke_response.json()
     assert revoked_payload["review_status"] == "REVOKED"
     assert revoked_payload["revocation_reason"] == "Deprecated variable"
+    assert revoked_payload["is_active"] is False
+    assert revoked_payload["valid_to"] is not None
+
+    reactivate_response = test_client.patch(
+        "/admin/dictionary/variables/VAR_REVIEW_LIFECYCLE/review-status",
+        headers=_auth_headers(admin_user),
+        json={"review_status": "ACTIVE"},
+    )
+    assert reactivate_response.status_code == 200, reactivate_response.text
+    reactivated_payload = reactivate_response.json()
+    assert reactivated_payload["review_status"] == "ACTIVE"
+    assert reactivated_payload["is_active"] is True
+    assert reactivated_payload["valid_to"] is None
 
     changelog_response = test_client.get(
         "/admin/dictionary/changelog",
@@ -438,6 +451,8 @@ def test_admin_dictionary_type_endpoints(test_client, admin_user):
         revoke_entity_type_response.status_code == 200
     ), revoke_entity_type_response.text
     assert revoke_entity_type_response.json()["review_status"] == "REVOKED"
+    assert revoke_entity_type_response.json()["is_active"] is False
+    assert revoke_entity_type_response.json()["valid_to"] is not None
 
     set_relation_review_status_response = test_client.patch(
         "/admin/dictionary/relation-types/REL_TEST_LINKS_TO/review-status",
@@ -460,6 +475,8 @@ def test_admin_dictionary_type_endpoints(test_client, admin_user):
         revoke_relation_type_response.status_code == 200
     ), revoke_relation_type_response.text
     assert revoke_relation_type_response.json()["review_status"] == "REVOKED"
+    assert revoke_relation_type_response.json()["is_active"] is False
+    assert revoke_relation_type_response.json()["valid_to"] is not None
 
 
 def test_admin_dictionary_value_set_endpoints(test_client, admin_user):

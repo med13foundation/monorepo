@@ -152,24 +152,35 @@ def _upsert_search_result(
         result_map[key] = candidate
 
 
-def _search_variables(  # noqa: C901
+def _search_variables(  # noqa: C901,PLR0912,PLR0913
     session: Session,
     *,
     terms: list[str],
     domain_context: str | None,
     query_embeddings: dict[str, list[float]] | None,
+    include_inactive: bool,
     result_map: dict[tuple[str, str], DictionarySearchResult],
 ) -> None:
-    stmt = select(VariableDefinitionModel).where(
-        VariableDefinitionModel.review_status == "ACTIVE",
-    )
+    stmt = select(VariableDefinitionModel)
+    if not include_inactive:
+        stmt = stmt.where(
+            and_(
+                VariableDefinitionModel.review_status == "ACTIVE",
+                VariableDefinitionModel.is_active.is_(True),
+            ),
+        )
     if domain_context is not None:
         stmt = stmt.where(VariableDefinitionModel.domain_context == domain_context)
     variables = session.scalars(stmt).all()
 
-    synonym_stmt = select(VariableSynonymModel).where(
-        VariableSynonymModel.review_status == "ACTIVE",
-    )
+    synonym_stmt = select(VariableSynonymModel)
+    if not include_inactive:
+        synonym_stmt = synonym_stmt.where(
+            and_(
+                VariableSynonymModel.review_status == "ACTIVE",
+                VariableSynonymModel.is_active.is_(True),
+            ),
+        )
     synonym_rows = session.scalars(synonym_stmt).all()
     synonyms_by_variable: dict[str, list[str]] = {}
     for synonym_row in synonym_rows:
@@ -286,17 +297,23 @@ def _search_variables(  # noqa: C901
                 candidate = None
 
 
-def _search_entity_types(
+def _search_entity_types(  # noqa: PLR0913
     session: Session,
     *,
     terms: list[str],
     domain_context: str | None,
     query_embeddings: dict[str, list[float]] | None,
+    include_inactive: bool,
     result_map: dict[tuple[str, str], DictionarySearchResult],
 ) -> None:
-    stmt = select(DictionaryEntityTypeModel).where(
-        DictionaryEntityTypeModel.review_status == "ACTIVE",
-    )
+    stmt = select(DictionaryEntityTypeModel)
+    if not include_inactive:
+        stmt = stmt.where(
+            and_(
+                DictionaryEntityTypeModel.review_status == "ACTIVE",
+                DictionaryEntityTypeModel.is_active.is_(True),
+            ),
+        )
     if domain_context is not None:
         stmt = stmt.where(DictionaryEntityTypeModel.domain_context == domain_context)
     rows = session.scalars(stmt).all()
@@ -373,17 +390,23 @@ def _search_entity_types(
             )
 
 
-def _search_relation_types(
+def _search_relation_types(  # noqa: PLR0913
     session: Session,
     *,
     terms: list[str],
     domain_context: str | None,
     query_embeddings: dict[str, list[float]] | None,
+    include_inactive: bool,
     result_map: dict[tuple[str, str], DictionarySearchResult],
 ) -> None:
-    stmt = select(DictionaryRelationTypeModel).where(
-        DictionaryRelationTypeModel.review_status == "ACTIVE",
-    )
+    stmt = select(DictionaryRelationTypeModel)
+    if not include_inactive:
+        stmt = stmt.where(
+            and_(
+                DictionaryRelationTypeModel.review_status == "ACTIVE",
+                DictionaryRelationTypeModel.is_active.is_(True),
+            ),
+        )
     if domain_context is not None:
         stmt = stmt.where(
             DictionaryRelationTypeModel.domain_context == domain_context,
@@ -467,18 +490,30 @@ def _search_constraints(
     *,
     terms: list[str],
     domain_context: str | None,
+    include_inactive: bool,
     result_map: dict[tuple[str, str], DictionarySearchResult],
 ) -> None:
-    stmt = select(RelationConstraintModel).where(
-        RelationConstraintModel.review_status == "ACTIVE",
-    )
+    stmt = select(RelationConstraintModel)
+    if not include_inactive:
+        stmt = stmt.where(
+            and_(
+                RelationConstraintModel.review_status == "ACTIVE",
+                RelationConstraintModel.is_active.is_(True),
+            ),
+        )
     rows = session.scalars(stmt).all()
 
+    relation_type_stmt = select(DictionaryRelationTypeModel)
+    if not include_inactive:
+        relation_type_stmt = relation_type_stmt.where(
+            and_(
+                DictionaryRelationTypeModel.review_status == "ACTIVE",
+                DictionaryRelationTypeModel.is_active.is_(True),
+            ),
+        )
     relation_context_map: dict[str, str] = {
         relation_type.id: relation_type.domain_context
-        for relation_type in session.scalars(
-            select(DictionaryRelationTypeModel),
-        ).all()
+        for relation_type in session.scalars(relation_type_stmt).all()
     }
 
     for row in rows:
@@ -548,6 +583,7 @@ def search_dictionary_entries(  # noqa: PLR0913
     domain_context: str | None = None,
     limit: int = 50,
     query_embeddings: dict[str, list[float]] | None = None,
+    include_inactive: bool = False,
 ) -> list[DictionarySearchResult]:
     normalized_terms = _normalize_search_terms(terms)
     if not normalized_terms:
@@ -565,6 +601,7 @@ def search_dictionary_entries(  # noqa: PLR0913
             terms=normalized_terms,
             domain_context=domain_context,
             query_embeddings=query_embeddings,
+            include_inactive=include_inactive,
             result_map=result_map,
         )
     if "entity_types" in normalized_dimensions:
@@ -573,6 +610,7 @@ def search_dictionary_entries(  # noqa: PLR0913
             terms=normalized_terms,
             domain_context=domain_context,
             query_embeddings=query_embeddings,
+            include_inactive=include_inactive,
             result_map=result_map,
         )
     if "relation_types" in normalized_dimensions:
@@ -581,6 +619,7 @@ def search_dictionary_entries(  # noqa: PLR0913
             terms=normalized_terms,
             domain_context=domain_context,
             query_embeddings=query_embeddings,
+            include_inactive=include_inactive,
             result_map=result_map,
         )
     if "constraints" in normalized_dimensions:
@@ -588,6 +627,7 @@ def search_dictionary_entries(  # noqa: PLR0913
             session,
             terms=normalized_terms,
             domain_context=domain_context,
+            include_inactive=include_inactive,
             result_map=result_map,
         )
 
@@ -599,6 +639,7 @@ def search_dictionary_entries_by_domain(
     *,
     domain_context: str,
     limit: int = 50,
+    include_inactive: bool = False,
 ) -> list[DictionarySearchResult]:
     normalized_limit = max(1, min(limit, 500))
     context = domain_context.strip()
@@ -607,14 +648,17 @@ def search_dictionary_entries_by_domain(
 
     results: list[DictionarySearchResult] = []
 
-    variables = session.scalars(
-        select(VariableDefinitionModel).where(
+    variable_stmt = select(VariableDefinitionModel).where(
+        VariableDefinitionModel.domain_context == context,
+    )
+    if not include_inactive:
+        variable_stmt = variable_stmt.where(
             and_(
-                VariableDefinitionModel.domain_context == context,
                 VariableDefinitionModel.review_status == "ACTIVE",
+                VariableDefinitionModel.is_active.is_(True),
             ),
-        ),
-    ).all()
+        )
+    variables = session.scalars(variable_stmt).all()
     results.extend(
         [
             DictionarySearchResult(
@@ -636,14 +680,17 @@ def search_dictionary_entries_by_domain(
         ],
     )
 
-    entity_types = session.scalars(
-        select(DictionaryEntityTypeModel).where(
+    entity_type_stmt = select(DictionaryEntityTypeModel).where(
+        DictionaryEntityTypeModel.domain_context == context,
+    )
+    if not include_inactive:
+        entity_type_stmt = entity_type_stmt.where(
             and_(
-                DictionaryEntityTypeModel.domain_context == context,
                 DictionaryEntityTypeModel.review_status == "ACTIVE",
+                DictionaryEntityTypeModel.is_active.is_(True),
             ),
-        ),
-    ).all()
+        )
+    entity_types = session.scalars(entity_type_stmt).all()
     results.extend(
         [
             DictionarySearchResult(
@@ -663,14 +710,17 @@ def search_dictionary_entries_by_domain(
         ],
     )
 
-    relation_types = session.scalars(
-        select(DictionaryRelationTypeModel).where(
+    relation_type_stmt = select(DictionaryRelationTypeModel).where(
+        DictionaryRelationTypeModel.domain_context == context,
+    )
+    if not include_inactive:
+        relation_type_stmt = relation_type_stmt.where(
             and_(
-                DictionaryRelationTypeModel.domain_context == context,
                 DictionaryRelationTypeModel.review_status == "ACTIVE",
+                DictionaryRelationTypeModel.is_active.is_(True),
             ),
-        ),
-    ).all()
+        )
+    relation_types = session.scalars(relation_type_stmt).all()
     results.extend(
         [
             DictionarySearchResult(
@@ -692,14 +742,17 @@ def search_dictionary_entries_by_domain(
 
     relation_type_ids = [relation_type.id for relation_type in relation_types]
     if relation_type_ids:
-        constraints = session.scalars(
-            select(RelationConstraintModel).where(
+        constraint_stmt = select(RelationConstraintModel).where(
+            RelationConstraintModel.relation_type.in_(relation_type_ids),
+        )
+        if not include_inactive:
+            constraint_stmt = constraint_stmt.where(
                 and_(
                     RelationConstraintModel.review_status == "ACTIVE",
-                    RelationConstraintModel.relation_type.in_(relation_type_ids),
+                    RelationConstraintModel.is_active.is_(True),
                 ),
-            ),
-        ).all()
+            )
+        constraints = session.scalars(constraint_stmt).all()
         results.extend(
             [
                 DictionarySearchResult(

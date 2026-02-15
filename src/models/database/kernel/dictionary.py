@@ -20,6 +20,9 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
+    func,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -170,6 +173,26 @@ class DictionaryEntityTypeModel(Base):
         server_default="seed",
         doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
     )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Soft-delete flag for temporal validity",
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        doc="Timestamp when this row became valid",
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when this row stopped being valid",
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Replacement entity type identifier when superseded",
+    )
     source_ref: Mapped[str | None] = mapped_column(
         String(1024),
         nullable=True,
@@ -198,6 +221,10 @@ class DictionaryEntityTypeModel(Base):
 
     __table_args__ = (
         Index("idx_enttype_domain", "domain_context"),
+        CheckConstraint(
+            "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
+            name="ck_dictionary_entity_types_active_validity",
+        ),
         {"comment": "First-class entity types with semantic metadata"},
     )
 
@@ -232,7 +259,7 @@ class DictionaryRelationTypeModel(Base):
     is_directional: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
-        server_default="true",
+        server_default=true(),
         doc="Whether A->B differs semantically from B->A",
     )
     inverse_label: Mapped[str | None] = mapped_column(
@@ -259,6 +286,26 @@ class DictionaryRelationTypeModel(Base):
         nullable=False,
         server_default="seed",
         doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Soft-delete flag for temporal validity",
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        doc="Timestamp when this row became valid",
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when this row stopped being valid",
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Replacement relation type identifier when superseded",
     )
     source_ref: Mapped[str | None] = mapped_column(
         String(1024),
@@ -288,6 +335,10 @@ class DictionaryRelationTypeModel(Base):
 
     __table_args__ = (
         Index("idx_reltype_domain", "domain_context"),
+        CheckConstraint(
+            "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
+            name="ck_dictionary_relation_types_active_validity",
+        ),
         {"comment": "First-class relation types with semantic metadata"},
     )
 
@@ -333,7 +384,7 @@ class ValueSetModel(Base):
     is_extensible: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
-        server_default="false",
+        server_default=false(),
         doc="Whether agents may add new items automatically",
     )
     created_by: Mapped[str] = mapped_column(
@@ -430,7 +481,7 @@ class ValueSetItemModel(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
-        server_default="true",
+        server_default=true(),
         doc="Soft-delete flag",
     )
     created_by: Mapped[str] = mapped_column(
@@ -558,6 +609,26 @@ class VariableDefinitionModel(Base):
         server_default="seed",
         doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
     )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Soft-delete flag for temporal validity",
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        doc="Timestamp when this row became valid",
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when this row stopped being valid",
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Replacement variable identifier when superseded",
+    )
     source_ref: Mapped[str | None] = mapped_column(
         String(1024),
         nullable=True,
@@ -588,6 +659,10 @@ class VariableDefinitionModel(Base):
         Index("idx_vardef_domain", "domain_context"),
         Index("idx_vardef_data_type", "data_type"),
         UniqueConstraint("id", "data_type", name="uq_vardef_id_data_type"),
+        CheckConstraint(
+            "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
+            name="ck_variable_definitions_active_validity",
+        ),
         {"comment": "Master dictionary of allowed data variables"},
     )
 
@@ -629,6 +704,26 @@ class VariableSynonymModel(Base):
         server_default="seed",
         doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
     )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Soft-delete flag for temporal validity",
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        doc="Timestamp when this row became valid",
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when this row stopped being valid",
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Replacement synonym identifier when superseded",
+    )
     source_ref: Mapped[str | None] = mapped_column(
         String(1024),
         nullable=True,
@@ -661,6 +756,10 @@ class VariableSynonymModel(Base):
             "variable_id",
             "synonym",
             unique=True,
+        ),
+        CheckConstraint(
+            "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
+            name="ck_variable_synonyms_active_validity",
         ),
         {"comment": "Synonyms for deterministic field-name matching"},
     )
@@ -708,6 +807,26 @@ class TransformRegistryModel(Base):
         server_default="seed",
         doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
     )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Soft-delete flag for temporal validity",
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        doc="Timestamp when this row became valid",
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when this row stopped being valid",
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Replacement transform identifier when superseded",
+    )
     source_ref: Mapped[str | None] = mapped_column(
         String(1024),
         nullable=True,
@@ -736,6 +855,10 @@ class TransformRegistryModel(Base):
 
     __table_args__ = (
         Index("idx_transform_units", "input_unit", "output_unit"),
+        CheckConstraint(
+            "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
+            name="ck_transform_registry_active_validity",
+        ),
         {"comment": "Registry of safe, pre-compiled unit conversions"},
     )
 
@@ -778,6 +901,26 @@ class EntityResolutionPolicyModel(Base):
         server_default="seed",
         doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
     )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Soft-delete flag for temporal validity",
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        doc="Timestamp when this row became valid",
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when this row stopped being valid",
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Replacement policy identifier when superseded",
+    )
     source_ref: Mapped[str | None] = mapped_column(
         String(1024),
         nullable=True,
@@ -804,7 +947,13 @@ class EntityResolutionPolicyModel(Base):
         doc="Reason for revocation when review_status is REVOKED",
     )
 
-    __table_args__ = ({"comment": "Entity deduplication policies by type"},)
+    __table_args__ = (
+        CheckConstraint(
+            "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
+            name="ck_entity_resolution_policies_active_validity",
+        ),
+        {"comment": "Entity deduplication policies by type"},
+    )
 
 
 class RelationConstraintModel(Base):
@@ -854,6 +1003,26 @@ class RelationConstraintModel(Base):
         server_default="seed",
         doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
     )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Soft-delete flag for temporal validity",
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        doc="Timestamp when this row became valid",
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when this row stopped being valid",
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Replacement constraint identifier when superseded",
+    )
     source_ref: Mapped[str | None] = mapped_column(
         String(1024),
         nullable=True,
@@ -888,6 +1057,10 @@ class RelationConstraintModel(Base):
             "target_type",
             unique=True,
         ),
+        CheckConstraint(
+            "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
+            name="ck_relation_constraints_active_validity",
+        ),
         {"comment": "Allowed triple patterns for graph edges"},
     )
 
@@ -917,7 +1090,7 @@ class DictionaryChangelogModel(Base):
     action: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
-        doc="Mutation type: CREATE, UPDATE, REVOKE",
+        doc="Mutation type: CREATE, UPDATE, REVOKE, MERGE",
     )
     before_snapshot: Mapped[JSONObject | None] = mapped_column(
         JSONB,

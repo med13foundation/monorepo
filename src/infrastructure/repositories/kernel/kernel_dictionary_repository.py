@@ -227,8 +227,11 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         *,
         domain_context: str | None = None,
         data_type: str | None = None,
+        include_inactive: bool = False,
     ) -> list[VariableDefinition]:
         stmt = select(VariableDefinitionModel)
+        if not include_inactive:
+            stmt = stmt.where(VariableDefinitionModel.is_active.is_(True))
         if domain_context is not None:
             stmt = stmt.where(
                 VariableDefinitionModel.domain_context == domain_context,
@@ -244,6 +247,8 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
     def find_variable_by_synonym(
         self,
         synonym: str,
+        *,
+        include_inactive: bool = False,
     ) -> VariableDefinition | None:
         normalized_synonym = synonym.strip().lower()
         stmt = (
@@ -251,6 +256,13 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             .join(VariableSynonymModel)
             .where(VariableSynonymModel.synonym == normalized_synonym)
         )
+        if not include_inactive:
+            stmt = stmt.where(
+                and_(
+                    VariableDefinitionModel.is_active.is_(True),
+                    VariableSynonymModel.is_active.is_(True),
+                ),
+            )
         model = self._session.scalars(stmt).first()
         return VariableDefinition.model_validate(model) if model is not None else None
 
@@ -397,9 +409,14 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         model.review_status = review_status
         model.reviewed_by = reviewed_by
         model.reviewed_at = datetime.now(UTC)
-        model.revocation_reason = (
-            revocation_reason if review_status == "REVOKED" else None
-        )
+        if review_status == "REVOKED":
+            model.is_active = False
+            model.valid_to = datetime.now(UTC)
+            model.revocation_reason = revocation_reason
+        else:
+            model.is_active = True
+            model.valid_to = None
+            model.revocation_reason = None
         self._session.flush()
         self._record_change(
             table_name=VariableDefinitionModel.__tablename__,
@@ -599,15 +616,29 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
     def get_resolution_policy(
         self,
         entity_type: str,
+        *,
+        include_inactive: bool = False,
     ) -> EntityResolutionPolicy | None:
-        model = self._session.get(EntityResolutionPolicyModel, entity_type)
+        stmt = select(EntityResolutionPolicyModel).where(
+            EntityResolutionPolicyModel.entity_type == entity_type,
+        )
+        if not include_inactive:
+            stmt = stmt.where(EntityResolutionPolicyModel.is_active.is_(True))
+        model = self._session.scalars(stmt).first()
         return (
             EntityResolutionPolicy.model_validate(model) if model is not None else None
         )
 
-    def find_resolution_policies(self) -> list[EntityResolutionPolicy]:
+    def find_resolution_policies(
+        self,
+        *,
+        include_inactive: bool = False,
+    ) -> list[EntityResolutionPolicy]:
+        stmt = select(EntityResolutionPolicyModel)
+        if not include_inactive:
+            stmt = stmt.where(EntityResolutionPolicyModel.is_active.is_(True))
         models = self._session.scalars(
-            select(EntityResolutionPolicyModel).order_by(
+            stmt.order_by(
                 EntityResolutionPolicyModel.entity_type,
             ),
         ).all()
@@ -697,8 +728,11 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         self,
         *,
         domain_context: str | None = None,
+        include_inactive: bool = False,
     ) -> list[DictionaryEntityType]:
         stmt = select(DictionaryEntityTypeModel)
+        if not include_inactive:
+            stmt = stmt.where(DictionaryEntityTypeModel.is_active.is_(True))
         if domain_context is not None:
             stmt = stmt.where(
                 DictionaryEntityTypeModel.domain_context == domain_context,
@@ -707,9 +741,19 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         models = self._session.scalars(stmt).all()
         return [DictionaryEntityType.model_validate(model) for model in models]
 
-    def get_entity_type(self, entity_type_id: str) -> DictionaryEntityType | None:
+    def get_entity_type(
+        self,
+        entity_type_id: str,
+        *,
+        include_inactive: bool = False,
+    ) -> DictionaryEntityType | None:
         normalized_entity_type = entity_type_id.strip().upper()
-        model = self._session.get(DictionaryEntityTypeModel, normalized_entity_type)
+        stmt = select(DictionaryEntityTypeModel).where(
+            DictionaryEntityTypeModel.id == normalized_entity_type,
+        )
+        if not include_inactive:
+            stmt = stmt.where(DictionaryEntityTypeModel.is_active.is_(True))
+        model = self._session.scalars(stmt).first()
         return DictionaryEntityType.model_validate(model) if model is not None else None
 
     def set_entity_type_review_status(
@@ -730,9 +774,14 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         model.review_status = review_status
         model.reviewed_by = reviewed_by
         model.reviewed_at = datetime.now(UTC)
-        model.revocation_reason = (
-            revocation_reason if review_status == "REVOKED" else None
-        )
+        if review_status == "REVOKED":
+            model.is_active = False
+            model.valid_to = datetime.now(UTC)
+            model.revocation_reason = revocation_reason
+        else:
+            model.is_active = True
+            model.valid_to = None
+            model.revocation_reason = None
         self._session.flush()
         self._record_change(
             table_name=DictionaryEntityTypeModel.__tablename__,
@@ -843,8 +892,11 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         self,
         *,
         domain_context: str | None = None,
+        include_inactive: bool = False,
     ) -> list[DictionaryRelationType]:
         stmt = select(DictionaryRelationTypeModel)
+        if not include_inactive:
+            stmt = stmt.where(DictionaryRelationTypeModel.is_active.is_(True))
         if domain_context is not None:
             stmt = stmt.where(
                 DictionaryRelationTypeModel.domain_context == domain_context,
@@ -856,9 +908,16 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
     def get_relation_type(
         self,
         relation_type_id: str,
+        *,
+        include_inactive: bool = False,
     ) -> DictionaryRelationType | None:
         normalized_relation_type = relation_type_id.strip().upper()
-        model = self._session.get(DictionaryRelationTypeModel, normalized_relation_type)
+        stmt = select(DictionaryRelationTypeModel).where(
+            DictionaryRelationTypeModel.id == normalized_relation_type,
+        )
+        if not include_inactive:
+            stmt = stmt.where(DictionaryRelationTypeModel.is_active.is_(True))
+        model = self._session.scalars(stmt).first()
         return (
             DictionaryRelationType.model_validate(model) if model is not None else None
         )
@@ -881,9 +940,14 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         model.review_status = review_status
         model.reviewed_by = reviewed_by
         model.reviewed_at = datetime.now(UTC)
-        model.revocation_reason = (
-            revocation_reason if review_status == "REVOKED" else None
-        )
+        if review_status == "REVOKED":
+            model.is_active = False
+            model.valid_to = datetime.now(UTC)
+            model.revocation_reason = revocation_reason
+        else:
+            model.is_active = True
+            model.valid_to = None
+            model.revocation_reason = None
         self._session.flush()
         self._record_change(
             table_name=DictionaryRelationTypeModel.__tablename__,
@@ -927,7 +991,7 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         models = self._session.scalars(stmt).all()
         return [DictionaryChangelog.model_validate(model) for model in models]
 
-    def search_dictionary(
+    def search_dictionary(  # noqa: PLR0913
         self,
         *,
         terms: list[str],
@@ -935,6 +999,7 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         domain_context: str | None = None,
         limit: int = 50,
         query_embeddings: dict[str, list[float]] | None = None,
+        include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
         return search_dictionary_entries(
             self._session,
@@ -943,6 +1008,7 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             domain_context=domain_context,
             limit=limit,
             query_embeddings=query_embeddings,
+            include_inactive=include_inactive,
         )
 
     def search_dictionary_by_domain(
@@ -950,11 +1016,13 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         *,
         domain_context: str,
         limit: int = 50,
+        include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
         return search_dictionary_entries_by_domain(
             self._session,
             domain_context=domain_context,
             limit=limit,
+            include_inactive=include_inactive,
         )
 
     # ── Relation constraints ──────────────────────────────────────────
@@ -1012,8 +1080,11 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         *,
         source_type: str | None = None,
         relation_type: str | None = None,
+        include_inactive: bool = False,
     ) -> list[RelationConstraint]:
         stmt = select(RelationConstraintModel)
+        if not include_inactive:
+            stmt = stmt.where(RelationConstraintModel.is_active.is_(True))
         if source_type is not None:
             stmt = stmt.where(RelationConstraintModel.source_type == source_type)
         if relation_type is not None:
@@ -1036,6 +1107,7 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
                 RelationConstraintModel.target_type == target_type,
                 RelationConstraintModel.is_allowed.is_(True),
                 RelationConstraintModel.review_status == "ACTIVE",
+                RelationConstraintModel.is_active.is_(True),
             ),
         )
         return self._session.scalars(stmt).first() is not None
@@ -1052,6 +1124,7 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
                 RelationConstraintModel.relation_type == relation_type,
                 RelationConstraintModel.target_type == target_type,
                 RelationConstraintModel.review_status == "ACTIVE",
+                RelationConstraintModel.is_active.is_(True),
             ),
         )
         constraint = self._session.scalars(stmt).first()
@@ -1066,6 +1139,8 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         self,
         input_unit: str,
         output_unit: str,
+        *,
+        include_inactive: bool = False,
     ) -> TransformRegistry | None:
         stmt = select(TransformRegistryModel).where(
             and_(
@@ -1074,6 +1149,8 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
                 TransformRegistryModel.status == "ACTIVE",
             ),
         )
+        if not include_inactive:
+            stmt = stmt.where(TransformRegistryModel.is_active.is_(True))
         model = self._session.scalars(stmt).first()
         return TransformRegistry.model_validate(model) if model is not None else None
 
@@ -1081,14 +1158,141 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         self,
         *,
         status: str = "ACTIVE",
+        include_inactive: bool = False,
     ) -> list[TransformRegistry]:
         stmt = select(TransformRegistryModel).where(
             TransformRegistryModel.status == status,
         )
+        if not include_inactive:
+            stmt = stmt.where(TransformRegistryModel.is_active.is_(True))
         return [
             TransformRegistry.model_validate(model)
             for model in self._session.scalars(stmt).all()
         ]
+
+    def merge_variable_definition(
+        self,
+        source_variable_id: str,
+        target_variable_id: str,
+        *,
+        reason: str,
+        reviewed_by: str | None = None,
+    ) -> VariableDefinition:
+        source = self._session.get(VariableDefinitionModel, source_variable_id)
+        if source is None:
+            msg = f"Variable '{source_variable_id}' not found"
+            raise ValueError(msg)
+        target = self._session.get(VariableDefinitionModel, target_variable_id)
+        if target is None:
+            msg = f"Variable '{target_variable_id}' not found"
+            raise ValueError(msg)
+        if not target.is_active:
+            msg = f"Variable '{target_variable_id}' must be active for merge"
+            raise ValueError(msg)
+
+        before_snapshot = _snapshot_model(source)
+        source.review_status = "REVOKED"
+        source.reviewed_by = reviewed_by
+        source.reviewed_at = datetime.now(UTC)
+        source.revocation_reason = reason
+        source.is_active = False
+        source.valid_to = datetime.now(UTC)
+        source.superseded_by = target.id
+        self._session.flush()
+        self._record_change(
+            table_name=VariableDefinitionModel.__tablename__,
+            record_id=source.id,
+            action="MERGE",
+            before_snapshot=before_snapshot,
+            after_snapshot=_snapshot_model(source),
+            changed_by=reviewed_by,
+            source_ref=source.source_ref,
+        )
+        return VariableDefinition.model_validate(source)
+
+    def merge_entity_type(
+        self,
+        source_entity_type_id: str,
+        target_entity_type_id: str,
+        *,
+        reason: str,
+        reviewed_by: str | None = None,
+    ) -> DictionaryEntityType:
+        normalized_source = source_entity_type_id.strip().upper()
+        normalized_target = target_entity_type_id.strip().upper()
+        source = self._session.get(DictionaryEntityTypeModel, normalized_source)
+        if source is None:
+            msg = f"Entity type '{source_entity_type_id}' not found"
+            raise ValueError(msg)
+        target = self._session.get(DictionaryEntityTypeModel, normalized_target)
+        if target is None:
+            msg = f"Entity type '{target_entity_type_id}' not found"
+            raise ValueError(msg)
+        if not target.is_active:
+            msg = f"Entity type '{target_entity_type_id}' must be active for merge"
+            raise ValueError(msg)
+
+        before_snapshot = _snapshot_model(source)
+        source.review_status = "REVOKED"
+        source.reviewed_by = reviewed_by
+        source.reviewed_at = datetime.now(UTC)
+        source.revocation_reason = reason
+        source.is_active = False
+        source.valid_to = datetime.now(UTC)
+        source.superseded_by = target.id
+        self._session.flush()
+        self._record_change(
+            table_name=DictionaryEntityTypeModel.__tablename__,
+            record_id=source.id,
+            action="MERGE",
+            before_snapshot=before_snapshot,
+            after_snapshot=_snapshot_model(source),
+            changed_by=reviewed_by,
+            source_ref=source.source_ref,
+        )
+        return DictionaryEntityType.model_validate(source)
+
+    def merge_relation_type(
+        self,
+        source_relation_type_id: str,
+        target_relation_type_id: str,
+        *,
+        reason: str,
+        reviewed_by: str | None = None,
+    ) -> DictionaryRelationType:
+        normalized_source = source_relation_type_id.strip().upper()
+        normalized_target = target_relation_type_id.strip().upper()
+        source = self._session.get(DictionaryRelationTypeModel, normalized_source)
+        if source is None:
+            msg = f"Relation type '{source_relation_type_id}' not found"
+            raise ValueError(msg)
+        target = self._session.get(DictionaryRelationTypeModel, normalized_target)
+        if target is None:
+            msg = f"Relation type '{target_relation_type_id}' not found"
+            raise ValueError(msg)
+        if not target.is_active:
+            msg = f"Relation type '{target_relation_type_id}' must be active for merge"
+            raise ValueError(msg)
+
+        before_snapshot = _snapshot_model(source)
+        source.review_status = "REVOKED"
+        source.reviewed_by = reviewed_by
+        source.reviewed_at = datetime.now(UTC)
+        source.revocation_reason = reason
+        source.is_active = False
+        source.valid_to = datetime.now(UTC)
+        source.superseded_by = target.id
+        self._session.flush()
+        self._record_change(
+            table_name=DictionaryRelationTypeModel.__tablename__,
+            record_id=source.id,
+            action="MERGE",
+            before_snapshot=before_snapshot,
+            after_snapshot=_snapshot_model(source),
+            changed_by=reviewed_by,
+            source_ref=source.source_ref,
+        )
+        return DictionaryRelationType.model_validate(source)
 
 
 __all__ = ["SqlAlchemyDictionaryRepository"]

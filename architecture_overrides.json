@@ -14,8 +14,8 @@
     },
     {
       "path": "src/infrastructure/repositories/kernel/kernel_dictionary_repository.py",
-      "max_lines": 1200,
-      "reason": "Repository extraction by concern (search/create/governance) is tracked as follow-up refactor work.",
+      "max_lines": 1400,
+      "reason": "Phase 6 versioning/validity additions expanded repository methods; extraction by concern (search/create/governance/versioning) remains tracked follow-up work.",
       "expires_on": "2026-12-31"
     },
     {
@@ -32,8 +32,8 @@
     },
     {
       "path": "src/application/services/kernel/dictionary_management_service.py",
-      "max_lines": 1050,
-      "reason": "Service is intentionally centralized while semantic layer APIs are still being finalized.",
+      "max_lines": 1200,
+      "reason": "Phase 6 merge/versioning and inactive-filter support increased service surface while semantic layer APIs remain centralized.",
       "expires_on": "2026-12-31"
     },
     {
@@ -44,8 +44,8 @@
     },
     {
       "path": "src/models/database/kernel/dictionary.py",
-      "max_lines": 1000,
-      "reason": "Dictionary ORM model breakup is deferred to the schema package reorganization effort.",
+      "max_lines": 1200,
+      "reason": "Dictionary ORM includes expanded versioning/validity fields across multiple tables; model breakup is deferred to schema package reorganization.",
       "expires_on": "2026-12-31"
     }
   ],

@@ -25,6 +25,10 @@ class VariableSynonym(BaseModel):
     synonym: str = Field(..., min_length=1, max_length=255)
     source: str | None = Field(None, max_length=64)
     created_by: str = Field(default="seed", min_length=1, max_length=128)
+    is_active: bool = True
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    superseded_by: str | None = Field(default=None, max_length=64)
     source_ref: str | None = Field(default=None, max_length=1024)
     review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
     reviewed_by: str | None = Field(default=None, max_length=128)
@@ -52,6 +56,10 @@ class VariableDefinition(BaseModel):
     embedded_at: datetime | None = None
     embedding_model: str | None = Field(default=None, max_length=64)
     created_by: str = Field(default="seed", min_length=1, max_length=128)
+    is_active: bool = True
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    superseded_by: str | None = Field(default=None, max_length=64)
     source_ref: str | None = Field(default=None, max_length=1024)
     review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
     reviewed_by: str | None = Field(default=None, max_length=128)
@@ -114,6 +122,10 @@ class DictionaryEntityType(BaseModel):
     embedded_at: datetime | None = None
     embedding_model: str | None = Field(default=None, max_length=64)
     created_by: str = Field(default="seed", min_length=1, max_length=128)
+    is_active: bool = True
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    superseded_by: str | None = Field(default=None, max_length=64)
     source_ref: str | None = Field(default=None, max_length=1024)
     review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
     reviewed_by: str | None = Field(default=None, max_length=128)
@@ -138,6 +150,10 @@ class DictionaryRelationType(BaseModel):
     embedded_at: datetime | None = None
     embedding_model: str | None = Field(default=None, max_length=64)
     created_by: str = Field(default="seed", min_length=1, max_length=128)
+    is_active: bool = True
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    superseded_by: str | None = Field(default=None, max_length=64)
     source_ref: str | None = Field(default=None, max_length=1024)
     review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
     reviewed_by: str | None = Field(default=None, max_length=128)
@@ -235,6 +251,10 @@ class TransformRegistry(BaseModel):
     implementation_ref: str = Field(..., min_length=1, max_length=255)
     status: str = Field(..., min_length=1, max_length=32)
     created_by: str = Field(default="seed", min_length=1, max_length=128)
+    is_active: bool = True
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    superseded_by: str | None = Field(default=None, max_length=64)
     source_ref: str | None = Field(default=None, max_length=1024)
     review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
     reviewed_by: str | None = Field(default=None, max_length=128)
@@ -254,6 +274,10 @@ class EntityResolutionPolicy(BaseModel):
     required_anchors: list[str] = Field(default_factory=list)
     auto_merge_threshold: float = Field(default=1.0, ge=0.0)
     created_by: str = Field(default="seed", min_length=1, max_length=128)
+    is_active: bool = True
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    superseded_by: str | None = Field(default=None, max_length=64)
     source_ref: str | None = Field(default=None, max_length=1024)
     review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
     reviewed_by: str | None = Field(default=None, max_length=128)
@@ -275,6 +299,10 @@ class RelationConstraint(BaseModel):
     is_allowed: bool
     requires_evidence: bool
     created_by: str = Field(default="seed", min_length=1, max_length=128)
+    is_active: bool = True
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    superseded_by: str | None = Field(default=None, max_length=64)
     source_ref: str | None = Field(default=None, max_length=1024)
     review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
     reviewed_by: str | None = Field(default=None, max_length=128)

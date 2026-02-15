@@ -768,6 +768,21 @@ def test_list_changelog_entries_delegates_to_repository(
     )
 
 
+def test_list_variables_passes_include_inactive_flag(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.find_variables.return_value = [_build_variable()]
+
+    service.list_variables(include_inactive=True)
+
+    dictionary_repo.find_variables.assert_called_once_with(
+        domain_context=None,
+        data_type=None,
+        include_inactive=True,
+    )
+
+
 def test_dictionary_search_adds_query_embeddings(
     service: DictionaryManagementService,
     dictionary_repo: Mock,
@@ -784,6 +799,151 @@ def test_dictionary_search_adds_query_embeddings(
     called_kwargs = dictionary_repo.search_dictionary.call_args.kwargs
     assert called_kwargs["query_embeddings"] is not None
     assert "test variable" in called_kwargs["query_embeddings"]
+
+
+def test_dictionary_search_passes_include_inactive_flag(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.search_dictionary.return_value = [_build_search_result()]
+
+    service.dictionary_search(
+        terms=["Test Variable"],
+        include_inactive=True,
+    )
+
+    called_kwargs = dictionary_repo.search_dictionary.call_args.kwargs
+    assert called_kwargs["include_inactive"] is True
+
+
+def test_set_entity_type_review_status_queries_inactive_records(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.get_entity_type.return_value = _build_entity_type(
+        review_status="REVOKED",
+    )
+    dictionary_repo.set_entity_type_review_status.return_value = _build_entity_type(
+        review_status="ACTIVE",
+    )
+
+    service.set_entity_type_review_status(
+        "GENE",
+        review_status="ACTIVE",
+        reviewed_by="manual:user-123",
+    )
+
+    dictionary_repo.get_entity_type.assert_called_once_with(
+        "GENE",
+        include_inactive=True,
+    )
+
+
+def test_set_relation_type_review_status_queries_inactive_records(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.get_relation_type.return_value = _build_relation_type(
+        review_status="REVOKED",
+    )
+    dictionary_repo.set_relation_type_review_status.return_value = _build_relation_type(
+        review_status="ACTIVE",
+    )
+
+    service.set_relation_type_review_status(
+        "ASSOCIATED_WITH",
+        review_status="ACTIVE",
+        reviewed_by="manual:user-123",
+    )
+
+    dictionary_repo.get_relation_type.assert_called_once_with(
+        "ASSOCIATED_WITH",
+        include_inactive=True,
+    )
+
+
+def test_merge_variable_definition_delegates_with_validation(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.merge_variable_definition.return_value = _build_variable(
+        review_status="REVOKED",
+    )
+
+    merged = service.merge_variable_definition(
+        "VAR_SOURCE",
+        "VAR_TARGET",
+        reason="Canonical consolidation",
+        reviewed_by="manual:user-123",
+    )
+
+    assert merged.review_status == "REVOKED"
+    dictionary_repo.merge_variable_definition.assert_called_once_with(
+        "VAR_SOURCE",
+        "VAR_TARGET",
+        reason="Canonical consolidation",
+        reviewed_by="manual:user-123",
+    )
+
+
+def test_merge_variable_definition_requires_distinct_ids(
+    service: DictionaryManagementService,
+) -> None:
+    with pytest.raises(ValueError, match="must differ"):
+        service.merge_variable_definition(
+            "VAR_SAME",
+            "VAR_SAME",
+            reason="Invalid merge",
+            reviewed_by="manual:user-123",
+        )
+
+
+def test_merge_entity_type_delegates_with_validation(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.merge_entity_type.return_value = _build_entity_type(
+        review_status="REVOKED",
+    )
+
+    merged = service.merge_entity_type(
+        "ENTITY_A",
+        "ENTITY_B",
+        reason="Canonical consolidation",
+        reviewed_by="manual:user-123",
+    )
+
+    assert merged.review_status == "REVOKED"
+    dictionary_repo.merge_entity_type.assert_called_once_with(
+        "ENTITY_A",
+        "ENTITY_B",
+        reason="Canonical consolidation",
+        reviewed_by="manual:user-123",
+    )
+
+
+def test_merge_relation_type_delegates_with_validation(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.merge_relation_type.return_value = _build_relation_type(
+        review_status="REVOKED",
+    )
+
+    merged = service.merge_relation_type(
+        "REL_A",
+        "REL_B",
+        reason="Canonical consolidation",
+        reviewed_by="manual:user-123",
+    )
+
+    assert merged.review_status == "REVOKED"
+    dictionary_repo.merge_relation_type.assert_called_once_with(
+        "REL_A",
+        "REL_B",
+        reason="Canonical consolidation",
+        reviewed_by="manual:user-123",
+    )
 
 
 def test_reembed_descriptions_updates_all_supported_dimensions(

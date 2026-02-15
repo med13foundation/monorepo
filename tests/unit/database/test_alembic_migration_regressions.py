@@ -14,7 +14,7 @@ from uuid import uuid4
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_HEAD_REVISION = "013_dictionary_embeddings"
+EXPECTED_HEAD_REVISION = "014_dict_version_validity"
 LEGACY_REVISION_ALIAS = "004_relation_evidence_and_extraction_queue_contract"
 ROLLOUT_MARKER_REVISION = "005_rel_evidence_rollout_marker"
 RAW_STORAGE_KEY_VALUE = "raw/clinvar/variant-1001.json"

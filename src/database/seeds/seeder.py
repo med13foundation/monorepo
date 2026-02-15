@@ -47,8 +47,8 @@ def _humanize(identifier: str) -> str:
 
 
 def _table_exists(session: Session, table_name: str) -> bool:
-    bind = session.get_bind()
-    return inspect(bind).has_table(table_name)
+    connection = session.connection()
+    return inspect(connection).has_table(table_name)
 
 
 def _ensure_data_type_reference(session: Session, data_type: str) -> None:

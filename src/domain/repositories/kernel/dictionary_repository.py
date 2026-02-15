@@ -50,6 +50,7 @@ class DictionaryRepository(ABC):
         *,
         domain_context: str | None = None,
         data_type: str | None = None,
+        include_inactive: bool = False,
     ) -> list[VariableDefinition]:
         """List variable definitions, optionally filtered by domain and/or type."""
 
@@ -57,6 +58,8 @@ class DictionaryRepository(ABC):
     def find_variable_by_synonym(
         self,
         synonym: str,
+        *,
+        include_inactive: bool = False,
     ) -> VariableDefinition | None:
         """
         Resolve a field name to its canonical variable definition.
@@ -205,11 +208,17 @@ class DictionaryRepository(ABC):
     def get_resolution_policy(
         self,
         entity_type: str,
+        *,
+        include_inactive: bool = False,
     ) -> EntityResolutionPolicy | None:
         """Get the resolution policy for a given entity type."""
 
     @abstractmethod
-    def find_resolution_policies(self) -> list[EntityResolutionPolicy]:
+    def find_resolution_policies(
+        self,
+        *,
+        include_inactive: bool = False,
+    ) -> list[EntityResolutionPolicy]:
         """List all entity resolution policies."""
 
     @abstractmethod
@@ -249,11 +258,17 @@ class DictionaryRepository(ABC):
         self,
         *,
         domain_context: str | None = None,
+        include_inactive: bool = False,
     ) -> list[DictionaryEntityType]:
         """List entity types with optional domain filtering."""
 
     @abstractmethod
-    def get_entity_type(self, entity_type_id: str) -> DictionaryEntityType | None:
+    def get_entity_type(
+        self,
+        entity_type_id: str,
+        *,
+        include_inactive: bool = False,
+    ) -> DictionaryEntityType | None:
         """Retrieve a single dictionary entity type by ID."""
 
     @abstractmethod
@@ -314,6 +329,7 @@ class DictionaryRepository(ABC):
         self,
         *,
         domain_context: str | None = None,
+        include_inactive: bool = False,
     ) -> list[DictionaryRelationType]:
         """List relation types with optional domain filtering."""
 
@@ -321,6 +337,8 @@ class DictionaryRepository(ABC):
     def get_relation_type(
         self,
         relation_type_id: str,
+        *,
+        include_inactive: bool = False,
     ) -> DictionaryRelationType | None:
         """Retrieve a single dictionary relation type by ID."""
 
@@ -356,7 +374,7 @@ class DictionaryRepository(ABC):
         """List changelog entries with optional table/record filters."""
 
     @abstractmethod
-    def search_dictionary(
+    def search_dictionary(  # noqa: PLR0913
         self,
         *,
         terms: list[str],
@@ -364,6 +382,7 @@ class DictionaryRepository(ABC):
         domain_context: str | None = None,
         limit: int = 50,
         query_embeddings: dict[str, list[float]] | None = None,
+        include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
         """Search dictionary dimensions with exact/fuzzy/vector matching."""
 
@@ -373,6 +392,7 @@ class DictionaryRepository(ABC):
         *,
         domain_context: str,
         limit: int = 50,
+        include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
         """List dictionary entries scoped to a single domain context."""
 
@@ -399,6 +419,7 @@ class DictionaryRepository(ABC):
         *,
         source_type: str | None = None,
         relation_type: str | None = None,
+        include_inactive: bool = False,
     ) -> list[RelationConstraint]:
         """List relation constraints, optionally filtered."""
 
@@ -427,6 +448,8 @@ class DictionaryRepository(ABC):
         self,
         input_unit: str,
         output_unit: str,
+        *,
+        include_inactive: bool = False,
     ) -> TransformRegistry | None:
         """Find a unit transformation between input and output units."""
 
@@ -435,8 +458,42 @@ class DictionaryRepository(ABC):
         self,
         *,
         status: str = "ACTIVE",
+        include_inactive: bool = False,
     ) -> list[TransformRegistry]:
         """List all transforms, optionally filtered by status."""
+
+    @abstractmethod
+    def merge_variable_definition(
+        self,
+        source_variable_id: str,
+        target_variable_id: str,
+        *,
+        reason: str,
+        reviewed_by: str | None = None,
+    ) -> VariableDefinition:
+        """Supersede one variable definition with another and record lineage."""
+
+    @abstractmethod
+    def merge_entity_type(
+        self,
+        source_entity_type_id: str,
+        target_entity_type_id: str,
+        *,
+        reason: str,
+        reviewed_by: str | None = None,
+    ) -> DictionaryEntityType:
+        """Supersede one entity type with another and record lineage."""
+
+    @abstractmethod
+    def merge_relation_type(
+        self,
+        source_relation_type_id: str,
+        target_relation_type_id: str,
+        *,
+        reason: str,
+        reviewed_by: str | None = None,
+    ) -> DictionaryRelationType:
+        """Supersede one relation type with another and record lineage."""
 
 
 __all__ = ["DictionaryRepository"]

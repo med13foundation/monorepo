@@ -35,11 +35,17 @@ class DictionaryPort(ABC):
         *,
         domain_context: str | None = None,
         data_type: str | None = None,
+        include_inactive: bool = False,
     ) -> list[VariableDefinition]:
         """List variable definitions with optional filters."""
 
     @abstractmethod
-    def resolve_synonym(self, synonym: str) -> VariableDefinition | None:
+    def resolve_synonym(
+        self,
+        synonym: str,
+        *,
+        include_inactive: bool = False,
+    ) -> VariableDefinition | None:
         """Resolve a synonym to its canonical variable definition."""
 
     @abstractmethod
@@ -168,6 +174,7 @@ class DictionaryPort(ABC):
         dimensions: list[str] | None = None,
         domain_context: str | None = None,
         limit: int = 50,
+        include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
         """Search dictionary entries across semantic dimensions."""
 
@@ -177,6 +184,7 @@ class DictionaryPort(ABC):
         *,
         domain_context: str,
         limit: int = 50,
+        include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
         """List dictionary entries filtered by domain context."""
 
@@ -230,6 +238,7 @@ class DictionaryPort(ABC):
         *,
         source_type: str | None = None,
         relation_type: str | None = None,
+        include_inactive: bool = False,
     ) -> list[RelationConstraint]:
         """List relation constraints."""
 
@@ -237,11 +246,17 @@ class DictionaryPort(ABC):
     def get_resolution_policy(
         self,
         entity_type: str,
+        *,
+        include_inactive: bool = False,
     ) -> EntityResolutionPolicy | None:
         """Return the deduplication policy for an entity type."""
 
     @abstractmethod
-    def list_resolution_policies(self) -> list[EntityResolutionPolicy]:
+    def list_resolution_policies(
+        self,
+        *,
+        include_inactive: bool = False,
+    ) -> list[EntityResolutionPolicy]:
         """List all entity-resolution policies."""
 
     @abstractmethod
@@ -265,6 +280,7 @@ class DictionaryPort(ABC):
         self,
         *,
         domain_context: str | None = None,
+        include_inactive: bool = False,
     ) -> list[DictionaryEntityType]:
         """List dictionary entity types."""
 
@@ -272,6 +288,8 @@ class DictionaryPort(ABC):
     def get_entity_type(
         self,
         entity_type_id: str,
+        *,
+        include_inactive: bool = False,
     ) -> DictionaryEntityType | None:
         """Return a dictionary entity type by ID."""
 
@@ -317,6 +335,7 @@ class DictionaryPort(ABC):
         self,
         *,
         domain_context: str | None = None,
+        include_inactive: bool = False,
     ) -> list[DictionaryRelationType]:
         """List dictionary relation types."""
 
@@ -324,6 +343,8 @@ class DictionaryPort(ABC):
     def get_relation_type(
         self,
         relation_type_id: str,
+        *,
+        include_inactive: bool = False,
     ) -> DictionaryRelationType | None:
         """Return a dictionary relation type by ID."""
 
@@ -363,6 +384,8 @@ class DictionaryPort(ABC):
         self,
         input_unit: str,
         output_unit: str,
+        *,
+        include_inactive: bool = False,
     ) -> TransformRegistry | None:
         """Return an active transform for the given unit pair."""
 
@@ -371,5 +394,39 @@ class DictionaryPort(ABC):
         self,
         *,
         status: str = "ACTIVE",
+        include_inactive: bool = False,
     ) -> list[TransformRegistry]:
         """List transforms filtered by status."""
+
+    @abstractmethod
+    def merge_variable_definition(
+        self,
+        source_variable_id: str,
+        target_variable_id: str,
+        *,
+        reason: str,
+        reviewed_by: str,
+    ) -> VariableDefinition:
+        """Supersede one variable with another while preserving audit lineage."""
+
+    @abstractmethod
+    def merge_entity_type(
+        self,
+        source_entity_type_id: str,
+        target_entity_type_id: str,
+        *,
+        reason: str,
+        reviewed_by: str,
+    ) -> DictionaryEntityType:
+        """Supersede one entity type with another while preserving audit lineage."""
+
+    @abstractmethod
+    def merge_relation_type(
+        self,
+        source_relation_type_id: str,
+        target_relation_type_id: str,
+        *,
+        reason: str,
+        reviewed_by: str,
+    ) -> DictionaryRelationType:
+        """Supersede one relation type with another while preserving audit lineage."""
