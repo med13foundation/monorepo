@@ -38,6 +38,8 @@ export function VariablesTableCard({ variables, error }: VariablesTableCardProps
                 <TableHead>Type</TableHead>
                 <TableHead>Domain</TableHead>
                 <TableHead>Sensitivity</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Active</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -52,6 +54,14 @@ export function VariablesTableCard({ variables, error }: VariablesTableCardProps
                   <TableCell>{v.domain_context}</TableCell>
                   <TableCell>
                     <Badge variant="secondary">{v.sensitivity}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{v.review_status}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={v.is_active ? 'default' : 'secondary'}>
+                      {v.is_active ? 'YES' : 'NO'}
+                    </Badge>
                   </TableCell>
                 </TableRow>
               ))}

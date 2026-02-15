@@ -141,6 +141,61 @@ export interface KernelGraphExportResponse {
   edges: KernelRelationResponse[]
 }
 
+export interface GraphSearchRequest {
+  question: string
+  max_depth?: number
+  top_k?: number
+  include_evidence_chains?: boolean
+  force_agent?: boolean
+}
+
+export interface GraphSearchEvidenceItem {
+  source_type: 'tool' | 'db' | 'paper' | 'web' | 'note' | 'api'
+  locator: string
+  excerpt: string
+  relevance: number
+}
+
+export interface GraphSearchEvidenceChainItem {
+  provenance_id: string | null
+  relation_id: string | null
+  observation_id: string | null
+  evidence_tier: string | null
+  confidence: number | null
+  source_ref: string | null
+}
+
+export interface GraphSearchResultEntry {
+  entity_id: string
+  entity_type: string
+  display_label: string | null
+  relevance_score: number
+  matching_observation_ids: string[]
+  matching_relation_ids: string[]
+  evidence_chain: GraphSearchEvidenceChainItem[]
+  explanation: string
+  support_summary: string
+}
+
+export type GraphSearchDecision = 'generated' | 'fallback' | 'escalate'
+export type GraphSearchExecutedPath = 'deterministic' | 'agent' | 'agent_fallback'
+
+export interface GraphSearchResponse {
+  confidence_score: number
+  rationale: string
+  evidence: GraphSearchEvidenceItem[]
+  decision: GraphSearchDecision
+  research_space_id: string
+  original_query: string
+  interpreted_intent: string
+  query_plan_summary: string
+  total_results: number
+  results: GraphSearchResultEntry[]
+  executed_path: GraphSearchExecutedPath
+  warnings: string[]
+  agent_run_id: string | null
+}
+
 export type SpaceSourceRunStatus = 'completed' | 'skipped' | 'failed'
 
 export interface SpaceSourceIngestionRunResponse {

@@ -10,6 +10,7 @@ export type KernelDataType =
   | 'JSON'
 
 export type KernelSensitivity = 'PUBLIC' | 'INTERNAL' | 'PHI'
+export type KernelReviewStatus = 'ACTIVE' | 'PENDING_REVIEW' | 'REVOKED'
 
 export interface VariableDefinitionCreateRequest {
   id: string
@@ -33,6 +34,16 @@ export interface VariableDefinitionResponse {
   domain_context: string
   sensitivity: KernelSensitivity
   description: string | null
+  created_by: string
+  is_active: boolean
+  valid_from: string | null
+  valid_to: string | null
+  superseded_by: string | null
+  source_ref: string | null
+  review_status: KernelReviewStatus
+  reviewed_by: string | null
+  reviewed_at: string | null
+  revocation_reason: string | null
   created_at: string
   updated_at: string
 }
@@ -62,6 +73,16 @@ export interface EntityResolutionPolicyResponse {
   policy_strategy: string
   required_anchors: string[]
   auto_merge_threshold: number
+  created_by: string
+  is_active: boolean
+  valid_from: string | null
+  valid_to: string | null
+  superseded_by: string | null
+  source_ref: string | null
+  review_status: KernelReviewStatus
+  reviewed_by: string | null
+  reviewed_at: string | null
+  revocation_reason: string | null
   created_at: string
   updated_at: string
 }
@@ -78,6 +99,16 @@ export interface RelationConstraintResponse {
   target_type: string
   is_allowed: boolean
   requires_evidence: boolean
+  created_by: string
+  is_active: boolean
+  valid_from: string | null
+  valid_to: string | null
+  superseded_by: string | null
+  source_ref: string | null
+  review_status: KernelReviewStatus
+  reviewed_by: string | null
+  reviewed_at: string | null
+  revocation_reason: string | null
   created_at: string
   updated_at: string
 }
@@ -85,4 +116,65 @@ export interface RelationConstraintResponse {
 export interface RelationConstraintListResponse {
   constraints: RelationConstraintResponse[]
   total: number
+}
+
+export interface DictionaryEntityTypeResponse {
+  id: string
+  display_name: string
+  description: string
+  domain_context: string
+  external_ontology_ref: string | null
+  expected_properties: JSONObject
+  created_by: string
+  is_active: boolean
+  valid_from: string | null
+  valid_to: string | null
+  superseded_by: string | null
+  source_ref: string | null
+  review_status: KernelReviewStatus
+  reviewed_by: string | null
+  reviewed_at: string | null
+  revocation_reason: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DictionaryEntityTypeListResponse {
+  entity_types: DictionaryEntityTypeResponse[]
+  total: number
+}
+
+export interface DictionaryRelationTypeResponse {
+  id: string
+  display_name: string
+  description: string
+  domain_context: string
+  is_directional: boolean
+  inverse_label: string | null
+  created_by: string
+  is_active: boolean
+  valid_from: string | null
+  valid_to: string | null
+  superseded_by: string | null
+  source_ref: string | null
+  review_status: KernelReviewStatus
+  reviewed_by: string | null
+  reviewed_at: string | null
+  revocation_reason: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DictionaryRelationTypeListResponse {
+  relation_types: DictionaryRelationTypeResponse[]
+  total: number
+}
+
+export interface DictionaryMergeRequest {
+  target_id: string
+  reason: string
+}
+
+export interface DictionaryRevokeRequest {
+  reason: string
 }

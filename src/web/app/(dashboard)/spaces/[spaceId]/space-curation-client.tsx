@@ -28,6 +28,8 @@ interface SpaceCurationClientProps {
   }
 }
 
+const ALL_CURATION_STATUSES = '__all__'
+
 function truncate(value: string, maxLen: number): string {
   if (value.length <= maxLen) {
     return value
@@ -44,7 +46,9 @@ export default function SpaceCurationClient({
 }: SpaceCurationClientProps) {
   const router = useRouter()
   const [relationType, setRelationType] = useState(filters.relationType)
-  const [curationStatus, setCurationStatus] = useState(filters.curationStatus)
+  const [curationStatus, setCurationStatus] = useState(
+    filters.curationStatus || ALL_CURATION_STATUSES,
+  )
   const [pendingRelationId, setPendingRelationId] = useState<string | null>(null)
 
   const rows = useMemo(() => relations?.relations ?? [], [relations?.relations])
@@ -74,7 +78,7 @@ export default function SpaceCurationClient({
               variant="outline"
               onClick={() => {
                 setRelationType('')
-                setCurationStatus('')
+                setCurationStatus(ALL_CURATION_STATUSES)
                 router.push(`/spaces/${spaceId}/curation`)
               }}
             >
@@ -84,7 +88,10 @@ export default function SpaceCurationClient({
               onClick={() => {
                 const params = new URLSearchParams()
                 const relTrim = relationType.trim()
-                const statusTrim = curationStatus.trim()
+                const statusTrim =
+                  curationStatus === ALL_CURATION_STATUSES
+                    ? ''
+                    : curationStatus.trim()
                 if (relTrim) params.set('relation_type', relTrim)
                 if (statusTrim) params.set('curation_status', statusTrim)
                 router.push(
@@ -118,7 +125,7 @@ export default function SpaceCurationClient({
                     <SelectValue placeholder="All statuses" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All</SelectItem>
+                    <SelectItem value={ALL_CURATION_STATUSES}>All</SelectItem>
                     {(['DRAFT', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'RETRACTED'] as const).map((s) => (
                       <SelectItem key={s} value={s}>
                         {s}

@@ -1,5 +1,11 @@
-import { apiGet, apiPost, type ApiRequestOptions } from '@/lib/api/client'
+import { apiGet, apiPatch, apiPost, type ApiRequestOptions } from '@/lib/api/client'
 import type {
+  DictionaryEntityTypeListResponse,
+  DictionaryEntityTypeResponse,
+  DictionaryMergeRequest,
+  DictionaryRelationTypeListResponse,
+  DictionaryRelationTypeResponse,
+  DictionaryRevokeRequest,
   EntityResolutionPolicyListResponse,
   RelationConstraintListResponse,
   TransformRegistryListResponse,
@@ -86,4 +92,152 @@ export async function fetchDictionaryRelationConstraints(
   }
 
   return apiGet<RelationConstraintListResponse>('/admin/dictionary/relation-constraints', options)
+}
+
+export async function fetchDictionaryEntityTypes(
+  params: { domain_context?: string } = {},
+  token?: string,
+): Promise<DictionaryEntityTypeListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchDictionaryEntityTypes')
+  }
+
+  const options: ApiRequestOptions<DictionaryEntityTypeListResponse> = {
+    token,
+    params: {
+      ...(params.domain_context ? { domain_context: params.domain_context } : {}),
+    },
+  }
+
+  return apiGet<DictionaryEntityTypeListResponse>('/admin/dictionary/entity-types', options)
+}
+
+export async function fetchDictionaryRelationTypes(
+  params: { domain_context?: string } = {},
+  token?: string,
+): Promise<DictionaryRelationTypeListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchDictionaryRelationTypes')
+  }
+
+  const options: ApiRequestOptions<DictionaryRelationTypeListResponse> = {
+    token,
+    params: {
+      ...(params.domain_context ? { domain_context: params.domain_context } : {}),
+    },
+  }
+
+  return apiGet<DictionaryRelationTypeListResponse>('/admin/dictionary/relation-types', options)
+}
+
+export async function revokeDictionaryVariable(
+  variableId: string,
+  payload: DictionaryRevokeRequest,
+  token?: string,
+): Promise<VariableDefinitionResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for revokeDictionaryVariable')
+  }
+
+  return apiPost<VariableDefinitionResponse>(
+    `/admin/dictionary/variables/${variableId}/revoke`,
+    payload,
+    { token },
+  )
+}
+
+export async function mergeDictionaryVariable(
+  variableId: string,
+  payload: DictionaryMergeRequest,
+  token?: string,
+): Promise<VariableDefinitionResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for mergeDictionaryVariable')
+  }
+
+  return apiPost<VariableDefinitionResponse>(
+    `/admin/dictionary/variables/${variableId}/merge`,
+    payload,
+    { token },
+  )
+}
+
+export async function setDictionaryVariableReviewStatus(
+  variableId: string,
+  payload: { review_status: 'ACTIVE' | 'PENDING_REVIEW' | 'REVOKED'; revocation_reason?: string },
+  token?: string,
+): Promise<VariableDefinitionResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for setDictionaryVariableReviewStatus')
+  }
+
+  return apiPatch<VariableDefinitionResponse>(
+    `/admin/dictionary/variables/${variableId}/review-status`,
+    payload,
+    { token },
+  )
+}
+
+export async function revokeDictionaryEntityType(
+  entityTypeId: string,
+  payload: DictionaryRevokeRequest,
+  token?: string,
+): Promise<DictionaryEntityTypeResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for revokeDictionaryEntityType')
+  }
+
+  return apiPost<DictionaryEntityTypeResponse>(
+    `/admin/dictionary/entity-types/${entityTypeId}/revoke`,
+    payload,
+    { token },
+  )
+}
+
+export async function mergeDictionaryEntityType(
+  entityTypeId: string,
+  payload: DictionaryMergeRequest,
+  token?: string,
+): Promise<DictionaryEntityTypeResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for mergeDictionaryEntityType')
+  }
+
+  return apiPost<DictionaryEntityTypeResponse>(
+    `/admin/dictionary/entity-types/${entityTypeId}/merge`,
+    payload,
+    { token },
+  )
+}
+
+export async function revokeDictionaryRelationType(
+  relationTypeId: string,
+  payload: DictionaryRevokeRequest,
+  token?: string,
+): Promise<DictionaryRelationTypeResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for revokeDictionaryRelationType')
+  }
+
+  return apiPost<DictionaryRelationTypeResponse>(
+    `/admin/dictionary/relation-types/${relationTypeId}/revoke`,
+    payload,
+    { token },
+  )
+}
+
+export async function mergeDictionaryRelationType(
+  relationTypeId: string,
+  payload: DictionaryMergeRequest,
+  token?: string,
+): Promise<DictionaryRelationTypeResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for mergeDictionaryRelationType')
+  }
+
+  return apiPost<DictionaryRelationTypeResponse>(
+    `/admin/dictionary/relation-types/${relationTypeId}/merge`,
+    payload,
+    { token },
+  )
 }

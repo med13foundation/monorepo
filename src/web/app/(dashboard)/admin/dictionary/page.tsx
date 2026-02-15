@@ -3,7 +3,9 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import DictionaryClient from './dictionary-client'
 import {
+  fetchDictionaryEntityTypes,
   fetchDictionaryRelationConstraints,
+  fetchDictionaryRelationTypes,
   fetchDictionaryResolutionPolicies,
   fetchDictionaryTransforms,
   fetchDictionaryVariables,
@@ -11,6 +13,8 @@ import {
 import { UserRole } from '@/types/auth'
 import type {
   EntityResolutionPolicyListResponse,
+  DictionaryEntityTypeListResponse,
+  DictionaryRelationTypeListResponse,
   RelationConstraintListResponse,
   TransformRegistryListResponse,
   VariableDefinitionListResponse,
@@ -36,6 +40,10 @@ export default async function DictionaryPage() {
   let policiesError: string | null = null
   let constraints: RelationConstraintListResponse | null = null
   let constraintsError: string | null = null
+  let entityTypes: DictionaryEntityTypeListResponse | null = null
+  let entityTypesError: string | null = null
+  let relationTypes: DictionaryRelationTypeListResponse | null = null
+  let relationTypesError: string | null = null
 
   try {
     variables = await fetchDictionaryVariables({}, token)
@@ -65,16 +73,38 @@ export default async function DictionaryPage() {
     console.error('[DictionaryPage] Failed to fetch relation constraints', error)
   }
 
+  try {
+    entityTypes = await fetchDictionaryEntityTypes({}, token)
+  } catch (error) {
+    entityTypesError = error instanceof Error ? error.message : 'Unable to load entity types.'
+    console.error('[DictionaryPage] Failed to fetch entity types', error)
+  }
+
+  try {
+    relationTypes = await fetchDictionaryRelationTypes({}, token)
+  } catch (error) {
+    relationTypesError = error instanceof Error ? error.message : 'Unable to load relation types.'
+    console.error('[DictionaryPage] Failed to fetch relation types', error)
+  }
+
   return (
     <DictionaryClient
-      variables={variables}
-      variablesError={variablesError}
-      transforms={transforms}
-      transformsError={transformsError}
-      policies={policies}
-      policiesError={policiesError}
-      constraints={constraints}
-      constraintsError={constraintsError}
+      data={{
+        variables,
+        transforms,
+        policies,
+        constraints,
+        entityTypes,
+        relationTypes,
+      }}
+      errors={{
+        variables: variablesError,
+        transforms: transformsError,
+        policies: policiesError,
+        constraints: constraintsError,
+        entityTypes: entityTypesError,
+        relationTypes: relationTypesError,
+      }}
     />
   )
 }

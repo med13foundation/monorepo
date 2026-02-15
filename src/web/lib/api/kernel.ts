@@ -6,6 +6,8 @@ import type {
   KernelEntityUpdateRequest,
   KernelEntityUpsertResponse,
   KernelGraphExportResponse,
+  GraphSearchRequest,
+  GraphSearchResponse,
   KernelObservationCreateRequest,
   KernelObservationListResponse,
   KernelObservationResponse,
@@ -226,6 +228,21 @@ export async function fetchKernelGraphExport(
     throw new Error('Authentication token is required for fetchKernelGraphExport')
   }
   return apiGet<KernelGraphExportResponse>(`/research-spaces/${spaceId}/graph/export`, { token })
+}
+
+export async function searchKernelGraph(
+  spaceId: string,
+  payload: GraphSearchRequest,
+  token?: string,
+): Promise<GraphSearchResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for searchKernelGraph')
+  }
+  return apiPost<GraphSearchResponse>(
+    `/research-spaces/${spaceId}/graph/search`,
+    payload,
+    { token },
+  )
 }
 
 export async function fetchKernelNeighborhood(

@@ -73,6 +73,22 @@ export function buildDashboardNavItems(
           allowedRoles: [UserRole.ADMIN],
         },
         {
+          id: "admin-audit",
+          title: "Audit Logs",
+          url: "/admin/audit",
+          icon: ListChecks,
+          isActive: pathname.startsWith("/admin/audit"),
+          allowedRoles: [UserRole.ADMIN],
+        },
+        {
+          id: "admin-phi-access",
+          title: "PHI Access",
+          url: "/admin/phi-access",
+          icon: Users,
+          isActive: pathname.startsWith("/admin/phi-access"),
+          allowedRoles: [UserRole.ADMIN],
+        },
+        {
           id: "admin-settings",
           title: "System Settings",
           url: "/system-settings",
@@ -349,6 +365,9 @@ export function buildBreadcrumbs(
         settings: "System Settings",
         users: "User Management",
         "data-sources": "Data Sources",
+        dictionary: "Dictionary",
+        audit: "Audit Logs",
+        "phi-access": "PHI Access",
       }
       items.push({
         label: adminLabels[adminPage] || adminPage,
