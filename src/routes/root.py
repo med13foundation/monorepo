@@ -27,6 +27,7 @@ async def root() -> JSONObject:
             "provenance": "/research-spaces/{space_id}/provenance",
             "ingest": "/research-spaces/{space_id}/ingest",
             "graph_export": "/research-spaces/{space_id}/graph/export",
+            "graph_search": "/research-spaces/{space_id}/graph/search",
         },
         "admin": "/admin",
         "authentication": {

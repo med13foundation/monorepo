@@ -26,6 +26,10 @@ from src.application.agents.services.graph_connection_service import (
     GraphConnectionService,
     GraphConnectionServiceDependencies,
 )
+from src.application.agents.services.graph_search_service import (
+    GraphSearchService,
+    GraphSearchServiceDependencies,
+)
 from src.application.agents.services.query_agent_service import (
     QueryAgentService,
     QueryAgentServiceDependencies,
@@ -42,6 +46,8 @@ __all__ = [
     "GraphConnectionOutcome",
     "GraphConnectionService",
     "GraphConnectionServiceDependencies",
+    "GraphSearchService",
+    "GraphSearchServiceDependencies",
     "GovernanceDecision",
     "GovernancePolicy",
     "GovernanceService",

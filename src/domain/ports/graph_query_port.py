@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from src.domain.entities.kernel.entities import KernelEntity
@@ -12,10 +12,22 @@ if TYPE_CHECKING:
         KernelRelation,
         KernelRelationEvidence,
     )
+    from src.type_definitions.common import JSONObject, JSONValue
 
 
 class GraphQueryPort(ABC):
     """Read-oriented graph query interface for graph-layer agents."""
+
+    @abstractmethod
+    def graph_query_entities(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str | None = None,
+        query_text: str | None = None,
+        limit: int = 200,
+    ) -> list[KernelEntity]:
+        """Query entities in one research space with optional filters."""
 
     @abstractmethod
     def graph_query_neighbourhood(
@@ -60,6 +72,42 @@ class GraphQueryPort(ABC):
         limit: int = 200,
     ) -> list[KernelRelationEvidence]:
         """Return evidence rows for one canonical relation."""
+
+    @abstractmethod
+    def graph_query_relations(  # noqa: PLR0913
+        self,
+        *,
+        research_space_id: str,
+        entity_id: str,
+        relation_types: list[str] | None = None,
+        direction: Literal["outgoing", "incoming", "both"] = "both",
+        depth: int = 1,
+        limit: int = 200,
+    ) -> list[KernelRelation]:
+        """Traverse relations from one entity with direction and depth filters."""
+
+    @abstractmethod
+    def graph_query_by_observation(  # noqa: PLR0913
+        self,
+        *,
+        research_space_id: str,
+        variable_id: str,
+        operator: Literal["eq", "lt", "lte", "gt", "gte", "contains"] = "eq",
+        value: JSONValue | None = None,
+        limit: int = 200,
+    ) -> list[KernelEntity]:
+        """Find entities by observation predicate within one space."""
+
+    @abstractmethod
+    def graph_aggregate(
+        self,
+        *,
+        research_space_id: str,
+        variable_id: str,
+        entity_type: str | None = None,
+        aggregation: Literal["count", "mean", "min", "max"] = "count",
+    ) -> JSONObject:
+        """Compute aggregate statistics for one variable in one space."""
 
 
 __all__ = ["GraphQueryPort"]

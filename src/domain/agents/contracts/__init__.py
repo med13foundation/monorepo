@@ -33,6 +33,11 @@ from src.domain.agents.contracts.graph_connection import (
     ProposedRelation,
     RejectedCandidate,
 )
+from src.domain.agents.contracts.graph_search import (
+    EvidenceChainItem,
+    GraphSearchContract,
+    GraphSearchResultEntry,
+)
 from src.domain.agents.contracts.query_generation import QueryGenerationContract
 
 __all__ = [
@@ -44,6 +49,9 @@ __all__ = [
     "ExtractedRelation",
     "ExtractionContract",
     "GraphConnectionContract",
+    "GraphSearchContract",
+    "GraphSearchResultEntry",
+    "EvidenceChainItem",
     "ProposedRelation",
     "QueryGenerationContract",
     "RejectedCandidate",

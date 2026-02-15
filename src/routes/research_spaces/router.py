@@ -32,6 +32,7 @@ from . import (  # noqa: E402,F401
     curation_routes,
     data_source_routes,
     kernel_entities_routes,
+    kernel_graph_search_routes,
     kernel_ingestion_routes,
     kernel_observations_routes,
     kernel_provenance_routes,

@@ -6,6 +6,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.application.agents.services import (
+    EntityRecognitionService,
+    EntityRecognitionServiceDependencies,
+    ExtractionService,
+    ExtractionServiceDependencies,
+    GovernanceService,
+    GraphConnectionService,
+    GraphConnectionServiceDependencies,
+    GraphSearchService,
+    GraphSearchServiceDependencies,
+)
 from src.domain.agents.models import ModelCapability
 from src.infrastructure.dependency_injection.analysis_service_factories import (
     AnalysisServiceFactoryMixin,
@@ -22,26 +33,17 @@ from src.infrastructure.dependency_injection.kernel_service_factories import (
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
-from src.infrastructure.llm.adapters.entity_recognition_agent_adapter import (
+from src.infrastructure.llm.adapters import (
     FlujoEntityRecognitionAdapter,
-)
-from src.infrastructure.llm.adapters.extraction_agent_adapter import (
     FlujoExtractionAdapter,
-)
-from src.infrastructure.llm.adapters.graph_connection_agent_adapter import (
     FlujoGraphConnectionAdapter,
+    FlujoQueryAgentAdapter,
 )
-from src.infrastructure.llm.adapters.query_agent_adapter import FlujoQueryAgentAdapter
 from src.infrastructure.llm.config.model_registry import get_model_registry
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from src.application.agents.services import (
-        EntityRecognitionService,
-        ExtractionService,
-        GraphConnectionService,
-    )
     from src.application.services import SystemStatusService
     from src.domain.agents.ports.entity_recognition_port import EntityRecognitionPort
     from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
@@ -103,13 +105,6 @@ class ApplicationServiceFactoryMixin(
         self,
         session: Session,
     ) -> EntityRecognitionService:
-        from src.application.agents.services import (
-            EntityRecognitionService,
-            EntityRecognitionServiceDependencies,
-            ExtractionService,
-            ExtractionServiceDependencies,
-            GovernanceService,
-        )
         from src.infrastructure.repositories import (
             SqlAlchemyResearchSpaceRepository,
             SqlAlchemySourceDocumentRepository,
@@ -151,12 +146,6 @@ class ApplicationServiceFactoryMixin(
         )
 
     def create_extraction_service(self, session: Session) -> ExtractionService:
-        from src.application.agents.services import (
-            ExtractionService,
-            ExtractionServiceDependencies,
-            GovernanceService,
-        )
-
         dictionary_service = self.create_dictionary_management_service(session)
         registry = get_model_registry()
         model_spec = registry.get_default_model(
@@ -178,11 +167,6 @@ class ApplicationServiceFactoryMixin(
         self,
         session: Session,
     ) -> GraphConnectionService:
-        from src.application.agents.services import (
-            GovernanceService,
-            GraphConnectionService,
-            GraphConnectionServiceDependencies,
-        )
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyGraphQueryRepository,
             SqlAlchemyKernelRelationRepository,
@@ -205,6 +189,26 @@ class ApplicationServiceFactoryMixin(
             dependencies=GraphConnectionServiceDependencies(
                 graph_connection_agent=graph_connection_agent,
                 relation_repository=relation_repository,
+                governance_service=GovernanceService(),
+            ),
+        )
+
+    def create_graph_search_service(self, session: Session) -> GraphSearchService:
+        from src.application.services.research_query_service import ResearchQueryService
+        from src.infrastructure.repositories.kernel import (
+            SqlAlchemyGraphQueryRepository,
+        )
+
+        dictionary_service = self.create_dictionary_management_service(session)
+        graph_query_service = SqlAlchemyGraphQueryRepository(session)
+        research_query_service = ResearchQueryService(
+            dictionary_service=dictionary_service,
+        )
+        return GraphSearchService(
+            dependencies=GraphSearchServiceDependencies(
+                research_query_service=research_query_service,
+                graph_query_service=graph_query_service,
+                graph_search_agent=None,
                 governance_service=GovernanceService(),
             ),
         )

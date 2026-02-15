@@ -14,6 +14,7 @@ from src.domain.agents.contexts.extraction_context import ExtractionContext
 from src.domain.agents.contexts.graph_connection_context import (
     GraphConnectionContext,
 )
+from src.domain.agents.contexts.graph_search_context import GraphSearchContext
 from src.domain.agents.contexts.query_context import QueryGenerationContext
 from src.domain.agents.contracts.base import (
     AgentDecision,
@@ -36,6 +37,11 @@ from src.domain.agents.contracts.graph_connection import (
     ProposedRelation,
     RejectedCandidate,
 )
+from src.domain.agents.contracts.graph_search import (
+    EvidenceChainItem,
+    GraphSearchContract,
+    GraphSearchResultEntry,
+)
 from src.domain.agents.contracts.query_generation import QueryGenerationContract
 from src.domain.agents.models import (
     ModelCapability,
@@ -54,6 +60,9 @@ __all__ = [
     "ExtractedRelation",
     "ExtractionContract",
     "GraphConnectionContract",
+    "GraphSearchContract",
+    "GraphSearchResultEntry",
+    "EvidenceChainItem",
     "ProposedRelation",
     "QueryGenerationContract",
     "RejectedCandidate",
@@ -65,6 +74,7 @@ __all__ = [
     "EntityRecognitionContext",
     "ExtractionContext",
     "GraphConnectionContext",
+    "GraphSearchContext",
     "QueryGenerationContext",
     # Models
     "ModelCapability",

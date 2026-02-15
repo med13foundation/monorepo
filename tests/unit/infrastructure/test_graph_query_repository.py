@@ -301,3 +301,76 @@ def test_graph_query_relation_evidence_returns_rows(db_session: Session) -> None
 
     assert len(evidences) == 2
     assert all(str(evidence.relation_id) == str(relation_id) for evidence in evidences)
+
+
+def test_graph_query_entities_filters_by_type_and_query(db_session: Session) -> None:
+    _seed_dictionary_primitives(db_session)
+    research_space = _seed_space(db_session)
+    entity_a, _entity_b, _shared_entity, _relation_id = _seed_graph(
+        db_session,
+        research_space_id=research_space,
+    )
+
+    repository = SqlAlchemyGraphQueryRepository(db_session)
+    entities = repository.graph_query_entities(
+        research_space_id=str(research_space),
+        entity_type="GENE",
+        query_text="MED13",
+    )
+
+    assert len(entities) == 1
+    assert str(entities[0].id) == str(entity_a)
+
+
+def test_graph_query_relations_applies_direction_filter(db_session: Session) -> None:
+    _seed_dictionary_primitives(db_session)
+    research_space = _seed_space(db_session)
+    entity_a, entity_b, _shared_entity, _relation_id = _seed_graph(
+        db_session,
+        research_space_id=research_space,
+    )
+
+    repository = SqlAlchemyGraphQueryRepository(db_session)
+    outgoing = repository.graph_query_relations(
+        research_space_id=str(research_space),
+        entity_id=str(entity_a),
+        direction="outgoing",
+    )
+    incoming = repository.graph_query_relations(
+        research_space_id=str(research_space),
+        entity_id=str(entity_b),
+        direction="incoming",
+    )
+
+    assert outgoing
+    assert incoming
+    assert all(str(relation.source_id) == str(entity_a) for relation in outgoing)
+    assert all(str(relation.target_id) == str(entity_b) for relation in incoming)
+
+
+def test_graph_query_by_observation_and_aggregate(db_session: Session) -> None:
+    _seed_dictionary_primitives(db_session)
+    research_space = _seed_space(db_session)
+    entity_a, _entity_b, shared_entity, _relation_id = _seed_graph(
+        db_session,
+        research_space_id=research_space,
+    )
+
+    repository = SqlAlchemyGraphQueryRepository(db_session)
+    entities = repository.graph_query_by_observation(
+        research_space_id=str(research_space),
+        variable_id="VAR_A",
+        operator="eq",
+        value="yes",
+    )
+    aggregate = repository.graph_aggregate(
+        research_space_id=str(research_space),
+        variable_id="VAR_A",
+        aggregation="count",
+    )
+
+    entity_ids = {str(entity.id) for entity in entities}
+    assert str(entity_a) in entity_ids
+    assert str(shared_entity) in entity_ids
+    assert aggregate["aggregation"] == "count"
+    assert aggregate["value"] == 2
