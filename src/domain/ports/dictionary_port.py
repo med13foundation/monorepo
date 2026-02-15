@@ -10,6 +10,7 @@ if TYPE_CHECKING:
         DictionaryChangelog,
         DictionaryEntityType,
         DictionaryRelationType,
+        DictionarySearchResult,
         EntityResolutionPolicy,
         RelationConstraint,
         TransformRegistry,
@@ -158,6 +159,37 @@ class DictionaryPort(ABC):
         revocation_reason: str | None = None,
     ) -> ValueSetItem:
         """Activate/deactivate a value set item."""
+
+    @abstractmethod
+    def dictionary_search(
+        self,
+        *,
+        terms: list[str],
+        dimensions: list[str] | None = None,
+        domain_context: str | None = None,
+        limit: int = 50,
+    ) -> list[DictionarySearchResult]:
+        """Search dictionary entries across semantic dimensions."""
+
+    @abstractmethod
+    def dictionary_search_by_domain(
+        self,
+        *,
+        domain_context: str,
+        limit: int = 50,
+    ) -> list[DictionarySearchResult]:
+        """List dictionary entries filtered by domain context."""
+
+    @abstractmethod
+    def reembed_descriptions(
+        self,
+        *,
+        model_name: str | None = None,
+        limit_per_dimension: int | None = None,
+        changed_by: str = "system:reembed",
+        source_ref: str | None = None,
+    ) -> int:
+        """Recompute description embeddings across dictionary dimensions."""
 
     @abstractmethod
     def is_relation_allowed(

@@ -48,6 +48,9 @@ class VariableDefinition(BaseModel):
     domain_context: str = Field(default="general", min_length=1, max_length=64)
     sensitivity: str = Field(default="INTERNAL", min_length=1, max_length=32)
     description: str | None = None
+    description_embedding: list[float] | None = None
+    embedded_at: datetime | None = None
+    embedding_model: str | None = Field(default=None, max_length=64)
     created_by: str = Field(default="seed", min_length=1, max_length=128)
     source_ref: str | None = Field(default=None, max_length=1024)
     review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
@@ -108,6 +111,8 @@ class DictionaryEntityType(BaseModel):
     external_ontology_ref: str | None = Field(default=None, max_length=255)
     expected_properties: JSONObject = Field(default_factory=dict)
     description_embedding: list[float] | None = None
+    embedded_at: datetime | None = None
+    embedding_model: str | None = Field(default=None, max_length=64)
     created_by: str = Field(default="seed", min_length=1, max_length=128)
     source_ref: str | None = Field(default=None, max_length=1024)
     review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
@@ -130,6 +135,8 @@ class DictionaryRelationType(BaseModel):
     is_directional: bool = True
     inverse_label: str | None = Field(default=None, max_length=128)
     description_embedding: list[float] | None = None
+    embedded_at: datetime | None = None
+    embedding_model: str | None = Field(default=None, max_length=64)
     created_by: str = Field(default="seed", min_length=1, max_length=128)
     source_ref: str | None = Field(default=None, max_length=1024)
     review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
@@ -138,6 +145,21 @@ class DictionaryRelationType(BaseModel):
     revocation_reason: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class DictionarySearchResult(BaseModel):
+    """Unified dictionary search result across all semantic dimensions."""
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    dimension: Literal["variables", "entity_types", "relation_types", "constraints"]
+    entry_id: str = Field(..., min_length=1, max_length=128)
+    display_name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+    domain_context: str | None = Field(default=None, max_length=64)
+    match_method: Literal["exact", "synonym", "fuzzy", "vector"]
+    similarity_score: float = Field(ge=0.0, le=1.0)
+    metadata: JSONObject = Field(default_factory=dict)
 
 
 class DictionaryChangelog(BaseModel):
@@ -268,6 +290,7 @@ __all__ = [
     "DictionaryDomainContext",
     "DictionaryEntityType",
     "DictionaryRelationType",
+    "DictionarySearchResult",
     "DictionarySensitivityLevel",
     "EntityResolutionPolicy",
     "RelationConstraint",

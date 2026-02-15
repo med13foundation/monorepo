@@ -1,5 +1,6 @@
 """Domain-wide service port interfaces."""
 
 from src.domain.ports.dictionary_port import DictionaryPort
+from src.domain.ports.text_embedding_port import TextEmbeddingPort
 
-__all__ = ["DictionaryPort"]
+__all__ = ["DictionaryPort", "TextEmbeddingPort"]

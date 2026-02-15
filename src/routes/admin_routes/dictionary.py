@@ -17,6 +17,7 @@ from src.application.services.kernel.dictionary_management_service import (
 )
 from src.domain.entities.user import User, UserRole
 from src.domain.ports import DictionaryPort
+from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 from src.infrastructure.repositories.kernel.kernel_dictionary_repository import (
     SqlAlchemyDictionaryRepository,
 )
@@ -29,11 +30,16 @@ from .dictionary_schemas import (
     DictionaryEntityTypeCreateRequest,
     DictionaryEntityTypeListResponse,
     DictionaryEntityTypeResponse,
+    DictionaryReembedRequest,
+    DictionaryReembedResponse,
     DictionaryRelationTypeCreateRequest,
     DictionaryRelationTypeListResponse,
     DictionaryRelationTypeResponse,
+    DictionarySearchListResponse,
+    DictionarySearchResultResponse,
     EntityResolutionPolicyListResponse,
     EntityResolutionPolicyResponse,
+    KernelDictionaryDimension,
     RelationConstraintListResponse,
     RelationConstraintResponse,
     TransformRegistryListResponse,
@@ -70,7 +76,10 @@ def get_dictionary_service(
 ) -> DictionaryPort:
     """Build a DictionaryManagementService backed by a scoped admin DB session."""
     repo = SqlAlchemyDictionaryRepository(session)
-    return DictionaryManagementService(dictionary_repo=repo)
+    return DictionaryManagementService(
+        dictionary_repo=repo,
+        embedding_provider=HybridTextEmbeddingProvider(),
+    )
 
 
 router = APIRouter(
@@ -546,6 +555,97 @@ async def set_dictionary_value_set_item_active(
         )
         session.commit()
         return ValueSetItemResponse.from_model(item)
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
+@router.get(
+    "/dictionary/search",
+    response_model=DictionarySearchListResponse,
+    summary="Search dictionary entries",
+)
+async def search_dictionary_entries(
+    terms: list[str] = Query(
+        ...,
+        description="Search terms (repeat parameter for multiple terms)",
+    ),
+    dimensions: list[KernelDictionaryDimension] | None = Query(
+        default=None,
+        description="Optional dictionary dimensions to search",
+    ),
+    domain_context: str | None = Query(
+        default=None,
+        description="Optional domain context filter",
+    ),
+    limit: int = Query(default=50, ge=1, le=500),
+    service: DictionaryPort = Depends(get_dictionary_service),
+) -> DictionarySearchListResponse:
+    requested_dimensions = (
+        [dimension.value for dimension in dimensions] if dimensions else None
+    )
+    results = service.dictionary_search(
+        terms=terms,
+        dimensions=requested_dimensions,
+        domain_context=domain_context,
+        limit=limit,
+    )
+    return DictionarySearchListResponse(
+        results=[
+            DictionarySearchResultResponse.from_model(result) for result in results
+        ],
+        total=len(results),
+    )
+
+
+@router.get(
+    "/dictionary/search/by-domain/{domain_context}",
+    response_model=DictionarySearchListResponse,
+    summary="List dictionary entries by domain",
+)
+async def search_dictionary_entries_by_domain(
+    domain_context: str,
+    limit: int = Query(default=200, ge=1, le=500),
+    service: DictionaryPort = Depends(get_dictionary_service),
+) -> DictionarySearchListResponse:
+    results = service.dictionary_search_by_domain(
+        domain_context=domain_context,
+        limit=limit,
+    )
+    return DictionarySearchListResponse(
+        results=[
+            DictionarySearchResultResponse.from_model(result) for result in results
+        ],
+        total=len(results),
+    )
+
+
+@router.post(
+    "/dictionary/reembed",
+    response_model=DictionaryReembedResponse,
+    summary="Recompute dictionary description embeddings",
+)
+async def reembed_dictionary_descriptions(
+    request: DictionaryReembedRequest,
+    current_user: User = Depends(require_admin_user),
+    session: Session = Depends(get_admin_db_session),
+    service: DictionaryPort = Depends(get_dictionary_service),
+) -> DictionaryReembedResponse:
+    try:
+        updated_records = service.reembed_descriptions(
+            model_name=request.model_name,
+            limit_per_dimension=request.limit_per_dimension,
+            changed_by=f"manual:{current_user.id}",
+            source_ref=request.source_ref,
+        )
+        session.commit()
+        return DictionaryReembedResponse(
+            updated_records=updated_records,
+            model_name=request.model_name,
+        )
     except ValueError as e:
         session.rollback()
         raise HTTPException(

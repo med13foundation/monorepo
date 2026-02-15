@@ -14,12 +14,29 @@ from src.domain.entities.kernel.dictionary import (
     DictionaryChangelog,
     DictionaryEntityType,
     DictionaryRelationType,
+    DictionarySearchResult,
     ValueSet,
     ValueSetItem,
     VariableDefinition,
     VariableSynonym,
 )
+from src.domain.ports.text_embedding_port import TextEmbeddingPort
 from src.domain.repositories.kernel.dictionary_repository import DictionaryRepository
+
+
+class StubEmbeddingProvider(TextEmbeddingPort):
+    """Deterministic test embedding provider."""
+
+    def embed_text(
+        self,
+        text: str,
+        *,
+        model_name: str,
+    ) -> list[float] | None:
+        normalized = text.strip()
+        if not normalized:
+            return None
+        return [float(len(normalized)), float(len(model_name))]
 
 
 def _build_variable(
@@ -125,6 +142,19 @@ def _build_changelog() -> DictionaryChangelog:
     )
 
 
+def _build_search_result() -> DictionarySearchResult:
+    return DictionarySearchResult(
+        dimension="variables",
+        entry_id="VAR_TEST",
+        display_name="Test Variable",
+        description="test",
+        domain_context="general",
+        match_method="exact",
+        similarity_score=1.0,
+        metadata={"canonical_name": "test_variable"},
+    )
+
+
 def _build_value_set(
     *,
     is_extensible: bool = False,
@@ -182,8 +212,19 @@ def dictionary_repo() -> Mock:
 
 
 @pytest.fixture
-def service(dictionary_repo: Mock) -> DictionaryManagementService:
-    return DictionaryManagementService(dictionary_repo=dictionary_repo)
+def embedding_provider() -> StubEmbeddingProvider:
+    return StubEmbeddingProvider()
+
+
+@pytest.fixture
+def service(
+    dictionary_repo: Mock,
+    embedding_provider: StubEmbeddingProvider,
+) -> DictionaryManagementService:
+    return DictionaryManagementService(
+        dictionary_repo=dictionary_repo,
+        embedding_provider=embedding_provider,
+    )
 
 
 def test_create_variable_uses_space_policy_for_agent(
@@ -230,6 +271,27 @@ def test_create_variable_manual_creation_forces_active(
 
     called_kwargs = dictionary_repo.create_variable.call_args.kwargs
     assert called_kwargs["review_status"] == "ACTIVE"
+
+
+def test_create_variable_embeds_description_before_persist(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.create_variable.return_value = _build_variable()
+
+    service.create_variable(
+        variable_id="VAR_TEST",
+        canonical_name="test_variable",
+        display_name="Test Variable",
+        data_type="STRING",
+        description="Variable description",
+        created_by="manual:user-123",
+    )
+
+    called_kwargs = dictionary_repo.create_variable.call_args.kwargs
+    assert isinstance(called_kwargs["description_embedding"], list)
+    assert called_kwargs["embedding_model"] == "text-embedding-3-small"
+    assert called_kwargs["embedded_at"] is not None
 
 
 def test_set_review_status_requires_reason_for_revoked(
@@ -563,3 +625,40 @@ def test_list_changelog_entries_delegates_to_repository(
         record_id="VAR_TEST",
         limit=20,
     )
+
+
+def test_dictionary_search_adds_query_embeddings(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.search_dictionary.return_value = [_build_search_result()]
+
+    results = service.dictionary_search(
+        terms=["Test Variable"],
+        dimensions=["variables"],
+        limit=10,
+    )
+
+    assert len(results) == 1
+    called_kwargs = dictionary_repo.search_dictionary.call_args.kwargs
+    assert called_kwargs["query_embeddings"] is not None
+    assert "test variable" in called_kwargs["query_embeddings"]
+
+
+def test_reembed_descriptions_updates_all_supported_dimensions(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.find_variables.return_value = [_build_variable()]
+    dictionary_repo.find_entity_types.return_value = [_build_entity_type()]
+    dictionary_repo.find_relation_types.return_value = [_build_relation_type()]
+
+    updated_records = service.reembed_descriptions(
+        changed_by="manual:user-123",
+        source_ref="job:test-reembed",
+    )
+
+    assert updated_records == 3
+    dictionary_repo.set_variable_embedding.assert_called_once()
+    dictionary_repo.set_entity_type_embedding.assert_called_once()
+    dictionary_repo.set_relation_type_embedding.assert_called_once()

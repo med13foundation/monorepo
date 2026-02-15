@@ -21,6 +21,7 @@ from src.domain.entities.kernel.dictionary import (
     DictionaryChangelog,
     DictionaryEntityType,
     DictionaryRelationType,
+    DictionarySearchResult,
     EntityResolutionPolicy,
     RelationConstraint,
     TransformRegistry,
@@ -30,6 +31,10 @@ from src.domain.entities.kernel.dictionary import (
     VariableSynonym,
 )
 from src.domain.repositories.kernel.dictionary_repository import DictionaryRepository
+from src.infrastructure.repositories.kernel.dictionary_search import (
+    search_dictionary_entries,
+    search_dictionary_entries_by_domain,
+)
 from src.models.database.kernel.dictionary import (
     DictionaryChangelogModel,
     DictionaryDataTypeModel,
@@ -255,6 +260,9 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         preferred_unit: str | None = None,
         constraints: JSONObject | None = None,
         description: str | None = None,
+        description_embedding: list[float] | None = None,
+        embedded_at: datetime | None = None,
+        embedding_model: str | None = None,
         created_by: str = "seed",
         source_ref: str | None = None,
         review_status: ReviewStatus = "ACTIVE",
@@ -275,6 +283,9 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             preferred_unit=preferred_unit,
             constraints=constraints or {},
             description=description,
+            description_embedding=description_embedding,
+            embedded_at=embedded_at,
+            embedding_model=embedding_model,
             created_by=created_by,
             source_ref=source_ref,
             review_status=review_status,
@@ -288,6 +299,37 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             before_snapshot=None,
             after_snapshot=_snapshot_model(model),
             changed_by=created_by,
+            source_ref=source_ref,
+        )
+        return VariableDefinition.model_validate(model)
+
+    def set_variable_embedding(  # noqa: PLR0913
+        self,
+        variable_id: str,
+        *,
+        description_embedding: list[float] | None,
+        embedded_at: datetime,
+        embedding_model: str,
+        changed_by: str | None = None,
+        source_ref: str | None = None,
+    ) -> VariableDefinition:
+        model = self._session.get(VariableDefinitionModel, variable_id)
+        if model is None:
+            msg = f"Variable '{variable_id}' not found"
+            raise ValueError(msg)
+
+        before_snapshot = _snapshot_model(model)
+        model.description_embedding = description_embedding
+        model.embedded_at = embedded_at
+        model.embedding_model = embedding_model
+        self._session.flush()
+        self._record_change(
+            table_name=VariableDefinitionModel.__tablename__,
+            record_id=model.id,
+            action="UPDATE",
+            before_snapshot=before_snapshot,
+            after_snapshot=_snapshot_model(model),
+            changed_by=changed_by,
             source_ref=source_ref,
         )
         return VariableDefinition.model_validate(model)
@@ -574,6 +616,9 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         domain_context: str,
         external_ontology_ref: str | None = None,
         expected_properties: JSONObject | None = None,
+        description_embedding: list[float] | None = None,
+        embedded_at: datetime | None = None,
+        embedding_model: str | None = None,
         created_by: str = "seed",
         source_ref: str | None = None,
         review_status: ReviewStatus = "ACTIVE",
@@ -590,6 +635,9 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             domain_context=normalized_domain_context,
             external_ontology_ref=external_ontology_ref,
             expected_properties=expected_properties or {},
+            description_embedding=description_embedding,
+            embedded_at=embedded_at,
+            embedding_model=embedding_model,
             created_by=created_by,
             source_ref=source_ref,
             review_status=review_status,
@@ -603,6 +651,38 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             before_snapshot=None,
             after_snapshot=_snapshot_model(model),
             changed_by=created_by,
+            source_ref=source_ref,
+        )
+        return DictionaryEntityType.model_validate(model)
+
+    def set_entity_type_embedding(  # noqa: PLR0913
+        self,
+        entity_type_id: str,
+        *,
+        description_embedding: list[float] | None,
+        embedded_at: datetime,
+        embedding_model: str,
+        changed_by: str | None = None,
+        source_ref: str | None = None,
+    ) -> DictionaryEntityType:
+        normalized_entity_type = entity_type_id.strip().upper()
+        model = self._session.get(DictionaryEntityTypeModel, normalized_entity_type)
+        if model is None:
+            msg = f"Entity type '{entity_type_id}' not found"
+            raise ValueError(msg)
+
+        before_snapshot = _snapshot_model(model)
+        model.description_embedding = description_embedding
+        model.embedded_at = embedded_at
+        model.embedding_model = embedding_model
+        self._session.flush()
+        self._record_change(
+            table_name=DictionaryEntityTypeModel.__tablename__,
+            record_id=model.id,
+            action="UPDATE",
+            before_snapshot=before_snapshot,
+            after_snapshot=_snapshot_model(model),
+            changed_by=changed_by,
             source_ref=source_ref,
         )
         return DictionaryEntityType.model_validate(model)
@@ -682,6 +762,9 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         domain_context: str,
         is_directional: bool = True,
         inverse_label: str | None = None,
+        description_embedding: list[float] | None = None,
+        embedded_at: datetime | None = None,
+        embedding_model: str | None = None,
         created_by: str = "seed",
         source_ref: str | None = None,
         review_status: ReviewStatus = "ACTIVE",
@@ -698,6 +781,9 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             domain_context=normalized_domain_context,
             is_directional=is_directional,
             inverse_label=inverse_label,
+            description_embedding=description_embedding,
+            embedded_at=embedded_at,
+            embedding_model=embedding_model,
             created_by=created_by,
             source_ref=source_ref,
             review_status=review_status,
@@ -711,6 +797,38 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             before_snapshot=None,
             after_snapshot=_snapshot_model(model),
             changed_by=created_by,
+            source_ref=source_ref,
+        )
+        return DictionaryRelationType.model_validate(model)
+
+    def set_relation_type_embedding(  # noqa: PLR0913
+        self,
+        relation_type_id: str,
+        *,
+        description_embedding: list[float] | None,
+        embedded_at: datetime,
+        embedding_model: str,
+        changed_by: str | None = None,
+        source_ref: str | None = None,
+    ) -> DictionaryRelationType:
+        normalized_relation_type = relation_type_id.strip().upper()
+        model = self._session.get(DictionaryRelationTypeModel, normalized_relation_type)
+        if model is None:
+            msg = f"Relation type '{relation_type_id}' not found"
+            raise ValueError(msg)
+
+        before_snapshot = _snapshot_model(model)
+        model.description_embedding = description_embedding
+        model.embedded_at = embedded_at
+        model.embedding_model = embedding_model
+        self._session.flush()
+        self._record_change(
+            table_name=DictionaryRelationTypeModel.__tablename__,
+            record_id=model.id,
+            action="UPDATE",
+            before_snapshot=before_snapshot,
+            after_snapshot=_snapshot_model(model),
+            changed_by=changed_by,
             source_ref=source_ref,
         )
         return DictionaryRelationType.model_validate(model)
@@ -802,6 +920,36 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         stmt = stmt.order_by(DictionaryChangelogModel.id.desc()).limit(normalized_limit)
         models = self._session.scalars(stmt).all()
         return [DictionaryChangelog.model_validate(model) for model in models]
+
+    def search_dictionary(
+        self,
+        *,
+        terms: list[str],
+        dimensions: list[str] | None = None,
+        domain_context: str | None = None,
+        limit: int = 50,
+        query_embeddings: dict[str, list[float]] | None = None,
+    ) -> list[DictionarySearchResult]:
+        return search_dictionary_entries(
+            self._session,
+            terms=terms,
+            dimensions=dimensions,
+            domain_context=domain_context,
+            limit=limit,
+            query_embeddings=query_embeddings,
+        )
+
+    def search_dictionary_by_domain(
+        self,
+        *,
+        domain_context: str,
+        limit: int = 50,
+    ) -> list[DictionarySearchResult]:
+        return search_dictionary_entries_by_domain(
+            self._session,
+            domain_context=domain_context,
+            limit=limit,
+        )
 
     # ── Relation constraints ──────────────────────────────────────────
 

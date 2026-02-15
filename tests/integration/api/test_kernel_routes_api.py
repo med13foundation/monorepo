@@ -568,6 +568,91 @@ def test_admin_dictionary_value_set_endpoints(test_client, admin_user):
     assert all_items_payload["items"][0]["is_active"] is False
 
 
+def test_admin_dictionary_search_and_reembed_endpoints(test_client, admin_user):
+    create_variable_response = test_client.post(
+        "/admin/dictionary/variables",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "VAR_SEARCH_FLAG",
+            "canonical_name": "search_flag",
+            "display_name": "Search Flag",
+            "data_type": "STRING",
+            "domain_context": "general",
+            "sensitivity": "INTERNAL",
+            "constraints": {},
+            "description": "A searchable integration-test dictionary variable",
+        },
+    )
+    assert create_variable_response.status_code == 201, create_variable_response.text
+
+    create_entity_type_response = test_client.post(
+        "/admin/dictionary/entity-types",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "ENTITY_SEARCH_ITEM",
+            "display_name": "Entity Search Item",
+            "description": "Entity type used for dictionary search tests",
+            "domain_context": "general",
+            "expected_properties": {},
+        },
+    )
+    assert (
+        create_entity_type_response.status_code == 201
+    ), create_entity_type_response.text
+
+    create_relation_type_response = test_client.post(
+        "/admin/dictionary/relation-types",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "REL_SEARCH_LINKS",
+            "display_name": "Search Links",
+            "description": "Relation type used for dictionary search tests",
+            "domain_context": "general",
+            "is_directional": True,
+        },
+    )
+    assert (
+        create_relation_type_response.status_code == 201
+    ), create_relation_type_response.text
+
+    search_response = test_client.get(
+        "/admin/dictionary/search",
+        headers=_auth_headers(admin_user),
+        params={
+            "terms": "Search Flag",
+            "dimensions": ["variables", "entity_types"],
+            "limit": 20,
+        },
+    )
+    assert search_response.status_code == 200, search_response.text
+    search_payload = search_response.json()
+    assert search_payload["total"] >= 1
+    first_result = search_payload["results"][0]
+    assert first_result["dimension"] in {"variables", "entity_types"}
+    assert first_result["match_method"] in {"exact", "synonym", "fuzzy", "vector"}
+
+    by_domain_response = test_client.get(
+        "/admin/dictionary/search/by-domain/general",
+        headers=_auth_headers(admin_user),
+        params={"limit": 50},
+    )
+    assert by_domain_response.status_code == 200, by_domain_response.text
+    by_domain_payload = by_domain_response.json()
+    assert by_domain_payload["total"] >= 3
+
+    reembed_response = test_client.post(
+        "/admin/dictionary/reembed",
+        headers=_auth_headers(admin_user),
+        json={
+            "limit_per_dimension": 5,
+            "source_ref": "test:dictionary-reembed",
+        },
+    )
+    assert reembed_response.status_code == 200, reembed_response.text
+    reembed_payload = reembed_response.json()
+    assert reembed_payload["updated_records"] >= 3
+
+
 def test_kernel_entity_rejects_unknown_type(
     test_client,
     db_session,

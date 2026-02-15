@@ -14,6 +14,7 @@ from src.application.services.kernel import (
 )
 from src.database.session import get_session
 from src.domain.ports import DictionaryPort
+from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
@@ -32,7 +33,10 @@ def get_dictionary_service(
 ) -> DictionaryPort:
     """Kernel dictionary service (read/write)."""
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
-    return DictionaryManagementService(dictionary_repo=dictionary_repo)
+    return DictionaryManagementService(
+        dictionary_repo=dictionary_repo,
+        embedding_provider=HybridTextEmbeddingProvider(),
+    )
 
 
 def get_kernel_entity_service(
@@ -54,7 +58,10 @@ def get_kernel_observation_service(
     observation_repo = SqlAlchemyKernelObservationRepository(session)
     entity_repo = SqlAlchemyKernelEntityRepository(session)
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
-    dictionary_service = DictionaryManagementService(dictionary_repo=dictionary_repo)
+    dictionary_service = DictionaryManagementService(
+        dictionary_repo=dictionary_repo,
+        embedding_provider=HybridTextEmbeddingProvider(),
+    )
     return KernelObservationService(
         observation_repo=observation_repo,
         entity_repo=entity_repo,

@@ -7,6 +7,7 @@ provenance-aware creation and review lifecycle management.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from src.domain.ports.dictionary_port import DictionaryPort
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
         DictionaryChangelog,
         DictionaryEntityType,
         DictionaryRelationType,
+        DictionarySearchResult,
         EntityResolutionPolicy,
         RelationConstraint,
         TransformRegistry,
@@ -24,6 +26,7 @@ if TYPE_CHECKING:
         VariableDefinition,
         VariableSynonym,
     )
+    from src.domain.ports.text_embedding_port import TextEmbeddingPort
     from src.domain.repositories.kernel.dictionary_repository import (
         DictionaryRepository,
     )
@@ -39,6 +42,10 @@ _ALLOWED_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     "PENDING_REVIEW": frozenset({"ACTIVE", "PENDING_REVIEW", "REVOKED"}),
     "REVOKED": frozenset({"REVOKED", "ACTIVE"}),
 }
+_VECTOR_SEARCH_DIMENSIONS: frozenset[str] = frozenset(
+    {"variables", "entity_types", "relation_types"},
+)
+_DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 
 
 def _parse_review_status(value: str) -> ReviewStatus:
@@ -57,8 +64,72 @@ def _parse_review_status(value: str) -> ReviewStatus:
 class DictionaryManagementService(DictionaryPort):
     """Application service for dictionary lookup and governance operations."""
 
-    def __init__(self, dictionary_repo: DictionaryRepository) -> None:
+    def __init__(
+        self,
+        dictionary_repo: DictionaryRepository,
+        embedding_provider: TextEmbeddingPort | None = None,
+        default_embedding_model: str = _DEFAULT_EMBEDDING_MODEL,
+    ) -> None:
         self._dictionary = dictionary_repo
+        self._embedding_provider = embedding_provider
+        normalized_model = default_embedding_model.strip()
+        self._default_embedding_model = (
+            normalized_model if normalized_model else _DEFAULT_EMBEDDING_MODEL
+        )
+
+    def _resolve_embedding_model(self, model_name: str | None = None) -> str:
+        if model_name is None:
+            return self._default_embedding_model
+        normalized = model_name.strip()
+        return normalized if normalized else self._default_embedding_model
+
+    def _embed_text(self, text: str, *, model_name: str) -> list[float] | None:
+        if self._embedding_provider is None:
+            return None
+        normalized = text.strip()
+        if not normalized:
+            return None
+        return self._embedding_provider.embed_text(
+            normalized,
+            model_name=model_name,
+        )
+
+    def _embed_description(
+        self,
+        description: str | None,
+        *,
+        model_name: str,
+    ) -> tuple[list[float] | None, datetime | None, str | None]:
+        if description is None:
+            return None, None, None
+        embedding = self._embed_text(description, model_name=model_name)
+        if embedding is None:
+            return None, None, None
+        return embedding, datetime.now(UTC), model_name
+
+    def _build_query_embeddings(
+        self,
+        terms: list[str],
+        *,
+        model_name: str,
+    ) -> dict[str, list[float]] | None:
+        if self._embedding_provider is None:
+            return None
+
+        embeddings: dict[str, list[float]] = {}
+        for term in terms:
+            normalized_term = term.strip().casefold()
+            if not normalized_term or normalized_term in embeddings:
+                continue
+
+            embedding = self._embed_text(normalized_term, model_name=model_name)
+            if embedding is None:
+                continue
+            embeddings[normalized_term] = embedding
+
+        if not embeddings:
+            return None
+        return embeddings
 
     def _normalize_review_status(self, review_status: str) -> ReviewStatus:
         return _parse_review_status(review_status)
@@ -149,6 +220,13 @@ class DictionaryManagementService(DictionaryPort):
             created_by=created_by_normalized,
             research_space_settings=research_space_settings,
         )
+        embedding_model = self._resolve_embedding_model()
+        description_embedding, embedded_at, resolved_embedding_model = (
+            self._embed_description(
+                description,
+                model_name=embedding_model,
+            )
+        )
 
         return self._dictionary.create_variable(
             variable_id=variable_id,
@@ -160,6 +238,9 @@ class DictionaryManagementService(DictionaryPort):
             preferred_unit=preferred_unit,
             constraints=constraints,
             description=description,
+            description_embedding=description_embedding,
+            embedded_at=embedded_at,
+            embedding_model=resolved_embedding_model,
             created_by=created_by_normalized,
             source_ref=source_ref,
             review_status=initial_review_status,
@@ -397,6 +478,148 @@ class DictionaryManagementService(DictionaryPort):
             revocation_reason=normalized_reason,
         )
 
+    # ── Search and embeddings ────────────────────────────────────────
+
+    def dictionary_search(
+        self,
+        *,
+        terms: list[str],
+        dimensions: list[str] | None = None,
+        domain_context: str | None = None,
+        limit: int = 50,
+    ) -> list[DictionarySearchResult]:
+        """Search dictionary entries with exact/fuzzy/vector matching."""
+        normalized_terms = [term for term in terms if term.strip()]
+        if not normalized_terms:
+            return []
+
+        embedding_dimensions = dimensions or list(_VECTOR_SEARCH_DIMENSIONS)
+        should_embed = any(
+            dimension.strip().lower() in _VECTOR_SEARCH_DIMENSIONS
+            for dimension in embedding_dimensions
+        )
+        query_embeddings: dict[str, list[float]] | None = None
+        if should_embed:
+            query_embeddings = self._build_query_embeddings(
+                normalized_terms,
+                model_name=self._resolve_embedding_model(),
+            )
+
+        return self._dictionary.search_dictionary(
+            terms=normalized_terms,
+            dimensions=dimensions,
+            domain_context=domain_context,
+            limit=limit,
+            query_embeddings=query_embeddings,
+        )
+
+    def dictionary_search_by_domain(
+        self,
+        *,
+        domain_context: str,
+        limit: int = 50,
+    ) -> list[DictionarySearchResult]:
+        """List dictionary entries scoped to one domain context."""
+        return self._dictionary.search_dictionary_by_domain(
+            domain_context=domain_context,
+            limit=limit,
+        )
+
+    def reembed_descriptions(  # noqa: C901,PLR0912
+        self,
+        *,
+        model_name: str | None = None,
+        limit_per_dimension: int | None = None,
+        changed_by: str = "system:reembed",
+        source_ref: str | None = None,
+    ) -> int:
+        """Recompute description embeddings for variables, entity, and relation types."""
+        if self._embedding_provider is None:
+            logger.warning(
+                "Re-embedding requested but no embedding provider is configured",
+            )
+            return 0
+
+        normalized_actor = changed_by.strip()
+        if not normalized_actor:
+            msg = "changed_by is required"
+            raise ValueError(msg)
+
+        normalized_limit: int | None = None
+        if limit_per_dimension is not None:
+            normalized_limit = max(1, limit_per_dimension)
+
+        selected_model = self._resolve_embedding_model(model_name)
+        updated_records = 0
+
+        variables = self._dictionary.find_variables()
+        if normalized_limit is not None:
+            variables = variables[:normalized_limit]
+        for variable in variables:
+            if variable.description is None or not variable.description.strip():
+                continue
+            embedding = self._embed_text(
+                variable.description,
+                model_name=selected_model,
+            )
+            if embedding is None:
+                continue
+            self._dictionary.set_variable_embedding(
+                variable.id,
+                description_embedding=embedding,
+                embedded_at=datetime.now(UTC),
+                embedding_model=selected_model,
+                changed_by=normalized_actor,
+                source_ref=source_ref,
+            )
+            updated_records += 1
+
+        entity_types = self._dictionary.find_entity_types()
+        if normalized_limit is not None:
+            entity_types = entity_types[:normalized_limit]
+        for entity_type in entity_types:
+            if not entity_type.description.strip():
+                continue
+            embedding = self._embed_text(
+                entity_type.description,
+                model_name=selected_model,
+            )
+            if embedding is None:
+                continue
+            self._dictionary.set_entity_type_embedding(
+                entity_type.id,
+                description_embedding=embedding,
+                embedded_at=datetime.now(UTC),
+                embedding_model=selected_model,
+                changed_by=normalized_actor,
+                source_ref=source_ref,
+            )
+            updated_records += 1
+
+        relation_types = self._dictionary.find_relation_types()
+        if normalized_limit is not None:
+            relation_types = relation_types[:normalized_limit]
+        for relation_type in relation_types:
+            if not relation_type.description.strip():
+                continue
+            embedding = self._embed_text(
+                relation_type.description,
+                model_name=selected_model,
+            )
+            if embedding is None:
+                continue
+            self._dictionary.set_relation_type_embedding(
+                relation_type.id,
+                description_embedding=embedding,
+                embedded_at=datetime.now(UTC),
+                embedding_model=selected_model,
+                changed_by=normalized_actor,
+                source_ref=source_ref,
+            )
+            updated_records += 1
+
+        return updated_records
+
     # ── Relation constraint checks ────────────────────────────────────
 
     def is_relation_allowed(
@@ -469,6 +692,13 @@ class DictionaryManagementService(DictionaryPort):
             created_by=created_by_normalized,
             research_space_settings=research_space_settings,
         )
+        embedding_model = self._resolve_embedding_model()
+        description_embedding, embedded_at, resolved_embedding_model = (
+            self._embed_description(
+                description,
+                model_name=embedding_model,
+            )
+        )
         return self._dictionary.create_entity_type(
             entity_type=entity_type,
             display_name=display_name,
@@ -476,6 +706,9 @@ class DictionaryManagementService(DictionaryPort):
             domain_context=domain_context,
             external_ontology_ref=external_ontology_ref,
             expected_properties=expected_properties,
+            description_embedding=description_embedding,
+            embedded_at=embedded_at,
+            embedding_model=resolved_embedding_model,
             created_by=created_by_normalized,
             source_ref=source_ref,
             review_status=initial_review_status,
@@ -569,6 +802,13 @@ class DictionaryManagementService(DictionaryPort):
             created_by=created_by_normalized,
             research_space_settings=research_space_settings,
         )
+        embedding_model = self._resolve_embedding_model()
+        description_embedding, embedded_at, resolved_embedding_model = (
+            self._embed_description(
+                description,
+                model_name=embedding_model,
+            )
+        )
         return self._dictionary.create_relation_type(
             relation_type=relation_type,
             display_name=display_name,
@@ -576,6 +816,9 @@ class DictionaryManagementService(DictionaryPort):
             domain_context=domain_context,
             is_directional=is_directional,
             inverse_label=inverse_label,
+            description_embedding=description_embedding,
+            embedded_at=embedded_at,
+            embedding_model=resolved_embedding_model,
             created_by=created_by_normalized,
             source_ref=source_ref,
             review_status=initial_review_status,

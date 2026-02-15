@@ -14,7 +14,7 @@ from uuid import uuid4
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_HEAD_REVISION = "012_dictionary_value_sets"
+EXPECTED_HEAD_REVISION = "013_dictionary_embeddings"
 LEGACY_REVISION_ALIAS = "004_relation_evidence_and_extraction_queue_contract"
 ROLLOUT_MARKER_REVISION = "005_rel_evidence_rollout_marker"
 RAW_STORAGE_KEY_VALUE = "raw/clinvar/variant-1001.json"
@@ -156,7 +156,7 @@ def test_006_backfills_extraction_queue_payload_reference_columns(
     assert payload_columns["payload_ref"] == PAYLOAD_REF_VALUE
 
 
-def test_012_creates_dictionary_dimension_tables(tmp_path: Path) -> None:
+def test_013_creates_dictionary_dimension_tables(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'dictionary_type_tables.db'}"
     _run_alembic_upgrade(database_url=database_url, revision=EXPECTED_HEAD_REVISION)
 
@@ -203,3 +203,22 @@ def test_012_creates_dictionary_dimension_tables(tmp_path: Path) -> None:
         fk["referred_table"] for fk in inspector.get_foreign_keys("value_set_items")
     }
     assert "value_sets" in value_set_item_fk_targets
+
+    variable_columns = {
+        column["name"] for column in inspector.get_columns("variable_definitions")
+    }
+    assert "description_embedding" in variable_columns
+    assert "embedded_at" in variable_columns
+    assert "embedding_model" in variable_columns
+
+    entity_type_columns = {
+        column["name"] for column in inspector.get_columns("dictionary_entity_types")
+    }
+    assert "embedded_at" in entity_type_columns
+    assert "embedding_model" in entity_type_columns
+
+    relation_type_columns = {
+        column["name"] for column in inspector.get_columns("dictionary_relation_types")
+    }
+    assert "embedded_at" in relation_type_columns
+    assert "embedding_model" in relation_type_columns

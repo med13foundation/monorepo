@@ -12,10 +12,13 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from src.domain.entities.kernel.dictionary import (
         DictionaryChangelog,
         DictionaryEntityType,
         DictionaryRelationType,
+        DictionarySearchResult,
         EntityResolutionPolicy,
         RelationConstraint,
         TransformRegistry,
@@ -75,11 +78,27 @@ class DictionaryRepository(ABC):
         preferred_unit: str | None = None,
         constraints: JSONObject | None = None,
         description: str | None = None,
+        description_embedding: list[float] | None = None,
+        embedded_at: datetime | None = None,
+        embedding_model: str | None = None,
         created_by: str = "seed",
         source_ref: str | None = None,
         review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE",
     ) -> VariableDefinition:
         """Create a new variable definition."""
+
+    @abstractmethod
+    def set_variable_embedding(  # noqa: PLR0913
+        self,
+        variable_id: str,
+        *,
+        description_embedding: list[float] | None,
+        embedded_at: datetime,
+        embedding_model: str,
+        changed_by: str | None = None,
+        source_ref: str | None = None,
+    ) -> VariableDefinition:
+        """Update embedding metadata for a variable definition."""
 
     @abstractmethod
     def create_synonym(  # noqa: PLR0913
@@ -203,11 +222,27 @@ class DictionaryRepository(ABC):
         domain_context: str,
         external_ontology_ref: str | None = None,
         expected_properties: JSONObject | None = None,
+        description_embedding: list[float] | None = None,
+        embedded_at: datetime | None = None,
+        embedding_model: str | None = None,
         created_by: str = "seed",
         source_ref: str | None = None,
         review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE",
     ) -> DictionaryEntityType:
         """Create a first-class entity type."""
+
+    @abstractmethod
+    def set_entity_type_embedding(  # noqa: PLR0913
+        self,
+        entity_type_id: str,
+        *,
+        description_embedding: list[float] | None,
+        embedded_at: datetime,
+        embedding_model: str,
+        changed_by: str | None = None,
+        source_ref: str | None = None,
+    ) -> DictionaryEntityType:
+        """Update embedding metadata for an entity type."""
 
     @abstractmethod
     def find_entity_types(
@@ -252,11 +287,27 @@ class DictionaryRepository(ABC):
         domain_context: str,
         is_directional: bool = True,
         inverse_label: str | None = None,
+        description_embedding: list[float] | None = None,
+        embedded_at: datetime | None = None,
+        embedding_model: str | None = None,
         created_by: str = "seed",
         source_ref: str | None = None,
         review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE",
     ) -> DictionaryRelationType:
         """Create a first-class relation type."""
+
+    @abstractmethod
+    def set_relation_type_embedding(  # noqa: PLR0913
+        self,
+        relation_type_id: str,
+        *,
+        description_embedding: list[float] | None,
+        embedded_at: datetime,
+        embedding_model: str,
+        changed_by: str | None = None,
+        source_ref: str | None = None,
+    ) -> DictionaryRelationType:
+        """Update embedding metadata for a relation type."""
 
     @abstractmethod
     def find_relation_types(
@@ -303,6 +354,27 @@ class DictionaryRepository(ABC):
         limit: int = 100,
     ) -> list[DictionaryChangelog]:
         """List changelog entries with optional table/record filters."""
+
+    @abstractmethod
+    def search_dictionary(
+        self,
+        *,
+        terms: list[str],
+        dimensions: list[str] | None = None,
+        domain_context: str | None = None,
+        limit: int = 50,
+        query_embeddings: dict[str, list[float]] | None = None,
+    ) -> list[DictionarySearchResult]:
+        """Search dictionary dimensions with exact/fuzzy/vector matching."""
+
+    @abstractmethod
+    def search_dictionary_by_domain(
+        self,
+        *,
+        domain_context: str,
+        limit: int = 50,
+    ) -> list[DictionarySearchResult]:
+        """List dictionary entries scoped to a single domain context."""
 
     # ── Relation constraints ──────────────────────────────────────────
 

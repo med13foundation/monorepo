@@ -11,6 +11,7 @@ from src.domain.entities.kernel.dictionary import (
     DictionaryChangelog,
     DictionaryEntityType,
     DictionaryRelationType,
+    DictionarySearchResult,
     EntityResolutionPolicy,
     RelationConstraint,
     TransformRegistry,
@@ -19,6 +20,22 @@ from src.domain.entities.kernel.dictionary import (
     VariableDefinition,
 )
 from src.type_definitions.common import JSONObject
+
+
+def _coerce_embedding(value: object) -> list[float] | None:
+    """Normalize database embedding payloads to a float list."""
+    if isinstance(value, list):
+        return [float(item) for item in value]
+    if isinstance(value, tuple):
+        return [float(item) for item in value]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            stripped = stripped[1:-1]
+        if not stripped:
+            return []
+        return [float(token) for token in stripped.split(",") if token.strip()]
+    return None
 
 
 class KernelDataType(str, Enum):
@@ -47,6 +64,24 @@ class KernelReviewStatus(str, Enum):
     ACTIVE = "ACTIVE"
     PENDING_REVIEW = "PENDING_REVIEW"
     REVOKED = "REVOKED"
+
+
+class KernelDictionaryDimension(str, Enum):
+    """Search dimensions supported by dictionary_search."""
+
+    VARIABLES = "variables"
+    ENTITY_TYPES = "entity_types"
+    RELATION_TYPES = "relation_types"
+    CONSTRAINTS = "constraints"
+
+
+class KernelSearchMatchMethod(str, Enum):
+    """Search ranking match methods."""
+
+    EXACT = "exact"
+    SYNONYM = "synonym"
+    FUZZY = "fuzzy"
+    VECTOR = "vector"
 
 
 class VariableDefinitionCreateRequest(BaseModel):
@@ -85,6 +120,9 @@ class VariableDefinitionResponse(BaseModel):
     domain_context: str
     sensitivity: KernelSensitivity
     description: str | None
+    description_embedding: list[float] | None
+    embedded_at: datetime | None
+    embedding_model: str | None
     created_by: str
     source_ref: str | None
     review_status: KernelReviewStatus
@@ -106,6 +144,11 @@ class VariableDefinitionResponse(BaseModel):
             domain_context=str(model.domain_context),
             sensitivity=KernelSensitivity(str(model.sensitivity)),
             description=str(model.description) if model.description else None,
+            description_embedding=_coerce_embedding(model.description_embedding),
+            embedded_at=model.embedded_at,
+            embedding_model=(
+                str(model.embedding_model) if model.embedding_model else None
+            ),
             created_by=str(model.created_by),
             source_ref=str(model.source_ref) if model.source_ref else None,
             review_status=KernelReviewStatus(str(model.review_status)),
@@ -307,6 +350,8 @@ class DictionaryEntityTypeResponse(BaseModel):
     external_ontology_ref: str | None
     expected_properties: JSONObject
     description_embedding: list[float] | None
+    embedded_at: datetime | None
+    embedding_model: str | None
     created_by: str
     source_ref: str | None
     review_status: KernelReviewStatus
@@ -331,10 +376,10 @@ class DictionaryEntityTypeResponse(BaseModel):
             expected_properties=(
                 dict(model.expected_properties) if model.expected_properties else {}
             ),
-            description_embedding=(
-                list(model.description_embedding)
-                if isinstance(model.description_embedding, list)
-                else None
+            description_embedding=_coerce_embedding(model.description_embedding),
+            embedded_at=model.embedded_at,
+            embedding_model=(
+                str(model.embedding_model) if model.embedding_model else None
             ),
             created_by=str(model.created_by),
             source_ref=str(model.source_ref) if model.source_ref else None,
@@ -384,6 +429,8 @@ class DictionaryRelationTypeResponse(BaseModel):
     is_directional: bool
     inverse_label: str | None
     description_embedding: list[float] | None
+    embedded_at: datetime | None
+    embedding_model: str | None
     created_by: str
     source_ref: str | None
     review_status: KernelReviewStatus
@@ -405,10 +452,10 @@ class DictionaryRelationTypeResponse(BaseModel):
             domain_context=str(model.domain_context),
             is_directional=bool(model.is_directional),
             inverse_label=str(model.inverse_label) if model.inverse_label else None,
-            description_embedding=(
-                list(model.description_embedding)
-                if isinstance(model.description_embedding, list)
-                else None
+            description_embedding=_coerce_embedding(model.description_embedding),
+            embedded_at=model.embedded_at,
+            embedding_model=(
+                str(model.embedding_model) if model.embedding_model else None
             ),
             created_by=str(model.created_by),
             source_ref=str(model.source_ref) if model.source_ref else None,
@@ -637,6 +684,78 @@ class DictionaryChangelogListResponse(BaseModel):
 
     changelog_entries: list[DictionaryChangelogResponse]
     total: int
+
+
+class DictionarySearchResultResponse(BaseModel):
+    """Response payload for one dictionary search hit."""
+
+    model_config = ConfigDict(strict=True)
+
+    dimension: KernelDictionaryDimension
+    entry_id: str
+    display_name: str
+    description: str | None
+    domain_context: str | None
+    match_method: KernelSearchMatchMethod
+    similarity_score: float
+    metadata: JSONObject
+
+    @classmethod
+    def from_model(
+        cls,
+        model: DictionarySearchResult,
+    ) -> DictionarySearchResultResponse:
+        return cls(
+            dimension=KernelDictionaryDimension(model.dimension),
+            entry_id=str(model.entry_id),
+            display_name=str(model.display_name),
+            description=str(model.description) if model.description else None,
+            domain_context=str(model.domain_context) if model.domain_context else None,
+            match_method=KernelSearchMatchMethod(model.match_method),
+            similarity_score=float(model.similarity_score),
+            metadata=dict(model.metadata) if model.metadata else {},
+        )
+
+
+class DictionarySearchListResponse(BaseModel):
+    """List response payload for dictionary search endpoints."""
+
+    model_config = ConfigDict(strict=True)
+
+    results: list[DictionarySearchResultResponse]
+    total: int
+
+
+class DictionaryReembedRequest(BaseModel):
+    """Request payload for dictionary embedding refresh jobs."""
+
+    model_config = ConfigDict(strict=False)
+
+    model_name: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Embedding model to use (defaults to service setting)",
+    )
+    limit_per_dimension: int | None = Field(
+        default=None,
+        ge=1,
+        le=5000,
+        description="Optional cap per dimension for partial re-embed runs",
+    )
+    source_ref: str | None = Field(
+        default=None,
+        max_length=1024,
+        description="Optional provenance pointer for the refresh request",
+    )
+
+
+class DictionaryReembedResponse(BaseModel):
+    """Response payload for dictionary embedding refresh jobs."""
+
+    model_config = ConfigDict(strict=True)
+
+    updated_records: int
+    model_name: str | None
 
 
 class VariableDefinitionReviewStatusRequest(BaseModel):

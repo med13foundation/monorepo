@@ -47,6 +47,7 @@ class KernelServiceFactoryMixin:
             DictionaryManagementService,
             KernelObservationService,
         )
+        from src.infrastructure.embeddings import HybridTextEmbeddingProvider
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyDictionaryRepository,
             SqlAlchemyKernelEntityRepository,
@@ -58,6 +59,7 @@ class KernelServiceFactoryMixin:
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
         dictionary_service = DictionaryManagementService(
             dictionary_repo=dictionary_repo,
+            embedding_provider=HybridTextEmbeddingProvider(),
         )
         return KernelObservationService(
             observation_repo=observation_repo,
@@ -90,12 +92,16 @@ class KernelServiceFactoryMixin:
         session: Session,
     ) -> DictionaryPort:
         from src.application.services.kernel import DictionaryManagementService
+        from src.infrastructure.embeddings import HybridTextEmbeddingProvider
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyDictionaryRepository,
         )
 
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
-        return DictionaryManagementService(dictionary_repo=dictionary_repo)
+        return DictionaryManagementService(
+            dictionary_repo=dictionary_repo,
+            embedding_provider=HybridTextEmbeddingProvider(),
+        )
 
     def create_provenance_service(
         self,

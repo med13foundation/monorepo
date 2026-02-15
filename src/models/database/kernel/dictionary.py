@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.database.base import Base
+from src.models.database.types import VectorEmbedding
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
 
@@ -150,9 +151,18 @@ class DictionaryEntityTypeModel(Base):
         doc="Expected properties schema for entity metadata",
     )
     description_embedding: Mapped[list[float] | None] = mapped_column(
-        JSONB,
+        VectorEmbedding(1536),
         nullable=True,
-        doc="Embedding placeholder for semantic search (Phase 4 vector migration)",
+        doc="pgvector embedding for semantic search over entity-type descriptions",
+    )
+    embedded_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when description_embedding was last computed",
+    )
+    embedding_model: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Embedding model used to compute description_embedding",
     )
     created_by: Mapped[str] = mapped_column(
         String(128),
@@ -231,9 +241,18 @@ class DictionaryRelationTypeModel(Base):
         doc="Optional label for the inverse direction",
     )
     description_embedding: Mapped[list[float] | None] = mapped_column(
-        JSONB,
+        VectorEmbedding(1536),
         nullable=True,
-        doc="Embedding placeholder for semantic search (Phase 4 vector migration)",
+        doc="pgvector embedding for semantic search over relation-type descriptions",
+    )
+    embedded_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when description_embedding was last computed",
+    )
+    embedding_model: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Embedding model used to compute description_embedding",
     )
     created_by: Mapped[str] = mapped_column(
         String(128),
@@ -518,6 +537,20 @@ class VariableDefinitionModel(Base):
         Text,
         nullable=True,
         doc="Optional longer description",
+    )
+    description_embedding: Mapped[list[float] | None] = mapped_column(
+        VectorEmbedding(1536),
+        nullable=True,
+        doc="pgvector embedding for semantic search over variable descriptions",
+    )
+    embedded_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when description_embedding was last computed",
+    )
+    embedding_model: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Embedding model used to compute description_embedding",
     )
     created_by: Mapped[str] = mapped_column(
         String(128),

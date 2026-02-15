@@ -12,6 +12,7 @@ from src.application.services.kernel.dictionary_management_service import (
 from src.application.services.kernel.kernel_observation_service import (
     KernelObservationService,
 )
+from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 from src.infrastructure.ingestion.mapping.exact_mapper import ExactMapper
 from src.infrastructure.ingestion.mapping.hybrid_mapper import HybridMapper
 from src.infrastructure.ingestion.normalization.composite_normalizer import (
@@ -47,7 +48,10 @@ def create_ingestion_pipeline(session: Session) -> IngestionPipeline:
     Create a fully wired ingestion pipeline.
     """
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
-    dictionary_service = DictionaryManagementService(dictionary_repo=dictionary_repo)
+    dictionary_service = DictionaryManagementService(
+        dictionary_repo=dictionary_repo,
+        embedding_provider=HybridTextEmbeddingProvider(),
+    )
     entity_repo = SqlAlchemyKernelEntityRepository(session)
     observation_repo = SqlAlchemyKernelObservationRepository(session)
     provenance_repo = SqlAlchemyProvenanceRepository(session)
