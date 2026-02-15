@@ -36,4 +36,20 @@ class KernelRelation(BaseModel):
     updated_at: datetime
 
 
-__all__ = ["KernelRelation"]
+class KernelRelationEvidence(BaseModel):
+    """Domain representation of one supporting evidence row for a relation."""
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID
+    relation_id: UUID
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    evidence_summary: str | None = None
+    evidence_tier: str = Field(..., min_length=1, max_length=32)
+    provenance_id: UUID | None = None
+    source_document_id: UUID | None = None
+    agent_run_id: UUID | None = None
+    created_at: datetime
+
+
+__all__ = ["KernelRelation", "KernelRelationEvidence"]

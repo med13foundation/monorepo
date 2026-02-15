@@ -50,6 +50,7 @@ from src.models.database.kernel.dictionary import (
     VariableDefinitionModel,
     VariableSynonymModel,
 )
+from src.type_definitions.dictionary import get_constraint_schema_for_data_type
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -157,6 +158,11 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         normalized = data_type.strip().upper()
         existing = self._session.get(DictionaryDataTypeModel, normalized)
         if existing is not None:
+            if existing.constraint_schema == {}:
+                existing.constraint_schema = get_constraint_schema_for_data_type(
+                    normalized,
+                )
+                self._session.flush()
             return normalized
 
         python_type_hint, description = _DATA_TYPE_HINTS.get(
@@ -169,7 +175,7 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
                 display_name=_humanize(normalized),
                 python_type_hint=python_type_hint,
                 description=description,
-                constraint_schema={},
+                constraint_schema=get_constraint_schema_for_data_type(normalized),
             ),
         )
         self._session.flush()
@@ -952,6 +958,54 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         )
 
     # ── Relation constraints ──────────────────────────────────────────
+
+    def create_relation_constraint(  # noqa: PLR0913
+        self,
+        *,
+        source_type: str,
+        relation_type: str,
+        target_type: str,
+        is_allowed: bool = True,
+        requires_evidence: bool = True,
+        created_by: str = "seed",
+        source_ref: str | None = None,
+        review_status: ReviewStatus = "ACTIVE",
+    ) -> RelationConstraint:
+        normalized_source_type = source_type.strip().upper()
+        if not normalized_source_type:
+            msg = "source_type is required"
+            raise ValueError(msg)
+        normalized_relation_type = relation_type.strip().upper()
+        if not normalized_relation_type:
+            msg = "relation_type is required"
+            raise ValueError(msg)
+        normalized_target_type = target_type.strip().upper()
+        if not normalized_target_type:
+            msg = "target_type is required"
+            raise ValueError(msg)
+
+        model = RelationConstraintModel(
+            source_type=normalized_source_type,
+            relation_type=normalized_relation_type,
+            target_type=normalized_target_type,
+            is_allowed=is_allowed,
+            requires_evidence=requires_evidence,
+            created_by=created_by,
+            source_ref=source_ref,
+            review_status=review_status,
+        )
+        self._session.add(model)
+        self._session.flush()
+        self._record_change(
+            table_name=RelationConstraintModel.__tablename__,
+            record_id=str(model.id),
+            action="CREATE",
+            before_snapshot=None,
+            after_snapshot=_snapshot_model(model),
+            changed_by=created_by,
+            source_ref=source_ref,
+        )
+        return RelationConstraint.model_validate(model)
 
     def get_constraints(
         self,

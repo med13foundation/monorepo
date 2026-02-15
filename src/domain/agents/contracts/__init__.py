@@ -17,11 +17,37 @@ from src.domain.agents.contracts.base import (
     BaseAgentContract,
     EvidenceItem,
 )
+from src.domain.agents.contracts.entity_recognition import (
+    EntityRecognitionContract,
+    RecognizedEntityCandidate,
+    RecognizedObservationCandidate,
+)
+from src.domain.agents.contracts.extraction import (
+    ExtractedObservation,
+    ExtractedRelation,
+    ExtractionContract,
+    RejectedFact,
+)
+from src.domain.agents.contracts.graph_connection import (
+    GraphConnectionContract,
+    ProposedRelation,
+    RejectedCandidate,
+)
 from src.domain.agents.contracts.query_generation import QueryGenerationContract
 
 __all__ = [
     "AgentDecision",
     "BaseAgentContract",
+    "EntityRecognitionContract",
     "EvidenceItem",
+    "ExtractedObservation",
+    "ExtractedRelation",
+    "ExtractionContract",
+    "GraphConnectionContract",
+    "ProposedRelation",
     "QueryGenerationContract",
+    "RejectedCandidate",
+    "RejectedFact",
+    "RecognizedEntityCandidate",
+    "RecognizedObservationCandidate",
 ]

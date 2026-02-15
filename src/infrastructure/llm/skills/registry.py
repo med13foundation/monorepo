@@ -10,15 +10,68 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from src.infrastructure.llm.config.governance import GovernanceConfig
-from src.type_definitions.common import JSONObject, JSONValue
+
+from .dictionary_tools import (
+    make_create_entity_type_tool,
+    make_create_relation_constraint_tool,
+    make_create_relation_type_tool,
+    make_create_synonym_tool,
+    make_create_variable_tool,
+    make_dictionary_search_by_domain_tool,
+    make_dictionary_search_tool,
+)
+from .extraction_tools import (
+    make_lookup_transform_tool,
+    make_validate_observation_tool,
+    make_validate_triple_tool,
+)
+from .graph_tools import (
+    make_graph_query_neighbourhood_tool,
+    make_graph_query_observations_tool,
+    make_graph_query_relation_evidence_tool,
+    make_graph_query_shared_subjects_tool,
+    make_upsert_relation_tool,
+)
+
+if TYPE_CHECKING:
+    from src.domain.ports.dictionary_port import DictionaryPort
+    from src.domain.ports.graph_query_port import GraphQueryPort
+    from src.domain.repositories.kernel.relation_repository import (
+        KernelRelationRepository,
+    )
+    from src.type_definitions.common import JSONObject, JSONValue, ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
 
-# Type alias for skill callables - they take JSONObject and return JSONObject
-SkillCallable = Callable[[JSONObject], JSONObject]
+# Type alias for skill callables.
+SkillCallable = Callable[..., object]
 SkillFactory = Callable[..., SkillCallable]
+
+_ENTITY_RECOGNITION_DICTIONARY_SKILL_IDS: tuple[str, ...] = (
+    "dictionary_search",
+    "dictionary_search_by_domain",
+    "create_variable",
+    "create_synonym",
+    "create_entity_type",
+    "create_relation_type",
+    "create_relation_constraint",
+)
+_EXTRACTION_SKILL_IDS: tuple[str, ...] = (
+    "validate_observation",
+    "validate_triple",
+    "lookup_transform",
+)
+_GRAPH_CONNECTION_SKILL_IDS: tuple[str, ...] = (
+    "graph_query_neighbourhood",
+    "graph_query_shared_subjects",
+    "graph_query_observations",
+    "graph_query_relation_evidence",
+    "upsert_relation",
+    "validate_triple",
+)
 
 
 @dataclass
@@ -108,7 +161,7 @@ class SkillRegistry:
         """
         return self._skills.get(skill_id)
 
-    def get_callable(self, skill_id: str, **kwargs: JSONValue) -> SkillCallable | None:
+    def get_callable(self, skill_id: str, **kwargs: object) -> SkillCallable | None:
         """
         Get a skill's callable implementation.
 
@@ -173,6 +226,15 @@ def register_all_skills() -> None:
     skills are available for agents.
     """
     registry = get_skill_registry()
+    if (
+        registry.get("query.validate_pubmed") is not None
+        and registry.get(
+            "dictionary_search",
+        )
+        is not None
+        and registry.get("graph_query_neighbourhood") is not None
+    ):
+        return
 
     # --- Query Validation Skills ---
     registry.register(
@@ -282,7 +344,387 @@ def register_all_skills() -> None:
         tags=["evidence", "citations", "extraction"],
     )
 
+    # --- Dictionary Skills ---
+    registry.register(
+        skill_id="dictionary_search",
+        factory=make_dictionary_search_tool,
+        description="Search dictionary definitions across dimensions. Read-only.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "terms": {"type": "array", "items": {"type": "string"}},
+                "dimensions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "domain_context": {"type": "string"},
+                "limit": {"type": "integer", "default": 25},
+            },
+            "required": ["terms"],
+        },
+        output_schema={
+            "type": "array",
+            "items": {"type": "object"},
+        },
+        tags=["dictionary", "semantic-layer", "search"],
+    )
+    registry.register(
+        skill_id="dictionary_search_by_domain",
+        factory=make_dictionary_search_by_domain_tool,
+        description="List dictionary entries scoped to one domain context.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "domain_context": {"type": "string"},
+                "limit": {"type": "integer", "default": 50},
+            },
+            "required": ["domain_context"],
+        },
+        output_schema={
+            "type": "array",
+            "items": {"type": "object"},
+        },
+        tags=["dictionary", "semantic-layer", "search"],
+    )
+    registry.register(
+        skill_id="create_variable",
+        factory=make_create_variable_tool,
+        description="Create a dictionary variable definition.",
+        side_effects=True,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "variable_id": {"type": "string"},
+                "canonical_name": {"type": "string"},
+                "display_name": {"type": "string"},
+                "data_type": {"type": "string"},
+                "domain_context": {"type": "string", "default": "general"},
+                "sensitivity": {"type": "string", "default": "INTERNAL"},
+                "preferred_unit": {"type": "string"},
+                "constraints": {"type": "object"},
+                "description": {"type": "string"},
+            },
+            "required": ["variable_id", "canonical_name", "display_name", "data_type"],
+        },
+        output_schema={"type": "object"},
+        tags=["dictionary", "semantic-layer", "write"],
+    )
+    registry.register(
+        skill_id="create_synonym",
+        factory=make_create_synonym_tool,
+        description="Create a synonym for an existing dictionary variable.",
+        side_effects=True,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "variable_id": {"type": "string"},
+                "synonym": {"type": "string"},
+                "source": {"type": "string"},
+            },
+            "required": ["variable_id", "synonym"],
+        },
+        output_schema={"type": "object"},
+        tags=["dictionary", "semantic-layer", "write"],
+    )
+    registry.register(
+        skill_id="create_entity_type",
+        factory=make_create_entity_type_tool,
+        description="Create a first-class dictionary entity type.",
+        side_effects=True,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "entity_type": {"type": "string"},
+                "display_name": {"type": "string"},
+                "description": {"type": "string"},
+                "domain_context": {"type": "string"},
+                "external_ontology_ref": {"type": "string"},
+                "expected_properties": {"type": "object"},
+            },
+            "required": [
+                "entity_type",
+                "display_name",
+                "description",
+                "domain_context",
+            ],
+        },
+        output_schema={"type": "object"},
+        tags=["dictionary", "semantic-layer", "write"],
+    )
+    registry.register(
+        skill_id="create_relation_type",
+        factory=make_create_relation_type_tool,
+        description="Create a first-class dictionary relation type.",
+        side_effects=True,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "relation_type": {"type": "string"},
+                "display_name": {"type": "string"},
+                "description": {"type": "string"},
+                "domain_context": {"type": "string"},
+                "is_directional": {"type": "boolean", "default": True},
+                "inverse_label": {"type": "string"},
+            },
+            "required": [
+                "relation_type",
+                "display_name",
+                "description",
+                "domain_context",
+            ],
+        },
+        output_schema={"type": "object"},
+        tags=["dictionary", "semantic-layer", "write"],
+    )
+    registry.register(
+        skill_id="create_relation_constraint",
+        factory=make_create_relation_constraint_tool,
+        description="Create a relation constraint triple for graph validation.",
+        side_effects=True,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "source_type": {"type": "string"},
+                "relation_type": {"type": "string"},
+                "target_type": {"type": "string"},
+                "is_allowed": {"type": "boolean", "default": True},
+                "requires_evidence": {"type": "boolean", "default": True},
+            },
+            "required": ["source_type", "relation_type", "target_type"],
+        },
+        output_schema={"type": "object"},
+        tags=["dictionary", "semantic-layer", "write"],
+    )
+
+    # --- Extraction Validation Skills ---
+    registry.register(
+        skill_id="validate_observation",
+        factory=make_validate_observation_tool,
+        description="Validate an extracted observation against dictionary constraints.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "variable_id": {"type": "string"},
+                "value": {},
+                "unit": {"type": "string"},
+            },
+            "required": ["variable_id", "value"],
+        },
+        output_schema={"type": "object"},
+        tags=["extraction", "validation", "semantic-layer"],
+    )
+    registry.register(
+        skill_id="validate_triple",
+        factory=make_validate_triple_tool,
+        description="Validate a relation triple against dictionary constraints.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "source_type": {"type": "string"},
+                "relation_type": {"type": "string"},
+                "target_type": {"type": "string"},
+            },
+            "required": ["source_type", "relation_type", "target_type"],
+        },
+        output_schema={"type": "object"},
+        tags=["extraction", "validation", "semantic-layer"],
+    )
+    registry.register(
+        skill_id="lookup_transform",
+        factory=make_lookup_transform_tool,
+        description="Look up a registered transform between two units.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "input_unit": {"type": "string"},
+                "output_unit": {"type": "string"},
+            },
+            "required": ["input_unit", "output_unit"],
+        },
+        output_schema={"type": "object"},
+        tags=["extraction", "normalization", "semantic-layer"],
+    )
+    registry.register(
+        skill_id="graph_query_neighbourhood",
+        factory=make_graph_query_neighbourhood_tool,
+        description="Query relation neighbourhood around an entity in one space.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "depth": {"type": "integer", "default": 1},
+                "relation_types": {"type": "array", "items": {"type": "string"}},
+                "limit": {"type": "integer", "default": 200},
+            },
+            "required": ["entity_id"],
+        },
+        output_schema={"type": "array", "items": {"type": "object"}},
+        tags=["graph", "query", "read"],
+    )
+    registry.register(
+        skill_id="graph_query_shared_subjects",
+        factory=make_graph_query_shared_subjects_tool,
+        description=(
+            "Find entities whose observation profiles overlap with both seed entities."
+        ),
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "entity_id_a": {"type": "string"},
+                "entity_id_b": {"type": "string"},
+                "limit": {"type": "integer", "default": 100},
+            },
+            "required": ["entity_id_a", "entity_id_b"],
+        },
+        output_schema={"type": "array", "items": {"type": "object"}},
+        tags=["graph", "query", "read"],
+    )
+    registry.register(
+        skill_id="graph_query_observations",
+        factory=make_graph_query_observations_tool,
+        description="Return observations for one entity in the scoped space.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "variable_ids": {"type": "array", "items": {"type": "string"}},
+                "limit": {"type": "integer", "default": 200},
+            },
+            "required": ["entity_id"],
+        },
+        output_schema={"type": "array", "items": {"type": "object"}},
+        tags=["graph", "query", "read"],
+    )
+    registry.register(
+        skill_id="graph_query_relation_evidence",
+        factory=make_graph_query_relation_evidence_tool,
+        description="Return all evidence rows for one canonical relation edge.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "relation_id": {"type": "string"},
+                "limit": {"type": "integer", "default": 200},
+            },
+            "required": ["relation_id"],
+        },
+        output_schema={"type": "array", "items": {"type": "object"}},
+        tags=["graph", "query", "read"],
+    )
+    registry.register(
+        skill_id="upsert_relation",
+        factory=make_upsert_relation_tool,
+        description="Canonical relation upsert with evidence accumulation.",
+        side_effects=True,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "source_id": {"type": "string"},
+                "relation_type": {"type": "string"},
+                "target_id": {"type": "string"},
+                "confidence": {"type": "number", "default": 0.5},
+                "evidence_summary": {"type": "string"},
+                "evidence_tier": {"type": "string", "default": "COMPUTATIONAL"},
+                "provenance_id": {"type": "string"},
+            },
+            "required": ["source_id", "relation_type", "target_id"],
+        },
+        output_schema={"type": "object"},
+        tags=["graph", "truth-layer", "write"],
+    )
+
     logger.info("Registered %d skills", len(registry.list_skills()))
+
+
+def build_entity_recognition_dictionary_tools(  # noqa: PLR0913
+    *,
+    dictionary_service: DictionaryPort,
+    created_by: str,
+    source_ref: str | None = None,
+    research_space_settings: ResearchSpaceSettings | None = None,
+) -> list[SkillCallable]:
+    """
+    Build the dictionary toolset required by Entity Recognition Agent workflows.
+
+    Tool access is filtered through governance allowlists at registry lookup time.
+    """
+    register_all_skills()
+    registry = get_skill_registry()
+
+    tools: list[SkillCallable] = []
+    for skill_id in _ENTITY_RECOGNITION_DICTIONARY_SKILL_IDS:
+        skill = registry.get_callable(
+            skill_id,
+            dictionary_service=dictionary_service,
+            created_by=created_by,
+            source_ref=source_ref,
+            research_space_settings=research_space_settings,
+        )
+        if skill is None:
+            msg = f"Required skill '{skill_id}' is not registered"
+            raise LookupError(msg)
+        tools.append(skill)
+    return tools
+
+
+def build_extraction_validation_tools(
+    *,
+    dictionary_service: DictionaryPort,
+) -> list[SkillCallable]:
+    """
+    Build toolset used by the Extraction Agent for validation and normalization.
+    """
+    register_all_skills()
+    registry = get_skill_registry()
+
+    tools: list[SkillCallable] = []
+    for skill_id in _EXTRACTION_SKILL_IDS:
+        skill = registry.get_callable(
+            skill_id,
+            dictionary_service=dictionary_service,
+        )
+        if skill is None:
+            msg = f"Required skill '{skill_id}' is not registered"
+            raise LookupError(msg)
+        tools.append(skill)
+    return tools
+
+
+def build_graph_connection_tools(  # noqa: PLR0913
+    *,
+    dictionary_service: DictionaryPort,
+    graph_query_service: GraphQueryPort,
+    relation_repository: KernelRelationRepository,
+    research_space_id: str,
+) -> list[SkillCallable]:
+    """
+    Build toolset for Graph Connection Agent workflows.
+    """
+    register_all_skills()
+    registry = get_skill_registry()
+
+    tools: list[SkillCallable] = []
+    for skill_id in _GRAPH_CONNECTION_SKILL_IDS:
+        skill = registry.get_callable(
+            skill_id,
+            dictionary_service=dictionary_service,
+            graph_query_service=graph_query_service,
+            relation_repository=relation_repository,
+            research_space_id=research_space_id,
+        )
+        if skill is None:
+            msg = f"Required skill '{skill_id}' is not registered"
+            raise LookupError(msg)
+        tools.append(skill)
+    return tools
 
 
 # --- Skill Implementations ---

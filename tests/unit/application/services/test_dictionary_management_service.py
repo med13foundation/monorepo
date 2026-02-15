@@ -15,6 +15,7 @@ from src.domain.entities.kernel.dictionary import (
     DictionaryEntityType,
     DictionaryRelationType,
     DictionarySearchResult,
+    RelationConstraint,
     ValueSet,
     ValueSetItem,
     VariableDefinition,
@@ -115,6 +116,29 @@ def _build_relation_type(*, review_status: str = "ACTIVE") -> DictionaryRelation
         is_directional=True,
         inverse_label=None,
         description_embedding=None,
+        created_by="seed",
+        source_ref=None,
+        review_status=review_status,
+        reviewed_by=None,
+        reviewed_at=None,
+        revocation_reason=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _build_relation_constraint(
+    *,
+    review_status: str = "ACTIVE",
+) -> RelationConstraint:
+    now = datetime.now(UTC)
+    return RelationConstraint(
+        id=1,
+        source_type="VARIANT",
+        relation_type="ASSOCIATED_WITH",
+        target_type="PHENOTYPE",
+        is_allowed=True,
+        requires_evidence=True,
         created_by="seed",
         source_ref=None,
         review_status=review_status,
@@ -292,6 +316,81 @@ def test_create_variable_embeds_description_before_persist(
     assert isinstance(called_kwargs["description_embedding"], list)
     assert called_kwargs["embedding_model"] == "text-embedding-3-small"
     assert called_kwargs["embedded_at"] is not None
+
+
+def test_create_variable_validates_and_normalizes_numeric_constraints(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.create_variable.return_value = _build_variable(data_type="INTEGER")
+
+    service.create_variable(
+        variable_id="VAR_TEST_NUMERIC",
+        canonical_name="test_numeric",
+        display_name="Test Numeric",
+        data_type="integer",
+        constraints={"min": 0, "max": 10, "precision": 2},
+        created_by="manual:user-123",
+    )
+
+    called_kwargs = dictionary_repo.create_variable.call_args.kwargs
+    assert called_kwargs["data_type"] == "INTEGER"
+    assert called_kwargs["constraints"] == {"min": 0.0, "max": 10.0, "precision": 2}
+
+
+def test_create_variable_rejects_invalid_constraint_bounds(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.create_variable.return_value = _build_variable(data_type="INTEGER")
+
+    with pytest.raises(
+        ValueError,
+        match="Invalid constraints for data_type 'INTEGER'",
+    ):
+        service.create_variable(
+            variable_id="VAR_TEST_NUMERIC",
+            canonical_name="test_numeric",
+            display_name="Test Numeric",
+            data_type="INTEGER",
+            constraints={"min": 10, "max": 1},
+            created_by="manual:user-123",
+        )
+
+
+def test_create_variable_rejects_unknown_constraint_keys(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.create_variable.return_value = _build_variable(data_type="BOOLEAN")
+
+    with pytest.raises(
+        ValueError,
+        match="Invalid constraints for data_type 'BOOLEAN'",
+    ):
+        service.create_variable(
+            variable_id="VAR_TEST_BOOLEAN",
+            canonical_name="test_boolean",
+            display_name="Test Boolean",
+            data_type="BOOLEAN",
+            constraints={"unexpected": True},
+            created_by="manual:user-123",
+        )
+
+
+def test_create_variable_rejects_unsupported_data_type(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    with pytest.raises(ValueError, match="Unsupported data_type"):
+        service.create_variable(
+            variable_id="VAR_TEST_UNKNOWN",
+            canonical_name="test_unknown",
+            display_name="Test Unknown",
+            data_type="VECTOR",
+            constraints={},
+            created_by="manual:user-123",
+        )
 
 
 def test_set_review_status_requires_reason_for_revoked(
@@ -604,6 +703,48 @@ def test_revoke_relation_type_updates_review_state(
         reviewed_by="manual:user-123",
         revocation_reason="Deprecated relation type",
     )
+
+
+def test_create_relation_constraint_uses_space_policy_for_agent(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.get_entity_type.return_value = _build_entity_type()
+    dictionary_repo.get_relation_type.return_value = _build_relation_type()
+    dictionary_repo.create_relation_constraint.return_value = (
+        _build_relation_constraint(
+            review_status="PENDING_REVIEW",
+        )
+    )
+
+    service.create_relation_constraint(
+        source_type="VARIANT",
+        relation_type="ASSOCIATED_WITH",
+        target_type="PHENOTYPE",
+        created_by="agent:run-123",
+        research_space_settings={"dictionary_agent_creation_policy": "PENDING_REVIEW"},
+    )
+
+    called_kwargs = dictionary_repo.create_relation_constraint.call_args.kwargs
+    assert called_kwargs["review_status"] == "PENDING_REVIEW"
+    assert called_kwargs["source_type"] == "VARIANT"
+    assert called_kwargs["target_type"] == "PHENOTYPE"
+
+
+def test_create_relation_constraint_requires_existing_relation_type(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.get_entity_type.return_value = _build_entity_type()
+    dictionary_repo.get_relation_type.return_value = None
+
+    with pytest.raises(ValueError, match="Relation type 'ASSOCIATED_WITH' not found"):
+        service.create_relation_constraint(
+            source_type="VARIANT",
+            relation_type="ASSOCIATED_WITH",
+            target_type="PHENOTYPE",
+            created_by="manual:user-123",
+        )
 
 
 def test_list_changelog_entries_delegates_to_repository(

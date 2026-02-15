@@ -52,8 +52,7 @@ def _resolve_default_jwt_secret() -> str:
         return configured_secret
     if _ENVIRONMENT in _PRODUCTION_LIKE_ENVS:
         message = (
-            "MED13_DEV_JWT_SECRET must be set when MED13_ENV is production or "
-            "staging."
+            "MED13_DEV_JWT_SECRET must be set when MED13_ENV is production or staging."
         )
         raise RuntimeError(message)
     return _FALLBACK_DEV_JWT_SIGNING_MATERIAL
@@ -142,6 +141,9 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         )
         self._system_status_repository: SqlAlchemySystemStatusRepository | None = None
         self._system_status_service: app_services.SystemStatusService | None = None
+        self._entity_recognition_agent = None
+        self._extraction_agent = None
+        self._graph_connection_agent = None
         self._query_agent = None
 
     def get_user_repository(self) -> SqlAlchemyUserRepository:

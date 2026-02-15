@@ -379,6 +379,21 @@ class DictionaryRepository(ABC):
     # ── Relation constraints ──────────────────────────────────────────
 
     @abstractmethod
+    def create_relation_constraint(  # noqa: PLR0913
+        self,
+        *,
+        source_type: str,
+        relation_type: str,
+        target_type: str,
+        is_allowed: bool = True,
+        requires_evidence: bool = True,
+        created_by: str = "seed",
+        source_ref: str | None = None,
+        review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE",
+    ) -> RelationConstraint:
+        """Create a relation constraint triple with provenance metadata."""
+
+    @abstractmethod
     def get_constraints(
         self,
         *,

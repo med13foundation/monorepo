@@ -25,7 +25,7 @@ from .dictionary import (
 from .entities import KernelEntity, KernelEntityIdentifier
 from .observations import KernelObservation
 from .provenance import KernelProvenanceRecord
-from .relations import KernelRelation
+from .relations import KernelRelation, KernelRelationEvidence
 
 __all__ = [
     "DictionaryChangelog",
@@ -41,6 +41,7 @@ __all__ = [
     "KernelObservation",
     "KernelProvenanceRecord",
     "KernelRelation",
+    "KernelRelationEvidence",
     "RelationConstraint",
     "TransformRegistry",
     "ValueSet",

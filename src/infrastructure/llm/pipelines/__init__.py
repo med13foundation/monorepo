@@ -15,6 +15,15 @@ from src.infrastructure.llm.pipelines.base_pipeline import (
     create_governance_gate,
     get_usage_limits_dict,
 )
+from src.infrastructure.llm.pipelines.entity_recognition_pipelines import (
+    create_clinvar_entity_recognition_pipeline,
+)
+from src.infrastructure.llm.pipelines.extraction_pipelines import (
+    create_clinvar_extraction_pipeline,
+)
+from src.infrastructure.llm.pipelines.graph_connection_pipelines import (
+    create_clinvar_graph_connection_pipeline,
+)
 from src.infrastructure.llm.pipelines.query_pipelines.clinvar_pipeline import (
     create_clinvar_query_pipeline,
 )
@@ -27,6 +36,9 @@ __all__ = [
     "check_confidence",
     "create_confidence_checker",
     "create_governance_gate",
+    "create_clinvar_entity_recognition_pipeline",
+    "create_clinvar_extraction_pipeline",
+    "create_clinvar_graph_connection_pipeline",
     "create_pubmed_query_pipeline",
     "create_clinvar_query_pipeline",
     "get_usage_limits_dict",

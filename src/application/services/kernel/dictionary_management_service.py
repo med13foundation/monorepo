@@ -11,6 +11,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from src.domain.ports.dictionary_port import DictionaryPort
+from src.type_definitions.dictionary import (
+    normalize_dictionary_data_type,
+    validate_constraints_for_data_type,
+)
 
 if TYPE_CHECKING:
     from src.domain.entities.kernel.dictionary import (
@@ -215,6 +219,11 @@ class DictionaryManagementService(DictionaryPort):
     ) -> VariableDefinition:
         """Create a new dictionary variable definition with provenance."""
         created_by_normalized = self._normalize_created_by(created_by)
+        normalized_data_type = normalize_dictionary_data_type(data_type)
+        normalized_constraints = validate_constraints_for_data_type(
+            data_type=normalized_data_type,
+            constraints=constraints,
+        )
 
         initial_review_status = self._resolve_agent_creation_review_status(
             created_by=created_by_normalized,
@@ -232,11 +241,11 @@ class DictionaryManagementService(DictionaryPort):
             variable_id=variable_id,
             canonical_name=canonical_name,
             display_name=display_name,
-            data_type=data_type,
+            data_type=normalized_data_type,
             domain_context=domain_context,
             sensitivity=sensitivity,
             preferred_unit=preferred_unit,
-            constraints=constraints,
+            constraints=normalized_constraints,
             description=description,
             description_embedding=description_embedding,
             embedded_at=embedded_at,
@@ -646,6 +655,59 @@ class DictionaryManagementService(DictionaryPort):
             source_type,
             relation_type,
             target_type,
+        )
+
+    def create_relation_constraint(  # noqa: PLR0913
+        self,
+        *,
+        source_type: str,
+        relation_type: str,
+        target_type: str,
+        is_allowed: bool = True,
+        requires_evidence: bool = True,
+        created_by: str,
+        source_ref: str | None = None,
+        research_space_settings: ResearchSpaceSettings | None = None,
+    ) -> RelationConstraint:
+        """Create a relation constraint with provenance metadata."""
+        created_by_normalized = self._normalize_created_by(created_by)
+
+        normalized_source = source_type.strip().upper()
+        normalized_relation = relation_type.strip().upper()
+        normalized_target = target_type.strip().upper()
+        if not normalized_source:
+            msg = "source_type is required"
+            raise ValueError(msg)
+        if not normalized_relation:
+            msg = "relation_type is required"
+            raise ValueError(msg)
+        if not normalized_target:
+            msg = "target_type is required"
+            raise ValueError(msg)
+
+        if self._dictionary.get_entity_type(normalized_source) is None:
+            msg = f"Entity type '{normalized_source}' not found"
+            raise ValueError(msg)
+        if self._dictionary.get_relation_type(normalized_relation) is None:
+            msg = f"Relation type '{normalized_relation}' not found"
+            raise ValueError(msg)
+        if self._dictionary.get_entity_type(normalized_target) is None:
+            msg = f"Entity type '{normalized_target}' not found"
+            raise ValueError(msg)
+
+        initial_review_status = self._resolve_agent_creation_review_status(
+            created_by=created_by_normalized,
+            research_space_settings=research_space_settings,
+        )
+        return self._dictionary.create_relation_constraint(
+            source_type=normalized_source,
+            relation_type=normalized_relation,
+            target_type=normalized_target,
+            is_allowed=is_allowed,
+            requires_evidence=requires_evidence,
+            created_by=created_by_normalized,
+            source_ref=source_ref,
+            review_status=initial_review_status,
         )
 
     def get_constraints(

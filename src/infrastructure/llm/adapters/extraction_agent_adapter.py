@@ -1,0 +1,452 @@
+"""Flujo-based adapter for extraction agent operations."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from typing import TYPE_CHECKING, Literal
+
+from flujo.domain.models import PipelineResult, StepResult
+from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
+
+from src.domain.agents.contracts.base import EvidenceItem
+from src.domain.agents.contracts.extraction import (
+    ExtractedObservation,
+    ExtractedRelation,
+    ExtractionContract,
+    RejectedFact,
+)
+from src.domain.agents.models import ModelCapability
+from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
+from src.infrastructure.ingestion.types import NormalizedObservation
+from src.infrastructure.ingestion.validation.observation_validator import (
+    ObservationValidator,
+)
+from src.infrastructure.llm.config.governance import GovernanceConfig
+from src.infrastructure.llm.config.model_registry import get_model_registry
+from src.infrastructure.llm.pipelines.extraction_pipelines import (
+    create_clinvar_extraction_pipeline,
+)
+from src.infrastructure.llm.skills.registry import build_extraction_validation_tools
+from src.infrastructure.llm.state.backend_manager import get_state_backend
+from src.infrastructure.llm.state.lifecycle import get_lifecycle_manager
+from src.type_definitions.json_utils import to_json_value
+
+if TYPE_CHECKING:
+    from flujo import Flujo
+
+    from src.domain.agents.contexts.extraction_context import ExtractionContext
+    from src.domain.ports.dictionary_port import DictionaryPort
+    from src.type_definitions.common import JSONObject
+
+logger = logging.getLogger(__name__)
+
+_INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
+_SUPPORTED_SOURCE_TYPES = frozenset({"clinvar"})
+
+
+class FlujoExtractionAdapter(ExtractionAgentPort):
+    """Adapter that executes extraction workflows through Flujo."""
+
+    def __init__(
+        self,
+        model: str | None = None,
+        *,
+        use_governance: bool = True,
+        dictionary_service: DictionaryPort | None = None,
+    ) -> None:
+        self._default_model = model
+        self._use_governance = use_governance
+        self._dictionary_service = dictionary_service
+        self._state_backend = get_state_backend()
+        self._governance = GovernanceConfig.from_environment()
+        self._registry = get_model_registry()
+        self._lifecycle_manager = get_lifecycle_manager()
+        self._pipelines: dict[
+            str,
+            Flujo[str, ExtractionContract, ExtractionContext],
+        ] = {}
+        self._last_run_id: str | None = None
+
+    async def extract(
+        self,
+        context: ExtractionContext,
+        *,
+        model_id: str | None = None,
+    ) -> ExtractionContract:
+        self._last_run_id = None
+        source_type = context.source_type.strip().lower()
+        if source_type not in _SUPPORTED_SOURCE_TYPES:
+            return self._unsupported_source_contract(context)
+
+        if not self._has_openai_key():
+            return self._heuristic_contract(context, decision="fallback")
+
+        effective_model = self._resolve_model_id(model_id)
+        pipeline = self._get_or_create_pipeline(effective_model)
+        input_text = self._build_input_text(context)
+        initial_context = context.model_dump(mode="json")
+
+        try:
+            return await self._execute_pipeline(
+                pipeline,
+                input_text=input_text,
+                initial_context=initial_context,
+                fallback_context=context,
+            )
+        except (PausedException, PipelineAbortSignal):
+            raise
+        except FlujoError as exc:
+            logger.warning(
+                "Extraction pipeline failed for document=%s: %s",
+                context.document_id,
+                exc,
+            )
+            return self._heuristic_contract(context, decision="fallback")
+
+    async def close(self) -> None:
+        for model_id, pipeline in self._pipelines.items():
+            try:
+                if hasattr(pipeline, "aclose"):
+                    await pipeline.aclose()
+                self._lifecycle_manager.unregister_runner(pipeline)
+            except (RuntimeError, OSError, ConnectionError) as exc:
+                logger.warning(
+                    "Error closing extraction pipeline for model=%s: %s",
+                    model_id,
+                    exc,
+                )
+        self._pipelines.clear()
+
+    @staticmethod
+    def _has_openai_key() -> bool:
+        raw_value = os.getenv("OPENAI_API_KEY") or os.getenv("FLUJO_OPENAI_API_KEY")
+        if raw_value is None:
+            return False
+        normalized = raw_value.strip()
+        if not normalized:
+            return False
+        return normalized.lower() not in _INVALID_OPENAI_KEYS
+
+    def _resolve_model_id(self, model_id: str | None) -> str:
+        if model_id is not None and self._registry.validate_model_for_capability(
+            model_id,
+            ModelCapability.EVIDENCE_EXTRACTION,
+        ):
+            return model_id
+        if self._default_model is not None:
+            return self._default_model
+        return self._registry.get_default_model(
+            ModelCapability.EVIDENCE_EXTRACTION,
+        ).model_id
+
+    def _get_or_create_pipeline(
+        self,
+        model_id: str,
+    ) -> Flujo[str, ExtractionContract, ExtractionContext]:
+        if model_id in self._pipelines:
+            return self._pipelines[model_id]
+
+        tools: list[object] | None = None
+        if self._dictionary_service is not None:
+            try:
+                tools = list(
+                    build_extraction_validation_tools(
+                        dictionary_service=self._dictionary_service,
+                    ),
+                )
+            except (LookupError, PermissionError) as exc:
+                logger.warning(
+                    "Extraction tools unavailable; running without tool binding: %s",
+                    exc,
+                )
+                tools = None
+
+        pipeline = create_clinvar_extraction_pipeline(
+            state_backend=self._state_backend,
+            model=model_id,
+            use_governance=self._use_governance,
+            usage_limits=self._governance.usage_limits,
+            tools=tools,
+        )
+        self._pipelines[model_id] = pipeline
+        self._lifecycle_manager.register_runner(pipeline)
+        return pipeline
+
+    @staticmethod
+    def _build_input_text(context: ExtractionContext) -> str:
+        serialized_raw_record = json.dumps(context.raw_record, default=str)
+        serialized_entities = json.dumps(
+            [entity.model_dump(mode="json") for entity in context.recognized_entities],
+            default=str,
+        )
+        serialized_observations = json.dumps(
+            [
+                observation.model_dump(mode="json")
+                for observation in context.recognized_observations
+            ],
+            default=str,
+        )
+        return (
+            f"SOURCE TYPE: {context.source_type}\n"
+            f"DOCUMENT ID: {context.document_id}\n"
+            f"RESEARCH SPACE ID: {context.research_space_id or 'none'}\n"
+            f"SHADOW MODE: {context.shadow_mode}\n\n"
+            f"RAW RECORD JSON:\n{serialized_raw_record}\n\n"
+            f"RECOGNIZED ENTITIES:\n{serialized_entities}\n\n"
+            f"RECOGNIZED OBSERVATIONS:\n{serialized_observations}"
+        )
+
+    async def _execute_pipeline(
+        self,
+        pipeline: Flujo[str, ExtractionContract, ExtractionContext],
+        *,
+        input_text: str,
+        initial_context: JSONObject,
+        fallback_context: ExtractionContext,
+    ) -> ExtractionContract:
+        final_output: ExtractionContract | None = None
+
+        async for item in pipeline.run_async(
+            input_text,
+            initial_context_data=initial_context,
+        ):
+            if isinstance(item, StepResult):
+                if isinstance(item.output, ExtractionContract):
+                    final_output = item.output
+            elif isinstance(item, PipelineResult):
+                self._capture_run_id(item)
+                candidate = self._extract_from_pipeline_result(item)
+                if candidate is not None:
+                    final_output = candidate
+
+        if final_output is None:
+            return self._heuristic_contract(fallback_context, decision="fallback")
+        return final_output
+
+    def _extract_from_pipeline_result(
+        self,
+        result: PipelineResult[ExtractionContext],
+    ) -> ExtractionContract | None:
+        step_history = getattr(result, "step_history", None)
+        if not isinstance(step_history, list):
+            return None
+        for step_result in reversed(step_history):
+            if isinstance(
+                step_result,
+                StepResult,
+            ) and isinstance(step_result.output, ExtractionContract):
+                return step_result.output
+        return None
+
+    def _capture_run_id(self, result: PipelineResult[ExtractionContext]) -> None:
+        context = result.final_pipeline_context
+        run_id = getattr(context, "run_id", None)
+        if isinstance(run_id, str) and run_id.strip():
+            self._last_run_id = run_id.strip()
+
+    def _heuristic_contract(
+        self,
+        context: ExtractionContext,
+        *,
+        decision: Literal["generated", "fallback", "escalate"],
+    ) -> ExtractionContract:
+        observations: list[ExtractedObservation] = []
+        rejected_facts: list[RejectedFact] = []
+
+        for candidate in context.recognized_observations:
+            variable_id = self._resolve_variable_id(
+                explicit_variable_id=candidate.variable_id,
+                field_name=candidate.field_name,
+            )
+            if variable_id is None:
+                rejected_facts.append(
+                    RejectedFact(
+                        fact_type="observation",
+                        reason="No variable mapping available",
+                        payload={"field_name": candidate.field_name},
+                    ),
+                )
+                continue
+
+            if not self._is_observation_valid(
+                variable_id=variable_id,
+                value=candidate.value,
+                unit=candidate.unit,
+            ):
+                rejected_facts.append(
+                    RejectedFact(
+                        fact_type="observation",
+                        reason="Observation failed dictionary validation",
+                        payload={
+                            "field_name": candidate.field_name,
+                            "variable_id": variable_id,
+                        },
+                    ),
+                )
+                continue
+
+            observations.append(
+                ExtractedObservation(
+                    field_name=candidate.field_name,
+                    variable_id=variable_id,
+                    value=to_json_value(candidate.value),
+                    unit=candidate.unit,
+                    confidence=candidate.confidence,
+                ),
+            )
+
+        relations: list[ExtractedRelation] = []
+        variant_entity = next(
+            (
+                entity
+                for entity in context.recognized_entities
+                if entity.entity_type.strip().upper() == "VARIANT"
+            ),
+            None,
+        )
+        phenotype_entity = next(
+            (
+                entity
+                for entity in context.recognized_entities
+                if entity.entity_type.strip().upper() == "PHENOTYPE"
+            ),
+            None,
+        )
+        if variant_entity and phenotype_entity:
+            relation_allowed = self._is_relation_allowed(
+                source_type="VARIANT",
+                relation_type="ASSOCIATED_WITH",
+                target_type="PHENOTYPE",
+            )
+            if relation_allowed:
+                relations.append(
+                    ExtractedRelation(
+                        source_type="VARIANT",
+                        relation_type="ASSOCIATED_WITH",
+                        target_type="PHENOTYPE",
+                        source_label=variant_entity.display_label,
+                        target_label=phenotype_entity.display_label,
+                        confidence=min(
+                            variant_entity.confidence,
+                            phenotype_entity.confidence,
+                        ),
+                    ),
+                )
+            else:
+                rejected_facts.append(
+                    RejectedFact(
+                        fact_type="relation",
+                        reason="Relation triple not allowed by dictionary constraints",
+                        payload={
+                            "source_type": "VARIANT",
+                            "relation_type": "ASSOCIATED_WITH",
+                            "target_type": "PHENOTYPE",
+                        },
+                    ),
+                )
+
+        pipeline_payload: JSONObject = {
+            str(key): to_json_value(value) for key, value in context.raw_record.items()
+        }
+        if observations:
+            for observation in observations:
+                pipeline_payload[observation.field_name] = to_json_value(
+                    observation.value,
+                )
+
+        evidence = [
+            EvidenceItem(
+                source_type="db",
+                locator=f"source_document:{context.document_id}",
+                excerpt="Deterministic extraction fallback mapped recognized candidates",
+                relevance=0.75 if observations else 0.4,
+            ),
+        ]
+        resolved_decision: Literal["generated", "fallback", "escalate"] = (
+            "generated" if observations or relations else decision
+        )
+        confidence = 0.82 if observations or relations else 0.4
+
+        return ExtractionContract(
+            decision=resolved_decision,
+            confidence_score=confidence,
+            rationale="Heuristic extraction fallback executed",
+            evidence=evidence,
+            source_type=context.source_type,
+            document_id=context.document_id,
+            observations=observations,
+            relations=relations,
+            rejected_facts=rejected_facts,
+            pipeline_payloads=[pipeline_payload] if pipeline_payload else [],
+            shadow_mode=context.shadow_mode,
+            agent_run_id=self._last_run_id,
+        )
+
+    def _resolve_variable_id(
+        self,
+        *,
+        explicit_variable_id: str | None,
+        field_name: str,
+    ) -> str | None:
+        if isinstance(explicit_variable_id, str) and explicit_variable_id.strip():
+            return explicit_variable_id.strip()
+        if self._dictionary_service is None:
+            return None
+        resolved = self._dictionary_service.resolve_synonym(field_name)
+        if resolved is None:
+            return None
+        return resolved.id
+
+    def _is_observation_valid(
+        self,
+        *,
+        variable_id: str,
+        value: object,
+        unit: str | None,
+    ) -> bool:
+        if self._dictionary_service is None:
+            return True
+        validator = ObservationValidator(self._dictionary_service)
+        validated = validator.validate(
+            NormalizedObservation(
+                subject_anchor={},
+                variable_id=variable_id,
+                value=to_json_value(value),
+                unit=unit,
+                observed_at=None,
+                provenance={},
+            ),
+        )
+        return validated is not None
+
+    def _is_relation_allowed(
+        self,
+        *,
+        source_type: str,
+        relation_type: str,
+        target_type: str,
+    ) -> bool:
+        if self._dictionary_service is None:
+            return True
+        return self._dictionary_service.is_relation_allowed(
+            source_type=source_type,
+            relation_type=relation_type,
+            target_type=target_type,
+        )
+
+    @staticmethod
+    def _unsupported_source_contract(context: ExtractionContext) -> ExtractionContract:
+        return ExtractionContract(
+            decision="escalate",
+            confidence_score=0.0,
+            rationale=f"Source type '{context.source_type}' is not supported",
+            evidence=[],
+            source_type=context.source_type,
+            document_id=context.document_id,
+            shadow_mode=context.shadow_mode,
+        )
+
+
+__all__ = ["FlujoExtractionAdapter"]

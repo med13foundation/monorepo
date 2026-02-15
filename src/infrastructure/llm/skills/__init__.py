@@ -11,10 +11,18 @@ Every skill must be explicitly registered with:
 
 from src.infrastructure.llm.skills.registry import (
     SkillRegistry,
+    build_entity_recognition_dictionary_tools,
+    build_extraction_validation_tools,
+    build_graph_connection_tools,
+    get_skill_registry,
     register_all_skills,
 )
 
 __all__ = [
+    "build_extraction_validation_tools",
+    "build_entity_recognition_dictionary_tools",
+    "build_graph_connection_tools",
+    "get_skill_registry",
     "register_all_skills",
     "SkillRegistry",
 ]
