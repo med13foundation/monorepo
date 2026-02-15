@@ -21,12 +21,15 @@ from src.infrastructure.llm.config.governance import GovernanceConfig
 from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.llm.pipelines.graph_connection_pipelines import (
     create_clinvar_graph_connection_pipeline,
+    create_pubmed_graph_connection_pipeline,
 )
 from src.infrastructure.llm.skills.registry import build_graph_connection_tools
 from src.infrastructure.llm.state.backend_manager import get_state_backend
 from src.infrastructure.llm.state.lifecycle import get_lifecycle_manager
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from flujo import Flujo
 
     from src.domain.agents.contexts.graph_connection_context import (
@@ -42,7 +45,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
-_SUPPORTED_SOURCE_TYPES = frozenset({"clinvar"})
+_SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
+
+if TYPE_CHECKING:
+    GraphConnectionPipelineFactory = Callable[
+        ...,
+        Flujo[str, GraphConnectionContract, GraphConnectionContext],
+    ]
+
+_PIPELINE_FACTORIES: dict[str, GraphConnectionPipelineFactory] = {
+    "clinvar": create_clinvar_graph_connection_pipeline,
+    "pubmed": create_pubmed_graph_connection_pipeline,
+}
 
 
 class FlujoGraphConnectionAdapter(GraphConnectionPort):
@@ -67,7 +81,7 @@ class FlujoGraphConnectionAdapter(GraphConnectionPort):
         self._registry = get_model_registry()
         self._lifecycle_manager = get_lifecycle_manager()
         self._pipelines: dict[
-            tuple[str, str],
+            tuple[str, str, str],
             Flujo[str, GraphConnectionContract, GraphConnectionContext],
         ] = {}
         self._last_run_id: str | None = None
@@ -161,7 +175,8 @@ class FlujoGraphConnectionAdapter(GraphConnectionPort):
         *,
         context: GraphConnectionContext,
     ) -> Flujo[str, GraphConnectionContract, GraphConnectionContext]:
-        cache_key = (model_id, context.research_space_id)
+        source_type = context.source_type.strip().lower()
+        cache_key = (source_type, model_id, context.research_space_id)
         if cache_key in self._pipelines:
             return self._pipelines[cache_key]
 
@@ -188,7 +203,12 @@ class FlujoGraphConnectionAdapter(GraphConnectionPort):
                 )
                 tools = None
 
-        pipeline = create_clinvar_graph_connection_pipeline(
+        pipeline_factory = _PIPELINE_FACTORIES.get(source_type)
+        if pipeline_factory is None:
+            msg = f"Unsupported source type for pipeline dispatch: {source_type}"
+            raise ValueError(msg)
+
+        pipeline = pipeline_factory(
             state_backend=self._state_backend,
             model=model_id,
             use_governance=self._use_governance,

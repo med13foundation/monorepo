@@ -28,8 +28,17 @@ async def root() -> JSONObject:
             "ingest": "/research-spaces/{space_id}/ingest",
             "graph_export": "/research-spaces/{space_id}/graph/export",
             "graph_search": "/research-spaces/{space_id}/graph/search",
+            "graph_connections_discover": (
+                "/research-spaces/{space_id}/graph/connections/discover"
+            ),
+            "entity_graph_connections": (
+                "/research-spaces/{space_id}/entities/{entity_id}/connections"
+            ),
             "content_enrichment_run": (
                 "/research-spaces/{space_id}/documents/enrichment/run"
+            ),
+            "knowledge_extraction_run": (
+                "/research-spaces/{space_id}/documents/extraction/run"
             ),
         },
         "admin": "/admin",

@@ -35,7 +35,7 @@ async def test_discover_escalates_for_unsupported_source() -> None:
     adapter = _build_adapter()
     context = GraphConnectionContext(
         seed_entity_id="entity-1",
-        source_type="pubmed",
+        source_type="unsupported_source",
         research_space_id="space-1",
     )
 
@@ -73,6 +73,8 @@ def test_get_or_create_pipeline_binds_graph_tools() -> None:
     dictionary_service = MagicMock()
     graph_query_service = MagicMock()
     relation_repository = MagicMock()
+    pubmed_factory = MagicMock(return_value=MagicMock(name="unused_pubmed_pipeline"))
+    clinvar_factory = MagicMock(return_value=mock_pipeline)
 
     with (
         patch(
@@ -91,10 +93,10 @@ def test_get_or_create_pipeline_binds_graph_tools() -> None:
             "src.infrastructure.llm.adapters.graph_connection_agent_adapter.build_graph_connection_tools",
             return_value=[lambda entity_id: entity_id],
         ) as build_tools_mock,
-        patch(
-            "src.infrastructure.llm.adapters.graph_connection_agent_adapter.create_clinvar_graph_connection_pipeline",
-            return_value=mock_pipeline,
-        ) as create_pipeline_mock,
+        patch.dict(
+            "src.infrastructure.llm.adapters.graph_connection_agent_adapter._PIPELINE_FACTORIES",
+            {"clinvar": clinvar_factory, "pubmed": pubmed_factory},
+        ),
     ):
         adapter = FlujoGraphConnectionAdapter(
             dictionary_service=dictionary_service,
@@ -113,6 +115,49 @@ def test_get_or_create_pipeline_binds_graph_tools() -> None:
 
     assert pipeline is mock_pipeline
     build_tools_mock.assert_called_once()
-    create_pipeline_mock.assert_called_once()
-    called_kwargs = create_pipeline_mock.call_args.kwargs
+    clinvar_factory.assert_called_once()
+    called_kwargs = clinvar_factory.call_args.kwargs
     assert called_kwargs["tools"] is not None
+
+
+def test_get_or_create_pipeline_dispatches_pubmed_factory() -> None:
+    mock_pipeline = MagicMock(name="pubmed_pipeline")
+    lifecycle_manager = MagicMock()
+    clinvar_factory = MagicMock(return_value=MagicMock(name="unused_clinvar_pipeline"))
+    pubmed_factory = MagicMock(return_value=mock_pipeline)
+
+    with (
+        patch(
+            "src.infrastructure.llm.adapters.graph_connection_agent_adapter.get_state_backend",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "src.infrastructure.llm.adapters.graph_connection_agent_adapter.get_model_registry",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "src.infrastructure.llm.adapters.graph_connection_agent_adapter.get_lifecycle_manager",
+            return_value=lifecycle_manager,
+        ),
+        patch.dict(
+            "src.infrastructure.llm.adapters.graph_connection_agent_adapter._PIPELINE_FACTORIES",
+            {"clinvar": clinvar_factory, "pubmed": pubmed_factory},
+        ),
+    ):
+        adapter = FlujoGraphConnectionAdapter(
+            dictionary_service=MagicMock(),
+            graph_query_service=MagicMock(),
+            relation_repository=MagicMock(),
+        )
+        context = GraphConnectionContext(
+            seed_entity_id="entity-tools-pubmed",
+            source_type="pubmed",
+            research_space_id="space-tools",
+        )
+        pipeline = adapter._get_or_create_pipeline(
+            "openai:gpt-4o-mini",
+            context=context,
+        )
+
+    assert pipeline is mock_pipeline
+    pubmed_factory.assert_called_once()

@@ -10,10 +10,12 @@ from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.llm.factories.base_factory import BaseAgentFactory, FlujoAgent
 from src.infrastructure.llm.prompts.entity_recognition import (
     CLINVAR_ENTITY_RECOGNITION_SYSTEM_PROMPT,
+    PUBMED_ENTITY_RECOGNITION_SYSTEM_PROMPT,
 )
 
 _ENTITY_RECOGNITION_PROMPTS: dict[str, str] = {
     "clinvar": CLINVAR_ENTITY_RECOGNITION_SYSTEM_PROMPT,
+    "pubmed": PUBMED_ENTITY_RECOGNITION_SYSTEM_PROMPT,
 }
 SUPPORTED_ENTITY_RECOGNITION_SOURCES = frozenset(_ENTITY_RECOGNITION_PROMPTS)
 
@@ -81,6 +83,20 @@ def create_clinvar_entity_recognition_agent(
     """Create a ClinVar entity-recognition agent."""
     return create_entity_recognition_agent_for_source(
         source_type="clinvar",
+        model=model,
+        max_retries=max_retries,
+        tools=tools,
+    )
+
+
+def create_pubmed_entity_recognition_agent(
+    model: str | None = None,
+    max_retries: int = 3,
+    tools: list[object] | None = None,
+) -> FlujoAgent:
+    """Create a PubMed entity-recognition agent."""
+    return create_entity_recognition_agent_for_source(
+        source_type="pubmed",
         model=model,
         max_retries=max_retries,
         tools=tools,

@@ -37,7 +37,7 @@ async def test_recognize_escalates_for_unsupported_source() -> None:
     adapter = _build_adapter()
     context = EntityRecognitionContext(
         document_id="doc-1",
-        source_type="pubmed",
+        source_type="unsupported_source",
         raw_record={"title": "Example"},
     )
 
@@ -101,6 +101,8 @@ def test_get_or_create_pipeline_binds_dictionary_tools() -> None:
     lifecycle_manager = MagicMock()
     mock_registry = MagicMock()
     mock_registry.validate_model_for_capability.return_value = True
+    pubmed_factory = MagicMock(return_value=MagicMock(name="unused_pubmed_pipeline"))
+    clinvar_factory = MagicMock(return_value=mock_pipeline)
 
     with (
         patch(
@@ -119,10 +121,10 @@ def test_get_or_create_pipeline_binds_dictionary_tools() -> None:
             "src.infrastructure.llm.adapters.entity_recognition_agent_adapter.build_entity_recognition_dictionary_tools",
             return_value=[lambda terms: terms],
         ) as build_tools_mock,
-        patch(
-            "src.infrastructure.llm.adapters.entity_recognition_agent_adapter.create_clinvar_entity_recognition_pipeline",
-            return_value=mock_pipeline,
-        ) as create_pipeline_mock,
+        patch.dict(
+            "src.infrastructure.llm.adapters.entity_recognition_agent_adapter._PIPELINE_FACTORIES",
+            {"clinvar": clinvar_factory, "pubmed": pubmed_factory},
+        ),
     ):
         adapter = FlujoEntityRecognitionAdapter(dictionary_service=dictionary_service)
         context = EntityRecognitionContext(
@@ -135,12 +137,56 @@ def test_get_or_create_pipeline_binds_dictionary_tools() -> None:
         )
         pipeline = adapter._get_or_create_pipeline(
             "openai:gpt-4o-mini",
+            source_type="clinvar",
             policy_key="PENDING_REVIEW",
             context=context,
         )
 
     assert pipeline is mock_pipeline
     build_tools_mock.assert_called_once()
-    create_pipeline_mock.assert_called_once()
-    called_kwargs = create_pipeline_mock.call_args.kwargs
+    clinvar_factory.assert_called_once()
+    called_kwargs = clinvar_factory.call_args.kwargs
     assert called_kwargs["tools"] is not None
+
+
+def test_get_or_create_pipeline_dispatches_pubmed_factory() -> None:
+    mock_pipeline = MagicMock(name="pubmed_pipeline")
+    lifecycle_manager = MagicMock()
+    mock_registry = MagicMock()
+    mock_registry.validate_model_for_capability.return_value = True
+    clinvar_factory = MagicMock(return_value=MagicMock(name="unused_clinvar_pipeline"))
+    pubmed_factory = MagicMock(return_value=mock_pipeline)
+
+    with (
+        patch(
+            "src.infrastructure.llm.adapters.entity_recognition_agent_adapter.get_state_backend",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "src.infrastructure.llm.adapters.entity_recognition_agent_adapter.get_model_registry",
+            return_value=mock_registry,
+        ),
+        patch(
+            "src.infrastructure.llm.adapters.entity_recognition_agent_adapter.get_lifecycle_manager",
+            return_value=lifecycle_manager,
+        ),
+        patch.dict(
+            "src.infrastructure.llm.adapters.entity_recognition_agent_adapter._PIPELINE_FACTORIES",
+            {"clinvar": clinvar_factory, "pubmed": pubmed_factory},
+        ),
+    ):
+        adapter = FlujoEntityRecognitionAdapter(dictionary_service=MagicMock())
+        context = EntityRecognitionContext(
+            document_id="doc-tools-pubmed",
+            source_type="pubmed",
+            raw_record={"title": "PubMed title"},
+        )
+        pipeline = adapter._get_or_create_pipeline(
+            "openai:gpt-4o-mini",
+            source_type="pubmed",
+            policy_key="DEFAULT",
+            context=context,
+        )
+
+    assert pipeline is mock_pipeline
+    pubmed_factory.assert_called_once()

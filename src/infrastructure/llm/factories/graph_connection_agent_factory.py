@@ -10,10 +10,12 @@ from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.llm.factories.base_factory import BaseAgentFactory, FlujoAgent
 from src.infrastructure.llm.prompts.graph_connection import (
     CLINVAR_GRAPH_CONNECTION_SYSTEM_PROMPT,
+    PUBMED_GRAPH_CONNECTION_SYSTEM_PROMPT,
 )
 
 _GRAPH_CONNECTION_PROMPTS: dict[str, str] = {
     "clinvar": CLINVAR_GRAPH_CONNECTION_SYSTEM_PROMPT,
+    "pubmed": PUBMED_GRAPH_CONNECTION_SYSTEM_PROMPT,
 }
 SUPPORTED_GRAPH_CONNECTION_SOURCES = frozenset(_GRAPH_CONNECTION_PROMPTS)
 
@@ -83,6 +85,20 @@ def create_clinvar_graph_connection_agent(
     )
 
 
+def create_pubmed_graph_connection_agent(
+    model: str | None = None,
+    max_retries: int = 3,
+    tools: list[object] | None = None,
+) -> FlujoAgent:
+    """Create a PubMed graph-connection agent."""
+    return create_graph_connection_agent_for_source(
+        source_type="pubmed",
+        model=model,
+        max_retries=max_retries,
+        tools=tools,
+    )
+
+
 class GraphConnectionAgentFactory(BaseAgentFactory[GraphConnectionContract]):
     """Class-based factory for graph-connection agents."""
 
@@ -111,6 +127,7 @@ __all__ = [
     "GraphConnectionAgentFactory",
     "SUPPORTED_GRAPH_CONNECTION_SOURCES",
     "create_clinvar_graph_connection_agent",
+    "create_pubmed_graph_connection_agent",
     "create_graph_connection_agent_for_source",
     "get_graph_connection_system_prompt",
 ]

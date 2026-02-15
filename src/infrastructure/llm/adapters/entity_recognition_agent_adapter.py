@@ -21,12 +21,15 @@ from src.domain.agents.ports.entity_recognition_port import EntityRecognitionPor
 from src.infrastructure.llm.config import GovernanceConfig, get_model_registry
 from src.infrastructure.llm.pipelines.entity_recognition_pipelines import (
     create_clinvar_entity_recognition_pipeline,
+    create_pubmed_entity_recognition_pipeline,
 )
 from src.infrastructure.llm.skills import build_entity_recognition_dictionary_tools
 from src.infrastructure.llm.state import get_lifecycle_manager, get_state_backend
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from flujo import Flujo
 
     from src.domain.agents.contexts.entity_recognition_context import (
@@ -38,8 +41,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
-_SUPPORTED_SOURCE_TYPES = frozenset({"clinvar"})
+_SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
 _DEFAULT_DICTIONARY_POLICY_KEY = "DEFAULT"
+
+if TYPE_CHECKING:
+    EntityRecognitionPipelineFactory = Callable[
+        ...,
+        Flujo[str, EntityRecognitionContract, EntityRecognitionContext],
+    ]
+
+_PIPELINE_FACTORIES: dict[str, EntityRecognitionPipelineFactory] = {
+    "clinvar": create_clinvar_entity_recognition_pipeline,
+    "pubmed": create_pubmed_entity_recognition_pipeline,
+}
+
+_HEURISTIC_FIELD_MAP: dict[str, dict[str, tuple[str, ...]]] = {
+    "clinvar": {
+        "variant": ("clinvar_id", "variation_id", "accession", "hgvs"),
+        "gene": ("gene_symbol", "gene", "hgnc_id"),
+        "phenotype": ("condition", "disease_name", "phenotype"),
+        "publication": ("title", "pubmed_id", "doi"),
+    },
+    "pubmed": {
+        "variant": ("hgvs", "variant"),
+        "gene": ("gene_symbol", "gene", "hgnc_id"),
+        "phenotype": ("condition", "disease", "phenotype"),
+        "publication": ("title", "pubmed_id", "pmid", "doi"),
+    },
+}
 
 
 class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
@@ -63,7 +92,7 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         self._registry = get_model_registry()
         self._lifecycle_manager = get_lifecycle_manager()
         self._pipelines: dict[
-            tuple[str, str],
+            tuple[str, str, str],
             Flujo[str, EntityRecognitionContract, EntityRecognitionContext],
         ] = {}
         self._last_run_id: str | None = None
@@ -86,6 +115,7 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         policy_key = self._resolve_dictionary_policy_key(context)
         pipeline = self._get_or_create_pipeline(
             effective_model,
+            source_type=source_type,
             policy_key=policy_key,
             context=context,
         )
@@ -155,10 +185,11 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         self,
         model_id: str,
         *,
+        source_type: str,
         policy_key: str,
         context: EntityRecognitionContext,
     ) -> Flujo[str, EntityRecognitionContract, EntityRecognitionContext]:
-        cache_key = (model_id, policy_key)
+        cache_key = (source_type, model_id, policy_key)
         if cache_key in self._pipelines:
             return self._pipelines[cache_key]
 
@@ -181,7 +212,12 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
                 )
                 tools = None
 
-        pipeline = create_clinvar_entity_recognition_pipeline(
+        pipeline_factory = _PIPELINE_FACTORIES.get(source_type)
+        if pipeline_factory is None:
+            msg = f"Unsupported source type for pipeline dispatch: {source_type}"
+            raise ValueError(msg)
+
+        pipeline = pipeline_factory(
             state_backend=self._state_backend,
             model=model_id,
             use_governance=self._use_governance,
@@ -282,6 +318,7 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         *,
         decision: Literal["generated", "fallback", "escalate"],
     ) -> EntityRecognitionContract:
+        source_type = context.source_type.strip().lower()
         raw_record = dict(context.raw_record)
         field_candidates = [
             str(key)
@@ -292,7 +329,7 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         entities: list[RecognizedEntityCandidate] = []
         variant_label = self._extract_scalar(
             raw_record,
-            ("clinvar_id", "variation_id", "accession", "hgvs"),
+            self._field_keys_for_source(source_type, "variant"),
         )
         if variant_label:
             entities.append(
@@ -306,7 +343,7 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
 
         gene_label = self._extract_scalar(
             raw_record,
-            ("gene_symbol", "gene", "hgnc_id"),
+            self._field_keys_for_source(source_type, "gene"),
         )
         if gene_label:
             entities.append(
@@ -320,7 +357,7 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
 
         phenotype_label = self._extract_scalar(
             raw_record,
-            ("condition", "disease_name", "phenotype"),
+            self._field_keys_for_source(source_type, "phenotype"),
         )
         if phenotype_label:
             entities.append(
@@ -329,6 +366,20 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
                     display_label=phenotype_label,
                     identifiers={"label": phenotype_label},
                     confidence=0.65,
+                ),
+            )
+
+        publication_label = self._extract_scalar(
+            raw_record,
+            self._field_keys_for_source(source_type, "publication"),
+        )
+        if publication_label:
+            entities.append(
+                RecognizedEntityCandidate(
+                    entity_type="PUBLICATION",
+                    display_label=publication_label,
+                    identifiers={"publication_ref": publication_label},
+                    confidence=0.7,
                 ),
             )
 
@@ -365,11 +416,15 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         return EntityRecognitionContract(
             decision=resolved_decision,
             confidence_score=confidence,
-            rationale="Heuristic ClinVar parsing fallback executed",
+            rationale=f"Heuristic {source_type} parsing fallback executed",
             evidence=evidence,
             source_type=context.source_type,
             document_id=context.document_id,
-            primary_entity_type=entities[0].entity_type if entities else "VARIANT",
+            primary_entity_type=(
+                entities[0].entity_type
+                if entities
+                else ("PUBLICATION" if source_type == "pubmed" else "VARIANT")
+            ),
             field_candidates=field_candidates,
             recognized_entities=entities,
             recognized_observations=observations,
@@ -377,6 +432,14 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             shadow_mode=context.shadow_mode,
             agent_run_id=self._last_run_id,
         )
+
+    @staticmethod
+    def _field_keys_for_source(source_type: str, field: str) -> tuple[str, ...]:
+        source_mapping = _HEURISTIC_FIELD_MAP.get(
+            source_type,
+            _HEURISTIC_FIELD_MAP["clinvar"],
+        )
+        return source_mapping.get(field, ())
 
     @staticmethod
     def _unsupported_source_contract(

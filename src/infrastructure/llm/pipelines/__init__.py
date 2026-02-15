@@ -20,12 +20,15 @@ from src.infrastructure.llm.pipelines.content_enrichment_pipelines import (
 )
 from src.infrastructure.llm.pipelines.entity_recognition_pipelines import (
     create_clinvar_entity_recognition_pipeline,
+    create_pubmed_entity_recognition_pipeline,
 )
 from src.infrastructure.llm.pipelines.extraction_pipelines import (
     create_clinvar_extraction_pipeline,
+    create_pubmed_extraction_pipeline,
 )
 from src.infrastructure.llm.pipelines.graph_connection_pipelines import (
     create_clinvar_graph_connection_pipeline,
+    create_pubmed_graph_connection_pipeline,
 )
 from src.infrastructure.llm.pipelines.graph_search_pipelines import (
     create_graph_search_pipeline,
@@ -44,8 +47,11 @@ __all__ = [
     "create_confidence_checker",
     "create_governance_gate",
     "create_clinvar_entity_recognition_pipeline",
+    "create_pubmed_entity_recognition_pipeline",
     "create_clinvar_extraction_pipeline",
+    "create_pubmed_extraction_pipeline",
     "create_clinvar_graph_connection_pipeline",
+    "create_pubmed_graph_connection_pipeline",
     "create_graph_search_pipeline",
     "create_pubmed_query_pipeline",
     "create_clinvar_query_pipeline",

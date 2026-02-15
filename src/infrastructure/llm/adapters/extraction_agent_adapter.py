@@ -26,12 +26,15 @@ from src.infrastructure.ingestion.validation.observation_validator import (
 from src.infrastructure.llm.config import GovernanceConfig, get_model_registry
 from src.infrastructure.llm.pipelines.extraction_pipelines import (
     create_clinvar_extraction_pipeline,
+    create_pubmed_extraction_pipeline,
 )
 from src.infrastructure.llm.skills import build_extraction_validation_tools
 from src.infrastructure.llm.state import get_lifecycle_manager, get_state_backend
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from flujo import Flujo
 
     from src.domain.agents.contexts.extraction_context import ExtractionContext
@@ -41,7 +44,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
-_SUPPORTED_SOURCE_TYPES = frozenset({"clinvar"})
+_SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
+
+if TYPE_CHECKING:
+    ExtractionPipelineFactory = Callable[
+        ...,
+        Flujo[str, ExtractionContract, ExtractionContext],
+    ]
+
+_PIPELINE_FACTORIES: dict[str, ExtractionPipelineFactory] = {
+    "clinvar": create_clinvar_extraction_pipeline,
+    "pubmed": create_pubmed_extraction_pipeline,
+}
 
 
 class FlujoExtractionAdapter(ExtractionAgentPort):
@@ -62,7 +76,7 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         self._registry = get_model_registry()
         self._lifecycle_manager = get_lifecycle_manager()
         self._pipelines: dict[
-            str,
+            tuple[str, str],
             Flujo[str, ExtractionContract, ExtractionContext],
         ] = {}
         self._last_run_id: str | None = None
@@ -82,7 +96,10 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             return self._heuristic_contract(context, decision="fallback")
 
         effective_model = self._resolve_model_id(model_id)
-        pipeline = self._get_or_create_pipeline(effective_model)
+        pipeline = self._get_or_create_pipeline(
+            effective_model,
+            source_type=source_type,
+        )
         input_text = self._build_input_text(context)
         initial_context = context.model_dump(mode="json")
 
@@ -104,15 +121,15 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             return self._heuristic_contract(context, decision="fallback")
 
     async def close(self) -> None:
-        for model_id, pipeline in self._pipelines.items():
+        for cache_key, pipeline in self._pipelines.items():
             try:
                 if hasattr(pipeline, "aclose"):
                     await pipeline.aclose()
                 self._lifecycle_manager.unregister_runner(pipeline)
             except (RuntimeError, OSError, ConnectionError) as exc:
                 logger.warning(
-                    "Error closing extraction pipeline for model=%s: %s",
-                    model_id,
+                    "Error closing extraction pipeline for key=%s: %s",
+                    cache_key,
                     exc,
                 )
         self._pipelines.clear()
@@ -142,9 +159,12 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
     def _get_or_create_pipeline(
         self,
         model_id: str,
+        *,
+        source_type: str,
     ) -> Flujo[str, ExtractionContract, ExtractionContext]:
-        if model_id in self._pipelines:
-            return self._pipelines[model_id]
+        cache_key = (source_type, model_id)
+        if cache_key in self._pipelines:
+            return self._pipelines[cache_key]
 
         tools: list[object] | None = None
         if self._dictionary_service is not None:
@@ -161,14 +181,19 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
                 )
                 tools = None
 
-        pipeline = create_clinvar_extraction_pipeline(
+        pipeline_factory = _PIPELINE_FACTORIES.get(source_type)
+        if pipeline_factory is None:
+            msg = f"Unsupported source type for pipeline dispatch: {source_type}"
+            raise ValueError(msg)
+
+        pipeline = pipeline_factory(
             state_backend=self._state_backend,
             model=model_id,
             use_governance=self._use_governance,
             usage_limits=self._governance.usage_limits,
             tools=tools,
         )
-        self._pipelines[model_id] = pipeline
+        self._pipelines[cache_key] = pipeline
         self._lifecycle_manager.register_runner(pipeline)
         return pipeline
 

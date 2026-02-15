@@ -3,5 +3,11 @@
 from src.infrastructure.llm.prompts.graph_connection.clinvar import (
     CLINVAR_GRAPH_CONNECTION_SYSTEM_PROMPT,
 )
+from src.infrastructure.llm.prompts.graph_connection.pubmed import (
+    PUBMED_GRAPH_CONNECTION_SYSTEM_PROMPT,
+)
 
-__all__ = ["CLINVAR_GRAPH_CONNECTION_SYSTEM_PROMPT"]
+__all__ = [
+    "CLINVAR_GRAPH_CONNECTION_SYSTEM_PROMPT",
+    "PUBMED_GRAPH_CONNECTION_SYSTEM_PROMPT",
+]

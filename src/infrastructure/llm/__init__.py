@@ -34,12 +34,15 @@ __all__ = [
     # Factories
     "create_entity_recognition_agent_for_source",
     "create_clinvar_entity_recognition_agent",
+    "create_pubmed_entity_recognition_agent",
     "EntityRecognitionAgentFactory",
     "create_extraction_agent_for_source",
     "create_clinvar_extraction_agent",
+    "create_pubmed_extraction_agent",
     "ExtractionAgentFactory",
     "create_graph_connection_agent_for_source",
     "create_clinvar_graph_connection_agent",
+    "create_pubmed_graph_connection_agent",
     "GraphConnectionAgentFactory",
     "create_graph_search_agent",
     "GraphSearchAgentFactory",
@@ -48,8 +51,11 @@ __all__ = [
     "QueryAgentFactory",
     # Pipelines
     "create_clinvar_entity_recognition_pipeline",
+    "create_pubmed_entity_recognition_pipeline",
     "create_clinvar_extraction_pipeline",
+    "create_pubmed_extraction_pipeline",
     "create_clinvar_graph_connection_pipeline",
+    "create_pubmed_graph_connection_pipeline",
     "create_graph_search_pipeline",
     "create_pubmed_query_pipeline",
     "create_clinvar_query_pipeline",
@@ -116,6 +122,10 @@ _EXPORT_MAP: dict[str, tuple[str, str]] = {
         "src.infrastructure.llm.factories.entity_recognition_agent_factory",
         "create_clinvar_entity_recognition_agent",
     ),
+    "create_pubmed_entity_recognition_agent": (
+        "src.infrastructure.llm.factories.entity_recognition_agent_factory",
+        "create_pubmed_entity_recognition_agent",
+    ),
     "EntityRecognitionAgentFactory": (
         "src.infrastructure.llm.factories.entity_recognition_agent_factory",
         "EntityRecognitionAgentFactory",
@@ -128,6 +138,10 @@ _EXPORT_MAP: dict[str, tuple[str, str]] = {
         "src.infrastructure.llm.factories.extraction_agent_factory",
         "create_clinvar_extraction_agent",
     ),
+    "create_pubmed_extraction_agent": (
+        "src.infrastructure.llm.factories.extraction_agent_factory",
+        "create_pubmed_extraction_agent",
+    ),
     "ExtractionAgentFactory": (
         "src.infrastructure.llm.factories.extraction_agent_factory",
         "ExtractionAgentFactory",
@@ -139,6 +153,10 @@ _EXPORT_MAP: dict[str, tuple[str, str]] = {
     "create_clinvar_graph_connection_agent": (
         "src.infrastructure.llm.factories.graph_connection_agent_factory",
         "create_clinvar_graph_connection_agent",
+    ),
+    "create_pubmed_graph_connection_agent": (
+        "src.infrastructure.llm.factories.graph_connection_agent_factory",
+        "create_pubmed_graph_connection_agent",
     ),
     "GraphConnectionAgentFactory": (
         "src.infrastructure.llm.factories.graph_connection_agent_factory",
@@ -168,13 +186,25 @@ _EXPORT_MAP: dict[str, tuple[str, str]] = {
         "src.infrastructure.llm.pipelines.entity_recognition_pipelines.clinvar_pipeline",
         "create_clinvar_entity_recognition_pipeline",
     ),
+    "create_pubmed_entity_recognition_pipeline": (
+        "src.infrastructure.llm.pipelines.entity_recognition_pipelines.pubmed_pipeline",
+        "create_pubmed_entity_recognition_pipeline",
+    ),
     "create_clinvar_extraction_pipeline": (
         "src.infrastructure.llm.pipelines.extraction_pipelines.clinvar_pipeline",
         "create_clinvar_extraction_pipeline",
     ),
+    "create_pubmed_extraction_pipeline": (
+        "src.infrastructure.llm.pipelines.extraction_pipelines.pubmed_pipeline",
+        "create_pubmed_extraction_pipeline",
+    ),
     "create_clinvar_graph_connection_pipeline": (
         "src.infrastructure.llm.pipelines.graph_connection_pipelines.clinvar_pipeline",
         "create_clinvar_graph_connection_pipeline",
+    ),
+    "create_pubmed_graph_connection_pipeline": (
+        "src.infrastructure.llm.pipelines.graph_connection_pipelines.pubmed_pipeline",
+        "create_pubmed_graph_connection_pipeline",
     ),
     "create_graph_search_pipeline": (
         "src.infrastructure.llm.pipelines.graph_search_pipelines.default_pipeline",
