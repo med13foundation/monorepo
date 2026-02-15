@@ -3,32 +3,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.orm import Session
 
-from src.application.agents.services.content_enrichment_service import (
-    ContentEnrichmentService,
-)
-from src.application.agents.services.entity_recognition_service import (
-    EntityRecognitionService,
-)
-from src.application.agents.services.graph_connection_service import (
-    GraphConnectionService,
-)
-from src.application.services import (
-    IngestionSchedulingService,
-    MembershipManagementService,
-)
 from src.application.services.pipeline_orchestration_service import (
     PipelineOrchestrationDependencies,
     PipelineOrchestrationService,
 )
 from src.database.session import get_session
-from src.domain.entities.user import User
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces.content_enrichment_routes import (
     get_content_enrichment_service,
@@ -50,6 +35,24 @@ from .router import (
     HTTP_500_INTERNAL_SERVER_ERROR,
     research_spaces_router,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from src.application.agents.services.content_enrichment_service import (
+        ContentEnrichmentService,
+    )
+    from src.application.agents.services.entity_recognition_service import (
+        EntityRecognitionService,
+    )
+    from src.application.agents.services.graph_connection_service import (
+        GraphConnectionService,
+    )
+    from src.application.services import (
+        IngestionSchedulingService,
+        MembershipManagementService,
+    )
+    from src.domain.entities.user import User
 
 
 class PipelineRunRequest(BaseModel):
@@ -103,6 +106,7 @@ class PipelineRunResponse(BaseModel):
     graph_persisted_relations: int
     executed_query: str | None = None
     errors: list[str]
+    metadata: dict[str, object] | None = None
 
 
 def get_pipeline_orchestration_service(
@@ -126,6 +130,7 @@ def get_pipeline_orchestration_service(
             content_enrichment_service=content_enrichment_service,
             entity_recognition_service=entity_recognition_service,
             graph_connection_service=graph_connection_service,
+            pipeline_run_repository=scheduling_service.get_job_repository(),
         ),
     )
 
@@ -207,4 +212,5 @@ async def run_unified_pipeline(
         graph_persisted_relations=summary.graph_persisted_relations,
         executed_query=summary.executed_query,
         errors=list(summary.errors),
+        metadata=dict(summary.metadata) if summary.metadata is not None else None,
     )

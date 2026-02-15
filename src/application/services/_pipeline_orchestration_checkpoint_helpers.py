@@ -1,0 +1,311 @@
+"""Checkpoint helpers for unified pipeline orchestration."""
+
+# mypy: disable-error-code="misc"
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Literal, Protocol
+from uuid import UUID, uuid4
+
+from src.domain.entities.ingestion_job import (
+    IngestionError,
+    IngestionJob,
+    IngestionStatus,
+    IngestionTrigger,
+    JobMetrics,
+)
+from src.domain.value_objects.provenance import DataSource, Provenance
+from src.type_definitions.json_utils import to_json_value
+
+if TYPE_CHECKING:
+    from src.application.services._pipeline_orchestration_contracts import (
+        PipelineStageName,
+        PipelineStageStatus,
+    )
+    from src.domain.repositories.ingestion_job_repository import IngestionJobRepository
+    from src.type_definitions.common import JSONObject
+
+
+class _PipelineCheckpointSelf(Protocol):
+    _pipeline_runs: IngestionJobRepository | None
+
+    def _start_or_resume_pipeline_run(
+        self,
+        *,
+        source_id: UUID,
+        research_space_id: UUID,
+        run_id: str,
+        resume_from_stage: PipelineStageName | None,
+    ) -> IngestionJob | None: ...
+
+    def _find_pipeline_run_job(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str,
+    ) -> IngestionJob | None: ...
+
+    def _build_pipeline_metadata(  # noqa: PLR0913
+        self,
+        *,
+        existing_metadata: object,
+        run_id: str,
+        research_space_id: UUID,
+        resume_from_stage: PipelineStageName | None,
+        overall_status: Literal["running", "completed", "failed"],
+        stage_updates: dict[PipelineStageName, tuple[PipelineStageStatus, str | None]],
+    ) -> JSONObject: ...
+
+    @staticmethod
+    def _coerce_json_object(raw_value: object) -> JSONObject: ...
+
+
+class _PipelineOrchestrationCheckpointHelpers:
+    """Checkpoint persistence helpers for unified pipeline runs."""
+
+    def _start_or_resume_pipeline_run(
+        self: _PipelineCheckpointSelf,
+        *,
+        source_id: UUID,
+        research_space_id: UUID,
+        run_id: str,
+        resume_from_stage: PipelineStageName | None,
+    ) -> IngestionJob | None:
+        repository = self._pipeline_runs
+        if repository is None:
+            return None
+
+        existing = self._find_pipeline_run_job(source_id=source_id, run_id=run_id)
+        if existing is None:
+            created = IngestionJob(
+                id=uuid4(),
+                source_id=source_id,
+                trigger=IngestionTrigger.API,
+                triggered_by=None,
+                triggered_at=datetime.now(UTC),
+                status=IngestionStatus.PENDING,
+                started_at=None,
+                completed_at=None,
+                provenance=Provenance(
+                    source=DataSource.COMPUTED,
+                    source_version=None,
+                    source_url=None,
+                    acquired_by="pipeline_orchestration_service",
+                    processing_steps=("pipeline_orchestration",),
+                    quality_score=None,
+                    metadata={"run_id": run_id},
+                ),
+                metadata=self._build_pipeline_metadata(
+                    existing_metadata={},
+                    run_id=run_id,
+                    research_space_id=research_space_id,
+                    resume_from_stage=resume_from_stage,
+                    overall_status="running",
+                    stage_updates={},
+                ),
+                source_config_snapshot={},
+            )
+            return repository.save(created.start_execution())
+
+        resumed = (
+            existing
+            if existing.status == IngestionStatus.RUNNING
+            else existing.start_execution()
+        )
+        resumed_metadata = self._build_pipeline_metadata(
+            existing_metadata=resumed.metadata,
+            run_id=run_id,
+            research_space_id=research_space_id,
+            resume_from_stage=resume_from_stage,
+            overall_status="running",
+            stage_updates={},
+        )
+        return repository.save(
+            resumed.model_copy(update={"metadata": resumed_metadata}),
+        )
+
+    def _persist_pipeline_stage_checkpoint(  # noqa: PLR0913
+        self: _PipelineCheckpointSelf,
+        *,
+        run_job: IngestionJob | None,
+        source_id: UUID,
+        research_space_id: UUID,
+        run_id: str,
+        resume_from_stage: PipelineStageName | None,
+        stage: PipelineStageName,
+        stage_status: PipelineStageStatus,
+        overall_status: Literal["running", "completed", "failed"],
+        stage_error: str | None = None,
+    ) -> IngestionJob | None:
+        repository = self._pipeline_runs
+        if repository is None:
+            return run_job
+        if run_job is None:
+            run_job = self._start_or_resume_pipeline_run(
+                source_id=source_id,
+                research_space_id=research_space_id,
+                run_id=run_id,
+                resume_from_stage=resume_from_stage,
+            )
+            if run_job is None:
+                return None
+
+        updated_metadata = self._build_pipeline_metadata(
+            existing_metadata=run_job.metadata,
+            run_id=run_id,
+            research_space_id=research_space_id,
+            resume_from_stage=resume_from_stage,
+            overall_status=overall_status,
+            stage_updates={stage: (stage_status, stage_error)},
+        )
+        return repository.save(
+            run_job.model_copy(update={"metadata": updated_metadata}),
+        )
+
+    def _finalize_pipeline_run_checkpoint(  # noqa: PLR0913
+        self: _PipelineCheckpointSelf,
+        *,
+        run_job: IngestionJob | None,
+        source_id: UUID,
+        research_space_id: UUID,
+        run_id: str,
+        resume_from_stage: PipelineStageName | None,
+        run_status: Literal["completed", "failed"],
+        errors: tuple[str, ...],
+        created_publications: int,
+        updated_publications: int,
+        extraction_extracted: int,
+        graph_persisted_relations: int,
+    ) -> IngestionJob | None:
+        repository = self._pipeline_runs
+        if repository is None:
+            return run_job
+        if run_job is None:
+            run_job = self._start_or_resume_pipeline_run(
+                source_id=source_id,
+                research_space_id=research_space_id,
+                run_id=run_id,
+                resume_from_stage=resume_from_stage,
+            )
+            if run_job is None:
+                return None
+
+        updated_metadata = self._build_pipeline_metadata(
+            existing_metadata=run_job.metadata,
+            run_id=run_id,
+            research_space_id=research_space_id,
+            resume_from_stage=resume_from_stage,
+            overall_status=run_status,
+            stage_updates={},
+        )
+        working = run_job.model_copy(update={"metadata": updated_metadata})
+        metrics = JobMetrics(
+            records_processed=max(
+                created_publications
+                + updated_publications
+                + extraction_extracted
+                + graph_persisted_relations,
+                0,
+            ),
+            records_failed=len(errors),
+            records_skipped=0,
+            bytes_processed=0,
+            api_calls_made=0,
+            duration_seconds=None,
+            records_per_second=None,
+        )
+
+        if run_status == "completed":
+            return repository.save(working.complete_successfully(metrics))
+
+        failed = working.fail(
+            IngestionError(
+                error_type="pipeline_failed",
+                error_message="Unified pipeline run completed with failures",
+                error_details={"errors": list(errors)},
+                record_id=None,
+            ),
+        )
+        return repository.save(failed.model_copy(update={"metrics": metrics}))
+
+    def _find_pipeline_run_job(
+        self: _PipelineCheckpointSelf,
+        *,
+        source_id: UUID,
+        run_id: str,
+    ) -> IngestionJob | None:
+        repository = self._pipeline_runs
+        if repository is None:
+            return None
+        for candidate in repository.find_by_source(source_id, limit=200):
+            metadata = self._coerce_json_object(candidate.metadata)
+            pipeline_payload = metadata.get("pipeline_run")
+            if not isinstance(pipeline_payload, dict):
+                continue
+            stored_run_id = pipeline_payload.get("run_id")
+            if isinstance(stored_run_id, str) and stored_run_id.strip() == run_id:
+                return candidate
+        return None
+
+    def _build_pipeline_metadata(  # noqa: PLR0913
+        self: _PipelineCheckpointSelf,
+        *,
+        existing_metadata: object,
+        run_id: str,
+        research_space_id: UUID,
+        resume_from_stage: PipelineStageName | None,
+        overall_status: Literal["running", "completed", "failed"],
+        stage_updates: dict[PipelineStageName, tuple[PipelineStageStatus, str | None]],
+    ) -> JSONObject:
+        metadata = self._coerce_json_object(existing_metadata)
+        pipeline_raw = metadata.get("pipeline_run")
+        pipeline_payload = (
+            self._coerce_json_object(pipeline_raw)
+            if isinstance(pipeline_raw, dict)
+            else {}
+        )
+        checkpoints_raw = pipeline_payload.get("checkpoints")
+        checkpoints = (
+            self._coerce_json_object(checkpoints_raw)
+            if isinstance(checkpoints_raw, dict)
+            else {}
+        )
+        timestamp = datetime.now(UTC).isoformat(timespec="seconds")
+
+        for stage_name, (stage_status, stage_error) in stage_updates.items():
+            checkpoint = {
+                "stage": stage_name,
+                "status": stage_status,
+                "updated_at": timestamp,
+            }
+            if stage_error is not None and stage_error.strip():
+                checkpoint["error"] = stage_error.strip()
+            checkpoints[stage_name] = checkpoint
+
+        started_at_raw = pipeline_payload.get("started_at")
+        started_at = (
+            started_at_raw
+            if isinstance(started_at_raw, str) and started_at_raw.strip()
+            else timestamp
+        )
+
+        pipeline_payload.update(
+            {
+                "run_id": run_id,
+                "research_space_id": str(research_space_id),
+                "resume_from_stage": resume_from_stage,
+                "status": overall_status,
+                "started_at": started_at,
+                "updated_at": timestamp,
+                "checkpoints": checkpoints,
+            },
+        )
+        metadata["pipeline_run"] = pipeline_payload
+        return metadata
+
+    @staticmethod
+    def _coerce_json_object(raw_value: object) -> JSONObject:
+        if not isinstance(raw_value, dict):
+            return {}
+        return {str(key): to_json_value(value) for key, value in raw_value.items()}

@@ -670,6 +670,31 @@ class HighDedupPubMedIngestionService:
         )
 
 
+class DeterministicFallbackPubMedIngestionService:
+    async def ingest(
+        self,
+        source: UserDataSource,
+    ) -> PubMedIngestionSummary:
+        return PubMedIngestionSummary(
+            source_id=source.id,
+            fetched_records=2,
+            parsed_publications=2,
+            created_publications=1,
+            updated_publications=0,
+            query_generation_decision="skipped",
+            query_generation_execution_mode="deterministic",
+            query_generation_fallback_reason=(
+                "ai_query_generation_disabled_or_unavailable"
+            ),
+            query_generation_downstream_fetched_records=2,
+            query_generation_downstream_processed_records=2,
+            new_records=1,
+            updated_records=0,
+            unchanged_records=1,
+            skipped_records=1,
+        )
+
+
 class SlowTimeoutPubMedIngestionService:
     async def ingest(
         self,
@@ -767,6 +792,36 @@ def _build_running_job(
             quality_score=None,
         ),
         metadata={},
+        source_config_snapshot={},
+    )
+
+
+def _build_completed_job(
+    source_id: UUID,
+    *,
+    triggered_at: datetime,
+    metadata: JSONObject | None = None,
+) -> IngestionJob:
+    started_at = triggered_at
+    completed_at = triggered_at + timedelta(minutes=1)
+    return IngestionJob(
+        id=uuid4(),
+        source_id=source_id,
+        trigger=IngestionTrigger.SCHEDULED,
+        triggered_by=None,
+        triggered_at=triggered_at,
+        status=IngestionStatus.COMPLETED,
+        started_at=started_at,
+        completed_at=completed_at,
+        provenance=Provenance(
+            source=ProvenanceSource.COMPUTED,
+            source_version=None,
+            source_url=None,
+            acquired_by="test-suite",
+            processing_steps=("scheduled_ingestion",),
+            quality_score=None,
+        ),
+        metadata=metadata or {},
         source_config_snapshot={},
     )
 
@@ -1390,6 +1445,54 @@ async def test_run_due_jobs_logs_high_dedup_ratio_warning(
 
     assert any(
         "High dedup ratio detected for source ingestion run" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_due_jobs_logs_prolonged_deterministic_query_fallback_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    now = datetime.now(UTC)
+    prior_jobs = [
+        _build_completed_job(
+            source.id,
+            triggered_at=now - timedelta(hours=2),
+            metadata={"query_generation": {"execution_mode": "deterministic"}},
+        ),
+        _build_completed_job(
+            source.id,
+            triggered_at=now - timedelta(hours=1),
+            metadata={"query_generation": {"execution_mode": "deterministic"}},
+        ),
+    ]
+    source_repo = StubSourceRepository(source)
+    job_repo = StubJobRepository(initial_jobs=prior_jobs)
+    scheduler = InMemoryScheduler()
+    service = IngestionSchedulingService(
+        scheduler=scheduler,
+        source_repository=source_repo,
+        job_repository=job_repo,
+        ingestion_services={
+            SourceType.PUBMED: DeterministicFallbackPubMedIngestionService().ingest,
+        },
+        options=_build_ingestion_options(),
+    )
+
+    await service.schedule_source(source.id)
+    with caplog.at_level(logging.WARNING):
+        await service.run_due_jobs(
+            as_of=datetime.now(UTC) + timedelta(hours=1, seconds=1),
+        )
+
+    assert any(
+        "Prolonged deterministic query fallback detected" in record.message
         for record in caplog.records
     )
 

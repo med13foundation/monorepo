@@ -2619,16 +2619,15 @@ This section tracks current deltas between implemented behavior and
 
 | Gap ID | Flow expectation | Current behavior | Status |
 |---|---|---|---|
-| `GAP-001` | One continuous orchestrator runs ingestion → enrichment → extraction → graph with automatic stage handoff. | Stages are implemented and callable, but orchestration is mostly stage-by-stage via separate services/endpoints. | In Progress |
-| `GAP-002` | Truth layer auto-promotes strong edges from `DRAFT` to `APPROVED` when evidence thresholds are met. | Evidence aggregation values are recomputed on writes, but universal threshold-driven auto-promotion is not consistently enforced. | In Progress |
-| `GAP-003` | Kernel ingest path uniformly handles observation and relation evidence accumulation semantics. | Ingestion pipeline is primarily observation-centric; relation accumulation is handled in separate relation write paths. | In Progress |
-| `GAP-004` | Query-generation stage is a first-class, source-agnostic pipeline stage. | AI query generation is currently tied to selected source/service paths (not universally applied to all connectors). | In Progress |
-| `GAP-005` | Full AI-driven flow is always active across tiers. | Multiple stages can run in deterministic or fallback mode depending on feature flags/configuration. | In Progress |
-| `GAP-006` | Domain cold-start bootstrapping is a guaranteed pipeline behavior. | Dictionary/domain creation tools exist, but universal automatic bootstrap behavior is not fully enforced end-to-end. | In Progress |
+| `GAP-001` | One continuous orchestrator runs ingestion → enrichment → extraction → graph with automatic stage handoff. | Unified orchestration endpoint/service runs stage handoff in one call; per-run checkpoints and resume state are persisted in ingestion-job metadata under `pipeline_run`. | Closed (2026-02-15) |
+| `GAP-002` | Truth layer auto-promotes strong edges from `DRAFT` to `APPROVED` when evidence thresholds are met. | Canonical relation writes enforce threshold-based promotion with per-space policy overrides and explicit promotion/non-promotion decision logging (`event=relation_auto_promotion`). | Closed (2026-02-15) |
+| `GAP-003` | Kernel ingest path uniformly handles observation and relation evidence accumulation semantics. | All relation writes route through the canonical `SqlAlchemyKernelRelationRepository.create` accumulation routine (dedup, aggregate recompute, source counts, promotion policy), with no direct relation-table write bypasses. | Closed (2026-02-15) |
+| `GAP-004` | Query-generation stage is a first-class, source-agnostic pipeline stage. | Query generation is implemented as a standalone service contract (`QueryGenerationService`) with deterministic fallback semantics and run telemetry propagated through ingestion metadata (`query_generation.*`). | Closed (2026-02-15) |
+| `GAP-005` | Full AI-driven flow is always active across tiers. | Stage activation and fallback modes are explicitly documented, runtime payloads expose execution mode details, and scheduler warnings surface prolonged deterministic fallback periods. | Closed (2026-02-15) |
+| `GAP-006` | Domain cold-start bootstrapping is a guaranteed pipeline behavior. | Entity-recognition processing invokes automatic domain bootstrap when dictionary coverage is empty, seeding minimum entity/relation/variable definitions and routing creations to `PENDING_REVIEW`. | Closed (2026-02-15) |
 
-**Tracking note:** keep this section updated whenever a gap is closed; when all
-rows are closed, this document can be realigned to "fully implemented" flow
-language.
+**Tracking note:** all tracked gaps in this table are closed as of 2026-02-15.
+This architecture path is now aligned with the implemented flow behavior.
 
 ---
 
@@ -2648,50 +2647,62 @@ Use this checklist to move any gap from `Open` to `Closed`.
 
 #### `GAP-001` - Continuous orchestrator across stages
 
-- [ ] A single orchestrator can run ingestion -> enrichment -> extraction -> graph connection with automatic handoff.
-- [ ] Partial failures are captured with resumable stage state per run.
-- [ ] A single run ID links all stage outputs and audit/provenance records.
+- [x] A single orchestrator can run ingestion -> enrichment -> extraction -> graph connection with automatic handoff.
+- [x] Partial failures are captured with resumable stage state per run.
+- [x] A single run ID links all stage outputs and audit/provenance records.
 
 #### `GAP-002` - Auto-promotion from `DRAFT` to `APPROVED`
 
-- [ ] Threshold policy is configurable per research space (confidence and minimum independent sources).
-- [ ] Relation writes consistently evaluate promotion policy after evidence updates.
-- [ ] Promotion and non-promotion decisions are logged in provenance/audit trail.
+- [x] Threshold policy is configurable per research space (confidence and minimum independent sources).
+- [x] Relation writes consistently evaluate promotion policy after evidence updates.
+- [x] Promotion and non-promotion decisions are logged in provenance/audit trail.
 
 #### `GAP-003` - Unified relation evidence accumulation semantics
 
-- [ ] Kernel ingest paths and relation write paths share one canonical evidence accumulation routine.
-- [ ] Duplicate evidence is idempotent by source reference and extraction run context.
-- [ ] Aggregate confidence and source counts are recalculated consistently for all relation upserts.
+- [x] Kernel ingest paths and relation write paths share one canonical evidence accumulation routine.
+- [x] Duplicate evidence is idempotent by source reference and extraction run context.
+- [x] Aggregate confidence and source counts are recalculated consistently for all relation upserts.
 
 #### `GAP-004` - Source-agnostic query generation stage
 
-- [ ] Query generation is available as a first-class stage independent of connector type.
-- [ ] Connector contracts define deterministic fallback behavior when AI query generation is disabled.
-- [ ] Stage telemetry captures generated query, fallback reason, and downstream retrieval impact.
+- [x] Query generation is available as a first-class stage independent of connector type.
+- [x] Connector contracts define deterministic fallback behavior when AI query generation is disabled.
+- [x] Stage telemetry captures generated query, fallback reason, and downstream retrieval impact.
 
 #### `GAP-005` - Predictable AI stage activation and fallbacks
 
-- [ ] Stage activation matrix is documented for all relevant feature flags and environment settings.
-- [ ] Runtime responses expose whether AI or deterministic fallback path was used.
-- [ ] Alerting or dashboards exist for prolonged fallback mode in production.
+Stage activation matrix (as-built):
+
+| Stage | AI-active condition | Deterministic / fallback condition | Runtime exposure |
+|---|---|---|---|
+| Query generation | `agent_config.is_ai_managed = true` and query agent is configured | AI disabled/unavailable returns deterministic base query | Ingestion job metadata `query_generation.execution_mode` + pipeline response `metadata.query_generation_execution_mode` |
+| Content enrichment | Tier-2 agent configured and source type is not pass-through | Pass-through source types or agent-disabled path | Batch summary counters (`ai_runs`, `deterministic_runs`) + pipeline response metadata (`enrichment_ai_runs`, `enrichment_deterministic_runs`) |
+| Entity recognition | Tier-3 entity agent is enabled for extraction run | `shadow_mode=true` writes skipped but output still evaluated | Document metadata `entity_recognition_shadow_mode`; run summary includes `shadow_runs` |
+| Graph connection | Graph connection service is configured and seed IDs provided | Service unavailable or graph stage disabled via run inputs | Pipeline stage status (`graph_status`) and structured errors (`graph:service_unavailable`) |
+
+- [x] Stage activation matrix is documented for all relevant feature flags and environment settings.
+- [x] Runtime responses expose whether AI or deterministic fallback path was used.
+- [x] Alerting or dashboards exist for prolonged fallback mode in production.
+
+Alerting implementation note:
+- Scheduler emits warning log event `Prolonged deterministic query fallback detected` with `source_id`, `fallback_reason`, and `consecutive_fallback_runs` once the fallback streak threshold is reached.
 
 #### `GAP-006` - Enforced dictionary/domain cold-start bootstrap
 
-- [ ] Cold-start bootstrap path is explicitly invoked when a new domain has insufficient dictionary coverage.
-- [ ] Bootstrap creates minimum viable entity types, relation types, and key variables with provenance.
-- [ ] Bootstrap outputs are routed through governance and review queue consistently.
+- [x] Cold-start bootstrap path is explicitly invoked when a new domain has insufficient dictionary coverage.
+- [x] Bootstrap creates minimum viable entity types, relation types, and key variables with provenance.
+- [x] Bootstrap outputs are routed through governance and review queue consistently.
 
 ### Closure tracker
 
 | Gap ID | Owner | Target Milestone | Status | Closed On | PR/Issue |
 |---|---|---|---|---|---|
-| `GAP-001` | `Pipeline/Orchestration` | `M1` | `In Progress` | `-` | `-` |
-| `GAP-002` | `Kernel/Graph` | `M1` | `In Progress` | `-` | `-` |
-| `GAP-003` | `Kernel/Graph` | `M1` | `In Progress` | `-` | `-` |
-| `GAP-004` | `Ingestion/Query` | `M1` | `In Progress` | `-` | `-` |
-| `GAP-005` | `Platform/LLM` | `M1` | `In Progress` | `-` | `-` |
-| `GAP-006` | `Dictionary/Agents` | `M1` | `In Progress` | `-` | `-` |
+| `GAP-001` | `Pipeline/Orchestration` | `M1` | `Closed` | `2026-02-15` | `local` |
+| `GAP-002` | `Kernel/Graph` | `M1` | `Closed` | `2026-02-15` | `local` |
+| `GAP-003` | `Kernel/Graph` | `M1` | `Closed` | `2026-02-15` | `local` |
+| `GAP-004` | `Ingestion/Query` | `M1` | `Closed` | `2026-02-15` | `local` |
+| `GAP-005` | `Platform/LLM` | `M1` | `Closed` | `2026-02-15` | `local` |
+| `GAP-006` | `Dictionary/Agents` | `M1` | `Closed` | `2026-02-15` | `local` |
 
 ---
 

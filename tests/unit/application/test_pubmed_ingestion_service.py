@@ -15,6 +15,8 @@ from src.application.services.pubmed_ingestion_service import (
 from src.application.services.storage_configuration_service import (
     StorageConfigurationService,
 )
+from src.domain.agents.contracts.query_generation import QueryGenerationContract
+from src.domain.agents.ports.query_agent_port import QueryAgentPort
 from src.domain.entities.publication import Publication, PublicationType
 from src.domain.entities.source_document import (
     DocumentExtractionStatus,
@@ -63,6 +65,48 @@ class StubGateway(PubMedGateway):
     async def fetch_records(self, config) -> list[RawRecord]:  # type: ignore[override]
         self.called_with.append(config.model_dump())
         return self.records
+
+
+class StubQueryAgent(QueryAgentPort):
+    """Query-agent test double for PubMed ingestion telemetry tests."""
+
+    def __init__(
+        self,
+        contract: QueryGenerationContract,
+        *,
+        run_id: str | None = None,
+    ) -> None:
+        self._contract = contract
+        self._run_id = run_id
+        self.calls: list[dict[str, object]] = []
+
+    async def generate_query(  # noqa: PLR0913
+        self,
+        research_space_description: str,
+        user_instructions: str,
+        source_type: str,
+        *,
+        model_id: str | None = None,
+        user_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> QueryGenerationContract:
+        self.calls.append(
+            {
+                "research_space_description": research_space_description,
+                "user_instructions": user_instructions,
+                "source_type": source_type,
+                "model_id": model_id,
+                "user_id": user_id,
+                "correlation_id": correlation_id,
+            },
+        )
+        return self._contract
+
+    async def close(self) -> None:
+        return None
+
+    def get_last_run_id(self) -> str | None:
+        return self._run_id
 
 
 class StubPublicationRepository(PublicationRepository):
@@ -542,3 +586,57 @@ async def test_ingest_skips_unchanged_records_using_ledger() -> None:
     assert len(pipeline.calls) == 1
     assert len(pipeline.calls[0][0]) == 1
     assert ledger.count_for_source(source.id) == 2
+
+
+@pytest.mark.asyncio
+async def test_ingest_exposes_query_generation_fallback_and_downstream_metrics() -> (
+    None
+):
+    gateway = StubGateway(records=[{"pmid": "100", "title": "A"}, {"pmid": "101"}])
+    pipeline = StubPipeline()
+    query_agent = StubQueryAgent(
+        QueryGenerationContract(
+            decision="fallback",
+            confidence_score=0.63,
+            rationale="insufficient_recall_with_base_query",
+            evidence=[],
+            query="MED13 OR MED13L",
+            source_type="clinvar",
+            query_complexity="simple",
+        ),
+        run_id="query-run-1",
+    )
+    service = PubMedIngestionService(
+        gateway=gateway,
+        pipeline=pipeline,
+        dependencies=PubMedIngestionDependencies(
+            publication_repository=StubPublicationRepository(),
+            query_agent=query_agent,
+        ),
+    )
+    source = _build_source(
+        {
+            "query": "MED13",
+            "agent_config": {
+                "is_ai_managed": True,
+                "query_agent_source_type": "clinvar",
+            },
+        },
+    ).model_copy(
+        update={"research_space_id": uuid4()},
+    )
+
+    summary = await service.ingest(source)
+
+    assert summary.executed_query == "MED13 OR MED13L"
+    assert summary.query_generation_decision == "fallback"
+    assert summary.query_generation_execution_mode == "ai"
+    assert (
+        summary.query_generation_fallback_reason
+        == "insufficient_recall_with_base_query"
+    )
+    assert summary.query_generation_run_id == "query-run-1"
+    assert summary.query_generation_downstream_fetched_records == 2
+    assert summary.query_generation_downstream_processed_records == 2
+    assert len(query_agent.calls) == 1
+    assert query_agent.calls[0]["source_type"] == "clinvar"

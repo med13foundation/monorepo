@@ -14,6 +14,9 @@ from uuid import uuid4
 
 from src.domain.entities import ingestion_job, user_data_source
 
+from ._ingestion_scheduling_observability_helpers import (
+    _IngestionSchedulingObservabilityHelpers,
+)
 from ._ingestion_scheduling_state_helpers import _IngestionSchedulingStateHelpers
 
 if TYPE_CHECKING:
@@ -30,11 +33,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MIN_POSITIONAL_PARAMETERS_WITH_CONTEXT = 2
-DEDUP_WARNING_THRESHOLD = 0.9
 ALREADY_RUNNING_ERROR_FRAGMENT = "already running"
 
 
-class _IngestionSchedulingCoreHelpers(_IngestionSchedulingStateHelpers):
+class _IngestionSchedulingCoreHelpers(
+    _IngestionSchedulingObservabilityHelpers,
+    _IngestionSchedulingStateHelpers,
+):
     """Helpers for orchestrating ingestion execution and summary metadata."""
 
     async def _execute_job(
@@ -92,6 +97,10 @@ class _IngestionSchedulingCoreHelpers(_IngestionSchedulingStateHelpers):
                     timeout=self._ingestion_job_hard_timeout_seconds,
                 )
                 self._emit_dedup_telemetry(source_id=source.id, summary=summary)
+                self._emit_query_generation_telemetry(
+                    source_id=source.id,
+                    summary=summary,
+                )
                 await self._run_post_ingestion_hook(source=source, summary=summary)
                 sync_state_after = self._persist_sync_state_on_success(
                     sync_state=sync_state_before,
@@ -473,32 +482,3 @@ class _IngestionSchedulingCoreHelpers(_IngestionSchedulingStateHelpers):
             )
         )
         return positional_count >= MIN_POSITIONAL_PARAMETERS_WITH_CONTEXT
-
-    def _emit_dedup_telemetry(
-        self: IngestionSchedulingService,
-        *,
-        source_id: UUID,
-        summary: IngestionRunSummary,
-    ) -> None:
-        fetched_records = summary.fetched_records
-        if fetched_records <= 0:
-            return
-        unchanged_records = self._int_summary_field(summary, "unchanged_records")
-        new_records = self._int_summary_field(summary, "new_records")
-        updated_records = self._int_summary_field(summary, "updated_records")
-        dedup_ratio = unchanged_records / fetched_records
-        log_extra = {
-            "source_id": str(source_id),
-            "fetched_records": fetched_records,
-            "new_records": new_records,
-            "updated_records": updated_records,
-            "unchanged_records": unchanged_records,
-            "dedup_ratio": round(dedup_ratio, 4),
-        }
-        if dedup_ratio >= DEDUP_WARNING_THRESHOLD:
-            logger.warning(
-                "High dedup ratio detected for source ingestion run",
-                extra=log_extra,
-            )
-            return
-        logger.info("Source ingestion dedup telemetry", extra=log_extra)

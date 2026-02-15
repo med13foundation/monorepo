@@ -16,20 +16,18 @@ from uuid import uuid4
 
 from src.domain.entities import source_document
 from src.domain.entities.source_record_ledger import SourceRecordLedgerEntry
-from src.domain.entities.source_sync_state import CheckpointKind
 from src.domain.services import pubmed_ingestion
-from src.domain.services.ingestion import IngestionExtractionTarget, IngestionRunContext
+from src.domain.services.ingestion import IngestionExtractionTarget
 from src.type_definitions.ingestion import RawRecord as IngestionRawRecord
 from src.type_definitions.storage import StorageUseCase
-
-from .query_generation_service import QueryGenerationRequest
 
 if TYPE_CHECKING:
     from src.application.services.pubmed_ingestion_service import (
         PubMedIngestionService,
     )
     from src.domain.entities import data_source_configs, user_data_source
-    from src.type_definitions.common import JSONObject, RawRecord
+    from src.domain.services.ingestion import IngestionRunContext
+    from src.type_definitions.common import JSONObject
 
 
 logger = logging.getLogger(__name__)
@@ -108,6 +106,8 @@ class PubMedIngestionServiceHelpers:
         config: data_source_configs.PubMedQueryConfig,
     ) -> _QueryResolution:
         """Resolve AI-managed query overrides and associated metadata."""
+        from .query_generation_service import QueryGenerationRequest
+
         request: QueryGenerationRequest = QueryGenerationRequest(
             base_query=config.query,
             source_type=config.agent_config.query_agent_source_type,
@@ -165,7 +165,6 @@ class PubMedIngestionServiceHelpers:
             records=records,
             fetched_records=len(records),
             checkpoint_after=None,
-            checkpoint_kind=CheckpointKind.NONE,
         )
 
     @staticmethod
@@ -349,7 +348,7 @@ class PubMedIngestionServiceHelpers:
 
     async def _persist_raw_records(
         self: PubMedIngestionService,
-        records: list[RawRecord],
+        records: list[JSONObject],
         source: user_data_source.UserDataSource,
     ) -> str | None:
         if not self._storage_service:

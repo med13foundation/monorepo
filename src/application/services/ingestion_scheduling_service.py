@@ -158,6 +158,10 @@ class IngestionSchedulingService(
         self._retry_batch_size = max(resolved_options.retry_batch_size, 1)
         self._post_ingestion_hook = resolved_options.post_ingestion_hook
 
+    def get_job_repository(self) -> ingestion_job_repository.IngestionJobRepository:
+        """Expose the ingestion-job repository for cross-service orchestration."""
+        return self._job_repository
+
     async def schedule_source(self, source_id: UUID) -> ScheduledJob:
         """Register a source with the scheduler backend."""
         source = self._get_source(source_id)
