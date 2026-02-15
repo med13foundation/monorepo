@@ -57,6 +57,8 @@ class ContentEnrichmentRunResponse(BaseModel):
     enriched: int
     skipped: int
     failed: int
+    ai_runs: int
+    deterministic_runs: int
     errors: list[str]
     started_at: datetime
     completed_at: datetime
@@ -78,6 +80,7 @@ class ContentEnrichmentDocumentResponse(BaseModel):
 
     document_id: UUID
     status: str
+    execution_mode: str
     reason: str
     acquisition_method: str | None = None
     content_storage_key: str | None = None
@@ -103,6 +106,8 @@ def _serialize_run_summary(
         enriched=summary.enriched,
         skipped=summary.skipped,
         failed=summary.failed,
+        ai_runs=summary.ai_runs,
+        deterministic_runs=summary.deterministic_runs,
         errors=list(summary.errors),
         started_at=summary.started_at,
         completed_at=summary.completed_at,
@@ -115,6 +120,7 @@ def _serialize_document_outcome(
     return ContentEnrichmentDocumentResponse(
         document_id=outcome.document_id,
         status=outcome.status,
+        execution_mode=outcome.execution_mode,
         reason=outcome.reason,
         acquisition_method=outcome.acquisition_method,
         content_storage_key=outcome.content_storage_key,

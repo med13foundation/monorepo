@@ -9,6 +9,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
+from src.application.agents.services._entity_recognition_bootstrap_helpers import (
+    _EntityRecognitionBootstrapHelpers,
+)
+from src.application.agents.services._entity_recognition_metadata_helpers import (
+    _EntityRecognitionMetadataHelpers,
+)
 from src.application.agents.services.governance_service import (
     GovernanceDecision,
     GovernanceService,
@@ -25,7 +31,6 @@ from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from src.application.agents.services.extraction_service import (
-        ExtractionDocumentOutcome,
         ExtractionService,
     )
     from src.application.services.ports.ingestion_pipeline_port import (
@@ -41,7 +46,6 @@ if TYPE_CHECKING:
         SourceDocumentRepository,
     )
     from src.type_definitions.common import JSONObject, JSONValue, ResearchSpaceSettings
-    from src.type_definitions.ingestion import IngestResult
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +108,10 @@ class EntityRecognitionRunSummary:
     completed_at: datetime
 
 
-class EntityRecognitionService:
+class EntityRecognitionService(
+    _EntityRecognitionBootstrapHelpers,
+    _EntityRecognitionMetadataHelpers,
+):
     """Coordinate Document Store -> Entity Agent -> Governance -> Kernel ingestion."""
 
     def __init__(
@@ -134,6 +141,7 @@ class EntityRecognitionService:
         source_type: str | None = None,
         model_id: str | None = None,
         shadow_mode: bool | None = None,
+        pipeline_run_id: str | None = None,
     ) -> EntityRecognitionRunSummary:
         """Process pending extraction documents through entity recognition."""
         started_at = datetime.now(UTC)
@@ -159,6 +167,7 @@ class EntityRecognitionService:
                 model_id=model_id,
                 shadow_mode=shadow_mode,
                 force=False,
+                pipeline_run_id=pipeline_run_id,
             )
             outcomes.append(outcome)
 
@@ -188,6 +197,7 @@ class EntityRecognitionService:
             model_id=model_id,
             shadow_mode=shadow_mode,
             force=force,
+            pipeline_run_id=None,
         )
 
     async def close(self) -> None:
@@ -203,6 +213,7 @@ class EntityRecognitionService:
         model_id: str | None,
         shadow_mode: bool | None,
         force: bool,
+        pipeline_run_id: str | None,
     ) -> EntityRecognitionDocumentOutcome:
         if not force and document.extraction_status != DocumentExtractionStatus.PENDING:
             return EntityRecognitionDocumentOutcome(
@@ -259,6 +270,7 @@ class EntityRecognitionService:
                                 UTC,
                             ).isoformat(),
                             "entity_recognition_shadow_mode": requested_shadow_mode,
+                            "pipeline_run_id": pipeline_run_id,
                         },
                     ),
                 },
@@ -309,6 +321,7 @@ class EntityRecognitionService:
                     contract=contract,
                     governance=governance,
                     run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
                     wrote_to_kernel=False,
                     dictionary_variables_created=0,
                     dictionary_synonyms_created=0,
@@ -335,6 +348,7 @@ class EntityRecognitionService:
                     contract=contract,
                     governance=governance,
                     run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
                     wrote_to_kernel=False,
                     dictionary_variables_created=0,
                     dictionary_synonyms_created=0,
@@ -361,6 +375,7 @@ class EntityRecognitionService:
                 metadata_patch={
                     "entity_recognition_failure_reason": failure_reason,
                     "entity_recognition_run_id": run_id,
+                    "pipeline_run_id": pipeline_run_id,
                 },
             )
             return EntityRecognitionDocumentOutcome(
@@ -399,6 +414,7 @@ class EntityRecognitionService:
                     "entity_recognition_failure_reason": failure_reason,
                     "entity_recognition_error": str(exc),
                     "entity_recognition_run_id": run_id,
+                    "pipeline_run_id": pipeline_run_id,
                 },
             )
             return EntityRecognitionDocumentOutcome(
@@ -425,6 +441,7 @@ class EntityRecognitionService:
                 dictionary_variables_created=dictionary_variables_created,
                 dictionary_synonyms_created=dictionary_synonyms_created,
                 dictionary_entity_types_created=dictionary_entity_types_created,
+                pipeline_run_id=pipeline_run_id,
             )
 
         pipeline_records = self._build_pipeline_records(
@@ -441,6 +458,7 @@ class EntityRecognitionService:
                 metadata_patch={
                     "entity_recognition_failure_reason": failure_reason,
                     "entity_recognition_run_id": run_id,
+                    "pipeline_run_id": pipeline_run_id,
                 },
             )
             return EntityRecognitionDocumentOutcome(
@@ -470,6 +488,7 @@ class EntityRecognitionService:
                     contract=contract,
                     governance=governance,
                     run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
                     wrote_to_kernel=False,
                     dictionary_variables_created=dictionary_variables_created,
                     dictionary_synonyms_created=dictionary_synonyms_created,
@@ -500,6 +519,7 @@ class EntityRecognitionService:
                 contract=contract,
                 governance=governance,
                 run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 wrote_to_kernel=True,
                 dictionary_variables_created=dictionary_variables_created,
                 dictionary_synonyms_created=dictionary_synonyms_created,
@@ -600,15 +620,33 @@ class EntityRecognitionService:
         source_ref: str,
         research_space_settings: ResearchSpaceSettings,
     ) -> tuple[int, int, int]:
+        (
+            bootstrap_variables_created,
+            bootstrap_entity_types_created,
+        ) = self._ensure_domain_bootstrap(
+            source_type=source_type,
+            source_ref=source_ref,
+            research_space_settings=research_space_settings,
+        )
+
         if (
             contract.decision == "generated"
             and isinstance(contract.agent_run_id, str)
             and contract.agent_run_id.strip()
         ):
-            return self._reconcile_agent_dictionary_mutations(contract)
+            (
+                reconciled_variables,
+                reconciled_synonyms,
+                reconciled_entity_types,
+            ) = self._reconcile_agent_dictionary_mutations(contract)
+            return (
+                reconciled_variables + bootstrap_variables_created,
+                reconciled_synonyms,
+                reconciled_entity_types + bootstrap_entity_types_created,
+            )
 
         domain_context = self._infer_domain_context(source_type)
-        created_entity_types = 0
+        created_entity_types = bootstrap_entity_types_created
         for entity in contract.recognized_entities:
             entity_type_id = self._normalize_identifier(
                 entity.entity_type,
@@ -631,7 +669,7 @@ class EntityRecognitionService:
             )
             created_entity_types += 1
 
-        created_variables = 0
+        created_variables = bootstrap_variables_created
         created_synonyms = 0
         for observation in contract.recognized_observations:
             field_name = observation.field_name.strip()
@@ -759,6 +797,7 @@ class EntityRecognitionService:
         dictionary_variables_created: int,
         dictionary_synonyms_created: int,
         dictionary_entity_types_created: int,
+        pipeline_run_id: str | None,
     ) -> EntityRecognitionDocumentOutcome:
         if self._extraction_service is None:
             msg = "Extraction service is not configured"
@@ -784,6 +823,7 @@ class EntityRecognitionService:
                 contract=contract,
                 governance=governance,
                 run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
                 wrote_to_kernel=False,
                 dictionary_variables_created=dictionary_variables_created,
                 dictionary_synonyms_created=dictionary_synonyms_created,
@@ -818,6 +858,7 @@ class EntityRecognitionService:
             contract=contract,
             governance=governance,
             run_id=run_id,
+            pipeline_run_id=pipeline_run_id,
             wrote_to_kernel=extraction_outcome.wrote_to_kernel,
             dictionary_variables_created=dictionary_variables_created,
             dictionary_synonyms_created=dictionary_synonyms_created,
@@ -1066,76 +1107,6 @@ class EntityRecognitionService:
         if normalized == "pubmed":
             return "clinical"
         return "general"
-
-    @staticmethod
-    def _build_outcome_metadata(  # noqa: PLR0913
-        *,
-        contract: EntityRecognitionContract,
-        governance: GovernanceDecision,
-        run_id: str | None,
-        wrote_to_kernel: bool,
-        dictionary_variables_created: int,
-        dictionary_synonyms_created: int,
-        dictionary_entity_types_created: int,
-        ingestion_result: IngestResult | None,
-    ) -> JSONObject:
-        metadata: JSONObject = {
-            "entity_recognition_decision": contract.decision,
-            "entity_recognition_confidence": contract.confidence_score,
-            "entity_recognition_rationale": contract.rationale,
-            "entity_recognition_run_id": run_id,
-            "entity_recognition_shadow_mode": governance.shadow_mode,
-            "entity_recognition_requires_review": governance.requires_review,
-            "entity_recognition_governance_reason": governance.reason,
-            "entity_recognition_wrote_to_kernel": wrote_to_kernel,
-            "entity_recognition_dictionary_variables_created": (
-                dictionary_variables_created
-            ),
-            "entity_recognition_dictionary_synonyms_created": (
-                dictionary_synonyms_created
-            ),
-            "entity_recognition_dictionary_entity_types_created": (
-                dictionary_entity_types_created
-            ),
-            "entity_recognition_processed_at": datetime.now(UTC).isoformat(),
-        }
-        if ingestion_result is not None:
-            metadata["entity_recognition_ingestion_success"] = ingestion_result.success
-            metadata["entity_recognition_ingestion_entities_created"] = (
-                ingestion_result.entities_created
-            )
-            metadata["entity_recognition_ingestion_observations_created"] = (
-                ingestion_result.observations_created
-            )
-            metadata["entity_recognition_ingestion_errors"] = ingestion_result.errors
-        return metadata
-
-    @staticmethod
-    def _build_extraction_metadata(
-        extraction_outcome: ExtractionDocumentOutcome,
-    ) -> JSONObject:
-        return {
-            "extraction_stage_status": extraction_outcome.status,
-            "extraction_stage_reason": extraction_outcome.reason,
-            "extraction_stage_run_id": extraction_outcome.run_id,
-            "extraction_stage_review_required": extraction_outcome.review_required,
-            "extraction_stage_shadow_mode": extraction_outcome.shadow_mode,
-            "extraction_stage_wrote_to_kernel": extraction_outcome.wrote_to_kernel,
-            "extraction_stage_observations_extracted": (
-                extraction_outcome.observations_extracted
-            ),
-            "extraction_stage_relations_extracted": (
-                extraction_outcome.relations_extracted
-            ),
-            "extraction_stage_rejected_facts": extraction_outcome.rejected_facts,
-            "extraction_stage_ingestion_entities_created": (
-                extraction_outcome.ingestion_entities_created
-            ),
-            "extraction_stage_ingestion_observations_created": (
-                extraction_outcome.ingestion_observations_created
-            ),
-            "extraction_stage_errors": list(extraction_outcome.errors),
-        }
 
     @staticmethod
     def _build_run_summary(

@@ -58,6 +58,8 @@ class KernelRelationService:
         evidence_summary: str | None = None,
         evidence_tier: str | None = None,
         provenance_id: str | None = None,
+        source_document_id: str | None = None,
+        agent_run_id: str | None = None,
     ) -> KernelRelation:
         """
         Create a relation with constraint validation.
@@ -121,6 +123,8 @@ class KernelRelationService:
             evidence_summary=evidence_summary,
             evidence_tier=evidence_tier,
             provenance_id=provenance_id,
+            source_document_id=source_document_id,
+            agent_run_id=agent_run_id,
         )
 
     # ── Curation lifecycle ────────────────────────────────────────────

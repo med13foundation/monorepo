@@ -92,6 +92,7 @@ class _IngestionSchedulingCoreHelpers(_IngestionSchedulingStateHelpers):
                     timeout=self._ingestion_job_hard_timeout_seconds,
                 )
                 self._emit_dedup_telemetry(source_id=source.id, summary=summary)
+                await self._run_post_ingestion_hook(source=source, summary=summary)
                 sync_state_after = self._persist_sync_state_on_success(
                     sync_state=sync_state_before,
                     ingestion_job_id=running.id,
@@ -173,6 +174,23 @@ class _IngestionSchedulingCoreHelpers(_IngestionSchedulingStateHelpers):
                     await lock_heartbeat_task
             if lock_token is not None:
                 self._release_source_lock(source_id=source.id, lock_token=lock_token)
+
+    async def _run_post_ingestion_hook(
+        self: IngestionSchedulingService,
+        *,
+        source: user_data_source.UserDataSource,
+        summary: IngestionRunSummary,
+    ) -> None:
+        hook = self._post_ingestion_hook
+        if hook is None:
+            return
+        try:
+            await hook(source, summary)
+        except Exception:  # noqa: BLE001 - hook must not fail ingestion completion
+            logger.exception(
+                "Post-ingestion hook failed",
+                extra={"source_id": str(source.id)},
+            )
 
     def _recover_stale_running_jobs(
         self: IngestionSchedulingService,

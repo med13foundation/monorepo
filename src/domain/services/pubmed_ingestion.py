@@ -57,6 +57,10 @@ class PubMedIngestionSummary:
     query_generation_model: str | None = None
     query_generation_decision: str | None = None
     query_generation_confidence: float | None = None
+    query_generation_execution_mode: str | None = None
+    query_generation_fallback_reason: str | None = None
+    query_generation_downstream_fetched_records: int | None = None
+    query_generation_downstream_processed_records: int | None = None
     query_signature: str | None = None
     checkpoint_before: JSONObject | None = None
     checkpoint_after: JSONObject | None = None

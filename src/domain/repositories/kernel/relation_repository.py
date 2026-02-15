@@ -39,6 +39,8 @@ class KernelRelationRepository(ABC):
         evidence_tier: str | None = None,
         curation_status: str = "DRAFT",
         provenance_id: str | None = None,
+        source_document_id: str | None = None,
+        agent_run_id: str | None = None,
     ) -> KernelRelation:
         """Create a new relation (graph edge) between two entities."""
 

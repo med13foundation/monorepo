@@ -51,6 +51,7 @@ class ContentEnrichmentServiceDependencies:
 class ContentEnrichmentDocumentOutcome:
     document_id: UUID
     status: Literal["enriched", "skipped", "failed"]
+    execution_mode: Literal["ai", "deterministic"]
     reason: str
     acquisition_method: str | None = None
     content_storage_key: str | None = None
@@ -66,6 +67,8 @@ class ContentEnrichmentRunSummary:
     enriched: int
     skipped: int
     failed: int
+    ai_runs: int
+    deterministic_runs: int
     errors: tuple[str, ...]
     started_at: datetime
     completed_at: datetime
@@ -80,7 +83,7 @@ class ContentEnrichmentService:
         self._source_documents = dependencies.source_document_repository
         self._storage_coordinator = dependencies.storage_coordinator
 
-    async def process_pending_documents(
+    async def process_pending_documents(  # noqa: PLR0913
         self,
         *,
         limit: int = 25,
@@ -88,6 +91,7 @@ class ContentEnrichmentService:
         research_space_id: UUID | None = None,
         source_type: str | None = None,
         model_id: str | None = None,
+        pipeline_run_id: str | None = None,
     ) -> ContentEnrichmentRunSummary:
         started_at = datetime.now(UTC)
         pending_documents = self._source_documents.list_pending_enrichment(
@@ -110,6 +114,7 @@ class ContentEnrichmentService:
                 document=document,
                 model_id=model_id,
                 force=False,
+                pipeline_run_id=pipeline_run_id,
             )
             for document in pending_documents
         ]
@@ -137,6 +142,7 @@ class ContentEnrichmentService:
             document=document,
             model_id=model_id,
             force=force,
+            pipeline_run_id=None,
         )
 
     async def close(self) -> None:
@@ -149,11 +155,14 @@ class ContentEnrichmentService:
         document: SourceDocument,
         model_id: str | None,
         force: bool,
+        pipeline_run_id: str | None,
     ) -> ContentEnrichmentDocumentOutcome:
+        execution_mode = self._resolve_execution_mode(document=document)
         if not force and document.enrichment_status != EnrichmentStatus.PENDING:
             return ContentEnrichmentDocumentOutcome(
                 document_id=document.id,
                 status="skipped",
+                execution_mode=execution_mode,
                 reason=f"document_status={document.enrichment_status.value}",
             )
 
@@ -169,11 +178,13 @@ class ContentEnrichmentService:
                 metadata_patch={
                     "content_enrichment_error": str(exc),
                     "content_enrichment_failure_reason": failure_reason,
+                    "pipeline_run_id": pipeline_run_id,
                 },
             )
             return ContentEnrichmentDocumentOutcome(
                 document_id=document.id,
                 status="failed",
+                execution_mode=execution_mode,
                 reason=failure_reason,
                 errors=(str(exc),),
             )
@@ -190,6 +201,7 @@ class ContentEnrichmentService:
                 metadata_patch=build_metadata_patch(
                     contract=contract,
                     run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
                     reason="skipped",
                     content_storage_key=None,
                     content_hash=None,
@@ -198,6 +210,7 @@ class ContentEnrichmentService:
             return ContentEnrichmentDocumentOutcome(
                 document_id=document.id,
                 status="skipped",
+                execution_mode=execution_mode,
                 reason="skipped",
                 acquisition_method=contract.acquisition_method,
                 run_id=run_id,
@@ -212,6 +225,7 @@ class ContentEnrichmentService:
                 metadata_patch=build_metadata_patch(
                     contract=contract,
                     run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
                     reason="failed",
                     content_storage_key=None,
                     content_hash=None,
@@ -220,6 +234,7 @@ class ContentEnrichmentService:
             return ContentEnrichmentDocumentOutcome(
                 document_id=document.id,
                 status="failed",
+                execution_mode=execution_mode,
                 reason="failed",
                 acquisition_method=contract.acquisition_method,
                 run_id=run_id,
@@ -230,6 +245,7 @@ class ContentEnrichmentService:
             document=document,
             contract=contract,
             run_id=run_id,
+            pipeline_run_id=pipeline_run_id,
         )
         if storage_result is None:
             failure_reason = "missing_enriched_content"
@@ -241,6 +257,7 @@ class ContentEnrichmentService:
                 metadata_patch=build_metadata_patch(
                     contract=contract,
                     run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
                     reason=failure_reason,
                     content_storage_key=None,
                     content_hash=None,
@@ -249,6 +266,7 @@ class ContentEnrichmentService:
             return ContentEnrichmentDocumentOutcome(
                 document_id=document.id,
                 status="failed",
+                execution_mode=execution_mode,
                 reason=failure_reason,
                 acquisition_method=contract.acquisition_method,
                 run_id=run_id,
@@ -271,6 +289,7 @@ class ContentEnrichmentService:
                         build_metadata_patch(
                             contract=contract,
                             run_id=run_id,
+                            pipeline_run_id=pipeline_run_id,
                             reason="enriched",
                             content_storage_key=storage_result.storage_key,
                             content_hash=storage_result.content_hash,
@@ -283,6 +302,7 @@ class ContentEnrichmentService:
         return ContentEnrichmentDocumentOutcome(
             document_id=document.id,
             status="enriched",
+            execution_mode=execution_mode,
             reason="enriched",
             acquisition_method=contract.acquisition_method,
             content_storage_key=storage_result.storage_key,
@@ -326,6 +346,17 @@ class ContentEnrichmentService:
         context = build_content_enrichment_context(document)
         return await self._agent.enrich(context, model_id=model_id)
 
+    def _resolve_execution_mode(
+        self,
+        *,
+        document: SourceDocument,
+    ) -> Literal["ai", "deterministic"]:
+        if document.source_type in PASS_THROUGH_SOURCE_TYPES:
+            return "deterministic"
+        if self._agent is None:
+            return "deterministic"
+        return "ai"
+
     @staticmethod
     def _build_pass_through_contract(
         *,
@@ -360,6 +391,7 @@ class ContentEnrichmentService:
         document: SourceDocument,
         contract: ContentEnrichmentContract,
         run_id: str | None,
+        pipeline_run_id: str | None,
     ) -> StorageResult | None:
         if contract.content_storage_key is not None:
             payload = serialize_contract_payload(contract)
@@ -416,6 +448,8 @@ class ContentEnrichmentService:
         }
         if run_id is not None:
             metadata["enrichment_run_id"] = run_id
+        if pipeline_run_id is not None and pipeline_run_id.strip():
+            metadata["pipeline_run_id"] = pipeline_run_id.strip()
 
         temp_path = write_temp_payload(payload, suffix=f".{extension}")
         try:
@@ -468,6 +502,8 @@ class ContentEnrichmentService:
         enriched = 0
         skipped = 0
         failed = 0
+        ai_runs = 0
+        deterministic_runs = 0
         for outcome in outcomes:
             if outcome.status == "enriched":
                 enriched += 1
@@ -475,6 +511,10 @@ class ContentEnrichmentService:
                 skipped += 1
             elif outcome.status == "failed":
                 failed += 1
+            if outcome.execution_mode == "ai":
+                ai_runs += 1
+            else:
+                deterministic_runs += 1
             errors.extend(error for error in outcome.errors if error)
         return ContentEnrichmentRunSummary(
             requested=requested,
@@ -482,6 +522,8 @@ class ContentEnrichmentService:
             enriched=enriched,
             skipped=skipped,
             failed=failed,
+            ai_runs=ai_runs,
+            deterministic_runs=deterministic_runs,
             errors=tuple(dict.fromkeys(errors)),
             started_at=started_at,
             completed_at=completed_at,

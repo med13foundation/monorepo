@@ -11,8 +11,10 @@ or any other domain.  Only the Dictionary content differs.
 
 It covers both the **implemented** source ingestion infrastructure (currently
 deployed for PubMed and ClinVar as the first domain connectors) and the
-**planned** Flujo-agent-driven extraction pipeline that will complete the
-journey from raw upstream data to the kernel knowledge graph.
+**implemented** Flujo-agent-driven extraction pipeline stages from raw
+upstream data toward the kernel knowledge graph.  The staged components are
+implemented, while some full-flow orchestration and truth-layer automation
+behaviors remain tracked gaps (see "Known Gaps vs Flow Example").
 
 ---
 
@@ -22,9 +24,9 @@ journey from raw upstream data to the kernel knowledge graph.
 2. [End-to-End Architecture Overview](#end-to-end-architecture-overview)
 3. [Intelligence Service Layers](#intelligence-service-layers)
 4. [Tier 1 — Source Ingestion Pipeline (Implemented)](#tier-1--source-ingestion-pipeline-implemented)
-5. [Tier 2 — Content Enrichment Pipeline (Planned)](#tier-2--content-enrichment-pipeline-planned)
-6. [Tier 3 — Knowledge Extraction Pipeline (Planned)](#tier-3--knowledge-extraction-pipeline-planned)
-7. [The Document Store (Planned)](#the-document-store-planned)
+5. [Tier 2 — Content Enrichment Pipeline (Implemented)](#tier-2--content-enrichment-pipeline-implemented)
+6. [Tier 3 — Knowledge Extraction Pipeline (Implemented)](#tier-3--knowledge-extraction-pipeline-implemented)
+7. [The Document Store (Implemented)](#the-document-store-implemented)
 8. [Kernel Ingestion Pipeline (Implemented)](#kernel-ingestion-pipeline-implemented)
 9. [Domain Contracts](#domain-contracts-type-safe-and-source-specific)
 10. [Ingestion Pipelines](#ingestion-pipelines)
@@ -37,12 +39,14 @@ journey from raw upstream data to the kernel knowledge graph.
 17. [Version 2 Status](#version-2-status)
 18. [Post-V2 Hardening Status](#post-v2-hardening-status)
 19. [The Knowledge Graph (Implemented)](#the-knowledge-graph-implemented)
-20. [Graph Connection Generation — Flujo Agent (Planned)](#graph-connection-generation--flujo-agent-planned)
-21. [Graph Search — Flujo Agent (Planned)](#graph-search--flujo-agent-planned)
+20. [Graph Connection Generation — Flujo Agent (Implemented)](#graph-connection-generation--flujo-agent-implemented)
+21. [Graph Search — Flujo Agent (Implemented)](#graph-search--flujo-agent-implemented)
 22. [PHI Isolation & Security](#phi-isolation--security)
 23. [Multi-Tenancy — Research Spaces](#multi-tenancy--research-spaces)
 24. [Autonomous Dictionary Evolution Plan](#autonomous-dictionary-evolution-plan)
-25. [Principles to Keep](#principles-to-keep)
+25. [Known Gaps vs Flow Example](#known-gaps-vs-flow-example-as-is-2026-02-15)
+26. [Gap Closure Checklist](#gap-closure-checklist)
+27. [Principles to Keep](#principles-to-keep)
 
 ---
 
@@ -76,8 +80,8 @@ response schemas, and query contracts — the same pattern any new connector fol
 The platform is organised into three sequential **tiers** that feed into a
 knowledge graph, plus two **graph-layer agents** that operate on the graph
 itself.  Each tier has a clear input, a clear output, and a well-defined
-boundary that separates it from the next.  Tier 1 and the kernel graph are
-fully implemented; Tiers 2–3 and the graph-layer agents are planned.
+boundary that separates it from the next.  The tier pipeline and graph-layer
+agents are implemented end-to-end.
 
 ```mermaid
 flowchart TB
@@ -99,13 +103,13 @@ flowchart TB
     IS --> IJ[IngestionJobRepository]
   end
 
-  subgraph DOCSTORE["Document Store (Planned)"]
+  subgraph DOCSTORE["Document Store (Implemented)"]
     direction LR
     SD[(source_documents)]
     BLOB[(Storage Backend)]
   end
 
-  subgraph TIER2["Tier 2 — Content Enrichment (Planned · Flujo Agent)"]
+  subgraph TIER2["Tier 2 — Content Enrichment (Implemented · Flujo Agent)"]
     direction LR
     CEA[Content Enrichment Agent] -->|strategy per record| PMC[PMC OA API]
     CEA --> EPMC[Europe PMC]
@@ -113,7 +117,7 @@ flowchart TB
     CEA --> PASS[Pass-Through — structured API data]
   end
 
-  subgraph TIER3["Tier 3 — Knowledge Extraction (Planned · Flujo Pipeline)"]
+  subgraph TIER3["Tier 3 — Knowledge Extraction (Implemented · Flujo Pipeline)"]
     direction LR
     ERA[Entity Recognition Agent]
     EXA[Extraction Agent]
@@ -138,7 +142,7 @@ flowchart TB
     PERSIST --> PROV[(provenance)]
   end
 
-  subgraph GRAPH_LAYER["Graph Layer (Planned · Flujo Agents)"]
+  subgraph GRAPH_LAYER["Graph Layer (Implemented · Flujo Agents)"]
     direction LR
     GCA[Graph Connection Agent] -->|cross-document\nrelation discovery| GRAPH_RESULTS[Proposed Relations]
     GSA[Graph Search Agent] -->|natural language\nresearch queries| RESULTS[Structured Results\n+ Evidence]
@@ -430,7 +434,7 @@ these gaps with domain-agnostic, agent-driven enrichment and extraction.
 
 ---
 
-## Tier 2 — Content Enrichment Pipeline (Planned)
+## Tier 2 — Content Enrichment Pipeline (Implemented)
 
 ### Problem
 
@@ -510,7 +514,7 @@ class ContentEnrichmentContract(BaseAgentContract):
 
 ---
 
-## Tier 3 — Knowledge Extraction Pipeline (Planned)
+## Tier 3 — Knowledge Extraction Pipeline (Implemented)
 
 ### Problem
 
@@ -871,7 +875,7 @@ block) is recorded via `GovernanceService.record_provenance(...)` in the
 
 ### Integration with existing extraction infrastructure
 
-The planned pipeline **replaces** the current `RuleBasedPubMedExtractionProcessor`
+The implemented pipeline **replaces** the current `RuleBasedPubMedExtractionProcessor`
 as the primary extraction path.  The rule-based extractor can remain as a
 **fast-path pre-filter** (zero-cost regex pass to catch obvious identifiers
 before invoking the LLM pipeline), but the Flujo agents become the authoritative
@@ -899,7 +903,7 @@ Current extraction infrastructure to **replace:**
 
 ---
 
-## The Document Store (Planned)
+## The Document Store (Implemented)
 
 The Document Store is the **boundary** between Tier 1 (source ingestion) and
 Tiers 2+3 (enrichment and extraction).  It tracks every document from raw
@@ -1011,12 +1015,13 @@ infrastructure) so domain/application layers can depend on them:
 
 ### HybridMapper extensibility
 
-`HybridMapper` chains multiple `Mapper` implementations in sequence.  Currently
-only `ExactMapper` (synonym lookup) is wired.  The architecture is designed for:
+`HybridMapper` chains multiple `Mapper` implementations in sequence.  The current
+chain is `ExactMapper -> VectorMapper`, with optional `LLMJudgeMapper` behind
+feature flag `MED13_ENABLE_LLM_JUDGE_MAPPER`.
 
 1. `ExactMapper` — deterministic synonym match via **Semantic Layer** (implemented)
-2. `VectorMapper` — pgvector similarity search via **Semantic Layer** (planned, part of Tier 3)
-3. `LLMJudgeMapper` — Flujo agent for ambiguous cases via **Identity Layer** agent overlay (planned, part of Tier 3)
+2. `VectorMapper` — pgvector similarity search via **Semantic Layer** (implemented)
+3. `LLMJudgeMapper` — Flujo mapping-judge fallback for ambiguous cases (implemented, feature-flagged)
 
 All three mappers delegate to the same centralized Semantic Layer for search —
 they differ only in which search strategy they use (exact, vector, LLM).  This
@@ -1024,9 +1029,9 @@ is a textbook example of the "deterministic core + agent overlay" pattern: the
 first two mappers are fast and cheap; the LLM mapper is invoked only for the
 small fraction of mentions that the deterministic strategies cannot resolve.
 
-When Tier 3 agents are implemented, they will **produce `RawRecord` objects**
-that flow through this same pipeline.  The agents handle the reasoning;
-the kernel pipeline handles the persistence with full Dictionary validation.
+Tier 3 agents **produce `RawRecord` objects** that flow through this same
+pipeline.  The agents handle the reasoning; the kernel pipeline handles
+persistence with full Dictionary validation.
 
 ### Factory
 
@@ -1630,7 +1635,7 @@ the source, extraction method, AI model, mapping confidence, and the raw input.
 
 ---
 
-## Graph Connection Generation — Flujo Agent (Planned)
+## Graph Connection Generation — Flujo Agent (Implemented)
 
 ### Problem
 
@@ -1796,7 +1801,7 @@ extractions:
 
 ---
 
-## Graph Search — Flujo Agent (Planned)
+## Graph Search — Flujo Agent (Implemented)
 
 ### Problem
 
@@ -1916,7 +1921,7 @@ and the Graph Query Port for execution, then synthesizes results.
 The Graph Search Agent powers the **research query interface** in the admin UI:
 
 1. Researcher types a natural language question.
-2. The agent processes it via the API (`/api/graph/search`).
+2. The agent processes it via the API (`/research-spaces/{space_id}/graph/search`).
 3. Results are displayed as an entity list with observations, relations, and
    evidence chains.
 4. The researcher can drill into any result to see full provenance.
@@ -2590,20 +2595,103 @@ by the Semantic Layer; agents and the Kernel Pipeline consume them through the
 
 | Tool | Provided by | Current | After Dictionary Evolution |
 |---|---|---|---|
-| `dictionary_search(terms, dimensions)` | **Semantic Layer** | Not implemented | Universal search across **all dimensions** (variables, entity types, relation types, constraints).  Exact + synonym + fuzzy (trigram) + vector (pgvector on descriptions).  Returns `dimension`, `match_method`, `similarity_score`, full descriptions. |
-| `dictionary_search_by_domain(domain)` | **Semantic Layer** | Not implemented | Reads from `dictionary_domain_contexts` + filters all dimension tables by domain.  Agent learns naming conventions for variables, entity types, and relation types in the target domain. |
-| `create_variable(...)` | **Semantic Layer** | `DictionaryRepository.create_variable` (basic) | Validates `data_type` against `dictionary_data_types`, `domain_context` against `dictionary_domain_contexts`, `sensitivity` against `dictionary_sensitivity_levels`, `constraints` against type-specific Pydantic schema.  Sets `created_by='agent:{run_id}'`, computes embedding, returns full entry. |
-| `create_synonym(...)` | **Semantic Layer** | Exists (basic insert) | Sets `source='ai_mapped'`, `created_by='agent:{run_id}'`. |
-| `create_entity_type(...)` | **Semantic Layer** | Not implemented | Inserts into `dictionary_entity_types` with `domain_context`, `description`, provenance, and embedding.  Creates matching `entity_resolution_policies` row. |
-| `create_relation_type(...)` | **Semantic Layer** | Does not exist | Inserts into `dictionary_relation_types` with `domain_context`, `description`, `is_directional`, `inverse_label`, provenance, and embedding.  Immediately usable in constraints and extractions. |
-| `create_relation_constraint(...)` | **Semantic Layer** | Does not exist | Inserts into `relation_constraints` with provenance.  Validates that `source_type`, `relation_type`, and `target_type` all exist in their respective type tables.  The constraint becomes immediately active. |
-| `create_value_set_item(...)` | **Semantic Layer** | Does not exist | For extensible value sets, adds a new coded item with provenance. |
-| `validate_observation(...)` | **Semantic Layer** | Exists (in Kernel Validate stage) | Validates value against variable constraints, data type, and unit.  Used by Extraction Agent and Kernel Pipeline. |
-| `validate_triple(...)` | **Semantic Layer** | Exists (in Kernel Validate stage) | Validates source_type → relation_type → target_type against `relation_constraints`.  Used by Extraction Agent, Graph Connection Agent, and Kernel Pipeline. |
-| `revoke(id, reason)` | **Semantic Layer** | Does not exist | Deactivates a Dictionary entry, flags downstream data for re-extraction.  Used by Admin UI curators. |
-| `resolve(anchor, entity_type, space_id)` | **Identity Layer** | `EntityResolver` (in Kernel Resolve stage) | Match subject anchors to existing entities via policies; create new entities when allowed.  Used by Kernel Pipeline and agents. |
-| `upsert_relation_evidence(...)` | **Truth Layer** | Inline in Kernel Persist stage | Canonical upsert: add evidence, recompute aggregate confidence, trigger auto-promotion.  Used by Kernel Pipeline and Graph Connection Agent. |
-| `evaluate(contract)` | **Governance Layer** | `GovernanceConfig.should_auto_approve()` | Full confidence-based routing + centralized review queue + provenance recording.  Used by all agents via Governance Gate. |
+| `dictionary_search(terms, dimensions)` | **Semantic Layer** | Implemented (`DictionaryManagementService.dictionary_search`) | Universal search across **all dimensions** (variables, entity types, relation types, constraints).  Exact + synonym + fuzzy (trigram) + vector (pgvector on descriptions).  Returns `dimension`, `match_method`, `similarity_score`, full descriptions. |
+| `dictionary_search_by_domain(domain)` | **Semantic Layer** | Implemented (`DictionaryManagementService.dictionary_search_by_domain`) | Reads from `dictionary_domain_contexts` + filters all dimension tables by domain.  Agent learns naming conventions for variables, entity types, and relation types in the target domain. |
+| `create_variable(...)` | **Semantic Layer** | Implemented | Validates `data_type` against `dictionary_data_types`, `domain_context` against `dictionary_domain_contexts`, `sensitivity` against `dictionary_sensitivity_levels`, `constraints` against type-specific Pydantic schema.  Sets `created_by='agent:{run_id}'`, computes embedding, returns full entry. |
+| `create_synonym(...)` | **Semantic Layer** | Implemented | Sets `source='ai_mapped'`, `created_by='agent:{run_id}'`. |
+| `create_entity_type(...)` | **Semantic Layer** | Implemented | Inserts into `dictionary_entity_types` with `domain_context`, `description`, provenance, and embedding.  Creates matching `entity_resolution_policies` row. |
+| `create_relation_type(...)` | **Semantic Layer** | Implemented | Inserts into `dictionary_relation_types` with `domain_context`, `description`, `is_directional`, `inverse_label`, provenance, and embedding.  Immediately usable in constraints and extractions. |
+| `create_relation_constraint(...)` | **Semantic Layer** | Implemented | Inserts into `relation_constraints` with provenance.  Validates that `source_type`, `relation_type`, and `target_type` all exist in their respective type tables.  The constraint becomes immediately active. |
+| `create_value_set_item(...)` | **Semantic Layer** | Implemented | For extensible value sets, adds a new coded item with provenance. |
+| `validate_observation(...)` | **Semantic Layer** | Implemented | Validates value against variable constraints, data type, and unit.  Used by Extraction Agent and Kernel Pipeline. |
+| `validate_triple(...)` | **Semantic Layer** | Implemented | Validates source_type → relation_type → target_type against `relation_constraints`.  Used by Extraction Agent, Graph Connection Agent, and Kernel Pipeline. |
+| `revoke(id, reason)` | **Semantic Layer** | Implemented (typed revoke methods per dictionary dimension) | Deactivates Dictionary entries and flags downstream data for re-extraction.  Used by Admin UI curators. |
+| `resolve(anchor, entity_type, space_id)` | **Identity Layer** | Implemented (`EntityResolver`) | Match subject anchors to existing entities via policies; create new entities when allowed.  Used by Kernel Pipeline and agents. |
+| `upsert_relation_evidence(...)` | **Truth Layer** | Partially implemented (canonical relation/evidence upsert in kernel relation repository) | Adds evidence and recomputes aggregate confidence/source counts.  Automatic `DRAFT` → `APPROVED` promotion by threshold is a tracked gap (see "Known Gaps vs Flow Example").  Used by Kernel Pipeline and Graph Connection Agent. |
+| `evaluate(contract)` | **Governance Layer** | Implemented (`GovernanceService.evaluate`) | Confidence-based routing + centralized review behavior + provenance integration across agents. |
+
+---
+
+## Known Gaps vs Flow Example (As-Is 2026-02-15)
+
+This section tracks current deltas between implemented behavior and
+`docs/latest_plan_path/flow_example.md`.
+
+| Gap ID | Flow expectation | Current behavior | Status |
+|---|---|---|---|
+| `GAP-001` | One continuous orchestrator runs ingestion → enrichment → extraction → graph with automatic stage handoff. | Stages are implemented and callable, but orchestration is mostly stage-by-stage via separate services/endpoints. | In Progress |
+| `GAP-002` | Truth layer auto-promotes strong edges from `DRAFT` to `APPROVED` when evidence thresholds are met. | Evidence aggregation values are recomputed on writes, but universal threshold-driven auto-promotion is not consistently enforced. | In Progress |
+| `GAP-003` | Kernel ingest path uniformly handles observation and relation evidence accumulation semantics. | Ingestion pipeline is primarily observation-centric; relation accumulation is handled in separate relation write paths. | In Progress |
+| `GAP-004` | Query-generation stage is a first-class, source-agnostic pipeline stage. | AI query generation is currently tied to selected source/service paths (not universally applied to all connectors). | In Progress |
+| `GAP-005` | Full AI-driven flow is always active across tiers. | Multiple stages can run in deterministic or fallback mode depending on feature flags/configuration. | In Progress |
+| `GAP-006` | Domain cold-start bootstrapping is a guaranteed pipeline behavior. | Dictionary/domain creation tools exist, but universal automatic bootstrap behavior is not fully enforced end-to-end. | In Progress |
+
+**Tracking note:** keep this section updated whenever a gap is closed; when all
+rows are closed, this document can be realigned to "fully implemented" flow
+language.
+
+---
+
+## Gap Closure Checklist
+
+Use this checklist to move any gap from `Open` to `Closed`.
+
+### Cross-gap completion criteria
+
+- [ ] Implementation merged for the gap.
+- [ ] Unit and integration tests added or updated for the changed behavior.
+- [ ] Feature flags and fallback behavior documented (including defaults).
+- [ ] API and architecture docs updated to reflect as-built behavior.
+- [ ] `Known Gaps vs Flow Example` table status changed to `Closed` with closure date and PR reference.
+
+### Gap-specific closure criteria
+
+#### `GAP-001` - Continuous orchestrator across stages
+
+- [ ] A single orchestrator can run ingestion -> enrichment -> extraction -> graph connection with automatic handoff.
+- [ ] Partial failures are captured with resumable stage state per run.
+- [ ] A single run ID links all stage outputs and audit/provenance records.
+
+#### `GAP-002` - Auto-promotion from `DRAFT` to `APPROVED`
+
+- [ ] Threshold policy is configurable per research space (confidence and minimum independent sources).
+- [ ] Relation writes consistently evaluate promotion policy after evidence updates.
+- [ ] Promotion and non-promotion decisions are logged in provenance/audit trail.
+
+#### `GAP-003` - Unified relation evidence accumulation semantics
+
+- [ ] Kernel ingest paths and relation write paths share one canonical evidence accumulation routine.
+- [ ] Duplicate evidence is idempotent by source reference and extraction run context.
+- [ ] Aggregate confidence and source counts are recalculated consistently for all relation upserts.
+
+#### `GAP-004` - Source-agnostic query generation stage
+
+- [ ] Query generation is available as a first-class stage independent of connector type.
+- [ ] Connector contracts define deterministic fallback behavior when AI query generation is disabled.
+- [ ] Stage telemetry captures generated query, fallback reason, and downstream retrieval impact.
+
+#### `GAP-005` - Predictable AI stage activation and fallbacks
+
+- [ ] Stage activation matrix is documented for all relevant feature flags and environment settings.
+- [ ] Runtime responses expose whether AI or deterministic fallback path was used.
+- [ ] Alerting or dashboards exist for prolonged fallback mode in production.
+
+#### `GAP-006` - Enforced dictionary/domain cold-start bootstrap
+
+- [ ] Cold-start bootstrap path is explicitly invoked when a new domain has insufficient dictionary coverage.
+- [ ] Bootstrap creates minimum viable entity types, relation types, and key variables with provenance.
+- [ ] Bootstrap outputs are routed through governance and review queue consistently.
+
+### Closure tracker
+
+| Gap ID | Owner | Target Milestone | Status | Closed On | PR/Issue |
+|---|---|---|---|---|---|
+| `GAP-001` | `Pipeline/Orchestration` | `M1` | `In Progress` | `-` | `-` |
+| `GAP-002` | `Kernel/Graph` | `M1` | `In Progress` | `-` | `-` |
+| `GAP-003` | `Kernel/Graph` | `M1` | `In Progress` | `-` | `-` |
+| `GAP-004` | `Ingestion/Query` | `M1` | `In Progress` | `-` | `-` |
+| `GAP-005` | `Platform/LLM` | `M1` | `In Progress` | `-` | `-` |
+| `GAP-006` | `Dictionary/Agents` | `M1` | `In Progress` | `-` | `-` |
 
 ---
 
@@ -2645,11 +2733,12 @@ by the Semantic Layer; agents and the Kernel Pipeline consume them through the
 13. **Global Dictionary, space-scoped graph.** The Dictionary is shared across
     all research spaces (one vocabulary).  Graph data (entities, observations,
     relations) is scoped per `research_space_id` (strict isolation).
-14. **Canonical edges with evidence accumulation.** Each logical connection in
-    the graph has exactly one canonical edge.  When multiple sources confirm the
-    same relation, evidence accumulates on the existing edge — strengthening the
-    signal.  Edges auto-promote from `DRAFT` to `APPROVED` when evidence crosses
-    configurable thresholds.  Curators focus review on weak-signal edges.
+14. **Canonical edges with evidence accumulation (target state).** Each
+    logical connection in the graph has exactly one canonical edge.  When
+    multiple sources confirm the same relation, evidence accumulates on the
+    existing edge, strengthening the signal.  Automatic `DRAFT` → `APPROVED`
+    promotion by threshold is the intended behavior and remains a tracked gap
+    until fully enforced.
 15. **Centralized Intelligence Layers.** Cross-cutting intelligence — Dictionary
     search and management (Semantic Layer), entity resolution (Identity Layer),
     evidence aggregation (Truth Layer), governance routing and audit (Governance

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         SchedulerPort,
     )
     from src.application.services.pubmed_discovery_service import PubMedDiscoveryService
+    from src.domain.entities.user_data_source import UserDataSource
     from src.domain.repositories import (
         ingestion_job_repository,
         storage_repository,
@@ -73,6 +74,9 @@ class IngestionSchedulingOptions:
     source_ledger_retention_days: int | None = 180
     source_ledger_cleanup_batch_size: int = 1000
     retry_batch_size: int = 25
+    post_ingestion_hook: (
+        Callable[[UserDataSource, IngestionRunSummary], Awaitable[None]] | None
+    ) = None
 
 
 class IngestionSchedulingService(
@@ -152,6 +156,7 @@ class IngestionSchedulingService(
             1,
         )
         self._retry_batch_size = max(resolved_options.retry_batch_size, 1)
+        self._post_ingestion_hook = resolved_options.post_ingestion_hook
 
     async def schedule_source(self, source_id: UUID) -> ScheduledJob:
         """Register a source with the scheduler backend."""

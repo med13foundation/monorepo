@@ -21,7 +21,11 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-def _seed_space_and_entities(db_session: Session) -> tuple[UUID, UUID, UUID]:
+def _seed_space_and_entities(
+    db_session: Session,
+    *,
+    settings: dict[str, object] | None = None,
+) -> tuple[UUID, UUID, UUID]:
     owner_id = uuid4()
     db_session.add(
         UserModel(
@@ -45,7 +49,7 @@ def _seed_space_and_entities(db_session: Session) -> tuple[UUID, UUID, UUID]:
             description="Test research space",
             owner_id=owner_id,
             status=SpaceStatusEnum.ACTIVE,
-            settings={},
+            settings=settings or {},
             tags=[],
         ),
     )
@@ -151,3 +155,301 @@ def test_create_clamps_confidence_and_defaults_evidence_tier(
 
     assert confidences == [0.0, 1.0]
     assert tiers == {"COMPUTATIONAL"}
+
+
+def test_create_skips_duplicate_evidence_rows(
+    db_session: Session,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+
+    first = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.91,
+        evidence_summary="Same supporting statement",
+        evidence_tier="LITERATURE",
+    )
+    second = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.91,
+        evidence_summary="Same supporting statement",
+        evidence_tier="LITERATURE",
+    )
+
+    assert first.id == second.id
+    assert second.source_count == 1
+    evidence_rows = db_session.scalars(
+        select(RelationEvidenceModel).where(
+            RelationEvidenceModel.relation_id == second.id,
+        ),
+    ).all()
+    assert len(evidence_rows) == 1
+
+
+def test_create_auto_promotes_when_default_thresholds_are_met(
+    db_session: Session,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.96,
+        evidence_tier="LITERATURE",
+    )
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.97,
+        evidence_tier="LITERATURE",
+    )
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.98,
+        evidence_tier="LITERATURE",
+    )
+
+    assert relation.source_count == 3
+    assert relation.aggregate_confidence >= 0.95
+    assert relation.curation_status == "APPROVED"
+
+
+def test_create_applies_stricter_threshold_for_computational_only_evidence(
+    db_session: Session,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=1.0,
+        evidence_tier="COMPUTATIONAL",
+        provenance_id=str(uuid4()),
+    )
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=1.0,
+        evidence_tier="COMPUTATIONAL",
+        provenance_id=str(uuid4()),
+    )
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=1.0,
+        evidence_tier="COMPUTATIONAL",
+        provenance_id=str(uuid4()),
+    )
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=1.0,
+        evidence_tier="COMPUTATIONAL",
+        provenance_id=str(uuid4()),
+    )
+
+    assert relation.source_count == 4
+    assert relation.curation_status == "DRAFT"
+
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=1.0,
+        evidence_tier="COMPUTATIONAL",
+        provenance_id=str(uuid4()),
+    )
+
+    assert relation.source_count == 5
+    assert relation.curation_status == "APPROVED"
+
+
+def test_create_logs_non_promotion_decision_reason(
+    db_session: Session,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+
+    with caplog.at_level("INFO"):
+        repository.create(
+            research_space_id=str(research_space_id),
+            source_id=str(source_entity_id),
+            relation_type="ASSOCIATED_WITH",
+            target_id=str(target_entity_id),
+            confidence=0.91,
+            evidence_tier="LITERATURE",
+            provenance_id=str(uuid4()),
+        )
+
+    decision_records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "relation_auto_promotion"
+    ]
+    assert decision_records
+    decision = decision_records[-1]
+    assert getattr(decision, "auto_promotion_outcome", None) == "kept"
+    assert getattr(decision, "auto_promotion_reason", None) in {
+        "insufficient_distinct_sources",
+        "insufficient_aggregate_confidence",
+    }
+
+
+def test_create_logs_promotion_decision_reason(
+    db_session: Session,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+
+    with caplog.at_level("INFO"):
+        repository.create(
+            research_space_id=str(research_space_id),
+            source_id=str(source_entity_id),
+            relation_type="ASSOCIATED_WITH",
+            target_id=str(target_entity_id),
+            confidence=0.96,
+            evidence_tier="LITERATURE",
+            provenance_id=str(uuid4()),
+        )
+        repository.create(
+            research_space_id=str(research_space_id),
+            source_id=str(source_entity_id),
+            relation_type="ASSOCIATED_WITH",
+            target_id=str(target_entity_id),
+            confidence=0.97,
+            evidence_tier="LITERATURE",
+            provenance_id=str(uuid4()),
+        )
+        repository.create(
+            research_space_id=str(research_space_id),
+            source_id=str(source_entity_id),
+            relation_type="ASSOCIATED_WITH",
+            target_id=str(target_entity_id),
+            confidence=0.98,
+            evidence_tier="LITERATURE",
+            provenance_id=str(uuid4()),
+        )
+
+    decision_records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "relation_auto_promotion"
+    ]
+    assert decision_records
+    decision = decision_records[-1]
+    assert getattr(decision, "auto_promotion_outcome", None) == "promoted"
+    assert getattr(decision, "auto_promotion_reason", None) == "thresholds_met"
+
+
+def test_create_uses_research_space_policy_override_for_auto_promotion(
+    db_session: Session,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+        settings={
+            "relation_auto_promotion": {
+                "min_distinct_sources": 1,
+                "min_aggregate_confidence": 0.8,
+                "require_distinct_documents": False,
+                "require_distinct_runs": False,
+                "block_if_conflicting_evidence": False,
+            },
+        },
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.85,
+        evidence_tier="LITERATURE",
+        provenance_id=str(uuid4()),
+    )
+
+    assert relation.source_count == 1
+    assert relation.curation_status == "APPROVED"
+
+
+def test_create_space_policy_override_can_block_default_auto_promotion(
+    db_session: Session,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+        settings={
+            "custom": {
+                "relation_autopromote_min_distinct_sources": 10,
+                "relation_autopromote_require_distinct_documents": False,
+                "relation_autopromote_require_distinct_runs": False,
+            },
+        },
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.99,
+        evidence_tier="LITERATURE",
+        provenance_id=str(uuid4()),
+    )
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.99,
+        evidence_tier="LITERATURE",
+        provenance_id=str(uuid4()),
+    )
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.99,
+        evidence_tier="LITERATURE",
+        provenance_id=str(uuid4()),
+    )
+
+    assert relation.source_count == 3
+    assert relation.curation_status == "DRAFT"

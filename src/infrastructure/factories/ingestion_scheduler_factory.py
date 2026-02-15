@@ -77,6 +77,7 @@ _ENV_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS = (
     "MED13_INGESTION_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS"
 )
 _ENV_INGESTION_JOB_HARD_TIMEOUT_SECONDS = "MED13_INGESTION_JOB_HARD_TIMEOUT_SECONDS"
+_ENV_ENABLE_POST_INGESTION_PIPELINE_HOOK = "MED13_ENABLE_POST_INGESTION_PIPELINE_HOOK"
 _DEFAULT_SCHEDULER_HEARTBEAT_SECONDS = 30
 _DEFAULT_SCHEDULER_LEASE_TTL_SECONDS = 120
 _DEFAULT_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS = 300
@@ -130,6 +131,18 @@ def _read_positive_int_env(env_key: str, *, default: int) -> int:
     return parsed_value
 
 
+def _read_bool_env(env_key: str, *, default: bool) -> bool:
+    raw_value = os.getenv(env_key)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def build_ingestion_scheduling_service(
     *,
     session: Session,
@@ -172,6 +185,45 @@ def build_ingestion_scheduling_service(
         },
         storage_coordinator=storage_coordinator,
     )
+    post_ingestion_hook = None
+    if _read_bool_env(_ENV_ENABLE_POST_INGESTION_PIPELINE_HOOK, default=True):
+        from src.infrastructure.dependency_injection.dependencies import (  # noqa: PLC0415
+            get_legacy_dependency_container,
+        )
+
+        container = get_legacy_dependency_container()
+        content_enrichment_service = container.create_content_enrichment_service(
+            session,
+        )
+        entity_recognition_service = container.create_entity_recognition_service(
+            session,
+        )
+
+        async def _run_post_ingestion_pipeline(
+            source: UserDataSource,
+            summary: IngestionRunSummary,
+        ) -> None:
+            _ = summary
+            if source.research_space_id is None:
+                return
+            source_type_value = source.source_type.value
+            await content_enrichment_service.process_pending_documents(
+                limit=200,
+                source_id=source.id,
+                research_space_id=source.research_space_id,
+                source_type=source_type_value,
+                model_id=None,
+            )
+            await entity_recognition_service.process_pending_documents(
+                limit=200,
+                source_id=source.id,
+                research_space_id=source.research_space_id,
+                source_type=source_type_value,
+                model_id=None,
+                shadow_mode=None,
+            )
+
+        post_ingestion_hook = _run_post_ingestion_pipeline
 
     # Initialize Query Agent
     query_agent = FlujoQueryAgentAdapter()
@@ -266,6 +318,7 @@ def build_ingestion_scheduling_service(
                 scheduler_stale_running_timeout_seconds
             ),
             ingestion_job_hard_timeout_seconds=ingestion_job_hard_timeout_seconds,
+            post_ingestion_hook=post_ingestion_hook,
         ),
     )
 

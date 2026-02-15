@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
         KernelRelationRepository,
     )
     from src.type_definitions.common import ResearchSpaceSettings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,7 @@ class GraphConnectionService:
         relation_types: list[str] | None = None,
         max_depth: int = 2,
         shadow_mode: bool | None = None,
+        pipeline_run_id: str | None = None,
     ) -> GraphConnectionOutcome:
         """Run one graph-connection discovery pass for a seed entity."""
         requested_shadow_mode = shadow_mode if isinstance(shadow_mode, bool) else False
@@ -124,10 +128,36 @@ class GraphConnectionService:
                         if relation.supporting_provenance_ids
                         else None
                     ),
+                    agent_run_id=run_id,
                 )
                 persisted_count += 1
+                logger.info(
+                    "Graph relation persisted from connection discovery",
+                    extra={
+                        "research_space_id": research_space_id,
+                        "seed_entity_id": seed_entity_id,
+                        "pipeline_run_id": pipeline_run_id,
+                        "graph_connection_run_id": run_id,
+                        "relation_type": relation.relation_type,
+                        "relation_source_id": relation.source_id,
+                        "relation_target_id": relation.target_id,
+                    },
+                )
             except (TypeError, ValueError) as exc:
                 persistence_errors.append(str(exc))
+                logger.warning(
+                    "Graph relation persistence failed",
+                    extra={
+                        "research_space_id": research_space_id,
+                        "seed_entity_id": seed_entity_id,
+                        "pipeline_run_id": pipeline_run_id,
+                        "graph_connection_run_id": run_id,
+                        "relation_type": relation.relation_type,
+                        "relation_source_id": relation.source_id,
+                        "relation_target_id": relation.target_id,
+                        "error": str(exc),
+                    },
+                )
 
         wrote_to_graph = persisted_count > 0
         reason = "processed" if wrote_to_graph else "no_relations_persisted"

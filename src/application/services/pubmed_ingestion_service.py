@@ -15,6 +15,10 @@ from src.domain.transform.transformers.pubmed_record_transformer import (
 )
 
 from ._pubmed_ingestion_helpers import PubMedIngestionServiceHelpers
+from .query_generation_service import (
+    QueryGenerationService,
+    QueryGenerationServiceDependencies,
+)
 
 if TYPE_CHECKING:
     from src.application.services.ports.ingestion_pipeline_port import (
@@ -52,6 +56,7 @@ class PubMedIngestionDependencies:
     query_agent: QueryAgentPort | None = None
     research_space_repository: ResearchSpaceRepository | None = None
     source_document_repository: SourceDocumentRepository | None = None
+    query_generation_service: QueryGenerationService | None = None
 
 
 class PubMedIngestionService(PubMedIngestionServiceHelpers):
@@ -78,6 +83,15 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
         self._source_document_repository = (
             resolved_dependencies.source_document_repository
         )
+        self._query_generation_service = (
+            resolved_dependencies.query_generation_service
+            or QueryGenerationService(
+                dependencies=QueryGenerationServiceDependencies(
+                    query_agent=self._query_agent,
+                    research_space_repository=self._research_space_repository,
+                ),
+            )
+        )
 
     async def ingest(
         self,
@@ -95,6 +109,12 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
         query_generation_decision = query_resolution.query_generation_decision
         query_generation_confidence = query_resolution.query_generation_confidence
         query_generation_run_id = query_resolution.query_generation_run_id
+        query_generation_execution_mode = (
+            query_resolution.query_generation_execution_mode
+        )
+        query_generation_fallback_reason = (
+            query_resolution.query_generation_fallback_reason
+        )
         checkpoint_before = (
             dict(context.source_sync_state.checkpoint_payload)
             if context is not None
@@ -181,6 +201,10 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
             query_generation_model=config.agent_config.model_id,
             query_generation_decision=query_generation_decision,
             query_generation_confidence=query_generation_confidence,
+            query_generation_execution_mode=query_generation_execution_mode,
+            query_generation_fallback_reason=query_generation_fallback_reason,
+            query_generation_downstream_fetched_records=fetch_result.fetched_records,
+            query_generation_downstream_processed_records=len(filtered_records),
             query_signature=query_signature,
             checkpoint_before=checkpoint_before,
             checkpoint_after=checkpoint_after_payload,

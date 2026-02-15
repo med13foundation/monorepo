@@ -54,6 +54,10 @@ class IngestionQueryGenerationMetadata(BaseModel):
     model: str | None = None
     decision: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    execution_mode: str | None = None
+    fallback_reason: str | None = None
+    downstream_fetched_records: int | None = Field(default=None, ge=0)
+    downstream_processed_records: int | None = Field(default=None, ge=0)
 
     def to_json_object(self) -> JSONObject:
         """Serialize to a JSON-safe object for ingestion job metadata."""
@@ -62,6 +66,10 @@ class IngestionQueryGenerationMetadata(BaseModel):
             "model": self.model,
             "decision": self.decision,
             "confidence": self.confidence,
+            "execution_mode": self.execution_mode,
+            "fallback_reason": self.fallback_reason,
+            "downstream_fetched_records": self.downstream_fetched_records,
+            "downstream_processed_records": self.downstream_processed_records,
         }
 
 

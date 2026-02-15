@@ -91,6 +91,8 @@ class StubContentEnrichmentService:
             enriched=1,
             skipped=0,
             failed=0,
+            ai_runs=0,
+            deterministic_runs=1,
             errors=(),
             started_at=now,
             completed_at=now,
@@ -113,6 +115,7 @@ class StubContentEnrichmentService:
         return ContentEnrichmentDocumentOutcome(
             document_id=document_id,
             status="enriched",
+            execution_mode="deterministic",
             reason="enriched",
             acquisition_method="pass_through",
             content_storage_key="documents/key.txt",

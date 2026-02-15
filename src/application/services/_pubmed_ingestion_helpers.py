@@ -22,6 +22,8 @@ from src.domain.services.ingestion import IngestionExtractionTarget, IngestionRu
 from src.type_definitions.ingestion import RawRecord as IngestionRawRecord
 from src.type_definitions.storage import StorageUseCase
 
+from .query_generation_service import QueryGenerationRequest
+
 if TYPE_CHECKING:
     from src.application.services.pubmed_ingestion_service import (
         PubMedIngestionService,
@@ -53,6 +55,8 @@ class _QueryResolution:
     query_generation_decision: str
     query_generation_confidence: float
     query_generation_run_id: str | None
+    query_generation_execution_mode: str
+    query_generation_fallback_reason: str | None
 
 
 class PubMedIngestionServiceHelpers:
@@ -104,59 +108,44 @@ class PubMedIngestionServiceHelpers:
         config: data_source_configs.PubMedQueryConfig,
     ) -> _QueryResolution:
         """Resolve AI-managed query overrides and associated metadata."""
-        query_generation_decision = "skipped"
-        query_generation_confidence = 0.0
-        query_generation_run_id: str | None = None
-
-        if (
-            not config.agent_config.is_ai_managed
-            or self._query_agent is None
-            or self._research_space_repository is None
-        ):
-            return _QueryResolution(
-                config=config,
-                query_generation_decision=query_generation_decision,
-                query_generation_confidence=query_generation_confidence,
-                query_generation_run_id=query_generation_run_id,
-            )
-
-        research_space_description = ""
-        if config.agent_config.use_research_space_context and source.research_space_id:
-            space = self._research_space_repository.find_by_id(source.research_space_id)
-            if space:
-                research_space_description = space.description
-
-        contract = await self._query_agent.generate_query(
-            research_space_description=research_space_description,
-            user_instructions=config.agent_config.agent_prompt,
-            source_type="pubmed",
+        request: QueryGenerationRequest = QueryGenerationRequest(
+            base_query=config.query,
+            source_type=config.agent_config.query_agent_source_type,
+            is_ai_managed=config.agent_config.is_ai_managed,
+            agent_prompt=config.agent_config.agent_prompt,
             model_id=config.agent_config.model_id,
+            use_research_space_context=config.agent_config.use_research_space_context,
+            research_space_id=source.research_space_id,
         )
-        query_generation_decision = contract.decision
-        query_generation_confidence = contract.confidence_score
-        query_generation_run_id = self._extract_query_generation_run_id()
+        result = await self._query_generation_service.resolve_query(request)
 
         resolved_config = config
-        if contract.decision == "generated" and contract.query:
-            resolved_config = config.model_copy(update={"query": contract.query})
-        elif contract.decision == "escalate":
+        if result.query.strip() and result.query.strip() != config.query:
+            resolved_config = config.model_copy(update={"query": result.query.strip()})
+
+        if result.decision == "escalate":
             logger.warning(
                 "AI query generation escalated: %s (confidence=%.2f)",
-                contract.rationale,
-                contract.confidence_score,
+                "agent requested escalation",
+                result.confidence,
             )
-        elif contract.confidence_score < LOW_CONFIDENCE_THRESHOLD:
+        elif (
+            result.execution_mode == "ai"
+            and result.confidence < LOW_CONFIDENCE_THRESHOLD
+        ):
             logger.warning(
                 "Low confidence AI query (%.2f): %s",
-                contract.confidence_score,
-                contract.rationale,
+                result.confidence,
+                result.decision,
             )
 
         return _QueryResolution(
             config=resolved_config,
-            query_generation_decision=query_generation_decision,
-            query_generation_confidence=query_generation_confidence,
-            query_generation_run_id=query_generation_run_id,
+            query_generation_decision=result.decision,
+            query_generation_confidence=result.confidence,
+            query_generation_run_id=result.run_id,
+            query_generation_execution_mode=result.execution_mode,
+            query_generation_fallback_reason=result.fallback_reason,
         )
 
     async def _fetch_records_with_checkpoint(
@@ -437,13 +426,3 @@ class PubMedIngestionServiceHelpers:
             )
         if documents:
             self._source_document_repository.upsert_many(documents)
-
-    def _extract_query_generation_run_id(self: PubMedIngestionService) -> str | None:
-        """Extract the latest query-generation run id from the query agent."""
-        if self._query_agent is None:
-            return None
-        provider = getattr(self._query_agent, "get_last_run_id", None)
-        if callable(provider):
-            run_id = provider()
-            return run_id if isinstance(run_id, str) and run_id.strip() else None
-        return None

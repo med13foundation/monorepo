@@ -209,21 +209,48 @@ class _DictionarySynonym:
     synonym: str
 
 
+@dataclass(frozen=True)
+class _DictionaryRelationType:
+    id: str
+
+
+@dataclass(frozen=True)
+class _DictionaryRelationConstraint:
+    source_type: str
+    relation_type: str
+    target_type: str
+
+
 class StubDictionaryService:
     """Minimal dictionary double for service orchestration tests."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, domain_has_entries: bool = True) -> None:
+        self._domain_has_entries = domain_has_entries
         self.entity_types: dict[str, _DictionaryEntityType] = {}
+        self.relation_types: dict[str, _DictionaryRelationType] = {}
+        self.relation_constraints: list[_DictionaryRelationConstraint] = []
         self.variables: dict[str, _DictionaryVariable] = {}
         self.synonyms: dict[str, str] = {}
         self.created_entity_types = 0
         self.created_variables = 0
         self.created_synonyms = 0
+        self.created_relation_types = 0
+        self.created_constraints = 0
+        self.creation_policies: list[str] = []
+
+    def _capture_creation_policy(self, kwargs: dict[str, object]) -> None:
+        settings = kwargs.get("research_space_settings")
+        if not isinstance(settings, dict):
+            return
+        raw_policy = settings.get("dictionary_agent_creation_policy")
+        if isinstance(raw_policy, str) and raw_policy.strip():
+            self.creation_policies.append(raw_policy.strip().upper())
 
     def get_entity_type(self, entity_type_id: str) -> _DictionaryEntityType | None:
         return self.entity_types.get(entity_type_id)
 
     def create_entity_type(self, **kwargs: object) -> _DictionaryEntityType:
+        self._capture_creation_policy(kwargs)
         entity_type = str(kwargs["entity_type"])
         created = _DictionaryEntityType(id=entity_type)
         self.entity_types[entity_type] = created
@@ -234,6 +261,7 @@ class StubDictionaryService:
         return self.variables.get(variable_id)
 
     def create_variable(self, **kwargs: object) -> _DictionaryVariable:
+        self._capture_creation_policy(kwargs)
         variable_id = str(kwargs["variable_id"])
         created = _DictionaryVariable(id=variable_id)
         self.variables[variable_id] = created
@@ -255,6 +283,76 @@ class StubDictionaryService:
         self.synonyms[synonym] = variable_id
         self.created_synonyms += 1
         return _DictionarySynonym(variable_id=variable_id, synonym=synonym)
+
+    def dictionary_search_by_domain(
+        self,
+        *,
+        domain_context: str,
+        limit: int = 50,
+        include_inactive: bool = False,
+    ) -> list[object]:
+        _ = domain_context
+        _ = limit
+        _ = include_inactive
+        if self._domain_has_entries:
+            return [{"id": "existing"}]
+        return []
+
+    def get_relation_type(
+        self,
+        relation_type_id: str,
+        *,
+        include_inactive: bool = False,
+    ) -> _DictionaryRelationType | None:
+        _ = include_inactive
+        return self.relation_types.get(relation_type_id)
+
+    def create_relation_type(self, **kwargs: object) -> _DictionaryRelationType:
+        self._capture_creation_policy(kwargs)
+        relation_type = str(kwargs["relation_type"])
+        created = _DictionaryRelationType(id=relation_type)
+        self.relation_types[relation_type] = created
+        self.created_relation_types += 1
+        self._domain_has_entries = True
+        return created
+
+    def get_constraints(
+        self,
+        *,
+        source_type: str | None = None,
+        relation_type: str | None = None,
+        include_inactive: bool = False,
+    ) -> list[_DictionaryRelationConstraint]:
+        _ = include_inactive
+        constraints = self.relation_constraints
+        if source_type is not None:
+            constraints = [
+                constraint
+                for constraint in constraints
+                if constraint.source_type == source_type
+            ]
+        if relation_type is not None:
+            constraints = [
+                constraint
+                for constraint in constraints
+                if constraint.relation_type == relation_type
+            ]
+        return constraints
+
+    def create_relation_constraint(
+        self,
+        **kwargs: object,
+    ) -> _DictionaryRelationConstraint:
+        self._capture_creation_policy(kwargs)
+        constraint = _DictionaryRelationConstraint(
+            source_type=str(kwargs["source_type"]),
+            relation_type=str(kwargs["relation_type"]),
+            target_type=str(kwargs["target_type"]),
+        )
+        self.relation_constraints.append(constraint)
+        self.created_constraints += 1
+        self._domain_has_entries = True
+        return constraint
 
 
 def _build_governance_service() -> GovernanceService:
@@ -541,3 +639,34 @@ async def test_process_document_uses_agent_mutation_reconciliation_when_run_id_p
     assert dictionary.created_variables == 0
     assert dictionary.created_synonyms == 0
     assert dictionary.created_entity_types == 0
+
+
+@pytest.mark.asyncio
+async def test_process_document_bootstraps_domain_when_dictionary_is_empty() -> None:
+    document = _build_document(include_raw_record=True)
+    repository = StubSourceDocumentRepository([document])
+    contract = _build_contract(document.id)
+    agent = StubEntityRecognitionAgent(contract=contract)
+    dictionary = StubDictionaryService(domain_has_entries=False)
+    ingestion = StubIngestionPipeline(
+        IngestResult(success=True, entities_created=1, observations_created=1),
+    )
+    service = EntityRecognitionService(
+        dependencies=EntityRecognitionServiceDependencies(
+            entity_recognition_agent=agent,
+            source_document_repository=repository,
+            ingestion_pipeline=ingestion,
+            dictionary_service=cast("DictionaryPort", dictionary),
+            governance_service=_build_governance_service(),
+        ),
+        default_shadow_mode=False,
+    )
+
+    outcome = await service.process_document(document_id=document.id)
+
+    assert outcome.status == "extracted"
+    assert outcome.dictionary_entity_types_created >= 3
+    assert outcome.dictionary_variables_created >= 2
+    assert dictionary.created_relation_types >= 1
+    assert dictionary.created_constraints >= 1
+    assert "PENDING_REVIEW" in dictionary.creation_policies

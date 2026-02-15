@@ -66,9 +66,30 @@ class _IngestionSchedulingMetadataHelpers:
         model = getattr(summary, "query_generation_model", None)
         decision = getattr(summary, "query_generation_decision", None)
         confidence = getattr(summary, "query_generation_confidence", None)
+        execution_mode = getattr(summary, "query_generation_execution_mode", None)
+        fallback_reason = getattr(summary, "query_generation_fallback_reason", None)
+        downstream_fetched_records = getattr(
+            summary,
+            "query_generation_downstream_fetched_records",
+            None,
+        )
+        downstream_processed_records = getattr(
+            summary,
+            "query_generation_downstream_processed_records",
+            None,
+        )
 
         has_signal = any(
-            value is not None for value in (run_id, model, decision, confidence)
+            value is not None
+            for value in (run_id, model, decision, confidence, execution_mode)
+        )
+        has_signal = has_signal or any(
+            value is not None
+            for value in (
+                fallback_reason,
+                downstream_fetched_records,
+                downstream_processed_records,
+            )
         )
         if not has_signal:
             return None
@@ -77,6 +98,22 @@ class _IngestionSchedulingMetadataHelpers:
             model=model if isinstance(model, str) else None,
             decision=decision if isinstance(decision, str) else None,
             confidence=confidence if isinstance(confidence, float | int) else None,
+            execution_mode=(
+                execution_mode if isinstance(execution_mode, str) else None
+            ),
+            fallback_reason=(
+                fallback_reason if isinstance(fallback_reason, str) else None
+            ),
+            downstream_fetched_records=(
+                downstream_fetched_records
+                if isinstance(downstream_fetched_records, int)
+                else None
+            ),
+            downstream_processed_records=(
+                downstream_processed_records
+                if isinstance(downstream_processed_records, int)
+                else None
+            ),
         )
 
     def _build_idempotency_metadata(

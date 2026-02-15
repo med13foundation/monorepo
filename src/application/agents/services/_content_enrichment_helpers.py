@@ -131,12 +131,13 @@ def build_metadata_patch(  # noqa: PLR0913
     *,
     contract: ContentEnrichmentContract,
     run_id: str | None,
+    pipeline_run_id: str | None = None,
     reason: str,
     content_storage_key: str | None,
     content_hash: str | None,
 ) -> JSONObject:
     """Build metadata patch persisted to the source document record."""
-    return {
+    metadata: JSONObject = {
         "content_enrichment_decision": contract.decision,
         "content_enrichment_reason": reason,
         "content_enrichment_acquisition_method": contract.acquisition_method,
@@ -150,6 +151,9 @@ def build_metadata_patch(  # noqa: PLR0913
         "content_enrichment_storage_key": content_storage_key,
         "content_enrichment_content_hash": content_hash,
     }
+    if pipeline_run_id is not None and pipeline_run_id.strip():
+        metadata["pipeline_run_id"] = pipeline_run_id.strip()
+    return metadata
 
 
 def merge_metadata(

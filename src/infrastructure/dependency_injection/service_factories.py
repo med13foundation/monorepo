@@ -4,6 +4,7 @@ Factory mixin for building application services used by the dependency container
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from src.application.agents.services import (
@@ -77,6 +78,10 @@ class ApplicationServiceFactoryMixin(
             model_spec = registry.get_default_model(ModelCapability.QUERY_GENERATION)
             self._query_agent = FlujoQueryAgentAdapter(model=model_spec.model_id)
         return self._query_agent
+
+    @staticmethod
+    def _is_stage_enabled(flag_name: str) -> bool:
+        return os.getenv(flag_name, "0").strip() == "1"
 
     def get_entity_recognition_agent(self) -> EntityRecognitionPort:
         if self._entity_recognition_agent is None:
@@ -204,9 +209,7 @@ class ApplicationServiceFactoryMixin(
             dictionary_service=dictionary_service,
         )
         graph_search_agent = None
-        import os
-
-        if os.getenv("MED13_ENABLE_GRAPH_SEARCH_AGENT", "0") == "1":
+        if self._is_stage_enabled("MED13_ENABLE_GRAPH_SEARCH_AGENT"):
             from src.infrastructure.llm.adapters.graph_search_agent_adapter import (
                 FlujoGraphSearchAdapter,
             )
@@ -231,12 +234,10 @@ class ApplicationServiceFactoryMixin(
         self,
         session: Session,
     ) -> ContentEnrichmentService:
-        import os
-
         from src.infrastructure.repositories import SqlAlchemySourceDocumentRepository
 
         content_enrichment_agent = None
-        if os.getenv("MED13_ENABLE_CONTENT_ENRICHMENT_AGENT", "0") == "1":
+        if self._is_stage_enabled("MED13_ENABLE_CONTENT_ENRICHMENT_AGENT"):
             registry = get_model_registry()
             model_spec = registry.get_default_model(
                 ModelCapability.EVIDENCE_EXTRACTION,
