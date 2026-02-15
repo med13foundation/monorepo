@@ -6,6 +6,9 @@ schema validity and enable safe persistence with indexed fields.
 """
 
 from src.domain.agents.contexts.base import BaseAgentContext
+from src.domain.agents.contexts.content_enrichment_context import (
+    ContentEnrichmentContext,
+)
 from src.domain.agents.contexts.entity_recognition_context import (
     EntityRecognitionContext,
 )
@@ -18,6 +21,7 @@ from src.domain.agents.contexts.query_context import QueryGenerationContext
 
 __all__ = [
     "BaseAgentContext",
+    "ContentEnrichmentContext",
     "EntityRecognitionContext",
     "ExtractionContext",
     "GraphConnectionContext",

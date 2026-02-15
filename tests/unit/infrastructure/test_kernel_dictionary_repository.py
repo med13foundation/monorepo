@@ -96,6 +96,36 @@ def test_find_variables_excludes_inactive_by_default(db_session: Session) -> Non
     assert "VAR_REPO_INACTIVE" in all_ids
 
 
+def test_set_variable_review_status_updates_validity_fields(
+    db_session: Session,
+) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_variable(
+        repository,
+        variable_id="VAR_REPO_REVIEW",
+        canonical_name="repo_review",
+    )
+
+    revoked = repository.set_variable_review_status(
+        "VAR_REPO_REVIEW",
+        review_status="REVOKED",
+        reviewed_by="manual:test",
+        revocation_reason="Deprecated in tests",
+    )
+    assert revoked.review_status == "REVOKED"
+    assert revoked.is_active is False
+    assert revoked.valid_to is not None
+
+    reactivated = repository.set_variable_review_status(
+        "VAR_REPO_REVIEW",
+        review_status="ACTIVE",
+        reviewed_by="manual:test",
+    )
+    assert reactivated.review_status == "ACTIVE"
+    assert reactivated.is_active is True
+    assert reactivated.valid_to is None
+
+
 def test_merge_variable_definition_sets_versioning_state(db_session: Session) -> None:
     repository = SqlAlchemyDictionaryRepository(db_session)
     _create_variable(
@@ -168,6 +198,32 @@ def test_merge_entity_type_sets_versioning_state(db_session: Session) -> None:
     assert "ENTITY_REPO_SOURCE" in all_ids
 
 
+def test_set_entity_type_review_status_updates_validity_fields(
+    db_session: Session,
+) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_entity_type(repository, entity_type="ENTITY_REPO_REVIEW")
+
+    revoked = repository.set_entity_type_review_status(
+        "ENTITY_REPO_REVIEW",
+        review_status="REVOKED",
+        reviewed_by="manual:test",
+        revocation_reason="Deprecated in tests",
+    )
+    assert revoked.review_status == "REVOKED"
+    assert revoked.is_active is False
+    assert revoked.valid_to is not None
+
+    reactivated = repository.set_entity_type_review_status(
+        "ENTITY_REPO_REVIEW",
+        review_status="ACTIVE",
+        reviewed_by="manual:test",
+    )
+    assert reactivated.review_status == "ACTIVE"
+    assert reactivated.is_active is True
+    assert reactivated.valid_to is None
+
+
 def test_merge_relation_type_sets_versioning_state(db_session: Session) -> None:
     repository = SqlAlchemyDictionaryRepository(db_session)
     _create_relation_type(repository, relation_type="REL_REPO_SOURCE")
@@ -206,3 +262,29 @@ def test_merge_relation_type_sets_versioning_state(db_session: Session) -> None:
     all_ids = {entry.id for entry in all_results}
     assert "REL_REPO_TARGET" in all_ids
     assert "REL_REPO_SOURCE" in all_ids
+
+
+def test_set_relation_type_review_status_updates_validity_fields(
+    db_session: Session,
+) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_relation_type(repository, relation_type="REL_REPO_REVIEW")
+
+    revoked = repository.set_relation_type_review_status(
+        "REL_REPO_REVIEW",
+        review_status="REVOKED",
+        reviewed_by="manual:test",
+        revocation_reason="Deprecated in tests",
+    )
+    assert revoked.review_status == "REVOKED"
+    assert revoked.is_active is False
+    assert revoked.valid_to is not None
+
+    reactivated = repository.set_relation_type_review_status(
+        "REL_REPO_REVIEW",
+        review_status="ACTIVE",
+        reviewed_by="manual:test",
+    )
+    assert reactivated.review_status == "ACTIVE"
+    assert reactivated.is_active is True
+    assert reactivated.valid_to is None

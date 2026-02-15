@@ -12,6 +12,12 @@ This layer:
 - Does NOT contain infrastructure details (adapters, Flujo)
 """
 
+from src.application.agents.services.content_enrichment_service import (
+    ContentEnrichmentDocumentOutcome,
+    ContentEnrichmentRunSummary,
+    ContentEnrichmentService,
+    ContentEnrichmentServiceDependencies,
+)
 from src.application.agents.services.entity_recognition_service import (
     EntityRecognitionDocumentOutcome,
     EntityRecognitionRunSummary,
@@ -43,6 +49,10 @@ from src.application.agents.services.query_agent_service import (
 )
 
 __all__ = [
+    "ContentEnrichmentDocumentOutcome",
+    "ContentEnrichmentRunSummary",
+    "ContentEnrichmentService",
+    "ContentEnrichmentServiceDependencies",
     "EntityRecognitionDocumentOutcome",
     "EntityRecognitionRunSummary",
     "EntityRecognitionService",

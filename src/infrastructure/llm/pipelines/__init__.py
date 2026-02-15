@@ -15,6 +15,9 @@ from src.infrastructure.llm.pipelines.base_pipeline import (
     create_governance_gate,
     get_usage_limits_dict,
 )
+from src.infrastructure.llm.pipelines.content_enrichment_pipelines import (
+    create_content_enrichment_pipeline,
+)
 from src.infrastructure.llm.pipelines.entity_recognition_pipelines import (
     create_clinvar_entity_recognition_pipeline,
 )
@@ -37,6 +40,7 @@ from src.infrastructure.llm.pipelines.query_pipelines.pubmed_pipeline import (
 __all__ = [
     "PipelineBuilder",
     "check_confidence",
+    "create_content_enrichment_pipeline",
     "create_confidence_checker",
     "create_governance_gate",
     "create_clinvar_entity_recognition_pipeline",

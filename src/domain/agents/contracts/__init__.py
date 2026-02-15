@@ -17,6 +17,7 @@ from src.domain.agents.contracts.base import (
     BaseAgentContract,
     EvidenceItem,
 )
+from src.domain.agents.contracts.content_enrichment import ContentEnrichmentContract
 from src.domain.agents.contracts.entity_recognition import (
     EntityRecognitionContract,
     RecognizedEntityCandidate,
@@ -43,6 +44,7 @@ from src.domain.agents.contracts.query_generation import QueryGenerationContract
 __all__ = [
     "AgentDecision",
     "BaseAgentContract",
+    "ContentEnrichmentContract",
     "EntityRecognitionContract",
     "EvidenceItem",
     "ExtractedObservation",

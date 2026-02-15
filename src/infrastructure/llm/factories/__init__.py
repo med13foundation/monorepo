@@ -12,6 +12,10 @@ from src.infrastructure.llm.factories.base_factory import (
     BaseAgentFactory,
     FlujoAgent,
 )
+from src.infrastructure.llm.factories.content_enrichment_agent_factory import (
+    ContentEnrichmentAgentFactory,
+    create_content_enrichment_agent,
+)
 from src.infrastructure.llm.factories.entity_recognition_agent_factory import (
     EntityRecognitionAgentFactory,
     create_clinvar_entity_recognition_agent,
@@ -39,6 +43,7 @@ from src.infrastructure.llm.factories.query_agent_factory import (
 
 __all__ = [
     "BaseAgentFactory",
+    "create_content_enrichment_agent",
     "create_entity_recognition_agent_for_source",
     "create_clinvar_entity_recognition_agent",
     "create_extraction_agent_for_source",
@@ -50,6 +55,7 @@ __all__ = [
     "create_pubmed_query_agent",
     "create_clinvar_query_agent",
     "EntityRecognitionAgentFactory",
+    "ContentEnrichmentAgentFactory",
     "ExtractionAgentFactory",
     "GraphConnectionAgentFactory",
     "GraphSearchAgentFactory",

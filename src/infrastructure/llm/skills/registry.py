@@ -23,6 +23,12 @@ from .dictionary_tools import (
     make_dictionary_search_by_domain_tool,
     make_dictionary_search_tool,
 )
+from .enrichment_tools import (
+    make_check_open_access_tool,
+    make_fetch_europe_pmc_tool,
+    make_fetch_pmc_oa_tool,
+    make_pass_through_tool,
+)
 from .extraction_tools import (
     make_lookup_transform_tool,
     make_validate_observation_tool,
@@ -67,6 +73,12 @@ _EXTRACTION_SKILL_IDS: tuple[str, ...] = (
     "validate_observation",
     "validate_triple",
     "lookup_transform",
+)
+_CONTENT_ENRICHMENT_SKILL_IDS: tuple[str, ...] = (
+    "fetch_pmc_oa",
+    "fetch_europe_pmc",
+    "check_open_access",
+    "pass_through",
 )
 _GRAPH_CONNECTION_SKILL_IDS: tuple[str, ...] = (
     "graph_query_neighbourhood",
@@ -562,6 +574,66 @@ def register_all_skills() -> None:
         tags=["extraction", "normalization", "semantic-layer"],
     )
     registry.register(
+        skill_id="fetch_pmc_oa",
+        factory=make_fetch_pmc_oa_tool,
+        description="Fetch open-access XML metadata/content using the PMC OA API.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pmcid": {"type": "string"},
+            },
+            "required": ["pmcid"],
+        },
+        output_schema={"type": "object"},
+        tags=["enrichment", "pmc", "read"],
+    )
+    registry.register(
+        skill_id="fetch_europe_pmc",
+        factory=make_fetch_europe_pmc_tool,
+        description="Fetch Europe PMC full-text XML when available.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "identifier": {"type": "string"},
+            },
+            "required": ["identifier"],
+        },
+        output_schema={"type": "object"},
+        tags=["enrichment", "europe-pmc", "read"],
+    )
+    registry.register(
+        skill_id="check_open_access",
+        factory=make_check_open_access_tool,
+        description="Run a coarse open-access eligibility check.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pmcid": {"type": "string"},
+                "doi": {"type": "string"},
+            },
+        },
+        output_schema={"type": "object"},
+        tags=["enrichment", "open-access", "read"],
+    )
+    registry.register(
+        skill_id="pass_through",
+        factory=make_pass_through_tool,
+        description="Mark structured payloads as enrichment-complete without fetching.",
+        side_effects=False,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "payload": {"type": "object"},
+                "content_text": {"type": "string"},
+            },
+        },
+        output_schema={"type": "object"},
+        tags=["enrichment", "pass-through", "read"],
+    )
+    registry.register(
         skill_id="graph_query_entities",
         factory=make_graph_query_entities_tool,
         description="Query entities in a research space with optional text/type filters.",
@@ -773,6 +845,21 @@ def build_extraction_validation_tools(
             skill_id,
             dictionary_service=dictionary_service,
         )
+        if skill is None:
+            msg = f"Required skill '{skill_id}' is not registered"
+            raise LookupError(msg)
+        tools.append(skill)
+    return tools
+
+
+def build_content_enrichment_tools() -> list[SkillCallable]:
+    """Build the toolset used by Tier-2 content-enrichment agent workflows."""
+    register_all_skills()
+    registry = get_skill_registry()
+
+    tools: list[SkillCallable] = []
+    for skill_id in _CONTENT_ENRICHMENT_SKILL_IDS:
+        skill = registry.get_callable(skill_id)
         if skill is None:
             msg = f"Required skill '{skill_id}' is not registered"
             raise LookupError(msg)

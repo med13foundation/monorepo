@@ -11,6 +11,9 @@ from src.infrastructure.llm.prompts.base_prompts import (
     BIOMEDICAL_CONTEXT_TEMPLATE,
     EVIDENCE_INSTRUCTION,
 )
+from src.infrastructure.llm.prompts.content_enrichment import (
+    CONTENT_ENRICHMENT_SYSTEM_PROMPT,
+)
 from src.infrastructure.llm.prompts.entity_recognition import (
     CLINVAR_ENTITY_RECOGNITION_SYSTEM_PROMPT,
 )
@@ -23,6 +26,7 @@ from src.infrastructure.llm.prompts.query.pubmed import PUBMED_QUERY_SYSTEM_PROM
 
 __all__ = [
     "BIOMEDICAL_CONTEXT_TEMPLATE",
+    "CONTENT_ENRICHMENT_SYSTEM_PROMPT",
     "CLINVAR_EXTRACTION_SYSTEM_PROMPT",
     "CLINVAR_ENTITY_RECOGNITION_SYSTEM_PROMPT",
     "CLINVAR_GRAPH_CONNECTION_SYSTEM_PROMPT",

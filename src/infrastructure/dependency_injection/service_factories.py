@@ -7,6 +7,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.application.agents.services import (
+    ContentEnrichmentService,
+    ContentEnrichmentServiceDependencies,
     EntityRecognitionService,
     EntityRecognitionServiceDependencies,
     ExtractionService,
@@ -18,22 +20,17 @@ from src.application.agents.services import (
     GraphSearchServiceDependencies,
 )
 from src.domain.agents.models import ModelCapability
-from src.infrastructure.dependency_injection.analysis_service_factories import (
-    AnalysisServiceFactoryMixin,
-)
-from src.infrastructure.dependency_injection.curation_service_factories import (
-    CurationServiceFactoryMixin,
-)
-from src.infrastructure.dependency_injection.discovery_service_factories import (
-    DiscoveryServiceFactoryMixin,
-)
-from src.infrastructure.dependency_injection.kernel_service_factories import (
-    KernelServiceFactoryMixin,
+from src.infrastructure.dependency_injection import (
+    analysis_service_factories,
+    curation_service_factories,
+    discovery_service_factories,
+    kernel_service_factories,
 )
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
 from src.infrastructure.llm.adapters import (
+    FlujoContentEnrichmentAdapter,
     FlujoEntityRecognitionAdapter,
     FlujoExtractionAdapter,
     FlujoGraphConnectionAdapter,
@@ -45,18 +42,20 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from src.application.services import SystemStatusService
-    from src.domain.agents.ports.entity_recognition_port import EntityRecognitionPort
-    from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
-    from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
-    from src.domain.agents.ports.query_agent_port import QueryAgentPort
+    from src.domain.agents.ports import (
+        EntityRecognitionPort,
+        ExtractionAgentPort,
+        GraphConnectionPort,
+        QueryAgentPort,
+    )
     from src.domain.services import storage_metrics, storage_providers
 
 
 class ApplicationServiceFactoryMixin(
-    AnalysisServiceFactoryMixin,
-    CurationServiceFactoryMixin,
-    DiscoveryServiceFactoryMixin,
-    KernelServiceFactoryMixin,
+    analysis_service_factories.AnalysisServiceFactoryMixin,
+    curation_service_factories.CurationServiceFactoryMixin,
+    discovery_service_factories.DiscoveryServiceFactoryMixin,
+    kernel_service_factories.KernelServiceFactoryMixin,
 ):
     """Provides helper factory methods shared by the dependency container."""
 
@@ -225,5 +224,26 @@ class ApplicationServiceFactoryMixin(
                 graph_query_service=graph_query_service,
                 graph_search_agent=graph_search_agent,
                 governance_service=GovernanceService(),
+            ),
+        )
+
+    def create_content_enrichment_service(
+        self,
+        session: Session,
+    ) -> ContentEnrichmentService:
+        from src.infrastructure.repositories import SqlAlchemySourceDocumentRepository
+
+        registry = get_model_registry()
+        model_spec = registry.get_default_model(
+            ModelCapability.EVIDENCE_EXTRACTION,
+        )
+        content_enrichment_agent = FlujoContentEnrichmentAdapter(
+            model=model_spec.model_id,
+        )
+        return ContentEnrichmentService(
+            dependencies=ContentEnrichmentServiceDependencies(
+                content_enrichment_agent=content_enrichment_agent,
+                source_document_repository=SqlAlchemySourceDocumentRepository(session),
+                storage_coordinator=self.create_storage_operation_coordinator(session),
             ),
         )

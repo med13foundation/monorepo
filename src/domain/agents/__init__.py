@@ -7,6 +7,9 @@ agents can output, how decisions are justified, and when humans must intervene.
 """
 
 from src.domain.agents.contexts.base import BaseAgentContext
+from src.domain.agents.contexts.content_enrichment_context import (
+    ContentEnrichmentContext,
+)
 from src.domain.agents.contexts.entity_recognition_context import (
     EntityRecognitionContext,
 )
@@ -21,6 +24,7 @@ from src.domain.agents.contracts.base import (
     BaseAgentContract,
     EvidenceItem,
 )
+from src.domain.agents.contracts.content_enrichment import ContentEnrichmentContract
 from src.domain.agents.contracts.entity_recognition import (
     EntityRecognitionContract,
     RecognizedEntityCandidate,
@@ -54,6 +58,7 @@ __all__ = [
     # Contracts
     "AgentDecision",
     "BaseAgentContract",
+    "ContentEnrichmentContract",
     "EntityRecognitionContract",
     "EvidenceItem",
     "ExtractedObservation",
@@ -71,6 +76,7 @@ __all__ = [
     "RecognizedObservationCandidate",
     # Contexts
     "BaseAgentContext",
+    "ContentEnrichmentContext",
     "EntityRecognitionContext",
     "ExtractionContext",
     "GraphConnectionContext",
