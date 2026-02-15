@@ -28,7 +28,7 @@ if TYPE_CHECKING:
         VariableDefinition,
         VariableSynonym,
     )
-    from src.type_definitions.common import JSONObject
+    from src.type_definitions.common import JSONObject, JSONValue
 
 
 class DictionaryRepository(ABC):
@@ -443,6 +443,29 @@ class DictionaryRepository(ABC):
         """Check if the given triple requires evidence."""
 
     # ── Transform registry ────────────────────────────────────────────
+
+    @abstractmethod
+    def create_transform(  # noqa: PLR0913
+        self,
+        *,
+        transform_id: str,
+        input_unit: str,
+        output_unit: str,
+        implementation_ref: str,
+        category: str = "UNIT_CONVERSION",
+        input_data_type: str | None = None,
+        output_data_type: str | None = None,
+        is_deterministic: bool = True,
+        is_production_allowed: bool = False,
+        test_input: JSONValue | None = None,
+        expected_output: JSONValue | None = None,
+        description: str | None = None,
+        status: str = "ACTIVE",
+        created_by: str = "seed",
+        source_ref: str | None = None,
+        review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE",
+    ) -> TransformRegistry:
+        """Create a transform registry entry with governance metadata."""
 
     @abstractmethod
     def get_transform(

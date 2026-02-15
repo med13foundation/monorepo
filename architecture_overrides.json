@@ -73,8 +73,8 @@
     {
       "path": "src/infrastructure/repositories/kernel/kernel_dictionary_repository.py",
       "class_name": "SqlAlchemyDictionaryRepository",
-      "max_methods": 48,
-      "reason": "Implementation is intentionally comprehensive until repository subcomponents are extracted.",
+      "max_methods": 50,
+      "reason": "Implementation is intentionally comprehensive until repository subcomponents are extracted; includes transform creation/verification/promotion governance.",
       "expires_on": "2026-12-31"
     },
     {

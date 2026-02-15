@@ -1140,6 +1140,99 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
 
     # ── Transform registry ────────────────────────────────────────────
 
+    def create_transform(  # noqa: PLR0913
+        self,
+        *,
+        transform_id: str,
+        input_unit: str,
+        output_unit: str,
+        implementation_ref: str,
+        category: str = "UNIT_CONVERSION",
+        input_data_type: str | None = None,
+        output_data_type: str | None = None,
+        is_deterministic: bool = True,
+        is_production_allowed: bool = False,
+        test_input: JSONValue | None = None,
+        expected_output: JSONValue | None = None,
+        description: str | None = None,
+        status: str = "ACTIVE",
+        created_by: str = "seed",
+        source_ref: str | None = None,
+        review_status: ReviewStatus = "ACTIVE",
+    ) -> TransformRegistry:
+        normalized_transform_id = transform_id.strip()
+        if not normalized_transform_id:
+            msg = "transform_id is required"
+            raise ValueError(msg)
+        normalized_input_unit = input_unit.strip()
+        if not normalized_input_unit:
+            msg = "input_unit is required"
+            raise ValueError(msg)
+        normalized_output_unit = output_unit.strip()
+        if not normalized_output_unit:
+            msg = "output_unit is required"
+            raise ValueError(msg)
+        normalized_impl_ref = implementation_ref.strip()
+        if not normalized_impl_ref:
+            msg = "implementation_ref is required"
+            raise ValueError(msg)
+
+        normalized_category = category.strip().upper()
+        if normalized_category not in {
+            "UNIT_CONVERSION",
+            "NORMALIZATION",
+            "DERIVATION",
+        }:
+            msg = f"Unsupported transform category: {category}"
+            raise ValueError(msg)
+
+        normalized_status = status.strip().upper()
+        if not normalized_status:
+            msg = "status is required"
+            raise ValueError(msg)
+
+        normalized_input_data_type = (
+            self._ensure_data_type_reference(input_data_type)
+            if input_data_type is not None
+            else None
+        )
+        normalized_output_data_type = (
+            self._ensure_data_type_reference(output_data_type)
+            if output_data_type is not None
+            else None
+        )
+
+        model = TransformRegistryModel(
+            id=normalized_transform_id,
+            input_unit=normalized_input_unit,
+            output_unit=normalized_output_unit,
+            category=normalized_category,
+            input_data_type=normalized_input_data_type,
+            output_data_type=normalized_output_data_type,
+            implementation_ref=normalized_impl_ref,
+            is_deterministic=is_deterministic,
+            is_production_allowed=is_production_allowed,
+            test_input=test_input,
+            expected_output=expected_output,
+            description=description,
+            status=normalized_status,
+            created_by=created_by,
+            source_ref=source_ref,
+            review_status=review_status,
+        )
+        self._session.add(model)
+        self._session.flush()
+        self._record_change(
+            table_name=TransformRegistryModel.__tablename__,
+            record_id=model.id,
+            action="CREATE",
+            before_snapshot=None,
+            after_snapshot=_snapshot_model(model),
+            changed_by=created_by,
+            source_ref=source_ref,
+        )
+        return TransformRegistry.model_validate(model)
+
     def get_transform(
         self,
         input_unit: str,

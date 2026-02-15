@@ -4,6 +4,7 @@ Factory for creating the ingestion pipeline.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from src.application.services.kernel.dictionary_management_service import (
@@ -13,8 +14,12 @@ from src.application.services.kernel.kernel_observation_service import (
     KernelObservationService,
 )
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
-from src.infrastructure.ingestion.mapping.exact_mapper import ExactMapper
-from src.infrastructure.ingestion.mapping.hybrid_mapper import HybridMapper
+from src.infrastructure.ingestion.mapping import (
+    ExactMapper,
+    HybridMapper,
+    LLMJudgeMapper,
+    VectorMapper,
+)
 from src.infrastructure.ingestion.normalization.composite_normalizer import (
     CompositeNormalizer,
 )
@@ -36,8 +41,18 @@ from src.infrastructure.repositories.kernel import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
+    from src.infrastructure.ingestion.interfaces import Mapper
 
-def create_ingestion_pipeline(session: Session) -> IngestionPipeline:
+
+_ENABLE_LLM_JUDGE_MAPPER_ENV = "MED13_ENABLE_LLM_JUDGE_MAPPER"
+
+
+def create_ingestion_pipeline(
+    session: Session,
+    *,
+    mapping_judge_agent: MappingJudgePort | None = None,
+) -> IngestionPipeline:
     """
     Create a fully wired ingestion pipeline.
     """
@@ -52,7 +67,23 @@ def create_ingestion_pipeline(session: Session) -> IngestionPipeline:
 
     # Mapper
     exact_mapper = ExactMapper(dictionary_service)
-    mapper = HybridMapper([exact_mapper])
+    vector_mapper = VectorMapper(dictionary_service)
+    mappers: list[Mapper] = [exact_mapper, vector_mapper]
+    if os.getenv(_ENABLE_LLM_JUDGE_MAPPER_ENV, "0") == "1":
+        active_mapping_judge_agent = mapping_judge_agent
+        if active_mapping_judge_agent is None:
+            from src.infrastructure.llm.adapters.mapping_judge_agent_adapter import (
+                FlujoMappingJudgeAdapter,
+            )
+
+            active_mapping_judge_agent = FlujoMappingJudgeAdapter()
+        mappers.append(
+            LLMJudgeMapper(
+                dictionary_service,
+                mapping_judge_agent=active_mapping_judge_agent,
+            ),
+        )
+    mapper = HybridMapper(mappers)
 
     # Normalizer
     unit_converter = UnitConverter(dictionary_service)

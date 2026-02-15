@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from src.infrastructure.repositories.kernel.kernel_dictionary_repository import (
     SqlAlchemyDictionaryRepository,
 )
-from src.models.database.kernel.dictionary import TransformRegistryModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -293,20 +292,18 @@ def test_set_relation_type_review_status_updates_validity_fields(
 
 def test_transform_production_filter_and_promotion(db_session: Session) -> None:
     repository = SqlAlchemyDictionaryRepository(db_session)
-    db_session.add(
-        TransformRegistryModel(
-            id="TR_REPO_PROMOTE",
-            input_unit="mg",
-            output_unit="g",
-            category="UNIT_CONVERSION",
-            implementation_ref="func:std_lib.convert.mg_to_g",
-            is_deterministic=True,
-            is_production_allowed=False,
-            test_input=1000,
-            expected_output=1.0,
-            status="ACTIVE",
-            created_by="manual:test",
-        ),
+    repository.create_transform(
+        transform_id="TR_REPO_PROMOTE",
+        input_unit="mg",
+        output_unit="g",
+        category="UNIT_CONVERSION",
+        implementation_ref="func:std_lib.convert.mg_to_g",
+        is_deterministic=True,
+        is_production_allowed=False,
+        test_input=1000,
+        expected_output=1.0,
+        status="ACTIVE",
+        created_by="manual:test",
     )
     db_session.commit()
 
@@ -334,20 +331,18 @@ def test_transform_production_filter_and_promotion(db_session: Session) -> None:
 
 def test_verify_transform_reports_failure_for_bad_fixture(db_session: Session) -> None:
     repository = SqlAlchemyDictionaryRepository(db_session)
-    db_session.add(
-        TransformRegistryModel(
-            id="TR_REPO_BAD_FIXTURE",
-            input_unit="kg",
-            output_unit="g",
-            category="UNIT_CONVERSION",
-            implementation_ref="func:std_lib.convert.g_to_mg",
-            is_deterministic=True,
-            is_production_allowed=False,
-            test_input=2,
-            expected_output=2,
-            status="ACTIVE",
-            created_by="manual:test",
-        ),
+    repository.create_transform(
+        transform_id="TR_REPO_BAD_FIXTURE",
+        input_unit="kg",
+        output_unit="g",
+        category="UNIT_CONVERSION",
+        implementation_ref="func:std_lib.convert.g_to_mg",
+        is_deterministic=True,
+        is_production_allowed=False,
+        test_input=2,
+        expected_output=2,
+        status="ACTIVE",
+        created_by="manual:test",
     )
     db_session.commit()
 
@@ -355,3 +350,43 @@ def test_verify_transform_reports_failure_for_bad_fixture(db_session: Session) -
     assert verification.transform_id == "TR_REPO_BAD_FIXTURE"
     assert verification.passed is False
     assert verification.actual_output is not None
+
+
+def test_create_transform_persists_phase7_fields(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    created = repository.create_transform(
+        transform_id="TR_REPO_CREATE",
+        input_unit="mg/dL",
+        output_unit="mmol/L",
+        category="UNIT_CONVERSION",
+        input_data_type="FLOAT",
+        output_data_type="FLOAT",
+        implementation_ref="func:std_lib.convert.mg_dl_to_mmol_l_glucose",
+        is_deterministic=True,
+        is_production_allowed=False,
+        test_input=180.182,
+        expected_output=10.0,
+        description="Glucose conversion transform",
+        status="ACTIVE",
+        created_by="manual:test",
+        source_ref="test:create-transform",
+    )
+    db_session.commit()
+
+    assert created.id == "TR_REPO_CREATE"
+    assert created.category == "UNIT_CONVERSION"
+    assert created.input_data_type == "FLOAT"
+    assert created.output_data_type == "FLOAT"
+    assert created.is_deterministic is True
+    assert created.is_production_allowed is False
+    assert created.test_input == 180.182
+    assert created.expected_output == 10.0
+    assert created.description == "Glucose conversion transform"
+
+    persisted = repository.get_transform(
+        "mg/dL",
+        "mmol/L",
+        include_inactive=True,
+    )
+    assert persisted is not None
+    assert persisted.id == "TR_REPO_CREATE"
