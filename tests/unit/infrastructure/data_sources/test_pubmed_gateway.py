@@ -35,6 +35,7 @@ async def test_gateway_passes_query_parameters() -> None:
         maxdate="2024/01/01",
         publication_date_from="2023/01/01",
         max_results=123,
+        open_access_only=True,
     )
 
 
@@ -104,6 +105,7 @@ async def test_gateway_incremental_fetch_uses_cursor_checkpoint() -> None:
         publication_date_from=None,
         max_results=5,
         retstart=10,
+        open_access_only=True,
     )
     assert result.fetched_records == 5
     assert len(result.records) == 1

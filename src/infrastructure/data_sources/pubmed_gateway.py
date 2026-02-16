@@ -24,6 +24,7 @@ class PubMedSourceGateway(PubMedGateway):
             "maxdate": config.date_to,
             "publication_date_from": config.date_from,
             "max_results": config.max_results,
+            "open_access_only": config.open_access_only,
         }
 
         raw_records = await self._ingestor.fetch_data(**params)
@@ -45,6 +46,7 @@ class PubMedSourceGateway(PubMedGateway):
             "publication_date_from": config.date_from,
             "max_results": config.max_results,
             "retstart": retstart,
+            "open_access_only": config.open_access_only,
         }
 
         if hasattr(self._ingestor, "fetch_page"):
@@ -79,6 +81,7 @@ class PubMedSourceGateway(PubMedGateway):
             "has_more": has_more,
             "cycle_completed": not has_more,
             "relevance_threshold": config.relevance_threshold,
+            "open_access_only": config.open_access_only,
         }
         return PubMedGatewayFetchResult(
             records=filtered_records,

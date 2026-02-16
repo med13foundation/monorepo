@@ -155,6 +155,11 @@ class PubMedIngestor(BaseIngestor, PubMedRecordParserMixin):
             if pub_types:
                 query_terms.append(f"({pub_types})")
 
+        if self._coerce_bool(kwargs.get("open_access_only"), default=True):
+            query_terms.append(
+                '("open access"[filter] OR "loattrfree full text"[sb])',
+            )
+
         full_query = " AND ".join(f"({term})" for term in query_terms)
 
         # Use ESearch to find relevant records
@@ -302,4 +307,19 @@ class PubMedIngestor(BaseIngestor, PubMedRecordParserMixin):
             return int(value)
         if isinstance(value, str) and value.isdigit():
             return int(value)
+        return default
+
+    @staticmethod
+    def _coerce_bool(value: JSONValue | None, *, default: bool) -> bool:
+        """Convert JSON value to bool."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
         return default

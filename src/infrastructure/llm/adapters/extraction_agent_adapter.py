@@ -10,14 +10,9 @@ from typing import TYPE_CHECKING
 from flujo.domain.models import PipelineResult, StepResult
 from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
 
-from src.domain.agents.contracts import ExtractionContract
+from src.domain.agents.contracts import EvidenceItem, ExtractionContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
-from src.infrastructure.llm.adapters._extraction_adapter_fallback_helpers import (
-    build_heuristic_extraction_contract,
-    is_heuristic_extraction_contract,
-    select_preferred_extraction_contract,
-)
 from src.infrastructure.llm.config import GovernanceConfig, get_model_registry
 from src.infrastructure.llm.pipelines.extraction_pipelines import (
     create_clinvar_extraction_pipeline,
@@ -40,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
-_FALLBACK_PIPELINE_EXCEPTIONS = (
+_PIPELINE_EXCEPTIONS = (
     FlujoError,
     RuntimeError,
     ValueError,
@@ -97,11 +92,9 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             return self._unsupported_source_contract(context)
 
         if not self._has_openai_key():
-            return build_heuristic_extraction_contract(
+            return self._ai_required_contract(
                 context,
-                dictionary_service=self._dictionary_service,
-                agent_run_id=self._last_run_id,
-                decision="fallback",
+                reason="missing_openai_api_key",
             )
 
         effective_model = self._resolve_model_id(model_id)
@@ -114,7 +107,7 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         initial_context = context.model_dump(mode="json")
 
         try:
-            primary_output = await self._execute_pipeline(
+            return await self._execute_pipeline(
                 pipeline,
                 input_text=input_text,
                 initial_context=initial_context,
@@ -122,20 +115,12 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             )
         except (PausedException, PipelineAbortSignal):
             raise
-        except _FALLBACK_PIPELINE_EXCEPTIONS as exc:
+        except _PIPELINE_EXCEPTIONS as exc:
             logger.warning(
                 "Extraction pipeline failed for document=%s: %s",
                 context.document_id,
                 exc,
             )
-            primary_output = build_heuristic_extraction_contract(
-                context,
-                dictionary_service=self._dictionary_service,
-                agent_run_id=self._last_run_id,
-                decision="fallback",
-            )
-
-        if source_type == "pubmed" and is_heuristic_extraction_contract(primary_output):
             retry_output = await self._retry_without_tools(
                 source_type=source_type,
                 model_id=effective_model,
@@ -144,11 +129,11 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
                 initial_context=initial_context,
             )
             if retry_output is not None:
-                return select_preferred_extraction_contract(
-                    primary_output,
-                    retry_output,
-                )
-        return primary_output
+                return retry_output
+            return self._ai_required_contract(
+                context,
+                reason=f"pipeline_execution_failed:{type(exc).__name__}",
+            )
 
     async def close(self) -> None:
         for cache_key, pipeline in self._pipelines.items():
@@ -252,7 +237,7 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             )
         except (PausedException, PipelineAbortSignal):
             raise
-        except _FALLBACK_PIPELINE_EXCEPTIONS as exc:
+        except _PIPELINE_EXCEPTIONS as exc:
             logger.warning(
                 "Extraction no-tools retry failed for document=%s: %s",
                 context.document_id,
@@ -316,13 +301,42 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
                     final_output = candidate
 
         if final_output is None:
-            return build_heuristic_extraction_contract(
+            return self._ai_required_contract(
                 fallback_context,
-                dictionary_service=self._dictionary_service,
-                agent_run_id=self._last_run_id,
-                decision="fallback",
+                reason="pipeline_returned_no_contract",
             )
         return final_output
+
+    def _ai_required_contract(
+        self,
+        context: ExtractionContext,
+        *,
+        reason: str,
+    ) -> ExtractionContract:
+        return ExtractionContract(
+            decision="escalate",
+            confidence_score=0.0,
+            rationale=(
+                "AI-only extraction is required for PubMed/ClinVar pipeline stages; "
+                f"no deterministic fallback was executed ({reason})."
+            ),
+            evidence=[
+                EvidenceItem(
+                    source_type="note",
+                    locator=f"source_document:{context.document_id}",
+                    excerpt=f"AI extraction unavailable: {reason}",
+                    relevance=1.0,
+                ),
+            ],
+            source_type=context.source_type,
+            document_id=context.document_id,
+            observations=[],
+            relations=[],
+            rejected_facts=[],
+            pipeline_payloads=[],
+            shadow_mode=context.shadow_mode,
+            agent_run_id=self._last_run_id,
+        )
 
     def _extract_from_pipeline_result(
         self,

@@ -26,6 +26,8 @@ from src.application.agents.services._content_enrichment_types import (
 from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.content_enrichment import ContentEnrichmentContract
 from src.domain.entities.source_document import EnrichmentStatus, SourceDocument
+from src.type_definitions.common import JSONObject  # noqa: TC001
+from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -253,19 +255,27 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
             enrichment_agent_run_id=run_uuid,
             enriched_at=datetime.now(UTC),
         )
+        metadata_patch = build_metadata_patch(
+            contract=contract,
+            run_id=run_id,
+            pipeline_run_id=pipeline_run_id,
+            reason="enriched",
+            content_storage_key=storage_result.storage_key,
+            content_hash=storage_result.content_hash,
+        )
+        metadata_patch = merge_metadata(
+            metadata_patch,
+            self._build_extraction_input_patch(
+                metadata=updated.metadata,
+                contract=contract,
+            ),
+        )
         self._source_documents.upsert(
             updated.model_copy(
                 update={
                     "metadata": merge_metadata(
                         updated.metadata,
-                        build_metadata_patch(
-                            contract=contract,
-                            run_id=run_id,
-                            pipeline_run_id=pipeline_run_id,
-                            reason="enriched",
-                            content_storage_key=storage_result.storage_key,
-                            content_hash=storage_result.content_hash,
-                        ),
+                        metadata_patch,
                     ),
                 },
             ),
@@ -282,6 +292,35 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
             run_id=run_id,
             errors=(),
         )
+
+    @staticmethod
+    def _build_extraction_input_patch(
+        *,
+        metadata: JSONObject,
+        contract: ContentEnrichmentContract,
+    ) -> JSONObject:
+        content_text = contract.content_text
+        if content_text is None:
+            return {}
+        normalized_text = content_text.strip()
+        if not normalized_text:
+            return {}
+
+        raw_record_value = metadata.get("raw_record")
+        raw_record: JSONObject
+        if isinstance(raw_record_value, dict):
+            raw_record = {
+                str(key): to_json_value(value)
+                for key, value in raw_record_value.items()
+            }
+        else:
+            raw_record = {}
+
+        raw_record["full_text"] = normalized_text
+        raw_record["full_text_source"] = contract.acquisition_method
+        raw_record["full_text_length_chars"] = len(normalized_text)
+
+        return {"raw_record": raw_record}
 
     async def _build_contract(
         self,

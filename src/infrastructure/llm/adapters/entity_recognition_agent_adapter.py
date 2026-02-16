@@ -10,14 +10,9 @@ from typing import TYPE_CHECKING
 from flujo.domain.models import PipelineResult, StepResult
 from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
 
-from src.domain.agents.contracts import EntityRecognitionContract
+from src.domain.agents.contracts import EntityRecognitionContract, EvidenceItem
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.entity_recognition_port import EntityRecognitionPort
-from src.infrastructure.llm.adapters._entity_recognition_adapter_fallback_helpers import (
-    build_heuristic_entity_recognition_contract,
-    is_heuristic_entity_recognition_contract,
-    select_preferred_entity_recognition_contract,
-)
 from src.infrastructure.llm.config import GovernanceConfig, get_model_registry
 from src.infrastructure.llm.pipelines.entity_recognition_pipelines import (
     create_clinvar_entity_recognition_pipeline,
@@ -43,7 +38,7 @@ logger = logging.getLogger(__name__)
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
 _DEFAULT_DICTIONARY_POLICY_KEY = "DEFAULT"
-_FALLBACK_PIPELINE_EXCEPTIONS = (
+_PIPELINE_EXCEPTIONS = (
     FlujoError,
     RuntimeError,
     ValueError,
@@ -103,10 +98,9 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             return self._unsupported_source_contract(context)
 
         if not self._has_openai_key():
-            return build_heuristic_entity_recognition_contract(
+            return self._ai_required_contract(
                 context,
-                agent_run_id=self._last_run_id,
-                decision="fallback",
+                reason="missing_openai_api_key",
             )
 
         effective_model = self._resolve_model_id(model_id)
@@ -122,7 +116,7 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         initial_context = context.model_dump(mode="json")
 
         try:
-            primary_output = await self._execute_pipeline(
+            return await self._execute_pipeline(
                 pipeline,
                 input_text=input_text,
                 initial_context=initial_context,
@@ -130,21 +124,12 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             )
         except (PausedException, PipelineAbortSignal):
             raise
-        except _FALLBACK_PIPELINE_EXCEPTIONS as exc:
+        except _PIPELINE_EXCEPTIONS as exc:
             logger.warning(
                 "Entity-recognition pipeline failed for document=%s: %s",
                 context.document_id,
                 exc,
             )
-            primary_output = build_heuristic_entity_recognition_contract(
-                context,
-                agent_run_id=self._last_run_id,
-                decision="fallback",
-            )
-
-        if source_type == "pubmed" and is_heuristic_entity_recognition_contract(
-            primary_output,
-        ):
             retry_output = await self._retry_without_tools(
                 model_id=effective_model,
                 context=context,
@@ -152,11 +137,11 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
                 initial_context=initial_context,
             )
             if retry_output is not None:
-                return select_preferred_entity_recognition_contract(
-                    primary_output,
-                    retry_output,
-                )
-        return primary_output
+                return retry_output
+            return self._ai_required_contract(
+                context,
+                reason=f"pipeline_execution_failed:{type(exc).__name__}",
+            )
 
     async def close(self) -> None:
         for model_id, pipeline in self._pipelines.items():
@@ -275,7 +260,7 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             )
         except (PausedException, PipelineAbortSignal):
             raise
-        except _FALLBACK_PIPELINE_EXCEPTIONS as exc:
+        except _PIPELINE_EXCEPTIONS as exc:
             logger.warning(
                 "Entity-recognition no-tools retry failed for document=%s: %s",
                 context.document_id,
@@ -336,12 +321,48 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
                     final_output = candidate
 
         if final_output is None:
-            return build_heuristic_entity_recognition_contract(
+            return self._ai_required_contract(
                 fallback_context,
-                agent_run_id=self._last_run_id,
-                decision="fallback",
+                reason="pipeline_returned_no_contract",
             )
         return final_output
+
+    def _ai_required_contract(
+        self,
+        context: EntityRecognitionContext,
+        *,
+        reason: str,
+    ) -> EntityRecognitionContract:
+        return EntityRecognitionContract(
+            decision="escalate",
+            confidence_score=0.0,
+            rationale=(
+                "AI-only entity recognition is required; "
+                f"no deterministic fallback was executed ({reason})."
+            ),
+            evidence=[
+                EvidenceItem(
+                    source_type="note",
+                    locator=f"source_document:{context.document_id}",
+                    excerpt=f"AI entity recognition unavailable: {reason}",
+                    relevance=1.0,
+                ),
+            ],
+            source_type=context.source_type,
+            document_id=context.document_id,
+            primary_entity_type="VARIANT",
+            field_candidates=[],
+            recognized_entities=[],
+            recognized_observations=[],
+            pipeline_payloads=[],
+            created_definitions=[],
+            created_synonyms=[],
+            created_entity_types=[],
+            created_relation_types=[],
+            created_relation_constraints=[],
+            shadow_mode=context.shadow_mode,
+            agent_run_id=self._last_run_id,
+        )
 
     def _extract_from_pipeline_result(
         self,

@@ -61,6 +61,12 @@ class PubMedQueryConfig(BaseModel):
         le=10000,
         description="Maximum number of articles to retrieve per run",
     )
+    open_access_only: bool = Field(
+        default=True,
+        description=(
+            "When true, enforce PubMed open-access/full-text filters at query time."
+        ),
+    )
     relevance_threshold: int = Field(
         default=5,
         ge=0,

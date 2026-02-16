@@ -49,7 +49,7 @@ async def test_recognize_escalates_for_unsupported_source() -> None:
 
 
 @pytest.mark.asyncio
-async def test_recognize_uses_heuristic_fallback_without_openai_key() -> None:
+async def test_recognize_escalates_without_openai_key() -> None:
     adapter = _build_adapter()
     context = EntityRecognitionContext(
         document_id="doc-2",
@@ -69,14 +69,14 @@ async def test_recognize_uses_heuristic_fallback_without_openai_key() -> None:
     ):
         contract = await adapter.recognize(context)
 
-    assert contract.decision == "generated"
-    assert contract.recognized_entities
-    assert contract.pipeline_payloads
-    assert contract.primary_entity_type == "VARIANT"
+    assert contract.decision == "escalate"
+    assert contract.recognized_entities == []
+    assert contract.pipeline_payloads == []
+    assert "AI-only entity recognition is required" in contract.rationale
 
 
 @pytest.mark.asyncio
-async def test_recognize_returns_fallback_when_no_entities_detected() -> None:
+async def test_recognize_escalates_when_no_openai_key_and_empty_input() -> None:
     adapter = _build_adapter()
     context = EntityRecognitionContext(
         document_id="doc-3",
@@ -91,7 +91,7 @@ async def test_recognize_returns_fallback_when_no_entities_detected() -> None:
     ):
         contract = await adapter.recognize(context)
 
-    assert contract.decision == "fallback"
+    assert contract.decision == "escalate"
     assert contract.recognized_entities == []
 
 

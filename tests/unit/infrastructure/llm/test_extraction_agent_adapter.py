@@ -47,7 +47,7 @@ async def test_extract_escalates_for_unsupported_source() -> None:
 
 
 @pytest.mark.asyncio
-async def test_extract_uses_heuristic_fallback_without_openai_key() -> None:
+async def test_extract_escalates_without_openai_key() -> None:
     adapter = _build_adapter()
     context = ExtractionContext(
         document_id="doc-2",
@@ -63,9 +63,10 @@ async def test_extract_uses_heuristic_fallback_without_openai_key() -> None:
     ):
         contract = await adapter.extract(context)
 
-    assert contract.decision == "fallback"
-    assert contract.pipeline_payloads
+    assert contract.decision == "escalate"
+    assert contract.pipeline_payloads == []
     assert contract.observations == []
+    assert "AI-only extraction is required" in contract.rationale
 
 
 def test_get_or_create_pipeline_binds_extraction_tools() -> None:

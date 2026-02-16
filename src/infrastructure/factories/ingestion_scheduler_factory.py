@@ -30,8 +30,8 @@ from src.infrastructure.data_sources import (
     SimplePubMedPdfGateway,
 )
 from src.infrastructure.extraction import (
+    AiRequiredPubMedExtractionProcessor,
     ClinVarExtractionProcessor,
-    RuleBasedPubMedExtractionProcessor,
 )
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
@@ -197,7 +197,7 @@ def build_ingestion_scheduling_service(  # noqa: PLR0915
         publication_repository=publication_repository,
         extraction_repository=extraction_repository,
         processor_registry={
-            SourceType.PUBMED.value: RuleBasedPubMedExtractionProcessor(),
+            SourceType.PUBMED.value: AiRequiredPubMedExtractionProcessor(),
             SourceType.CLINVAR.value: ClinVarExtractionProcessor(),
         },
         storage_coordinator=storage_coordinator,

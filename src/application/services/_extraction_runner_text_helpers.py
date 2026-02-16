@@ -41,6 +41,12 @@ def build_payload_from_segments(
     full_text: str,
     document_reference: str | None,
 ) -> ExtractionTextPayload | None:
+    if full_text:
+        return ExtractionTextPayload(
+            text=full_text,
+            text_source="full_text",
+            document_reference=document_reference,
+        )
     if title and abstract:
         return ExtractionTextPayload(
             text=f"{title} {abstract}",
@@ -57,12 +63,6 @@ def build_payload_from_segments(
         return ExtractionTextPayload(
             text=abstract,
             text_source="abstract",
-            document_reference=document_reference,
-        )
-    if full_text:
-        return ExtractionTextPayload(
-            text=full_text,
-            text_source="full_text",
             document_reference=document_reference,
         )
     return None

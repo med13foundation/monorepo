@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 
 from src.domain.entities.user_data_source import SourceType
 from src.infrastructure.extraction import (
+    AiRequiredPubMedExtractionProcessor,
     ClinVarExtractionProcessor,
-    RuleBasedPubMedExtractionProcessor,
 )
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ class CurationServiceFactoryMixin:
         queue_repository = SqlAlchemyExtractionQueueRepository(session)
         publication_repository = SqlAlchemyPublicationRepository(session)
         extraction_repository = SqlAlchemyPublicationExtractionRepository(session)
-        processor = RuleBasedPubMedExtractionProcessor()
+        processor = AiRequiredPubMedExtractionProcessor()
         storage_coordinator = self.create_storage_operation_coordinator(session)
         return ExtractionRunnerService(
             queue_repository=queue_repository,
