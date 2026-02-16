@@ -76,7 +76,7 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         self._registry = get_model_registry()
         self._lifecycle_manager = get_lifecycle_manager()
         self._pipelines: dict[
-            tuple[str, str],
+            tuple[str, str, bool],
             Flujo[str, ExtractionContract, ExtractionContext],
         ] = {}
         self._last_run_id: str | None = None
@@ -99,12 +99,13 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         pipeline = self._get_or_create_pipeline(
             effective_model,
             source_type=source_type,
+            bind_tools=True,
         )
         input_text = self._build_input_text(context)
         initial_context = context.model_dump(mode="json")
 
         try:
-            return await self._execute_pipeline(
+            primary_output = await self._execute_pipeline(
                 pipeline,
                 input_text=input_text,
                 initial_context=initial_context,
@@ -118,7 +119,19 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
                 context.document_id,
                 exc,
             )
-            return self._heuristic_contract(context, decision="fallback")
+            primary_output = self._heuristic_contract(context, decision="fallback")
+
+        if source_type == "pubmed" and self._is_heuristic_contract(primary_output):
+            retry_output = await self._retry_without_tools(
+                source_type=source_type,
+                model_id=effective_model,
+                context=context,
+                input_text=input_text,
+                initial_context=initial_context,
+            )
+            if retry_output is not None:
+                return self._select_preferred_contract(primary_output, retry_output)
+        return primary_output
 
     async def close(self) -> None:
         for cache_key, pipeline in self._pipelines.items():
@@ -161,13 +174,14 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         model_id: str,
         *,
         source_type: str,
+        bind_tools: bool = True,
     ) -> Flujo[str, ExtractionContract, ExtractionContext]:
-        cache_key = (source_type, model_id)
+        cache_key = (source_type, model_id, bind_tools)
         if cache_key in self._pipelines:
             return self._pipelines[cache_key]
 
         tools: list[object] | None = None
-        if self._dictionary_service is not None:
+        if bind_tools and self._dictionary_service is not None:
             try:
                 tools = list(
                     build_extraction_validation_tools(
@@ -191,11 +205,86 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             model=model_id,
             use_governance=self._use_governance,
             usage_limits=self._governance.usage_limits,
-            tools=tools,
+            tools=tools if bind_tools else None,
         )
         self._pipelines[cache_key] = pipeline
         self._lifecycle_manager.register_runner(pipeline)
         return pipeline
+
+    async def _retry_without_tools(
+        self,
+        *,
+        source_type: str,
+        model_id: str,
+        context: ExtractionContext,
+        input_text: str,
+        initial_context: JSONObject,
+    ) -> ExtractionContract | None:
+        retry_pipeline = self._get_or_create_pipeline(
+            model_id,
+            source_type=source_type,
+            bind_tools=False,
+        )
+        try:
+            return await self._execute_pipeline(
+                retry_pipeline,
+                input_text=input_text,
+                initial_context=initial_context,
+                fallback_context=context,
+            )
+        except (PausedException, PipelineAbortSignal):
+            raise
+        except FlujoError as exc:
+            logger.warning(
+                "Extraction no-tools retry failed for document=%s: %s",
+                context.document_id,
+                exc,
+            )
+            return None
+
+    @staticmethod
+    def _is_heuristic_contract(contract: ExtractionContract) -> bool:
+        rationale = contract.rationale.strip().lower()
+        return rationale.startswith("heuristic ")
+
+    @staticmethod
+    def _relation_rejection_count(contract: ExtractionContract) -> int:
+        return sum(
+            1
+            for rejected_fact in contract.rejected_facts
+            if rejected_fact.fact_type == "relation"
+        )
+
+    @classmethod
+    def _extraction_signal_score(
+        cls,
+        contract: ExtractionContract,
+    ) -> tuple[int, float]:
+        relation_count = len(contract.relations)
+        observation_count = len(contract.observations)
+        relation_rejections = cls._relation_rejection_count(contract)
+        return (
+            relation_count * 4 + observation_count * 2 + relation_rejections,
+            contract.confidence_score,
+        )
+
+    @classmethod
+    def _select_preferred_contract(
+        cls,
+        primary_output: ExtractionContract,
+        retry_output: ExtractionContract,
+    ) -> ExtractionContract:
+        primary_is_heuristic = cls._is_heuristic_contract(primary_output)
+        retry_is_heuristic = cls._is_heuristic_contract(retry_output)
+        if primary_is_heuristic and not retry_is_heuristic:
+            return retry_output
+        if retry_is_heuristic and not primary_is_heuristic:
+            return primary_output
+        if cls._extraction_signal_score(retry_output) > cls._extraction_signal_score(
+            primary_output,
+        ):
+            return retry_output
+        return primary_output
 
     @staticmethod
     def _build_input_text(context: ExtractionContext) -> str:

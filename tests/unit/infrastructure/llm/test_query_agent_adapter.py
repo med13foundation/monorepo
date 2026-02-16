@@ -113,10 +113,14 @@ class TestFlujoQueryAgentAdapterModelSelection:
             patch(
                 "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
             ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.load_query_source_policies",
+                return_value={},
+            ),
         ):
-            adapter = FlujoQueryAgentAdapter()
+            adapter = FlujoQueryAgentAdapter(model="openai:gpt-4o-mini")
             resolved = adapter._resolve_model_id("pubmed")
-            assert resolved == "openai:gpt-5-nano"
+            assert resolved == "openai:gpt-4o-mini"
 
     def test_resolve_model_id_with_valid_model(
         self,
@@ -162,11 +166,15 @@ class TestFlujoQueryAgentAdapterModelSelection:
             patch(
                 "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
             ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.load_query_source_policies",
+                return_value={},
+            ),
         ):
-            adapter = FlujoQueryAgentAdapter()
+            adapter = FlujoQueryAgentAdapter(model="openai:gpt-4o-mini")
             resolved = adapter._resolve_model_id("pubmed", "invalid:model")
             # Should fall back to default
-            assert resolved == "openai:gpt-5-nano"
+            assert resolved == "openai:gpt-4o-mini"
 
     def test_is_supported_source_pubmed(
         self,
@@ -524,8 +532,12 @@ class TestFlujoQueryAgentAdapterModelSelection:
                 "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
                 return_value=mock_pipeline,
             ),
+            patch(
+                "src.infrastructure.llm.adapters.query_agent_adapter.load_query_source_policies",
+                return_value={},
+            ),
         ):
-            adapter = FlujoQueryAgentAdapter()
+            adapter = FlujoQueryAgentAdapter(model="openai:gpt-4o-mini")
 
             # Create a second pipeline for different model
             adapter._get_or_create_pipeline("pubmed", "openai:gpt-5")

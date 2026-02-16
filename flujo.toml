@@ -54,10 +54,10 @@ default_limit_usd = 1.0
 
 [models]
 # System-wide defaults by capability (can be overridden per-user/space/source)
-default_query_generation = "openai:gpt-5-nano"
-default_evidence_extraction = "openai:gpt-5-nano"
-default_curation = "openai:gpt-5-nano"
-default_judge = "openai:gpt-5-nano"
+default_query_generation = "openai:gpt-5"
+default_evidence_extraction = "openai:gpt-5"
+default_curation = "openai:gpt-5"
+default_judge = "openai:gpt-5"
 
 # -----------------------------------------------------------------------------
 # GPT-4o Mini - Fast, cost-effective model for simple tasks

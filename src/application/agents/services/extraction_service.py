@@ -54,6 +54,8 @@ class ExtractionDocumentOutcome:
     observations_extracted: int = 0
     relations_extracted: int = 0
     rejected_facts: int = 0
+    rejected_relation_reasons: tuple[str, ...] = ()
+    rejected_relation_details: tuple[JSONObject, ...] = ()
     ingestion_entities_created: int = 0
     ingestion_observations_created: int = 0
     seed_entity_ids: tuple[str, ...] = ()
@@ -267,6 +269,40 @@ class ExtractionService:
             relation_types.append(normalized)
         return tuple(relation_types) if relation_types else None
 
+    @staticmethod
+    def _resolve_rejected_relation_reasons(
+        contract: ExtractionContract,
+    ) -> tuple[str, ...]:
+        reasons: list[str] = []
+        for rejected_fact in contract.rejected_facts:
+            if rejected_fact.fact_type != "relation":
+                continue
+            reason = rejected_fact.reason.strip()
+            if not reason or reason in reasons:
+                continue
+            reasons.append(reason)
+        return tuple(reasons)
+
+    @staticmethod
+    def _resolve_rejected_relation_details(
+        contract: ExtractionContract,
+    ) -> tuple[JSONObject, ...]:
+        details: list[JSONObject] = []
+        for rejected_fact in contract.rejected_facts:
+            if rejected_fact.fact_type != "relation":
+                continue
+            normalized_payload: JSONObject = {
+                str(key): to_json_value(value)
+                for key, value in rejected_fact.payload.items()
+            }
+            details.append(
+                {
+                    "reason": rejected_fact.reason.strip(),
+                    "payload": normalized_payload,
+                },
+            )
+        return tuple(details)
+
     def _submit_review_item(
         self,
         *,
@@ -340,6 +376,12 @@ class ExtractionService:
             observations_extracted=len(contract.observations),
             relations_extracted=len(contract.relations),
             rejected_facts=len(contract.rejected_facts),
+            rejected_relation_reasons=(
+                ExtractionService._resolve_rejected_relation_reasons(contract)
+            ),
+            rejected_relation_details=(
+                ExtractionService._resolve_rejected_relation_details(contract)
+            ),
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
             seed_entity_ids=seed_entity_ids,

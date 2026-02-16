@@ -82,6 +82,12 @@ class _EntityRecognitionMetadataHelpers:
                 extraction_outcome.relations_extracted
             ),
             "extraction_stage_rejected_facts": extraction_outcome.rejected_facts,
+            "extraction_stage_rejected_relation_reasons": list(
+                extraction_outcome.rejected_relation_reasons,
+            ),
+            "extraction_stage_rejected_relation_details": list(
+                extraction_outcome.rejected_relation_details,
+            ),
             "extraction_stage_ingestion_entities_created": (
                 extraction_outcome.ingestion_entities_created
             ),

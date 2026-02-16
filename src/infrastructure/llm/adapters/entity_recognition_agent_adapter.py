@@ -92,7 +92,7 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         self._registry = get_model_registry()
         self._lifecycle_manager = get_lifecycle_manager()
         self._pipelines: dict[
-            tuple[str, str, str],
+            tuple[str, str, str, bool],
             Flujo[str, EntityRecognitionContract, EntityRecognitionContext],
         ] = {}
         self._last_run_id: str | None = None
@@ -118,12 +118,13 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             source_type=source_type,
             policy_key=policy_key,
             context=context,
+            bind_tools=True,
         )
         input_text = self._build_input_text(context)
         initial_context = context.model_dump(mode="json")
 
         try:
-            return await self._execute_pipeline(
+            primary_output = await self._execute_pipeline(
                 pipeline,
                 input_text=input_text,
                 initial_context=initial_context,
@@ -137,7 +138,18 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
                 context.document_id,
                 exc,
             )
-            return self._heuristic_contract(context, decision="fallback")
+            primary_output = self._heuristic_contract(context, decision="fallback")
+
+        if source_type == "pubmed" and self._is_heuristic_contract(primary_output):
+            retry_output = await self._retry_without_tools(
+                model_id=effective_model,
+                context=context,
+                input_text=input_text,
+                initial_context=initial_context,
+            )
+            if retry_output is not None:
+                return self._select_preferred_contract(primary_output, retry_output)
+        return primary_output
 
     async def close(self) -> None:
         for model_id, pipeline in self._pipelines.items():
@@ -188,13 +200,14 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         source_type: str,
         policy_key: str,
         context: EntityRecognitionContext,
+        bind_tools: bool = True,
     ) -> Flujo[str, EntityRecognitionContract, EntityRecognitionContext]:
-        cache_key = (source_type, model_id, policy_key)
+        cache_key = (source_type, model_id, policy_key, bind_tools)
         if cache_key in self._pipelines:
             return self._pipelines[cache_key]
 
         tools: list[object] | None = None
-        if self._dictionary_service is not None:
+        if bind_tools and self._dictionary_service is not None:
             try:
                 tools = list(
                     build_entity_recognition_dictionary_tools(
@@ -222,11 +235,74 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             model=model_id,
             use_governance=self._use_governance,
             usage_limits=self._governance.usage_limits,
-            tools=tools,
+            tools=tools if bind_tools else None,
         )
         self._pipelines[cache_key] = pipeline
         self._lifecycle_manager.register_runner(pipeline)
         return pipeline
+
+    async def _retry_without_tools(
+        self,
+        *,
+        model_id: str,
+        context: EntityRecognitionContext,
+        input_text: str,
+        initial_context: JSONObject,
+    ) -> EntityRecognitionContract | None:
+        source_type = context.source_type.strip().lower()
+        policy_key = self._resolve_dictionary_policy_key(context)
+        retry_pipeline = self._get_or_create_pipeline(
+            model_id,
+            source_type=source_type,
+            policy_key=policy_key,
+            context=context,
+            bind_tools=False,
+        )
+        try:
+            return await self._execute_pipeline(
+                retry_pipeline,
+                input_text=input_text,
+                initial_context=initial_context,
+                fallback_context=context,
+            )
+        except (PausedException, PipelineAbortSignal):
+            raise
+        except FlujoError as exc:
+            logger.warning(
+                "Entity-recognition no-tools retry failed for document=%s: %s",
+                context.document_id,
+                exc,
+            )
+            return None
+
+    @staticmethod
+    def _is_heuristic_contract(contract: EntityRecognitionContract) -> bool:
+        rationale = contract.rationale.strip().lower()
+        return rationale.startswith("heuristic ")
+
+    @staticmethod
+    def _entity_signal_score(contract: EntityRecognitionContract) -> tuple[int, float]:
+        entity_count = len(contract.recognized_entities)
+        observation_count = len(contract.recognized_observations)
+        return (entity_count * 3 + observation_count, contract.confidence_score)
+
+    @classmethod
+    def _select_preferred_contract(
+        cls,
+        primary_output: EntityRecognitionContract,
+        retry_output: EntityRecognitionContract,
+    ) -> EntityRecognitionContract:
+        primary_is_heuristic = cls._is_heuristic_contract(primary_output)
+        retry_is_heuristic = cls._is_heuristic_contract(retry_output)
+        if primary_is_heuristic and not retry_is_heuristic:
+            return retry_output
+        if retry_is_heuristic and not primary_is_heuristic:
+            return primary_output
+        if cls._entity_signal_score(retry_output) > cls._entity_signal_score(
+            primary_output,
+        ):
+            return retry_output
+        return primary_output
 
     @staticmethod
     def _resolve_dictionary_policy_key(context: EntityRecognitionContext) -> str:
