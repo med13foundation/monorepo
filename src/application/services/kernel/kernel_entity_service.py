@@ -76,8 +76,8 @@ class KernelEntityService:
                 if anchor not in identifiers or not identifiers[anchor]
             ]
             if missing:
-                logger.warning(
-                    "Missing required anchors %s for %s; skipping resolution",
+                logger.info(
+                    "Missing required anchors %s for %s; creating new entity.",
                     missing,
                     entity_type,
                 )

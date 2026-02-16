@@ -5,23 +5,18 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from flujo.domain.models import PipelineResult, StepResult
 from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
 
-from src.domain.agents.contracts import (
-    EvidenceItem,
-    ExtractedObservation,
-    ExtractedRelation,
-    ExtractionContract,
-    RejectedFact,
-)
+from src.domain.agents.contracts import ExtractionContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
-from src.infrastructure.ingestion.types import NormalizedObservation
-from src.infrastructure.ingestion.validation.observation_validator import (
-    ObservationValidator,
+from src.infrastructure.llm.adapters._extraction_adapter_fallback_helpers import (
+    build_heuristic_extraction_contract,
+    is_heuristic_extraction_contract,
+    select_preferred_extraction_contract,
 )
 from src.infrastructure.llm.config import GovernanceConfig, get_model_registry
 from src.infrastructure.llm.pipelines.extraction_pipelines import (
@@ -45,6 +40,15 @@ logger = logging.getLogger(__name__)
 
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
+_FALLBACK_PIPELINE_EXCEPTIONS = (
+    FlujoError,
+    RuntimeError,
+    ValueError,
+    TypeError,
+    LookupError,
+    OSError,
+    ConnectionError,
+)
 
 if TYPE_CHECKING:
     ExtractionPipelineFactory = Callable[
@@ -93,7 +97,12 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             return self._unsupported_source_contract(context)
 
         if not self._has_openai_key():
-            return self._heuristic_contract(context, decision="fallback")
+            return build_heuristic_extraction_contract(
+                context,
+                dictionary_service=self._dictionary_service,
+                agent_run_id=self._last_run_id,
+                decision="fallback",
+            )
 
         effective_model = self._resolve_model_id(model_id)
         pipeline = self._get_or_create_pipeline(
@@ -113,15 +122,20 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             )
         except (PausedException, PipelineAbortSignal):
             raise
-        except FlujoError as exc:
+        except _FALLBACK_PIPELINE_EXCEPTIONS as exc:
             logger.warning(
                 "Extraction pipeline failed for document=%s: %s",
                 context.document_id,
                 exc,
             )
-            primary_output = self._heuristic_contract(context, decision="fallback")
+            primary_output = build_heuristic_extraction_contract(
+                context,
+                dictionary_service=self._dictionary_service,
+                agent_run_id=self._last_run_id,
+                decision="fallback",
+            )
 
-        if source_type == "pubmed" and self._is_heuristic_contract(primary_output):
+        if source_type == "pubmed" and is_heuristic_extraction_contract(primary_output):
             retry_output = await self._retry_without_tools(
                 source_type=source_type,
                 model_id=effective_model,
@@ -130,7 +144,10 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
                 initial_context=initial_context,
             )
             if retry_output is not None:
-                return self._select_preferred_contract(primary_output, retry_output)
+                return select_preferred_extraction_contract(
+                    primary_output,
+                    retry_output,
+                )
         return primary_output
 
     async def close(self) -> None:
@@ -225,16 +242,17 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             source_type=source_type,
             bind_tools=False,
         )
+        retry_initial_context = self._build_retry_initial_context(initial_context)
         try:
             return await self._execute_pipeline(
                 retry_pipeline,
                 input_text=input_text,
-                initial_context=initial_context,
+                initial_context=retry_initial_context,
                 fallback_context=context,
             )
         except (PausedException, PipelineAbortSignal):
             raise
-        except FlujoError as exc:
+        except _FALLBACK_PIPELINE_EXCEPTIONS as exc:
             logger.warning(
                 "Extraction no-tools retry failed for document=%s: %s",
                 context.document_id,
@@ -243,48 +261,12 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             return None
 
     @staticmethod
-    def _is_heuristic_contract(contract: ExtractionContract) -> bool:
-        rationale = contract.rationale.strip().lower()
-        return rationale.startswith("heuristic ")
-
-    @staticmethod
-    def _relation_rejection_count(contract: ExtractionContract) -> int:
-        return sum(
-            1
-            for rejected_fact in contract.rejected_facts
-            if rejected_fact.fact_type == "relation"
-        )
-
-    @classmethod
-    def _extraction_signal_score(
-        cls,
-        contract: ExtractionContract,
-    ) -> tuple[int, float]:
-        relation_count = len(contract.relations)
-        observation_count = len(contract.observations)
-        relation_rejections = cls._relation_rejection_count(contract)
-        return (
-            relation_count * 4 + observation_count * 2 + relation_rejections,
-            contract.confidence_score,
-        )
-
-    @classmethod
-    def _select_preferred_contract(
-        cls,
-        primary_output: ExtractionContract,
-        retry_output: ExtractionContract,
-    ) -> ExtractionContract:
-        primary_is_heuristic = cls._is_heuristic_contract(primary_output)
-        retry_is_heuristic = cls._is_heuristic_contract(retry_output)
-        if primary_is_heuristic and not retry_is_heuristic:
-            return retry_output
-        if retry_is_heuristic and not primary_is_heuristic:
-            return primary_output
-        if cls._extraction_signal_score(retry_output) > cls._extraction_signal_score(
-            primary_output,
-        ):
-            return retry_output
-        return primary_output
+    def _build_retry_initial_context(initial_context: JSONObject) -> JSONObject:
+        return {
+            str(key): to_json_value(value)
+            for key, value in initial_context.items()
+            if key != "run_id"
+        }
 
     @staticmethod
     def _build_input_text(context: ExtractionContext) -> str:
@@ -334,7 +316,12 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
                     final_output = candidate
 
         if final_output is None:
-            return self._heuristic_contract(fallback_context, decision="fallback")
+            return build_heuristic_extraction_contract(
+                fallback_context,
+                dictionary_service=self._dictionary_service,
+                agent_run_id=self._last_run_id,
+                decision="fallback",
+            )
         return final_output
 
     def _extract_from_pipeline_result(
@@ -357,196 +344,6 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         run_id = getattr(context, "run_id", None)
         if isinstance(run_id, str) and run_id.strip():
             self._last_run_id = run_id.strip()
-
-    def _heuristic_contract(
-        self,
-        context: ExtractionContext,
-        *,
-        decision: Literal["generated", "fallback", "escalate"],
-    ) -> ExtractionContract:
-        observations: list[ExtractedObservation] = []
-        rejected_facts: list[RejectedFact] = []
-
-        for candidate in context.recognized_observations:
-            variable_id = self._resolve_variable_id(
-                explicit_variable_id=candidate.variable_id,
-                field_name=candidate.field_name,
-            )
-            if variable_id is None:
-                rejected_facts.append(
-                    RejectedFact(
-                        fact_type="observation",
-                        reason="No variable mapping available",
-                        payload={"field_name": candidate.field_name},
-                    ),
-                )
-                continue
-
-            if not self._is_observation_valid(
-                variable_id=variable_id,
-                value=candidate.value,
-                unit=candidate.unit,
-            ):
-                rejected_facts.append(
-                    RejectedFact(
-                        fact_type="observation",
-                        reason="Observation failed dictionary validation",
-                        payload={
-                            "field_name": candidate.field_name,
-                            "variable_id": variable_id,
-                        },
-                    ),
-                )
-                continue
-
-            observations.append(
-                ExtractedObservation(
-                    field_name=candidate.field_name,
-                    variable_id=variable_id,
-                    value=to_json_value(candidate.value),
-                    unit=candidate.unit,
-                    confidence=candidate.confidence,
-                ),
-            )
-
-        relations: list[ExtractedRelation] = []
-        variant_entity = next(
-            (
-                entity
-                for entity in context.recognized_entities
-                if entity.entity_type.strip().upper() == "VARIANT"
-            ),
-            None,
-        )
-        phenotype_entity = next(
-            (
-                entity
-                for entity in context.recognized_entities
-                if entity.entity_type.strip().upper() == "PHENOTYPE"
-            ),
-            None,
-        )
-        if variant_entity and phenotype_entity:
-            relation_allowed = self._is_relation_allowed(
-                source_type="VARIANT",
-                relation_type="ASSOCIATED_WITH",
-                target_type="PHENOTYPE",
-            )
-            if relation_allowed:
-                relations.append(
-                    ExtractedRelation(
-                        source_type="VARIANT",
-                        relation_type="ASSOCIATED_WITH",
-                        target_type="PHENOTYPE",
-                        source_label=variant_entity.display_label,
-                        target_label=phenotype_entity.display_label,
-                        confidence=min(
-                            variant_entity.confidence,
-                            phenotype_entity.confidence,
-                        ),
-                    ),
-                )
-            else:
-                rejected_facts.append(
-                    RejectedFact(
-                        fact_type="relation",
-                        reason="Relation triple not allowed by dictionary constraints",
-                        payload={
-                            "source_type": "VARIANT",
-                            "relation_type": "ASSOCIATED_WITH",
-                            "target_type": "PHENOTYPE",
-                        },
-                    ),
-                )
-
-        pipeline_payload: JSONObject = {
-            str(key): to_json_value(value) for key, value in context.raw_record.items()
-        }
-        if observations:
-            for observation in observations:
-                pipeline_payload[observation.field_name] = to_json_value(
-                    observation.value,
-                )
-
-        evidence = [
-            EvidenceItem(
-                source_type="db",
-                locator=f"source_document:{context.document_id}",
-                excerpt="Deterministic extraction fallback mapped recognized candidates",
-                relevance=0.75 if observations else 0.4,
-            ),
-        ]
-        resolved_decision: Literal["generated", "fallback", "escalate"] = (
-            "generated" if observations or relations else decision
-        )
-        confidence = 0.82 if observations or relations else 0.4
-
-        return ExtractionContract(
-            decision=resolved_decision,
-            confidence_score=confidence,
-            rationale="Heuristic extraction fallback executed",
-            evidence=evidence,
-            source_type=context.source_type,
-            document_id=context.document_id,
-            observations=observations,
-            relations=relations,
-            rejected_facts=rejected_facts,
-            pipeline_payloads=[pipeline_payload] if pipeline_payload else [],
-            shadow_mode=context.shadow_mode,
-            agent_run_id=self._last_run_id,
-        )
-
-    def _resolve_variable_id(
-        self,
-        *,
-        explicit_variable_id: str | None,
-        field_name: str,
-    ) -> str | None:
-        if isinstance(explicit_variable_id, str) and explicit_variable_id.strip():
-            return explicit_variable_id.strip()
-        if self._dictionary_service is None:
-            return None
-        resolved = self._dictionary_service.resolve_synonym(field_name)
-        if resolved is None:
-            return None
-        return resolved.id
-
-    def _is_observation_valid(
-        self,
-        *,
-        variable_id: str,
-        value: object,
-        unit: str | None,
-    ) -> bool:
-        if self._dictionary_service is None:
-            return True
-        validator = ObservationValidator(self._dictionary_service)
-        validated = validator.validate(
-            NormalizedObservation(
-                subject_anchor={},
-                variable_id=variable_id,
-                value=to_json_value(value),
-                unit=unit,
-                observed_at=None,
-                provenance={},
-            ),
-        )
-        return validated is not None
-
-    def _is_relation_allowed(
-        self,
-        *,
-        source_type: str,
-        relation_type: str,
-        target_type: str,
-    ) -> bool:
-        if self._dictionary_service is None:
-            return True
-        return self._dictionary_service.is_relation_allowed(
-            source_type=source_type,
-            relation_type=relation_type,
-            target_type=target_type,
-        )
 
     @staticmethod
     def _unsupported_source_contract(context: ExtractionContext) -> ExtractionContract:

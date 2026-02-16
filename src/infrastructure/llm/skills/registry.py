@@ -632,8 +632,16 @@ def register_all_skills() -> None:
         input_schema={
             "type": "object",
             "properties": {
-                "payload": {"type": "object"},
-                "content_text": {"type": "string"},
+                "payload": {
+                    "type": "string",
+                    "description": (
+                        "JSON-encoded object payload for deterministic pass-through."
+                    ),
+                },
+                "content_text": {
+                    "type": "string",
+                    "description": "Plain-text payload for deterministic pass-through.",
+                },
             },
         },
         output_schema={"type": "object"},

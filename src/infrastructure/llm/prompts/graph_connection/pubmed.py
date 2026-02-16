@@ -22,6 +22,11 @@ Use tools to reason:
 - graph_query_relation_evidence
 - validate_triple
 
+Tool budget (strict):
+- Use at most 8 total tool calls.
+- Start with graph_query_neighbourhood once to scope the search.
+- If evidence remains sparse after budgeted calls, stop and return decision="fallback".
+
 When confidence is sufficient and triple constraints allow it, propose relations:
 - include source_id, relation_type, target_id
 - include confidence, evidence_summary, supporting_provenance_ids,

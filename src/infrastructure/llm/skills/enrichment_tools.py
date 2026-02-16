@@ -32,6 +32,28 @@ def _normalize_pmcid(pmcid: str) -> str:
     return f"PMC{candidate}"
 
 
+def _parse_payload_json(payload: str | None) -> JSONObject | None:
+    if payload is None:
+        return None
+
+    decoded: object = payload
+    for _ in range(3):
+        if not isinstance(decoded, str):
+            break
+        candidate = decoded.strip()
+        if not candidate:
+            return None
+        try:
+            decoded = json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+
+    if not isinstance(decoded, dict):
+        return None
+
+    return {str(key): to_json_value(value) for key, value in decoded.items()}
+
+
 def _http_get_text(url: str, *, timeout_seconds: int) -> str:
     with urlopen(url, timeout=timeout_seconds) as response:  # noqa: S310
         payload = response.read()
@@ -153,17 +175,16 @@ def make_check_open_access_tool(
 
 def make_pass_through_tool(
     **_: object,
-) -> Callable[[JSONObject | None, str | None], JSONObject]:
+) -> Callable[[str | None, str | None], JSONObject]:
     """Build a tool callable for deterministic structured-data pass-through."""
 
     def pass_through(
-        payload: JSONObject | None = None,
+        payload: str | None = None,
         content_text: str | None = None,
     ) -> JSONObject:
-        if isinstance(payload, dict):
-            normalized_payload = {
-                str(key): to_json_value(value) for key, value in payload.items()
-            }
+        parsed_payload = _parse_payload_json(payload)
+        if parsed_payload is not None:
+            normalized_payload = parsed_payload
             serialized = json.dumps(normalized_payload, default=str)
             return {
                 "decision": "enriched",

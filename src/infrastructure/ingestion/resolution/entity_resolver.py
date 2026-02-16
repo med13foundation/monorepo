@@ -95,8 +95,8 @@ class EntityResolver:
 
         existing_entity = None
         if missing_required:
-            logger.warning(
-                "Missing required anchors %s for %s; skipping resolution",
+            logger.info(
+                "Missing required anchors %s for %s; using create-new fallback.",
                 missing_required,
                 entity_type,
             )

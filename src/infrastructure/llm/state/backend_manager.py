@@ -7,11 +7,12 @@ to ensure consistent state handling across the application.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 from flujo.application.core.runtime.factories import BackendFactory
 from flujo.domain.agent_result import FlujoAgentResult
@@ -39,6 +40,63 @@ _STATE_BACKEND_HOLDER = _StateBackendHolder()
 _STATE_BACKEND_FACTORY = BackendFactory()
 _SERIALIZER_REGISTRATION_LOCK = threading.Lock()
 _SERIALIZER_REGISTRATION_STATE = {"registered": False}
+_MAX_WORKFLOW_STATE_DECODE_DEPTH = 3
+
+
+class _StateBackendWithNormalization:
+    """Proxy that normalizes legacy string-encoded workflow state fields."""
+
+    def __init__(self, backend: StateBackend) -> None:
+        self._backend = backend
+
+    async def load_state(self, run_id: str) -> object:
+        loaded_state = await self._backend.load_state(run_id)
+        return _normalize_loaded_workflow_state(loaded_state)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._backend, name)
+
+
+def _decode_nested_json_string(value: object) -> object:
+    decoded: object = value
+    for _ in range(_MAX_WORKFLOW_STATE_DECODE_DEPTH):
+        if not isinstance(decoded, str):
+            break
+        candidate = decoded.strip()
+        if not candidate:
+            return decoded
+        try:
+            decoded = json.loads(candidate)
+        except json.JSONDecodeError:
+            break
+    return decoded
+
+
+def _coerce_json_object(value: object) -> dict[str, JSONValue]:
+    decoded = _decode_nested_json_string(value)
+    if not isinstance(decoded, dict):
+        return {}
+    return {str(key): to_json_value(item) for key, item in decoded.items()}
+
+
+def _coerce_json_list(value: object) -> list[JSONValue]:
+    decoded = _decode_nested_json_string(value)
+    if not isinstance(decoded, list):
+        return []
+    return [to_json_value(item) for item in decoded]
+
+
+def _normalize_loaded_workflow_state(state: object) -> object:
+    if not isinstance(state, dict):
+        return state
+
+    normalized_state: dict[str, object] = dict(state)
+    normalized_state["pipeline_context"] = _coerce_json_object(
+        state.get("pipeline_context"),
+    )
+    normalized_state["step_history"] = _coerce_json_list(state.get("step_history"))
+    normalized_state["metadata"] = _coerce_json_object(state.get("metadata"))
+    return normalized_state
 
 
 def _serialize_flujo_agent_result(result: FlujoAgentResult) -> dict[str, JSONValue]:
@@ -92,7 +150,12 @@ def _build_state_backend() -> StateBackend:
     _register_custom_serializers()
     os.environ["FLUJO_STATE_URI"] = state_uri
     logger.info("Initializing Flujo state backend with URI: %s", _mask_uri(state_uri))
-    return _STATE_BACKEND_FACTORY.create_state_backend()
+    raw_backend = _STATE_BACKEND_FACTORY.create_state_backend()
+    normalized_backend = _StateBackendWithNormalization(raw_backend)
+    if _is_state_backend(normalized_backend):
+        return normalized_backend
+    msg = "State backend does not satisfy StateBackend protocol after normalization"
+    raise TypeError(msg)
 
 
 def _mask_uri(uri: str) -> str:
@@ -111,6 +174,29 @@ def _mask_uri(uri: str) -> str:
         return f"{scheme}://{user}:***@{host_part}"
 
     return uri
+
+
+def _is_state_backend(value: object) -> TypeGuard[StateBackend]:
+    required_methods = (
+        "save_state",
+        "load_state",
+        "delete_state",
+        "get_trace",
+        "save_trace",
+        "persist_evaluation",
+        "list_evaluations",
+        "save_run_start",
+        "save_step_result",
+        "save_run_end",
+        "get_run_details",
+        "list_runs",
+        "list_run_steps",
+        "set_system_state",
+        "get_system_state",
+    )
+    return all(
+        callable(getattr(value, method_name, None)) for method_name in required_methods
+    )
 
 
 def get_state_backend() -> StateBackend:

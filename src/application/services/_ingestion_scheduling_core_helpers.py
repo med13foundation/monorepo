@@ -17,6 +17,10 @@ from src.domain.entities import ingestion_job, user_data_source
 from ._ingestion_scheduling_observability_helpers import (
     _IngestionSchedulingObservabilityHelpers,
 )
+from ._ingestion_scheduling_shared_helpers import (
+    normalize_datetime,
+    with_failure_metadata,
+)
 from ._ingestion_scheduling_state_helpers import _IngestionSchedulingStateHelpers
 
 if TYPE_CHECKING:
@@ -205,7 +209,7 @@ class _IngestionSchedulingCoreHelpers(
         source_id: UUID | None = None,
         as_of: datetime | None = None,
     ) -> int:
-        reference = self._normalize_datetime(as_of or datetime.now(UTC))
+        reference = normalize_datetime(as_of or datetime.now(UTC))
         timeout_seconds = self._scheduler_stale_running_timeout_seconds
         if source_id is None:
             candidates = self._job_repository.find_running_jobs(limit=200)
@@ -243,7 +247,7 @@ class _IngestionSchedulingCoreHelpers(
     ) -> bool:
         if job.status != ingestion_job.IngestionStatus.RUNNING:
             return False
-        started_at = self._normalize_datetime(job.started_at or job.triggered_at)
+        started_at = normalize_datetime(job.started_at or job.triggered_at)
         elapsed_seconds = (as_of - started_at).total_seconds()
         return elapsed_seconds >= self._scheduler_stale_running_timeout_seconds
 
@@ -256,7 +260,7 @@ class _IngestionSchedulingCoreHelpers(
         timeout_message: str,
         timed_out_at: datetime | None = None,
     ) -> None:
-        failure_time = self._normalize_datetime(timed_out_at or datetime.now(UTC))
+        failure_time = normalize_datetime(timed_out_at or datetime.now(UTC))
         failure_payload: JSONObject = {
             "error_type": "timeout",
             "timeout_seconds": timeout_seconds,
@@ -274,7 +278,7 @@ class _IngestionSchedulingCoreHelpers(
         )
         failed = running.model_copy(
             update={
-                "metadata": self._with_failure_metadata(
+                "metadata": with_failure_metadata(
                     running.metadata,
                     failure_payload=failure_payload,
                 ),
@@ -290,25 +294,6 @@ class _IngestionSchedulingCoreHelpers(
                 "timeout_seconds": timeout_seconds,
             },
         )
-
-    @staticmethod
-    def _with_failure_metadata(
-        metadata: object,
-        *,
-        failure_payload: JSONObject,
-    ) -> JSONObject:
-        if not isinstance(metadata, dict):
-            normalized_metadata: JSONObject = {}
-        else:
-            normalized_metadata = {str(key): value for key, value in metadata.items()}
-        normalized_metadata["failure"] = dict(failure_payload)
-        return normalized_metadata
-
-    @staticmethod
-    def _normalize_datetime(value: datetime) -> datetime:
-        if value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
-        return value.astimezone(UTC)
 
     def _handle_ingestion_failure(
         self: IngestionSchedulingService,

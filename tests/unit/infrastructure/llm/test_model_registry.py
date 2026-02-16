@@ -46,7 +46,7 @@ class TestModelSpec:
             is_reasoning_model=True,
             default_reasoning_settings=ModelReasoningSettings(
                 effort="high",
-                summary="detailed",
+                verbosity="high",
             ),
             prompt_tokens_per_1k=0.00125,
             completion_tokens_per_1k=0.01,
@@ -75,7 +75,7 @@ class TestModelSpec:
             is_reasoning_model=True,
             default_reasoning_settings=ModelReasoningSettings(
                 effort="high",
-                summary="detailed",
+                verbosity="high",
             ),
             prompt_tokens_per_1k=0.00125,
             completion_tokens_per_1k=0.01,
@@ -84,9 +84,9 @@ class TestModelSpec:
         assert settings is not None
         assert "reasoning" in settings
         assert settings["reasoning"]["effort"] == "high"
-        # Summary maps to text.verbosity in Flujo
+        # Verbosity maps to text.verbosity in Flujo
         assert "text" in settings
-        assert settings["text"]["verbosity"] == "detailed"
+        assert settings["text"]["verbosity"] == "high"
 
     def test_get_reasoning_settings_with_override(self) -> None:
         """Should allow overriding the default effort level."""
@@ -97,7 +97,7 @@ class TestModelSpec:
             is_reasoning_model=True,
             default_reasoning_settings=ModelReasoningSettings(
                 effort="high",
-                summary="detailed",
+                verbosity="high",
             ),
             prompt_tokens_per_1k=0.00125,
             completion_tokens_per_1k=0.01,
@@ -105,6 +105,25 @@ class TestModelSpec:
         settings = spec.get_reasoning_settings(effort="low")
         assert settings is not None
         assert settings["reasoning"]["effort"] == "low"
+
+    def test_get_reasoning_settings_legacy_summary_compatibility(self) -> None:
+        """Legacy summary settings should still map to valid verbosity values."""
+        spec = ModelSpec(
+            model_id="openai:gpt-5",
+            display_name="GPT-5",
+            provider="openai",
+            is_reasoning_model=True,
+            default_reasoning_settings=ModelReasoningSettings(
+                effort="medium",
+                verbosity=None,
+                summary="brief",
+            ),
+            prompt_tokens_per_1k=0.00125,
+            completion_tokens_per_1k=0.01,
+        )
+        settings = spec.get_reasoning_settings()
+        assert settings is not None
+        assert settings["text"]["verbosity"] == "low"
 
     def test_model_capabilities_frozenset(self) -> None:
         """Capabilities should be immutable."""

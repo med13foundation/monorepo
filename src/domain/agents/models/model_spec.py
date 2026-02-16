@@ -47,7 +47,19 @@ class ModelReasoningSettings(BaseModel):
     """
 
     effort: Literal["low", "medium", "high"] = "medium"
-    summary: Literal["brief", "detailed"] = "detailed"
+    verbosity: Literal["low", "medium", "high"] | None = "medium"
+    # Legacy compatibility field: old configs used summary=brief|detailed.
+    summary: Literal["brief", "detailed"] | None = None
+
+    def resolved_verbosity(self) -> Literal["low", "medium", "high"]:
+        """Resolve effective verbosity, preserving legacy summary compatibility."""
+        if self.verbosity is not None:
+            return self.verbosity
+        if self.summary == "brief":
+            return "low"
+        if self.summary == "detailed":
+            return "medium"
+        return "medium"
 
 
 class ModelSpec(BaseModel):
@@ -134,8 +146,9 @@ class ModelSpec(BaseModel):
 
         settings = self.default_reasoning_settings or ModelReasoningSettings()
         actual_effort = effort or settings.effort
+        actual_verbosity = settings.resolved_verbosity()
 
         return {
             "reasoning": {"effort": actual_effort},
-            "text": {"verbosity": "low" if settings.summary == "brief" else "detailed"},
+            "text": {"verbosity": actual_verbosity},
         }

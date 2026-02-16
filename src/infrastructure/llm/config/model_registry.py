@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -125,8 +125,11 @@ class FlujoModelRegistry(ModelRegistryPort):
             raw_reasoning = spec.get("default_reasoning_settings")
             if isinstance(raw_reasoning, dict):
                 reasoning_settings = ModelReasoningSettings(
-                    effort=raw_reasoning.get("effort", "medium"),
-                    summary=raw_reasoning.get("summary", "detailed"),
+                    effort=self._parse_reasoning_effort(raw_reasoning.get("effort")),
+                    verbosity=self._parse_reasoning_verbosity(
+                        raw_reasoning.get("verbosity"),
+                    ),
+                    summary=self._parse_reasoning_summary(raw_reasoning.get("summary")),
                 )
 
             # Parse cost tier
@@ -237,6 +240,36 @@ class FlujoModelRegistry(ModelRegistryPort):
             parts = model_id.split(":", 1)
             return parts[0], parts[1]
         return "openai", model_id
+
+    @staticmethod
+    def _parse_reasoning_effort(raw_value: object) -> Literal["low", "medium", "high"]:
+        if raw_value == "low":
+            return "low"
+        if raw_value == "high":
+            return "high"
+        return "medium"
+
+    @staticmethod
+    def _parse_reasoning_verbosity(
+        raw_value: object,
+    ) -> Literal["low", "medium", "high"] | None:
+        if raw_value == "low":
+            return "low"
+        if raw_value == "high":
+            return "high"
+        if raw_value == "medium":
+            return "medium"
+        return "medium"
+
+    @staticmethod
+    def _parse_reasoning_summary(
+        raw_value: object,
+    ) -> Literal["brief", "detailed"] | None:
+        if raw_value == "brief":
+            return "brief"
+        if raw_value == "detailed":
+            return "detailed"
+        return None
 
     # =========================================================================
     # ModelRegistryPort Implementation

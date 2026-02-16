@@ -4,16 +4,11 @@ from __future__ import annotations
 
 import logging
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.application.services.ports.extraction_processor_port import (
-    ExtractionProcessorPort,
-    ExtractionProcessorResult,
-    ExtractionTextPayload,
-)
 from src.domain.entities.publication_extraction import (
     ExtractionOutcome,
     ExtractionTextSource,
@@ -21,9 +16,21 @@ from src.domain.entities.publication_extraction import (
 )
 from src.type_definitions.storage import StorageUseCase
 
+from ._extraction_runner_text_helpers import (
+    ExtractionBatchSummary,
+    build_payload_from_segments,
+    coerce_text,
+    resolve_document_reference,
+)
+
 if TYPE_CHECKING:
     from uuid import UUID
 
+    from src.application.services.ports.extraction_processor_port import (
+        ExtractionProcessorPort,
+        ExtractionProcessorResult,
+        ExtractionTextPayload,
+    )
     from src.application.services.storage_operation_coordinator import (
         StorageOperationCoordinator,
     )
@@ -39,16 +46,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class ExtractionBatchSummary:
-    """Execution summary for one extraction batch."""
-
-    processed: int = 0
-    completed: int = 0
-    skipped: int = 0
-    failed: int = 0
 
 
 class ExtractionRunnerBatchProcessor:
@@ -222,7 +219,7 @@ class ExtractionRunnerBatchProcessor:
             return None
         title = publication.title.strip() if publication.title else ""
         abstract = publication.abstract.strip() if publication.abstract else ""
-        return self._build_payload_from_segments(
+        return build_payload_from_segments(
             title=title,
             abstract=abstract,
             full_text="",
@@ -236,69 +233,16 @@ class ExtractionRunnerBatchProcessor:
         raw_record_value = item.metadata.get("raw_record")
         if not isinstance(raw_record_value, dict):
             return None
-        title = self._coerce_text(raw_record_value.get("title"))
-        abstract = self._coerce_text(raw_record_value.get("abstract"))
-        text_value = self._coerce_text(raw_record_value.get("text"))
-        full_text = text_value or self._coerce_text(raw_record_value.get("full_text"))
-        return self._build_payload_from_segments(
+        title = coerce_text(raw_record_value.get("title"))
+        abstract = coerce_text(raw_record_value.get("abstract"))
+        text_value = coerce_text(raw_record_value.get("text"))
+        full_text = text_value or coerce_text(raw_record_value.get("full_text"))
+        return build_payload_from_segments(
             title=title,
             abstract=abstract,
             full_text=full_text,
-            document_reference=self._resolve_document_reference(item),
+            document_reference=resolve_document_reference(item),
         )
-
-    @staticmethod
-    def _resolve_document_reference(item: ExtractionQueueItem) -> str | None:
-        if item.payload_ref:
-            return item.payload_ref
-        if item.raw_storage_key:
-            return item.raw_storage_key
-        document_reference_value = item.metadata.get("document_reference")
-        if isinstance(document_reference_value, str):
-            return document_reference_value
-        return None
-
-    @staticmethod
-    def _build_payload_from_segments(
-        *,
-        title: str,
-        abstract: str,
-        full_text: str,
-        document_reference: str | None,
-    ) -> ExtractionTextPayload | None:
-        if title and abstract:
-            return ExtractionTextPayload(
-                text=f"{title} {abstract}",
-                text_source="title_abstract",
-                document_reference=document_reference,
-            )
-        if title:
-            return ExtractionTextPayload(
-                text=title,
-                text_source="title",
-                document_reference=document_reference,
-            )
-        if abstract:
-            return ExtractionTextPayload(
-                text=abstract,
-                text_source="abstract",
-                document_reference=document_reference,
-            )
-        if full_text:
-            return ExtractionTextPayload(
-                text=full_text,
-                text_source="full_text",
-                document_reference=document_reference,
-            )
-        return None
-
-    @staticmethod
-    def _coerce_text(value: object) -> str:
-        if isinstance(value, str):
-            return value.strip()
-        if isinstance(value, int | float):
-            return str(value)
-        return ""
 
     async def _store_text_payload(
         self,
@@ -516,3 +460,6 @@ class ExtractionRunnerBatchProcessor:
             updated_at=now,
         )
         return self._extraction_repository.create(extraction)
+
+
+__all__ = ["ExtractionBatchSummary", "ExtractionRunnerBatchProcessor"]
