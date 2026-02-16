@@ -12,6 +12,9 @@ if TYPE_CHECKING:
 
     from src.domain.ports.dictionary_port import DictionaryPort
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
+else:
+    type JSONObject = dict[str, object]
+    type ResearchSpaceSettings = dict[str, object]
 
 
 _MUTATION_TOOL_LOCK = threading.RLock()

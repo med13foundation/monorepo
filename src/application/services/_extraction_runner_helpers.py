@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
         JSONObject,
         PublicationExtractionUpdate,
     )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -161,12 +164,44 @@ class ExtractionRunnerBatchProcessor:
         item: ExtractionQueueItem,
     ) -> Publication | None:
         if item.publication_id is not None:
-            publication = self._publication_repository.get_by_id(item.publication_id)
+            try:
+                publication = self._publication_repository.get_by_id(
+                    item.publication_id,
+                )
+            except Exception:  # noqa: BLE001 - fallback to metadata-only extraction
+                self._rollback_publication_repository_session()
+                logger.warning(
+                    "Publication lookup by id failed; continuing with metadata payload",
+                    extra={
+                        "publication_id": item.publication_id,
+                        "source_record_id": item.source_record_id,
+                    },
+                )
+                publication = None
             if publication is not None:
                 return publication
         if item.pubmed_id:
-            return self._publication_repository.find_by_pmid(item.pubmed_id)
+            try:
+                return self._publication_repository.find_by_pmid(item.pubmed_id)
+            except Exception:  # noqa: BLE001 - fallback to metadata-only extraction
+                self._rollback_publication_repository_session()
+                logger.warning(
+                    "Publication lookup by pmid failed; continuing with metadata payload",
+                    extra={
+                        "pubmed_id": item.pubmed_id,
+                        "source_record_id": item.source_record_id,
+                    },
+                )
+                return None
         return None
+
+    def _rollback_publication_repository_session(self) -> None:
+        repository_session = getattr(self._publication_repository, "session", None)
+        if repository_session is None:
+            return
+        rollback = getattr(repository_session, "rollback", None)
+        if callable(rollback):
+            rollback()
 
     def _build_text_payload(
         self,

@@ -14,6 +14,9 @@ if TYPE_CHECKING:
         KernelRelationRepository,
     )
     from src.type_definitions.common import JSONObject, JSONValue
+else:
+    type JSONObject = dict[str, object]
+    type JSONValue = object
 
 
 def _model_to_json(model: object) -> JSONObject:

@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from src.type_definitions.common import JSONObject
+else:
+    type JSONObject = dict[str, object]
 
 
 def _normalize_identifier(value: str | None) -> str | None:

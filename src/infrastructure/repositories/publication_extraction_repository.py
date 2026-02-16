@@ -43,8 +43,12 @@ class SqlAlchemyPublicationExtractionRepository(
     def create(self, entity: PublicationExtraction) -> PublicationExtraction:
         model = PublicationExtractionMapper.to_model(entity)
         self.session.add(model)
-        self.session.commit()
-        self.session.refresh(model)
+        try:
+            self.session.commit()
+            self.session.refresh(model)
+        except Exception:
+            self.session.rollback()
+            raise
         return PublicationExtractionMapper.to_domain(model)
 
     def get_by_id(self, entity_id: UUID) -> PublicationExtraction | None:
@@ -116,8 +120,12 @@ class SqlAlchemyPublicationExtractionRepository(
                 setattr(model, target_field, ExtractionOutcomeEnum(value))
                 continue
             setattr(model, target_field, value)
-        self.session.commit()
-        self.session.refresh(model)
+        try:
+            self.session.commit()
+            self.session.refresh(model)
+        except Exception:
+            self.session.rollback()
+            raise
         return PublicationExtractionMapper.to_domain(model)
 
     def delete(self, entity_id: UUID) -> bool:
@@ -125,7 +133,11 @@ class SqlAlchemyPublicationExtractionRepository(
         if model is None:
             return False
         self.session.delete(model)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
         return True
 
     def find_by_criteria(

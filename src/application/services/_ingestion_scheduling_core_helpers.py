@@ -161,13 +161,11 @@ class _IngestionSchedulingCoreHelpers(
                 )
                 raise
             except Exception as exc:
-                error = ingestion_job.IngestionError(
-                    error_type="scheduler_failure",
+                self._handle_ingestion_failure(
+                    running=running,
+                    source=source,
                     error_message=str(exc),
-                    record_id=None,
                 )
-                failed = running.fail(error)
-                self._job_repository.save(failed)
                 raise
             else:
                 self._job_repository.save(completed)
@@ -311,6 +309,39 @@ class _IngestionSchedulingCoreHelpers(
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
+
+    def _handle_ingestion_failure(
+        self: IngestionSchedulingService,
+        *,
+        running: ingestion_job.IngestionJob,
+        source: user_data_source.UserDataSource,
+        error_message: str,
+    ) -> None:
+        error = ingestion_job.IngestionError(
+            error_type="scheduler_failure",
+            error_message=error_message,
+            record_id=None,
+        )
+        self._rollback_job_repository_session()
+        failed = running.fail(error)
+        try:
+            self._job_repository.save(failed)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to persist ingestion failure state after rollback",
+                extra={
+                    "job_id": str(running.id),
+                    "source_id": str(source.id),
+                },
+            )
+
+    def _rollback_job_repository_session(self: IngestionSchedulingService) -> None:
+        repository_session = getattr(self._job_repository, "session", None)
+        if repository_session is None:
+            return
+        rollback = getattr(repository_session, "rollback", None)
+        if callable(rollback):
+            rollback()
 
     def _acquire_source_lock(
         self: IngestionSchedulingService,

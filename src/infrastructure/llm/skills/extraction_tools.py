@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 
     from src.domain.ports.dictionary_port import DictionaryPort
     from src.type_definitions.common import JSONObject, JSONValue
+else:
+    type JSONObject = dict[str, object]
+    type JSONValue = object
 
 
 def _to_json_payload(value: object) -> JSONObject:

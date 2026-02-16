@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.type_definitions.common import JSONObject, JSONValue
+else:
+    type JSONObject = dict[str, object]
+    type JSONValue = object
 
 
 def validate_pubmed_query(payload: JSONObject) -> JSONObject:
