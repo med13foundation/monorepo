@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
 
 from src.application.services.pipeline_orchestration_service import (
     PipelineOrchestrationDependencies,
@@ -26,6 +27,9 @@ from src.routes.research_spaces.dependencies import (
 from src.routes.research_spaces.graph_connection_routes import (
     get_graph_connection_service,
 )
+from src.routes.research_spaces.kernel_graph_search_routes import (
+    get_graph_search_service,
+)
 from src.routes.research_spaces.knowledge_extraction_routes import (
     get_entity_recognition_service,
 )
@@ -37,8 +41,6 @@ from .router import (
 )
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
     from src.application.agents.services.content_enrichment_service import (
         ContentEnrichmentService,
     )
@@ -47,6 +49,9 @@ if TYPE_CHECKING:
     )
     from src.application.agents.services.graph_connection_service import (
         GraphConnectionService,
+    )
+    from src.application.agents.services.graph_search_service import (
+        GraphSearchService,
     )
     from src.application.services import (
         IngestionSchedulingService,
@@ -122,14 +127,20 @@ def get_pipeline_orchestration_service(
     graph_connection_service: GraphConnectionService = Depends(
         get_graph_connection_service,
     ),
+    graph_search_service: GraphSearchService = Depends(get_graph_search_service),
+    session: Session = Depends(get_session),
 ) -> PipelineOrchestrationService:
     """Dependency provider for unified pipeline orchestration."""
+    from src.infrastructure.repositories import SqlAlchemyResearchSpaceRepository
+
     return PipelineOrchestrationService(
         dependencies=PipelineOrchestrationDependencies(
             ingestion_scheduling_service=scheduling_service,
             content_enrichment_service=content_enrichment_service,
             entity_recognition_service=entity_recognition_service,
             graph_connection_service=graph_connection_service,
+            graph_search_service=graph_search_service,
+            research_space_repository=SqlAlchemyResearchSpaceRepository(session),
             pipeline_run_repository=scheduling_service.get_job_repository(),
         ),
     )

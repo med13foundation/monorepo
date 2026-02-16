@@ -35,6 +35,7 @@ from src.infrastructure.llm.adapters import (
     FlujoEntityRecognitionAdapter,
     FlujoExtractionAdapter,
     FlujoGraphConnectionAdapter,
+    FlujoGraphSearchAdapter,
     FlujoQueryAgentAdapter,
 )
 from src.infrastructure.llm.config.model_registry import get_model_registry
@@ -103,6 +104,7 @@ class ApplicationServiceFactoryMixin(
                 session,
                 entity_type=entity_type,
                 entity_id=entity_id,
+                research_space_id=research_space_id,
             )
             if existing is not None:
                 existing_status = str(existing.get("status", "")).strip().lower()
@@ -120,7 +122,7 @@ class ApplicationServiceFactoryMixin(
 
     @staticmethod
     def _is_stage_enabled(flag_name: str) -> bool:
-        return os.getenv(flag_name, "0").strip() == "1"
+        return os.getenv(flag_name, "1").strip() == "1"
 
     def get_entity_recognition_agent(self) -> EntityRecognitionPort:
         if self._entity_recognition_agent is None:
@@ -187,6 +189,7 @@ class ApplicationServiceFactoryMixin(
                 governance_service=governance_service,
                 research_space_repository=SqlAlchemyResearchSpaceRepository(session),
             ),
+            default_shadow_mode=False,
         )
 
     def create_extraction_service(self, session: Session) -> ExtractionService:
@@ -256,10 +259,6 @@ class ApplicationServiceFactoryMixin(
         )
         graph_search_agent = None
         if self._is_stage_enabled("MED13_ENABLE_GRAPH_SEARCH_AGENT"):
-            from src.infrastructure.llm.adapters.graph_search_agent_adapter import (
-                FlujoGraphSearchAdapter,
-            )
-
             registry = get_model_registry()
             model_spec = registry.get_default_model(ModelCapability.QUERY_GENERATION)
             graph_search_agent = FlujoGraphSearchAdapter(

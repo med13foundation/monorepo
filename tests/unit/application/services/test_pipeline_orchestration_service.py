@@ -68,6 +68,7 @@ class StubExtractionSummary:
     processed: int = 3
     extracted: int = 3
     failed: int = 0
+    derived_graph_seed_entity_ids: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
 
@@ -75,6 +76,16 @@ class StubExtractionSummary:
 class StubGraphOutcome:
     persisted_relations_count: int = 1
     errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class StubGraphSearchResultEntry:
+    entity_id: str
+
+
+@dataclass(frozen=True)
+class StubGraphSearchContract:
+    results: tuple[StubGraphSearchResultEntry, ...] = ()
 
 
 class StubIngestionSchedulingService:
@@ -199,6 +210,44 @@ class StubGraphConnectionService:
             },
         )
         return self._outcome
+
+
+class StubGraphSearchService:
+    def __init__(
+        self,
+        contract: StubGraphSearchContract,
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self._contract = contract
+        self._error = error
+        self.calls: list[dict[str, object]] = []
+
+    async def search(  # noqa: PLR0913
+        self,
+        *,
+        question: str,
+        research_space_id: str,
+        max_depth: int = 2,
+        top_k: int = 25,
+        include_evidence_chains: bool = True,
+        force_agent: bool = False,
+        model_id: str | None = None,
+    ) -> StubGraphSearchContract:
+        self.calls.append(
+            {
+                "question": question,
+                "research_space_id": research_space_id,
+                "max_depth": max_depth,
+                "top_k": top_k,
+                "include_evidence_chains": include_evidence_chains,
+                "force_agent": force_agent,
+                "model_id": model_id,
+            },
+        )
+        if self._error is not None:
+            raise self._error
+        return self._contract
 
 
 class StubPipelineRunRepository(IngestionJobRepository):
@@ -492,3 +541,106 @@ async def test_run_for_source_persists_failed_stage_checkpoint() -> None:
     enrichment_checkpoint = _coerce_json_object(checkpoints.get("enrichment"))
     assert enrichment_checkpoint.get("status") == "failed"
     assert isinstance(enrichment_checkpoint.get("error"), str)
+
+
+@pytest.mark.asyncio
+async def test_run_for_source_derives_graph_seeds_from_extraction() -> None:
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    ingestion_service = StubIngestionSchedulingService(
+        StubIngestionSummary(source_id=source_id),
+    )
+    enrichment_service = StubContentEnrichmentService(StubEnrichmentSummary())
+    extraction_service = StubEntityRecognitionService(
+        StubExtractionSummary(
+            derived_graph_seed_entity_ids=("auto-seed-1", "auto-seed-2"),
+        ),
+    )
+    graph_service = StubGraphConnectionService(
+        StubGraphOutcome(persisted_relations_count=1),
+    )
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=ingestion_service,
+            content_enrichment_service=enrichment_service,
+            entity_recognition_service=extraction_service,
+            graph_connection_service=graph_service,
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-derived-seeds",
+        source_type="clinvar",
+    )
+
+    assert summary.graph_requested == 2
+    assert summary.graph_processed == 2
+    assert summary.graph_status == "completed"
+    assert [call["seed_entity_id"] for call in graph_service.calls] == [
+        "auto-seed-1",
+        "auto-seed-2",
+    ]
+    assert summary.metadata is not None
+    assert summary.metadata.get("graph_seed_mode") == "derived_from_extraction"
+
+
+@pytest.mark.asyncio
+async def test_run_for_source_infers_graph_seeds_from_ai_context() -> None:
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    ingestion_service = StubIngestionSchedulingService(
+        StubIngestionSummary(source_id=source_id),
+    )
+    enrichment_service = StubContentEnrichmentService(StubEnrichmentSummary())
+    extraction_service = StubEntityRecognitionService(
+        StubExtractionSummary(
+            derived_graph_seed_entity_ids=(),
+        ),
+    )
+    graph_service = StubGraphConnectionService(
+        StubGraphOutcome(persisted_relations_count=1),
+    )
+    graph_search_service = StubGraphSearchService(
+        StubGraphSearchContract(
+            results=(
+                StubGraphSearchResultEntry(entity_id="ai-seed-1"),
+                StubGraphSearchResultEntry(entity_id="ai-seed-2"),
+            ),
+        ),
+    )
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=ingestion_service,
+            content_enrichment_service=enrichment_service,
+            entity_recognition_service=extraction_service,
+            graph_connection_service=graph_service,
+            graph_search_service=graph_search_service,
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-ai-seeds",
+        source_type="clinvar",
+    )
+
+    assert summary.graph_requested == 2
+    assert summary.graph_processed == 2
+    assert summary.graph_status == "completed"
+    assert [call["seed_entity_id"] for call in graph_service.calls] == [
+        "ai-seed-1",
+        "ai-seed-2",
+    ]
+    assert len(graph_search_service.calls) == 1
+    assert graph_search_service.calls[0]["force_agent"] is True
+    assert summary.metadata is not None
+    assert summary.metadata.get("graph_seed_mode") == "ai_inferred_from_context"

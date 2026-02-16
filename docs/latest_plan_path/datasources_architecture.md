@@ -13,8 +13,8 @@ It covers both the **implemented** source ingestion infrastructure (currently
 deployed for PubMed and ClinVar as the first domain connectors) and the
 **implemented** Flujo-agent-driven extraction pipeline stages from raw
 upstream data toward the kernel knowledge graph.  The staged components are
-implemented, while some full-flow orchestration and truth-layer automation
-behaviors remain tracked gaps (see "Known Gaps vs Flow Example").
+implemented end-to-end for the currently supported connectors, and tracked
+flow gaps are closed (see "Known Gaps vs Flow Example").
 
 ---
 
@@ -2607,7 +2607,7 @@ by the Semantic Layer; agents and the Kernel Pipeline consume them through the
 | `validate_triple(...)` | **Semantic Layer** | Implemented | Validates source_type → relation_type → target_type against `relation_constraints`.  Used by Extraction Agent, Graph Connection Agent, and Kernel Pipeline. |
 | `revoke(id, reason)` | **Semantic Layer** | Implemented (typed revoke methods per dictionary dimension) | Deactivates Dictionary entries and flags downstream data for re-extraction.  Used by Admin UI curators. |
 | `resolve(anchor, entity_type, space_id)` | **Identity Layer** | Implemented (`EntityResolver`) | Match subject anchors to existing entities via policies; create new entities when allowed.  Used by Kernel Pipeline and agents. |
-| `upsert_relation_evidence(...)` | **Truth Layer** | Partially implemented (canonical relation/evidence upsert in kernel relation repository) | Adds evidence and recomputes aggregate confidence/source counts.  Automatic `DRAFT` → `APPROVED` promotion by threshold is a tracked gap (see "Known Gaps vs Flow Example").  Used by Kernel Pipeline and Graph Connection Agent. |
+| `upsert_relation_evidence(...)` | **Truth Layer** | Implemented (canonical relation/evidence upsert in kernel relation repository with auto-promotion policy) | Adds evidence, recomputes aggregate confidence/source counts, and evaluates threshold-based `DRAFT` → `APPROVED` promotion with policy overrides and decision logging.  Used by Kernel Pipeline and Graph Connection Agent. |
 | `evaluate(contract)` | **Governance Layer** | Implemented (`GovernanceService.evaluate`) | Confidence-based routing + centralized review behavior + provenance integration across agents. |
 
 ---
@@ -2637,11 +2637,11 @@ Use this checklist to move any gap from `Open` to `Closed`.
 
 ### Cross-gap completion criteria
 
-- [ ] Implementation merged for the gap.
-- [ ] Unit and integration tests added or updated for the changed behavior.
-- [ ] Feature flags and fallback behavior documented (including defaults).
-- [ ] API and architecture docs updated to reflect as-built behavior.
-- [ ] `Known Gaps vs Flow Example` table status changed to `Closed` with closure date and PR reference.
+- [x] Implementation merged for the gap.
+- [x] Unit and integration tests added or updated for the changed behavior.
+- [x] Feature flags and fallback behavior documented (including defaults).
+- [x] API and architecture docs updated to reflect as-built behavior.
+- [x] `Known Gaps vs Flow Example` table status changed to `Closed` with closure date and PR reference.
 
 ### Gap-specific closure criteria
 
@@ -2678,7 +2678,7 @@ Stage activation matrix (as-built):
 | Query generation | `agent_config.is_ai_managed = true` and query agent is configured | AI disabled/unavailable returns deterministic base query | Ingestion job metadata `query_generation.execution_mode` + pipeline response `metadata.query_generation_execution_mode` |
 | Content enrichment | Tier-2 agent configured and source type is not pass-through | Pass-through source types or agent-disabled path | Batch summary counters (`ai_runs`, `deterministic_runs`) + pipeline response metadata (`enrichment_ai_runs`, `enrichment_deterministic_runs`) |
 | Entity recognition | Tier-3 entity agent is enabled for extraction run | `shadow_mode=true` writes skipped but output still evaluated | Document metadata `entity_recognition_shadow_mode`; run summary includes `shadow_runs` |
-| Graph connection | Graph connection service is configured and seed IDs provided | Service unavailable or graph stage disabled via run inputs | Pipeline stage status (`graph_status`) and structured errors (`graph:service_unavailable`) |
+| Graph connection | Graph connection service is configured and seed IDs are available (explicit run inputs, extraction-derived seeds, or AI-inferred seeds from project/run context + graph search) | Service unavailable, graph stage disabled via run inputs, or scheduler graph hook disabled (`MED13_ENABLE_POST_INGESTION_GRAPH_STAGE=0`) | Pipeline stage status (`graph_status`) and structured errors (`graph:service_unavailable`) |
 
 - [x] Stage activation matrix is documented for all relevant feature flags and environment settings.
 - [x] Runtime responses expose whether AI or deterministic fallback path was used.

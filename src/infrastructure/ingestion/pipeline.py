@@ -93,6 +93,8 @@ class IngestionPipeline:
                 )
                 if resolved_entity.created:
                     result.entities_created += 1
+                if resolved_entity.id not in result.entity_ids_touched:
+                    result.entity_ids_touched.append(resolved_entity.id)
 
                 for observation in mapped_observations:
                     # 3. Normalize

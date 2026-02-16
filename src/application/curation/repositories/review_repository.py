@@ -45,6 +45,7 @@ class ReviewRepository(Protocol):
         db: Session,
         entity_type: str,
         entity_id: str,
+        research_space_id: str | None = None,
     ) -> ReviewRecordLike | None: ...
 
     def get_stats(
@@ -97,7 +98,10 @@ class SqlAlchemyReviewRepository:
             if not self._is_missing_reviews_table_error(exc):
                 raise
             logger.warning(
-                "Reviews table unavailable while listing curation queue; returning empty list",
+                (
+                    "Reviews table unavailable while listing curation queue; "
+                    "returning empty list"
+                ),
                 exc_info=exc,
             )
             db.rollback()
@@ -153,16 +157,15 @@ class SqlAlchemyReviewRepository:
         db: Session,
         entity_type: str,
         entity_id: str,
+        research_space_id: str | None = None,
     ) -> ReviewRecordLike | None:
-        orm = (
-            db.query(ReviewRecord)
-            .filter(
-                ReviewRecord.entity_type == entity_type,
-                ReviewRecord.entity_id == entity_id,
-            )
-            .order_by(ReviewRecord.last_updated.desc())
-            .first()
+        query = db.query(ReviewRecord).filter(
+            ReviewRecord.entity_type == entity_type,
+            ReviewRecord.entity_id == entity_id,
         )
+        if research_space_id is not None:
+            query = query.filter(ReviewRecord.research_space_id == research_space_id)
+        orm = query.order_by(ReviewRecord.last_updated.desc()).first()
         if orm is None:
             return None
         return {
@@ -197,7 +200,10 @@ class SqlAlchemyReviewRepository:
             if not self._is_missing_reviews_table_error(exc):
                 raise
             logger.warning(
-                "Reviews table unavailable while calculating curation stats; returning zeros",
+                (
+                    "Reviews table unavailable while calculating curation stats; "
+                    "returning zeros"
+                ),
                 exc_info=exc,
             )
             db.rollback()

@@ -100,6 +100,7 @@ class StubEntityRecognitionService:
             dictionary_entity_types_created=0,
             ingestion_entities_created=2,
             ingestion_observations_created=4,
+            derived_graph_seed_entity_ids=(),
             errors=(),
             started_at=now,
             completed_at=now,

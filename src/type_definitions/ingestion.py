@@ -65,4 +65,5 @@ class IngestResult:
     success: bool
     entities_created: int = 0
     observations_created: int = 0
+    entity_ids_touched: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)

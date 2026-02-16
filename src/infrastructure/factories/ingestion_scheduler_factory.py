@@ -1,7 +1,8 @@
-"""Factory helpers for building ingestion scheduling services with infrastructure adapters."""
+"""Factory helpers for ingestion scheduling service wiring."""
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -78,10 +79,14 @@ _ENV_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS = (
 )
 _ENV_INGESTION_JOB_HARD_TIMEOUT_SECONDS = "MED13_INGESTION_JOB_HARD_TIMEOUT_SECONDS"
 _ENV_ENABLE_POST_INGESTION_PIPELINE_HOOK = "MED13_ENABLE_POST_INGESTION_PIPELINE_HOOK"
+_ENV_ENABLE_POST_INGESTION_GRAPH_STAGE = "MED13_ENABLE_POST_INGESTION_GRAPH_STAGE"
 _DEFAULT_SCHEDULER_HEARTBEAT_SECONDS = 30
 _DEFAULT_SCHEDULER_LEASE_TTL_SECONDS = 120
 _DEFAULT_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS = 300
 _DEFAULT_INGESTION_JOB_HARD_TIMEOUT_SECONDS = 7200
+_MAX_POST_INGESTION_GRAPH_SEEDS = 200
+
+logger = logging.getLogger(__name__)
 
 
 def _get_configured_scheduler_backend_name() -> str:
@@ -143,7 +148,19 @@ def _read_bool_env(env_key: str, *, default: bool) -> bool:
     return default
 
 
-def build_ingestion_scheduling_service(
+def _normalize_graph_seed_entity_ids(seed_entity_ids: tuple[str, ...]) -> list[str]:
+    normalized_ids: list[str] = []
+    for seed_entity_id in seed_entity_ids:
+        normalized = seed_entity_id.strip()
+        if not normalized or normalized in normalized_ids:
+            continue
+        normalized_ids.append(normalized)
+        if len(normalized_ids) >= _MAX_POST_INGESTION_GRAPH_SEEDS:
+            break
+    return normalized_ids
+
+
+def build_ingestion_scheduling_service(  # noqa: PLR0915
     *,
     session: Session,
     scheduler: SchedulerPort | None = None,
@@ -187,7 +204,8 @@ def build_ingestion_scheduling_service(
     )
     post_ingestion_hook = None
     if _read_bool_env(_ENV_ENABLE_POST_INGESTION_PIPELINE_HOOK, default=True):
-        from src.infrastructure.dependency_injection.dependencies import (  # noqa: PLC0415
+        from src.infrastructure.dependency_injection.dependencies import (
+            # noqa: PLC0415
             get_legacy_dependency_container,
         )
 
@@ -197,6 +215,15 @@ def build_ingestion_scheduling_service(
         )
         entity_recognition_service = container.create_entity_recognition_service(
             session,
+        )
+        enable_post_ingestion_graph_stage = _read_bool_env(
+            _ENV_ENABLE_POST_INGESTION_GRAPH_STAGE,
+            default=True,
+        )
+        graph_connection_service = (
+            container.create_graph_connection_service(session)
+            if enable_post_ingestion_graph_stage
+            else None
         )
 
         async def _run_post_ingestion_pipeline(
@@ -214,14 +241,45 @@ def build_ingestion_scheduling_service(
                 source_type=source_type_value,
                 model_id=None,
             )
-            await entity_recognition_service.process_pending_documents(
-                limit=200,
-                source_id=source.id,
-                research_space_id=source.research_space_id,
-                source_type=source_type_value,
-                model_id=None,
-                shadow_mode=None,
+            extraction_summary = (
+                await entity_recognition_service.process_pending_documents(
+                    limit=200,
+                    source_id=source.id,
+                    research_space_id=source.research_space_id,
+                    source_type=source_type_value,
+                    model_id=None,
+                    shadow_mode=None,
+                )
             )
+            if not enable_post_ingestion_graph_stage:
+                return
+            if graph_connection_service is None:
+                return
+            derived_seed_ids = _normalize_graph_seed_entity_ids(
+                extraction_summary.derived_graph_seed_entity_ids,
+            )
+            for seed_entity_id in derived_seed_ids:
+                try:
+                    await graph_connection_service.discover_connections_for_seed(
+                        research_space_id=str(source.research_space_id),
+                        seed_entity_id=seed_entity_id,
+                        source_type=source_type_value,
+                        model_id=None,
+                        relation_types=None,
+                        max_depth=2,
+                        shadow_mode=None,
+                        pipeline_run_id=None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        (
+                            "Post-ingestion graph discovery failed for "
+                            "source_id=%s, seed=%s: %s"
+                        ),
+                        source.id,
+                        seed_entity_id,
+                        exc,
+                    )
 
         post_ingestion_hook = _run_post_ingestion_pipeline
 

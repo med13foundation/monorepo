@@ -6,16 +6,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, Protocol
-from uuid import UUID, uuid4
 
 from src.application.services._pipeline_orchestration_contracts import (
-    PIPELINE_STAGE_ORDER,
     PipelineRunSummary,
     PipelineStageName,
     PipelineStageStatus,
 )
+from src.application.services._pipeline_orchestration_seed_helpers import (
+    _PipelineOrchestrationContextSeedHelpers,
+)
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from src.application.agents.services.content_enrichment_service import (
         ContentEnrichmentService,
     )
@@ -25,10 +28,16 @@ if TYPE_CHECKING:
     from src.application.agents.services.graph_connection_service import (
         GraphConnectionService,
     )
+    from src.application.agents.services.graph_search_service import (
+        GraphSearchService,
+    )
     from src.application.services.ingestion_scheduling_service import (
         IngestionSchedulingService,
     )
     from src.domain.entities.ingestion_job import IngestionJob
+    from src.domain.repositories.research_space_repository import (
+        ResearchSpaceRepository,
+    )
 
 
 class _PipelineExecutionSelf(Protocol):
@@ -36,6 +45,8 @@ class _PipelineExecutionSelf(Protocol):
     _enrichment: ContentEnrichmentService
     _extraction: EntityRecognitionService
     _graph: GraphConnectionService | None
+    _graph_search: GraphSearchService | None
+    _research_spaces: ResearchSpaceRepository | None
 
     def _start_or_resume_pipeline_run(
         self,
@@ -77,10 +88,12 @@ class _PipelineExecutionSelf(Protocol):
     ) -> IngestionJob | None: ...
 
 
-class _PipelineOrchestrationExecutionHelpers:
+class _PipelineOrchestrationExecutionHelpers(
+    _PipelineOrchestrationContextSeedHelpers,
+):
     """Execution-stage helpers for unified pipeline runs."""
 
-    async def run_for_source(  # noqa: C901, PLR0913, PLR0915
+    async def run_for_source(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self: _PipelineExecutionSelf,
         *,
         source_id: UUID,
@@ -97,14 +110,8 @@ class _PipelineOrchestrationExecutionHelpers:
         graph_relation_types: list[str] | None = None,
     ) -> PipelineRunSummary:
         started_at = datetime.now(UTC)
-        normalized_run_id = _PipelineOrchestrationExecutionHelpers._resolve_run_id(
-            run_id,
-        )
-        normalized_resume_stage = (
-            _PipelineOrchestrationExecutionHelpers._resolve_resume_stage(
-                resume_from_stage,
-            )
-        )
+        normalized_run_id = self._resolve_run_id(run_id)
+        normalized_resume_stage = self._resolve_resume_stage(resume_from_stage)
         errors: list[str] = []
 
         ingestion_status: PipelineStageStatus = "skipped"
@@ -130,7 +137,14 @@ class _PipelineOrchestrationExecutionHelpers:
         extraction_extracted = 0
         extraction_failed = 0
 
-        graph_requested = len(graph_seed_entity_ids or [])
+        explicit_graph_seed_entity_ids = self._normalize_graph_seed_entity_ids(
+            graph_seed_entity_ids,
+        )
+        derived_graph_seed_entity_ids: list[str] = []
+        inferred_graph_seed_entity_ids: list[str] = []
+        active_graph_seed_entity_ids = list(explicit_graph_seed_entity_ids)
+        graph_seed_mode = "explicit" if explicit_graph_seed_entity_ids else "none"
+        graph_requested = len(active_graph_seed_entity_ids)
         graph_processed = 0
         graph_persisted_relations = 0
         pipeline_run_job = self._start_or_resume_pipeline_run(
@@ -140,23 +154,19 @@ class _PipelineOrchestrationExecutionHelpers:
             resume_from_stage=normalized_resume_stage,
         )
 
-        should_run_ingestion = _PipelineOrchestrationExecutionHelpers._should_run_stage(
+        should_run_ingestion = self._should_run_stage(
             stage="ingestion",
             resume_from_stage=normalized_resume_stage,
         )
-        should_run_enrichment = (
-            _PipelineOrchestrationExecutionHelpers._should_run_stage(
-                stage="enrichment",
-                resume_from_stage=normalized_resume_stage,
-            )
+        should_run_enrichment = self._should_run_stage(
+            stage="enrichment",
+            resume_from_stage=normalized_resume_stage,
         )
-        should_run_extraction = (
-            _PipelineOrchestrationExecutionHelpers._should_run_stage(
-                stage="extraction",
-                resume_from_stage=normalized_resume_stage,
-            )
+        should_run_extraction = self._should_run_stage(
+            stage="extraction",
+            resume_from_stage=normalized_resume_stage,
         )
-        should_run_graph = _PipelineOrchestrationExecutionHelpers._should_run_stage(
+        should_run_graph = self._should_run_stage(
             stage="graph",
             resume_from_stage=normalized_resume_stage,
         )
@@ -277,6 +287,11 @@ class _PipelineOrchestrationExecutionHelpers:
                 extraction_processed = extraction_summary.processed
                 extraction_extracted = extraction_summary.extracted
                 extraction_failed = extraction_summary.failed
+                derived_graph_seed_entity_ids = (
+                    self._extract_seed_entity_ids_from_extraction_summary(
+                        extraction_summary,
+                    )
+                )
                 errors.extend(extraction_summary.errors)
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                 extraction_status = "failed"
@@ -295,6 +310,25 @@ class _PipelineOrchestrationExecutionHelpers:
                 ),
             )
 
+        if not explicit_graph_seed_entity_ids and not derived_graph_seed_entity_ids:
+            inferred_graph_seed_entity_ids = (
+                await self._infer_seed_entity_ids_with_context(
+                    source_id=source_id,
+                    research_space_id=research_space_id,
+                    source_type=normalized_source_type,
+                    model_id=model_id,
+                )
+            )
+        if not explicit_graph_seed_entity_ids and derived_graph_seed_entity_ids:
+            active_graph_seed_entity_ids = list(derived_graph_seed_entity_ids)
+            graph_seed_mode = "derived_from_extraction"
+        elif not explicit_graph_seed_entity_ids and inferred_graph_seed_entity_ids:
+            active_graph_seed_entity_ids = list(inferred_graph_seed_entity_ids)
+            graph_seed_mode = "ai_inferred_from_context"
+        else:
+            active_graph_seed_entity_ids = list(explicit_graph_seed_entity_ids)
+        graph_requested = len(active_graph_seed_entity_ids)
+
         can_run_graph = extraction_status == "completed" or (
             normalized_resume_stage == "graph"
         )
@@ -308,7 +342,7 @@ class _PipelineOrchestrationExecutionHelpers:
                 normalized_source_type if normalized_source_type else "clinvar"
             )
             graph_status = "completed"
-            for seed_entity_id in graph_seed_entity_ids or []:
+            for seed_entity_id in active_graph_seed_entity_ids:
                 try:
                     graph_outcome = await self._graph.discover_connections_for_seed(
                         research_space_id=str(research_space_id),
@@ -411,36 +445,10 @@ class _PipelineOrchestrationExecutionHelpers:
                 "enrichment_status": enrichment_status,
                 "extraction_status": extraction_status,
                 "graph_status": graph_status,
+                "graph_seed_mode": graph_seed_mode,
+                "graph_explicit_seed_count": len(explicit_graph_seed_entity_ids),
+                "graph_derived_seed_count": len(derived_graph_seed_entity_ids),
+                "graph_inferred_seed_count": len(inferred_graph_seed_entity_ids),
+                "graph_active_seed_ids": list(active_graph_seed_entity_ids),
             },
         )
-
-    @staticmethod
-    def _resolve_run_id(raw_run_id: str | None) -> str:
-        if raw_run_id is None:
-            return str(uuid4())
-        normalized = raw_run_id.strip()
-        if normalized:
-            return normalized
-        return str(uuid4())
-
-    @staticmethod
-    def _resolve_resume_stage(
-        resume_from_stage: PipelineStageName | None,
-    ) -> PipelineStageName | None:
-        if resume_from_stage is None:
-            return None
-        if resume_from_stage in PIPELINE_STAGE_ORDER:
-            return resume_from_stage
-        return None
-
-    @staticmethod
-    def _should_run_stage(
-        *,
-        stage: PipelineStageName,
-        resume_from_stage: PipelineStageName | None,
-    ) -> bool:
-        if resume_from_stage is None:
-            return True
-        stage_index = PIPELINE_STAGE_ORDER.index(stage)
-        resume_index = PIPELINE_STAGE_ORDER.index(resume_from_stage)
-        return stage_index >= resume_index

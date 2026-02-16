@@ -84,6 +84,7 @@ class EntityRecognitionDocumentOutcome:
     dictionary_entity_types_created: int = 0
     ingestion_entities_created: int = 0
     ingestion_observations_created: int = 0
+    seed_entity_ids: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
 
@@ -103,6 +104,7 @@ class EntityRecognitionRunSummary:
     dictionary_entity_types_created: int
     ingestion_entities_created: int
     ingestion_observations_created: int
+    derived_graph_seed_entity_ids: tuple[str, ...]
     errors: tuple[str, ...]
     started_at: datetime
     completed_at: datetime
@@ -509,6 +511,9 @@ class EntityRecognitionService(
                 dictionary_entity_types_created=dictionary_entity_types_created,
                 ingestion_entities_created=ingestion_result.entities_created,
                 ingestion_observations_created=ingestion_result.observations_created,
+                seed_entity_ids=self._normalize_seed_entity_ids(
+                    ingestion_result.entity_ids_touched,
+                ),
                 errors=tuple(ingestion_result.errors),
             )
 
@@ -540,6 +545,9 @@ class EntityRecognitionService(
             dictionary_entity_types_created=dictionary_entity_types_created,
             ingestion_entities_created=ingestion_result.entities_created,
             ingestion_observations_created=ingestion_result.observations_created,
+            seed_entity_ids=self._normalize_seed_entity_ids(
+                ingestion_result.entity_ids_touched,
+            ),
             errors=tuple(ingestion_result.errors),
         )
 
@@ -925,6 +933,7 @@ class EntityRecognitionService(
                 ingestion_observations_created=(
                     extraction_outcome.ingestion_observations_created
                 ),
+                seed_entity_ids=extraction_outcome.seed_entity_ids,
                 errors=extraction_outcome.errors,
             )
 
@@ -948,6 +957,7 @@ class EntityRecognitionService(
             ingestion_observations_created=(
                 extraction_outcome.ingestion_observations_created
             ),
+            seed_entity_ids=extraction_outcome.seed_entity_ids,
             errors=extraction_outcome.errors,
         )
 
@@ -1138,6 +1148,16 @@ class EntityRecognitionService(
         return "general"
 
     @staticmethod
+    def _normalize_seed_entity_ids(seed_entity_ids: list[str]) -> tuple[str, ...]:
+        normalized_ids: list[str] = []
+        for seed_entity_id in seed_entity_ids:
+            normalized = seed_entity_id.strip()
+            if not normalized or normalized in normalized_ids:
+                continue
+            normalized_ids.append(normalized)
+        return tuple(normalized_ids)
+
+    @staticmethod
     def _build_run_summary(
         *,
         outcomes: list[EntityRecognitionDocumentOutcome],
@@ -1170,6 +1190,12 @@ class EntityRecognitionService(
         errors: list[str] = []
         for outcome in outcomes:
             errors.extend(outcome.errors)
+        derived_graph_seed_entity_ids: list[str] = []
+        for outcome in outcomes:
+            for seed_entity_id in outcome.seed_entity_ids:
+                if seed_entity_id in derived_graph_seed_entity_ids:
+                    continue
+                derived_graph_seed_entity_ids.append(seed_entity_id)
 
         return EntityRecognitionRunSummary(
             requested=requested,
@@ -1184,6 +1210,7 @@ class EntityRecognitionService(
             dictionary_entity_types_created=dictionary_entity_types_created,
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
+            derived_graph_seed_entity_ids=tuple(derived_graph_seed_entity_ids),
             errors=tuple(errors),
             started_at=started_at,
             completed_at=completed_at,

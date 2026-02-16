@@ -56,6 +56,7 @@ class ExtractionDocumentOutcome:
     rejected_facts: int = 0
     ingestion_entities_created: int = 0
     ingestion_observations_created: int = 0
+    seed_entity_ids: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
 
@@ -173,6 +174,9 @@ class ExtractionService:
                 reason="kernel_ingestion_failed",
                 ingestion_entities_created=ingestion_result.entities_created,
                 ingestion_observations_created=ingestion_result.observations_created,
+                seed_entity_ids=self._normalize_seed_entity_ids(
+                    ingestion_result.entity_ids_touched,
+                ),
                 errors=tuple(ingestion_result.errors),
             )
 
@@ -185,6 +189,9 @@ class ExtractionService:
             reason="processed",
             ingestion_entities_created=ingestion_result.entities_created,
             ingestion_observations_created=ingestion_result.observations_created,
+            seed_entity_ids=self._normalize_seed_entity_ids(
+                ingestion_result.entity_ids_touched,
+            ),
             errors=tuple(ingestion_result.errors),
         )
 
@@ -296,6 +303,16 @@ class ExtractionService:
         return "low"
 
     @staticmethod
+    def _normalize_seed_entity_ids(seed_entity_ids: list[str]) -> tuple[str, ...]:
+        normalized_ids: list[str] = []
+        for seed_entity_id in seed_entity_ids:
+            normalized = seed_entity_id.strip()
+            if not normalized or normalized in normalized_ids:
+                continue
+            normalized_ids.append(normalized)
+        return tuple(normalized_ids)
+
+    @staticmethod
     def _build_outcome(  # noqa: PLR0913
         *,
         document: SourceDocument,
@@ -306,6 +323,7 @@ class ExtractionService:
         reason: str,
         ingestion_entities_created: int = 0,
         ingestion_observations_created: int = 0,
+        seed_entity_ids: tuple[str, ...] = (),
         errors: tuple[str, ...] = (),
     ) -> ExtractionDocumentOutcome:
         status: Literal["extracted", "failed"] = (
@@ -324,6 +342,7 @@ class ExtractionService:
             rejected_facts=len(contract.rejected_facts),
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
+            seed_entity_ids=seed_entity_ids,
             errors=errors,
         )
 
