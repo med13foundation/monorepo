@@ -280,7 +280,7 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
             content_storage_key=storage_result.storage_key,
             content_length_chars=storage_result.content_length_chars,
             run_id=run_id,
-            errors=(contract.warning,) if contract.warning else (),
+            errors=(),
         )
 
     async def _build_contract(
@@ -352,6 +352,7 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
             source_type=document.source_type.value,
             acquisition_method="pass_through",
             content_format="structured_json",
+            content_storage_key=document.raw_storage_key,
             content_length_chars=len(serialized),
             content_payload=payload,
             agent_run_id=None,

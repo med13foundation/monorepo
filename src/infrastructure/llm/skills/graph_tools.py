@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from typing import Literal
 
     from src.domain.ports.graph_query_port import GraphQueryPort
     from src.domain.repositories.kernel.relation_repository import (

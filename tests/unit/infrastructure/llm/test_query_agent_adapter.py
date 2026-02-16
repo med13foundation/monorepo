@@ -116,7 +116,7 @@ class TestFlujoQueryAgentAdapterModelSelection:
         ):
             adapter = FlujoQueryAgentAdapter()
             resolved = adapter._resolve_model_id("pubmed")
-            assert resolved == "openai:gpt-4o-mini"
+            assert resolved == "openai:gpt-5-nano"
 
     def test_resolve_model_id_with_valid_model(
         self,
@@ -166,7 +166,7 @@ class TestFlujoQueryAgentAdapterModelSelection:
             adapter = FlujoQueryAgentAdapter()
             resolved = adapter._resolve_model_id("pubmed", "invalid:model")
             # Should fall back to default
-            assert resolved == "openai:gpt-4o-mini"
+            assert resolved == "openai:gpt-5-nano"
 
     def test_is_supported_source_pubmed(
         self,

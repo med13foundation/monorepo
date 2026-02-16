@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 from src.type_definitions.json_utils import to_json_value
@@ -11,6 +12,9 @@ if TYPE_CHECKING:
 
     from src.domain.ports.dictionary_port import DictionaryPort
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
+
+
+_MUTATION_TOOL_LOCK = threading.RLock()
 
 
 def _model_to_json(model: object) -> JSONObject:
@@ -152,28 +156,29 @@ def make_create_variable_tool(
 
         Call this only after searching and confirming no good existing match.
         """
-        created = dictionary_service.create_variable(
-            variable_id=variable_id,
-            canonical_name=canonical_name,
-            display_name=display_name,
-            data_type=data_type,
-            domain_context=_normalized_string(
-                optional_params.get("domain_context"),
-                default="general",
-            ),
-            sensitivity=_normalized_string(
-                optional_params.get("sensitivity"),
-                default="INTERNAL",
-            ),
-            preferred_unit=_optional_string(optional_params.get("preferred_unit")),
-            constraints=_constraints_payload(
-                _optional_constraints(optional_params.get("constraints")),
-            ),
-            description=_optional_string(optional_params.get("description")),
-            created_by=actor,
-            source_ref=source_ref,
-            research_space_settings=research_space_settings,
-        )
+        with _MUTATION_TOOL_LOCK:
+            created = dictionary_service.create_variable(
+                variable_id=variable_id,
+                canonical_name=canonical_name,
+                display_name=display_name,
+                data_type=data_type,
+                domain_context=_normalized_string(
+                    optional_params.get("domain_context"),
+                    default="general",
+                ),
+                sensitivity=_normalized_string(
+                    optional_params.get("sensitivity"),
+                    default="INTERNAL",
+                ),
+                preferred_unit=_optional_string(optional_params.get("preferred_unit")),
+                constraints=_constraints_payload(
+                    _optional_constraints(optional_params.get("constraints")),
+                ),
+                description=_optional_string(optional_params.get("description")),
+                created_by=actor,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
         return _model_to_json(created)
 
     return create_variable
@@ -200,14 +205,15 @@ def make_create_synonym_tool(
 
         Use this when a document field is an alias of an existing variable.
         """
-        created = dictionary_service.create_synonym(
-            variable_id=variable_id,
-            synonym=synonym,
-            source=source,
-            created_by=actor,
-            source_ref=source_ref,
-            research_space_settings=research_space_settings,
-        )
+        with _MUTATION_TOOL_LOCK:
+            created = dictionary_service.create_synonym(
+                variable_id=variable_id,
+                synonym=synonym,
+                source=source,
+                created_by=actor,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
         return _model_to_json(created)
 
     return create_synonym
@@ -237,17 +243,18 @@ def make_create_entity_type_tool(
 
         Use only when the concept is absent from existing entity types.
         """
-        created = dictionary_service.create_entity_type(
-            entity_type=entity_type,
-            display_name=display_name,
-            description=description,
-            domain_context=domain_context,
-            external_ontology_ref=external_ontology_ref,
-            expected_properties=_expected_properties_payload(expected_properties),
-            created_by=actor,
-            source_ref=source_ref,
-            research_space_settings=research_space_settings,
-        )
+        with _MUTATION_TOOL_LOCK:
+            created = dictionary_service.create_entity_type(
+                entity_type=entity_type,
+                display_name=display_name,
+                description=description,
+                domain_context=domain_context,
+                external_ontology_ref=external_ontology_ref,
+                expected_properties=_expected_properties_payload(expected_properties),
+                created_by=actor,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
         return _model_to_json(created)
 
     return create_entity_type
@@ -278,17 +285,18 @@ def make_create_relation_type_tool(
 
         Use only when no semantically equivalent relation type exists.
         """
-        created = dictionary_service.create_relation_type(
-            relation_type=relation_type,
-            display_name=display_name,
-            description=description,
-            domain_context=domain_context,
-            is_directional=is_directional,
-            inverse_label=inverse_label,
-            created_by=actor,
-            source_ref=source_ref,
-            research_space_settings=research_space_settings,
-        )
+        with _MUTATION_TOOL_LOCK:
+            created = dictionary_service.create_relation_type(
+                relation_type=relation_type,
+                display_name=display_name,
+                description=description,
+                domain_context=domain_context,
+                is_directional=is_directional,
+                inverse_label=inverse_label,
+                created_by=actor,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
         return _model_to_json(created)
 
     return create_relation_type
@@ -318,16 +326,17 @@ def make_create_relation_constraint_tool(
 
         Use this only after confirming the source/target entity and relation types.
         """
-        created = dictionary_service.create_relation_constraint(
-            source_type=source_type,
-            relation_type=relation_type,
-            target_type=target_type,
-            is_allowed=is_allowed,
-            requires_evidence=requires_evidence,
-            created_by=actor,
-            source_ref=source_ref,
-            research_space_settings=research_space_settings,
-        )
+        with _MUTATION_TOOL_LOCK:
+            created = dictionary_service.create_relation_constraint(
+                source_type=source_type,
+                relation_type=relation_type,
+                target_type=target_type,
+                is_allowed=is_allowed,
+                requires_evidence=requires_evidence,
+                created_by=actor,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
         return _model_to_json(created)
 
     return create_relation_constraint

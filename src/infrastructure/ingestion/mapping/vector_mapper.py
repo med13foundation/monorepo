@@ -139,9 +139,32 @@ class VectorMapper:
                     anchors[key] = record.data[key]
             return anchors
 
-        for key in ["mrn", "issuer", "patient_id", "email", "hgnc_id", "gene_symbol"]:
+        for key in [
+            "mrn",
+            "issuer",
+            "patient_id",
+            "email",
+            "hgnc_id",
+            "gene_symbol",
+            "clinvar_id",
+            "variant_id",
+            "variation_id",
+            "hgvs_notation",
+            "hgvs",
+            "rsid",
+        ]:
             if key in record.data and record.data[key] is not None:
                 anchors[key] = record.data[key]
+
+        for key in ["source_record_id", "external_record_id"]:
+            if key in anchors:
+                continue
+            raw_value = record.metadata.get(key)
+            if raw_value is not None and raw_value != "":
+                anchors[key] = raw_value
+
+        if not anchors and record.source_id.strip():
+            anchors["source_id"] = record.source_id.strip()
         return anchors
 
     def _extract_timestamp(self, record: RawRecord) -> datetime | None:

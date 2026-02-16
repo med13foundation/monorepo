@@ -1,6 +1,6 @@
 # Data Sources Architecture Guide
 
-Last updated: 2026-02-15
+Last updated: 2026-02-16
 
 This guide documents how the platform handles external data sources end-to-end
 — from discovery and fetch through content enrichment, knowledge extraction,
@@ -13,8 +13,8 @@ It covers both the **implemented** source ingestion infrastructure (currently
 deployed for PubMed and ClinVar as the first domain connectors) and the
 **implemented** Flujo-agent-driven extraction pipeline stages from raw
 upstream data toward the kernel knowledge graph.  The staged components are
-implemented end-to-end for the currently supported connectors, and tracked
-flow gaps are closed (see "Known Gaps vs Flow Example").
+implemented end-to-end for the currently supported connectors; remaining
+flow deltas are tracked in "Known Gaps vs Flow Example".
 
 ---
 
@@ -44,7 +44,7 @@ flow gaps are closed (see "Known Gaps vs Flow Example").
 22. [PHI Isolation & Security](#phi-isolation--security)
 23. [Multi-Tenancy — Research Spaces](#multi-tenancy--research-spaces)
 24. [Autonomous Dictionary Evolution Plan](#autonomous-dictionary-evolution-plan)
-25. [Known Gaps vs Flow Example](#known-gaps-vs-flow-example-as-is-2026-02-15)
+25. [Known Gaps vs Flow Example](#known-gaps-vs-flow-example)
 26. [Gap Closure Checklist](#gap-closure-checklist)
 27. [Principles to Keep](#principles-to-keep)
 
@@ -68,10 +68,13 @@ scheduling, job lifecycle, dedup, and the kernel pipeline are shared.
 - `database` — direct database connector (e.g. institutional data warehouse, REDCap export).
 - `web_scraping` — structured web extraction (e.g. trade trackers, leaderboard pages).
 
-Adding a new domain requires only a new connector and Dictionary seeds — no
-changes to the pipeline, agents, or kernel graph.  PubMed and ClinVar are
-treated as separate source types because they have different upstream APIs,
-response schemas, and query contracts — the same pattern any new connector follows.
+Adding a new domain requires a new connector and domain Dictionary
+definitions — no changes to the pipeline, agents, or kernel graph.
+Graph-stage seed IDs are resolved at runtime (explicit request seeds,
+extraction-derived seeds, or AI-inferred seeds from project/run context).
+PubMed and ClinVar are treated as separate source types because they have
+different upstream APIs, response schemas, and query contracts — the same
+pattern any new connector follows.
 
 ---
 
@@ -2612,10 +2615,10 @@ by the Semantic Layer; agents and the Kernel Pipeline consume them through the
 
 ---
 
-## Known Gaps vs Flow Example (As-Is 2026-02-15)
+## Known Gaps vs Flow Example
 
 This section tracks current deltas between implemented behavior and
-`docs/latest_plan_path/flow_example.md`.
+`docs/latest_plan_path/flow_example.md` as of 2026-02-16.
 
 | Gap ID | Flow expectation | Current behavior | Status |
 |---|---|---|---|
@@ -2625,9 +2628,12 @@ This section tracks current deltas between implemented behavior and
 | `GAP-004` | Query-generation stage is a first-class, source-agnostic pipeline stage. | Query generation is implemented as a standalone service contract (`QueryGenerationService`) with deterministic fallback semantics and run telemetry propagated through ingestion metadata (`query_generation.*`). | Closed (2026-02-15) |
 | `GAP-005` | Full AI-driven flow is always active across tiers. | Stage activation and fallback modes are explicitly documented, runtime payloads expose execution mode details, and scheduler warnings surface prolonged deterministic fallback periods. | Closed (2026-02-15) |
 | `GAP-006` | Domain cold-start bootstrapping is a guaranteed pipeline behavior. | Entity-recognition processing invokes automatic domain bootstrap when dictionary coverage is empty, seeding minimum entity/relation/variable definitions and routing creations to `PENDING_REVIEW`. | Closed (2026-02-15) |
+| `GAP-007` | Connector onboarding is fully generalized beyond initial biomedical connectors. | End-to-end pipeline/orchestration is source-agnostic, but ingestion connectors currently wired at launch are `PubMed` and `ClinVar`; additional connectors remain onboarding work. | Open |
+| `GAP-008` | Graph-only resume runs deterministically without manual seed input. | Seed resolution supports explicit, extraction-derived, and AI-inferred context modes; if all resolve to zero seeds (for example, sparse prior graph context), graph stage is skipped and manual seeds may still be required. | Partial |
 
-**Tracking note:** all tracked gaps in this table are closed as of 2026-02-15.
-This architecture path is now aligned with the implemented flow behavior.
+**Tracking note:** core flow gaps `GAP-001` through `GAP-006` are closed.
+Remaining deltas are connector breadth (`GAP-007`) and deterministic
+no-input graph seed availability for graph-only resumes (`GAP-008`).
 
 ---
 
@@ -2676,9 +2682,9 @@ Stage activation matrix (as-built):
 | Stage | AI-active condition | Deterministic / fallback condition | Runtime exposure |
 |---|---|---|---|
 | Query generation | `agent_config.is_ai_managed = true` and query agent is configured | AI disabled/unavailable returns deterministic base query | Ingestion job metadata `query_generation.execution_mode` + pipeline response `metadata.query_generation_execution_mode` |
-| Content enrichment | Tier-2 agent configured and source type is not pass-through | Pass-through source types or agent-disabled path | Batch summary counters (`ai_runs`, `deterministic_runs`) + pipeline response metadata (`enrichment_ai_runs`, `enrichment_deterministic_runs`) |
-| Entity recognition | Tier-3 entity agent is enabled for extraction run | `shadow_mode=true` writes skipped but output still evaluated | Document metadata `entity_recognition_shadow_mode`; run summary includes `shadow_runs` |
-| Graph connection | Graph connection service is configured and seed IDs are available (explicit run inputs, extraction-derived seeds, or AI-inferred seeds from project/run context + graph search) | Service unavailable, graph stage disabled via run inputs, or scheduler graph hook disabled (`MED13_ENABLE_POST_INGESTION_GRAPH_STAGE=0`) | Pipeline stage status (`graph_status`) and structured errors (`graph:service_unavailable`) |
+| Content enrichment | `MED13_ENABLE_CONTENT_ENRICHMENT_AGENT=1` (default when unset) and source type is not pass-through | Pass-through source types or env flag explicitly set to `0` | Batch summary counters (`ai_runs`, `deterministic_runs`) + pipeline response metadata (`enrichment_ai_runs`, `enrichment_deterministic_runs`) |
+| Entity recognition | Tier-3 entity agent is enabled for extraction run; DI default is `shadow_mode=false` | `shadow_mode=true` writes skipped but output still evaluated | Document metadata `entity_recognition_shadow_mode`; run summary includes `shadow_runs` |
+| Graph connection | Graph connection service is configured and seed IDs are available (explicit run inputs, extraction-derived seeds, or AI-inferred seeds from project/run context + graph search) | Service unavailable, graph stage disabled via run inputs/scheduler hook (`MED13_ENABLE_POST_INGESTION_GRAPH_STAGE=0`), or no seed IDs resolved | Pipeline stage status (`graph_status`) and structured errors (`graph:service_unavailable`) |
 
 - [x] Stage activation matrix is documented for all relevant feature flags and environment settings.
 - [x] Runtime responses expose whether AI or deterministic fallback path was used.
@@ -2703,6 +2709,8 @@ Alerting implementation note:
 | `GAP-004` | `Ingestion/Query` | `M1` | `Closed` | `2026-02-15` | `local` |
 | `GAP-005` | `Platform/LLM` | `M1` | `Closed` | `2026-02-15` | `local` |
 | `GAP-006` | `Dictionary/Agents` | `M1` | `Closed` | `2026-02-15` | `local` |
+| `GAP-007` | `Connector Onboarding` | `M2` | `Open` | `-` | `local` |
+| `GAP-008` | `Pipeline/Graph Seeds` | `M2` | `Partial` | `-` | `local` |
 
 ---
 
@@ -2744,12 +2752,12 @@ Alerting implementation note:
 13. **Global Dictionary, space-scoped graph.** The Dictionary is shared across
     all research spaces (one vocabulary).  Graph data (entities, observations,
     relations) is scoped per `research_space_id` (strict isolation).
-14. **Canonical edges with evidence accumulation (target state).** Each
+14. **Canonical edges with evidence accumulation (implemented).** Each
     logical connection in the graph has exactly one canonical edge.  When
     multiple sources confirm the same relation, evidence accumulates on the
     existing edge, strengthening the signal.  Automatic `DRAFT` → `APPROVED`
-    promotion by threshold is the intended behavior and remains a tracked gap
-    until fully enforced.
+    promotion is enforced by threshold policy with per-research-space
+    overrides and promotion/non-promotion decision logging.
 15. **Centralized Intelligence Layers.** Cross-cutting intelligence — Dictionary
     search and management (Semantic Layer), entity resolution (Identity Layer),
     evidence aggregation (Truth Layer), governance routing and audit (Governance

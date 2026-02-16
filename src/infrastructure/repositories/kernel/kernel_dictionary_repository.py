@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from sqlalchemy import and_, select
+from sqlalchemy.exc import IntegrityError
 
 from src.domain.entities.kernel.dictionary import (
     DictionaryChangelog,
@@ -376,6 +377,14 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         if normalized_source == "":
             normalized_source = None
 
+        existing_stmt = select(VariableSynonymModel).where(
+            VariableSynonymModel.variable_id == variable_id,
+            VariableSynonymModel.synonym == normalized_synonym,
+        )
+        existing = self._session.scalars(existing_stmt).first()
+        if existing is not None:
+            return VariableSynonym.model_validate(existing)
+
         model = VariableSynonymModel(
             variable_id=variable_id,
             synonym=normalized_synonym,
@@ -384,8 +393,15 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             source_ref=source_ref,
             review_status=review_status,
         )
-        self._session.add(model)
-        self._session.flush()
+        try:
+            self._session.add(model)
+            self._session.flush()
+        except IntegrityError:
+            self._session.rollback()
+            existing_after_conflict = self._session.scalars(existing_stmt).first()
+            if existing_after_conflict is not None:
+                return VariableSynonym.model_validate(existing_after_conflict)
+            raise
         self._record_change(
             table_name=VariableSynonymModel.__tablename__,
             record_id=str(model.id),

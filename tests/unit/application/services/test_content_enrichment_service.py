@@ -253,6 +253,58 @@ async def test_process_pending_documents_passes_through_structured_source() -> N
 
 
 @pytest.mark.asyncio
+async def test_pass_through_reuses_raw_storage_key_when_coordinator_present() -> None:
+    document = _build_document(
+        source_type=SourceType.CLINVAR,
+        raw_storage_key="clinvar/raw/record-1.json",
+    )
+    repository = StubSourceDocumentRepository([document])
+    storage = StubStorageCoordinator()
+    service = ContentEnrichmentService(
+        dependencies=ContentEnrichmentServiceDependencies(
+            content_enrichment_agent=None,
+            source_document_repository=repository,
+            storage_coordinator=storage,
+        ),
+    )
+
+    summary = await service.process_pending_documents(limit=5)
+    updated = repository.get_by_id(document.id)
+    assert updated is not None
+
+    assert summary.enriched == 1
+    assert summary.failed == 0
+    assert storage.calls == 0
+    assert updated.enrichment_method == "pass_through"
+    assert updated.enriched_storage_key == "clinvar/raw/record-1.json"
+
+
+@pytest.mark.asyncio
+async def test_pass_through_uses_inline_key_when_raw_storage_key_missing() -> None:
+    document = _build_document(source_type=SourceType.CLINVAR)
+    repository = StubSourceDocumentRepository([document])
+    storage = StubStorageCoordinator()
+    service = ContentEnrichmentService(
+        dependencies=ContentEnrichmentServiceDependencies(
+            content_enrichment_agent=None,
+            source_document_repository=repository,
+            storage_coordinator=storage,
+        ),
+    )
+
+    summary = await service.process_pending_documents(limit=5)
+    updated = repository.get_by_id(document.id)
+    assert updated is not None
+
+    assert summary.enriched == 1
+    assert summary.failed == 0
+    assert storage.calls == 0
+    assert updated.enrichment_method == "pass_through"
+    assert updated.enriched_storage_key is not None
+    assert updated.enriched_storage_key.startswith("inline://documents/")
+
+
+@pytest.mark.asyncio
 async def test_process_document_uses_agent_and_storage_for_pubmed() -> None:
     document = _build_document(source_type=SourceType.PUBMED)
     repository = StubSourceDocumentRepository([document])

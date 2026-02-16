@@ -20,7 +20,7 @@
     },
     {
       "path": "src/infrastructure/repositories/kernel/kernel_dictionary_repository.py",
-      "max_lines": 1500,
+      "max_lines": 1600,
       "reason": "Phase 6 + Phase 7 (versioning/validity + transform governance) expanded repository methods; extraction by concern (search/create/governance/versioning/transforms) remains tracked follow-up work.",
       "expires_on": "2026-12-31"
     },

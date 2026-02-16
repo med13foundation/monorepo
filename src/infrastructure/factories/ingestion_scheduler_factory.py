@@ -194,7 +194,7 @@ def build_ingestion_scheduling_service(  # noqa: PLR0915
     extraction_repository = SqlAlchemyPublicationExtractionRepository(session)
     extraction_runner_service = ExtractionRunnerService(
         queue_repository=extraction_queue_repository,
-        publication_repository=publication_repository,  # type: ignore[arg-type]
+        publication_repository=publication_repository,
         extraction_repository=extraction_repository,
         processor_registry={
             SourceType.PUBMED.value: RuleBasedPubMedExtractionProcessor(),
@@ -292,7 +292,7 @@ def build_ingestion_scheduling_service(  # noqa: PLR0915
         gateway=PubMedSourceGateway(),
         pipeline=pipeline,
         dependencies=PubMedIngestionDependencies(
-            publication_repository=publication_repository,  # type: ignore[arg-type]
+            publication_repository=publication_repository,
             storage_service=storage_service,
             query_agent=query_agent,
             research_space_repository=research_space_repository,

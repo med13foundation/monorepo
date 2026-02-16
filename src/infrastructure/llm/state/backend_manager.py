@@ -14,8 +14,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from flujo.application.core.runtime.factories import BackendFactory
+from flujo.domain.agent_result import FlujoAgentResult
+from flujo.utils.serialization import register_custom_serializer
 
 from src.infrastructure.llm.config.flujo_config import resolve_flujo_state_uri
+from src.type_definitions.common import JSONValue  # noqa: TC001
+from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from flujo.state.backends.base import StateBackend
@@ -33,11 +37,59 @@ class _StateBackendHolder:
 _STATE_BACKEND_LOCK = threading.Lock()
 _STATE_BACKEND_HOLDER = _StateBackendHolder()
 _STATE_BACKEND_FACTORY = BackendFactory()
+_SERIALIZER_REGISTRATION_LOCK = threading.Lock()
+_SERIALIZER_REGISTRATION_STATE = {"registered": False}
+
+
+def _serialize_flujo_agent_result(result: FlujoAgentResult) -> dict[str, JSONValue]:
+    usage_payload: dict[str, JSONValue] | None = None
+    usage = result.usage()
+    if usage is not None:
+        input_tokens = getattr(usage, "input_tokens", 0)
+        output_tokens = getattr(usage, "output_tokens", 0)
+        usage_cost = getattr(usage, "cost_usd", None)
+        usage_payload = {
+            "input_tokens": (
+                int(input_tokens) if isinstance(input_tokens, int | float) else 0
+            ),
+            "output_tokens": (
+                int(output_tokens) if isinstance(output_tokens, int | float) else 0
+            ),
+            "cost_usd": (
+                float(usage_cost) if isinstance(usage_cost, int | float) else None
+            ),
+        }
+
+    serialized: dict[str, JSONValue] = {
+        "output": to_json_value(result.output),
+        "usage": to_json_value(usage_payload),
+        "cost_usd": (
+            float(result.cost_usd) if isinstance(result.cost_usd, int | float) else None
+        ),
+        "token_counts": (
+            int(result.token_counts)
+            if isinstance(result.token_counts, int | float)
+            else None
+        ),
+    }
+    return serialized
+
+
+def _register_custom_serializers() -> None:
+    with _SERIALIZER_REGISTRATION_LOCK:
+        if _SERIALIZER_REGISTRATION_STATE["registered"]:
+            return
+        register_custom_serializer(
+            FlujoAgentResult,
+            _serialize_flujo_agent_result,
+        )
+        _SERIALIZER_REGISTRATION_STATE["registered"] = True
 
 
 def _build_state_backend() -> StateBackend:
     """Build a new state backend instance."""
     state_uri = resolve_flujo_state_uri()
+    _register_custom_serializers()
     os.environ["FLUJO_STATE_URI"] = state_uri
     logger.info("Initializing Flujo state backend with URI: %s", _mask_uri(state_uri))
     return _STATE_BACKEND_FACTORY.create_state_backend()

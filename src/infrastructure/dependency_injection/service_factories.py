@@ -4,7 +4,9 @@ Factory mixin for building application services used by the dependency container
 
 from __future__ import annotations
 
+import logging
 import os
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from src.application.agents.services import (
@@ -39,6 +41,14 @@ from src.infrastructure.llm.adapters import (
     FlujoQueryAgentAdapter,
 )
 from src.infrastructure.llm.config.model_registry import get_model_registry
+from src.infrastructure.repositories import (
+    SqlAlchemyResearchSpaceRepository,
+    SqlAlchemySourceDocumentRepository,
+)
+from src.infrastructure.repositories.kernel import (
+    SqlAlchemyGraphQueryRepository,
+    SqlAlchemyKernelRelationRepository,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -75,6 +85,8 @@ class ApplicationServiceFactoryMixin(
 
         def get_system_status_service(self) -> SystemStatusService: ...
 
+    _logger = logging.getLogger(__name__)
+
     def get_query_agent(self) -> QueryAgentPort:
         if self._query_agent is None:
             registry = get_model_registry()
@@ -100,23 +112,31 @@ class ApplicationServiceFactoryMixin(
             research_space_id: str | None,
             priority: str,
         ) -> None:
-            existing = repository.find_by_entity(
-                session,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                research_space_id=research_space_id,
-            )
-            if existing is not None:
-                existing_status = str(existing.get("status", "")).strip().lower()
-                if existing_status == "pending":
-                    return
-            review_service.submit(
-                session,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                priority=priority,
-                research_space_id=research_space_id,
-            )
+            try:
+                existing = repository.find_by_entity(
+                    session,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    research_space_id=research_space_id,
+                )
+                if existing is not None:
+                    existing_status = str(existing.get("status", "")).strip().lower()
+                    if existing_status == "pending":
+                        return
+                review_service.submit(
+                    session,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    priority=priority,
+                    research_space_id=research_space_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                with suppress(Exception):
+                    session.rollback()
+                ApplicationServiceFactoryMixin._logger.warning(
+                    "Review queue submit skipped due to repository error: %s",
+                    exc,
+                )
 
         return submit_review_item
 
@@ -150,11 +170,6 @@ class ApplicationServiceFactoryMixin(
         self,
         session: Session,
     ) -> EntityRecognitionService:
-        from src.infrastructure.repositories import (
-            SqlAlchemyResearchSpaceRepository,
-            SqlAlchemySourceDocumentRepository,
-        )
-
         dictionary_service = self.create_dictionary_management_service(session)
         governance_service = GovernanceService()
         ingestion_pipeline = create_ingestion_pipeline(session)
@@ -215,14 +230,6 @@ class ApplicationServiceFactoryMixin(
         self,
         session: Session,
     ) -> GraphConnectionService:
-        from src.infrastructure.repositories.kernel import (
-            SqlAlchemyGraphQueryRepository,
-            SqlAlchemyKernelRelationRepository,
-        )
-        from src.infrastructure.repositories.research_space_repository import (
-            SqlAlchemyResearchSpaceRepository,
-        )
-
         dictionary_service = self.create_dictionary_management_service(session)
         relation_repository = SqlAlchemyKernelRelationRepository(session)
         graph_query_service = SqlAlchemyGraphQueryRepository(session)
@@ -248,9 +255,6 @@ class ApplicationServiceFactoryMixin(
 
     def create_graph_search_service(self, session: Session) -> GraphSearchService:
         from src.application.services.research_query_service import ResearchQueryService
-        from src.infrastructure.repositories.kernel import (
-            SqlAlchemyGraphQueryRepository,
-        )
 
         dictionary_service = self.create_dictionary_management_service(session)
         graph_query_service = SqlAlchemyGraphQueryRepository(session)
@@ -279,8 +283,6 @@ class ApplicationServiceFactoryMixin(
         self,
         session: Session,
     ) -> ContentEnrichmentService:
-        from src.infrastructure.repositories import SqlAlchemySourceDocumentRepository
-
         content_enrichment_agent = None
         if self._is_stage_enabled("MED13_ENABLE_CONTENT_ENRICHMENT_AGENT"):
             registry = get_model_registry()

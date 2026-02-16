@@ -24,6 +24,7 @@ from src.type_definitions.common import JSONObject  # noqa: TC001
 from src.type_definitions.storage import StorageUseCase
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from uuid import UUID
 
     from src.application.services.storage_operation_coordinator import (
@@ -40,6 +41,37 @@ class _ContentEnrichmentStorageSelf(Protocol):
     _storage_coordinator: StorageOperationCoordinator | None
     _source_documents: SourceDocumentRepository
 
+    @staticmethod
+    def _resolve_existing_or_inline_storage(
+        *,
+        document: SourceDocument,
+        contract: ContentEnrichmentContract,
+        payload: bytes | None,
+    ) -> StorageResult | None: ...
+
+    async def _store_generated_payload(
+        self,
+        *,
+        document: SourceDocument,
+        contract: ContentEnrichmentContract,
+        payload: bytes,
+        run_id: str | None,
+        pipeline_run_id: str | None,
+    ) -> StorageResult: ...
+
+    async def _store_payload_with_fallback(
+        self,
+        *,
+        key: str,
+        file_path: Path,
+        content_type: str,
+        metadata: JSONObject,
+    ) -> _StoredPayloadRecord: ...
+
+
+class _StoredPayloadRecord(Protocol):
+    key: str
+
 
 class _ContentEnrichmentStorageHelpers:
     """Storage persistence and run-summary helper methods."""
@@ -52,49 +84,99 @@ class _ContentEnrichmentStorageHelpers:
         run_id: str | None,
         pipeline_run_id: str | None,
     ) -> StorageResult | None:
+        payload = serialize_contract_payload(contract)
+        direct_result = self._resolve_existing_or_inline_storage(
+            document=document,
+            contract=contract,
+            payload=payload,
+        )
+        if direct_result is not None:
+            return direct_result
+
+        if payload is None:
+            return None
+        if self._storage_coordinator is None:
+            return None
+
+        return await self._store_generated_payload(
+            document=document,
+            contract=contract,
+            payload=payload,
+            run_id=run_id,
+            pipeline_run_id=pipeline_run_id,
+        )
+
+    @staticmethod
+    def _resolve_existing_or_inline_storage(
+        *,
+        document: SourceDocument,
+        contract: ContentEnrichmentContract,
+        payload: bytes | None,
+    ) -> StorageResult | None:
         if contract.content_storage_key is not None:
-            payload = serialize_contract_payload(contract)
-            content_hash = (
-                hashlib.sha256(payload).hexdigest() if payload is not None else None
-            )
-            length = contract.content_length_chars
-            if payload is not None and length <= 0:
-                length = compute_character_count(contract, payload)
-            return StorageResult(
+            return _ContentEnrichmentStorageHelpers._build_storage_result_for_key(
                 storage_key=contract.content_storage_key,
-                content_hash=content_hash,
-                content_length_chars=max(length, 0),
+                contract=contract,
+                payload=payload,
             )
 
-        payload = serialize_contract_payload(contract)
+        if contract.acquisition_method != "pass_through":
+            return None
+
+        if document.raw_storage_key is not None:
+            return _ContentEnrichmentStorageHelpers._build_storage_result_for_key(
+                storage_key=document.raw_storage_key,
+                contract=contract,
+                payload=payload,
+            )
+
         if payload is None:
-            if (
-                contract.acquisition_method == "pass_through"
-                and document.raw_storage_key is not None
-            ):
-                return StorageResult(
-                    storage_key=document.raw_storage_key,
-                    content_hash=None,
-                    content_length_chars=max(contract.content_length_chars, 0),
-                )
             return None
 
         content_hash = hashlib.sha256(payload).hexdigest()
-        if self._storage_coordinator is None:
-            if (
-                contract.acquisition_method == "pass_through"
-                and document.raw_storage_key is not None
-            ):
-                return StorageResult(
-                    storage_key=document.raw_storage_key,
-                    content_hash=content_hash,
-                    content_length_chars=compute_character_count(
-                        contract,
-                        payload,
-                    ),
-                )
-            return None
+        inline_storage_key = (
+            f"inline://documents/{document.id}/pass_through/{content_hash}"
+        )
+        return _ContentEnrichmentStorageHelpers._build_storage_result_for_key(
+            storage_key=inline_storage_key,
+            contract=contract,
+            payload=payload,
+        )
 
+    @staticmethod
+    def _build_storage_result_for_key(
+        *,
+        storage_key: str,
+        contract: ContentEnrichmentContract,
+        payload: bytes | None,
+    ) -> StorageResult:
+        content_hash = (
+            hashlib.sha256(payload).hexdigest() if payload is not None else None
+        )
+        if payload is None:
+            content_length_chars = max(contract.content_length_chars, 0)
+        else:
+            content_length_chars = (
+                contract.content_length_chars
+                if contract.content_length_chars > 0
+                else compute_character_count(contract, payload)
+            )
+        return StorageResult(
+            storage_key=storage_key,
+            content_hash=content_hash,
+            content_length_chars=max(content_length_chars, 0),
+        )
+
+    async def _store_generated_payload(
+        self: _ContentEnrichmentStorageSelf,
+        *,
+        document: SourceDocument,
+        contract: ContentEnrichmentContract,
+        payload: bytes,
+        run_id: str | None,
+        pipeline_run_id: str | None,
+    ) -> StorageResult:
+        content_hash = hashlib.sha256(payload).hexdigest()
         extension, content_type = infer_storage_format(contract.content_format)
         key = f"documents/{document.id}/enriched/{content_hash}.{extension}"
         metadata: JSONObject = {
@@ -112,12 +194,10 @@ class _ContentEnrichmentStorageHelpers:
 
         temp_path = write_temp_payload(payload, suffix=f".{extension}")
         try:
-            record = await self._storage_coordinator.store_for_use_case(
-                StorageUseCase.DOCUMENT_CONTENT,
+            record = await self._store_payload_with_fallback(
                 key=key,
                 file_path=temp_path,
                 content_type=content_type,
-                user_id=None,
                 metadata=metadata,
             )
         finally:
@@ -128,6 +208,44 @@ class _ContentEnrichmentStorageHelpers:
             content_hash=content_hash,
             content_length_chars=compute_character_count(contract, payload),
         )
+
+    async def _store_payload_with_fallback(
+        self: _ContentEnrichmentStorageSelf,
+        *,
+        key: str,
+        file_path: Path,
+        content_type: str,
+        metadata: JSONObject,
+    ) -> _StoredPayloadRecord:
+        storage_coordinator = self._storage_coordinator
+        if storage_coordinator is None:
+            msg = "Storage coordinator is not configured"
+            raise RuntimeError(msg)
+        try:
+            return await storage_coordinator.store_for_use_case(
+                StorageUseCase.DOCUMENT_CONTENT,
+                key=key,
+                file_path=file_path,
+                content_type=content_type,
+                user_id=None,
+                metadata=metadata,
+            )
+        except RuntimeError as exc:
+            expected_fragment = f"use case {StorageUseCase.DOCUMENT_CONTENT.value}"
+            if expected_fragment not in str(exc):
+                raise
+            fallback_metadata: JSONObject = dict(metadata)
+            fallback_metadata["storage_use_case_fallback"] = (
+                StorageUseCase.RAW_SOURCE.value
+            )
+            return await storage_coordinator.store_for_use_case(
+                StorageUseCase.RAW_SOURCE,
+                key=key,
+                file_path=file_path,
+                content_type=content_type,
+                user_id=None,
+                metadata=fallback_metadata,
+            )
 
     def _persist_document_with_status(
         self: _ContentEnrichmentStorageSelf,

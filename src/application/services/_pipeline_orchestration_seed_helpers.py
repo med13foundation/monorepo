@@ -11,7 +11,7 @@ from src.application.services._pipeline_orchestration_contracts import (
 )
 
 if TYPE_CHECKING:
-    from src.application.services._pipeline_orchestration_execution_helpers import (
+    from src.application.services._pipeline_orchestration_execution_protocols import (
         _PipelineExecutionSelf,
     )
 

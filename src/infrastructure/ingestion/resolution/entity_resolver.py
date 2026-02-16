@@ -65,11 +65,11 @@ class EntityResolver:
 
         policy = self.dict_repo.get_resolution_policy(entity_type)
         if policy is None:
-            msg = (
-                f"Unknown entity_type '{entity_type}'. "
-                "Ingestion only supports entity types with a resolution policy."
+            logger.warning(
+                "No resolution policy configured for entity_type=%s; "
+                "falling back to STRICT_MATCH with best-effort anchors.",
+                entity_type,
             )
-            raise ValueError(msg)
         strategy_name = "STRICT_MATCH"
         if policy:
             strategy_name = policy.policy_strategy

@@ -73,7 +73,7 @@ class CurationServiceFactoryMixin:
         storage_coordinator = self.create_storage_operation_coordinator(session)
         return ExtractionRunnerService(
             queue_repository=queue_repository,
-            publication_repository=publication_repository,  # type: ignore[arg-type]
+            publication_repository=publication_repository,
             extraction_repository=extraction_repository,
             processor_registry={
                 SourceType.PUBMED.value: processor,
