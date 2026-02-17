@@ -28,6 +28,10 @@ from src.infrastructure.llm.factories.extraction_agent_factory import (
     create_extraction_agent_for_source,
     create_pubmed_extraction_agent,
 )
+from src.infrastructure.llm.factories.extraction_policy_agent_factory import (
+    ExtractionPolicyAgentFactory,
+    create_extraction_policy_agent,
+)
 from src.infrastructure.llm.factories.graph_connection_agent_factory import (
     GraphConnectionAgentFactory,
     create_clinvar_graph_connection_agent,
@@ -53,6 +57,7 @@ __all__ = [
     "create_extraction_agent_for_source",
     "create_clinvar_extraction_agent",
     "create_pubmed_extraction_agent",
+    "create_extraction_policy_agent",
     "create_graph_connection_agent_for_source",
     "create_clinvar_graph_connection_agent",
     "create_pubmed_graph_connection_agent",
@@ -63,6 +68,7 @@ __all__ = [
     "EntityRecognitionAgentFactory",
     "ContentEnrichmentAgentFactory",
     "ExtractionAgentFactory",
+    "ExtractionPolicyAgentFactory",
     "GraphConnectionAgentFactory",
     "GraphSearchAgentFactory",
     "QueryAgentFactory",

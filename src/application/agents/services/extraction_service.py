@@ -6,6 +6,10 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from src.application.agents.services._extraction_outcome_helpers import (
+    merge_rejected_relation_details,
+    merge_rejected_relation_reasons,
+)
 from src.application.agents.services._extraction_relation_persistence_helpers import (
     _ExtractionRelationPersistenceHelpers,
 )
@@ -27,7 +31,11 @@ if TYPE_CHECKING:
     from src.domain.agents.contracts.entity_recognition import EntityRecognitionContract
     from src.domain.agents.contracts.extraction import ExtractionContract
     from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
+    from src.domain.agents.ports.extraction_policy_agent_port import (
+        ExtractionPolicyAgentPort,
+    )
     from src.domain.entities.source_document import SourceDocument
+    from src.domain.ports.dictionary_port import DictionaryPort
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
@@ -43,8 +51,10 @@ class ExtractionServiceDependencies:
 
     extraction_agent: ExtractionAgentPort
     ingestion_pipeline: IngestionPipelinePort
+    extraction_policy_agent: ExtractionPolicyAgentPort | None = None
     relation_repository: KernelRelationRepository | None = None
     entity_repository: KernelEntityRepository | None = None
+    dictionary_service: DictionaryPort | None = None
     governance_service: GovernanceService | None = None
     review_queue_submitter: Callable[[str, str, str | None, str], None] | None = None
 
@@ -68,6 +78,11 @@ class ExtractionDocumentOutcome:
     ingestion_entities_created: int = 0
     ingestion_observations_created: int = 0
     persisted_relations_count: int = 0
+    pending_review_relations_count: int = 0
+    forbidden_relations_count: int = 0
+    undefined_relations_count: int = 0
+    policy_step_run_id: str | None = None
+    policy_proposals_count: int = 0
     seed_entity_ids: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
@@ -77,9 +92,11 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
 
     def __init__(self, dependencies: ExtractionServiceDependencies) -> None:
         self._agent = dependencies.extraction_agent
+        self._policy_agent = dependencies.extraction_policy_agent
         self._ingestion_pipeline = dependencies.ingestion_pipeline
         self._relations = dependencies.relation_repository
         self._entities = dependencies.entity_repository
+        self._dictionary = dependencies.dictionary_service
         self._governance = dependencies.governance_service or GovernanceService()
         self._review_queue_submitter = dependencies.review_queue_submitter
 
@@ -194,14 +211,12 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 errors=tuple(ingestion_result.errors),
             )
 
-        persisted_relations_count, relation_persistence_errors = (
-            self._persist_extracted_relations(
-                research_space_id=str(document.research_space_id),
-                document=document,
-                contract=contract,
-                publication_entity_ids=tuple(ingestion_result.entity_ids_touched),
-                run_id=run_id,
-            )
+        relation_persistence_result = await self._persist_extracted_relations(
+            document=document,
+            contract=contract,
+            publication_entity_ids=tuple(ingestion_result.entity_ids_touched),
+            run_id=run_id,
+            model_id=model_id,
         )
 
         return self._build_outcome(
@@ -213,16 +228,37 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             reason="processed",
             ingestion_entities_created=ingestion_result.entities_created,
             ingestion_observations_created=ingestion_result.observations_created,
-            persisted_relations_count=persisted_relations_count,
+            persisted_relations_count=(
+                relation_persistence_result.persisted_relations_count
+            ),
+            pending_review_relations_count=(
+                relation_persistence_result.pending_review_relations_count
+            ),
+            forbidden_relations_count=(
+                relation_persistence_result.forbidden_relations_count
+            ),
+            undefined_relations_count=(
+                relation_persistence_result.undefined_relations_count
+            ),
+            policy_step_run_id=relation_persistence_result.policy_run_id,
+            policy_proposals_count=relation_persistence_result.policy_proposals_count,
+            relation_rejected_reasons=(
+                relation_persistence_result.rejected_relation_reasons
+            ),
+            relation_rejected_details=(
+                relation_persistence_result.rejected_relation_details
+            ),
             seed_entity_ids=self._normalize_seed_entity_ids(
                 ingestion_result.entity_ids_touched,
             ),
-            errors=tuple(ingestion_result.errors) + relation_persistence_errors,
+            errors=tuple(ingestion_result.errors) + relation_persistence_result.errors,
         )
 
     async def close(self) -> None:
         """Release resources held by the underlying extraction adapter."""
         await self._agent.close()
+        if self._policy_agent is not None:
+            await self._policy_agent.close()
 
     @staticmethod
     def _extract_raw_record(document: SourceDocument) -> JSONObject:
@@ -306,40 +342,6 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             relation_types.append(normalized)
         return tuple(relation_types) if relation_types else None
 
-    @staticmethod
-    def _resolve_rejected_relation_reasons(
-        contract: ExtractionContract,
-    ) -> tuple[str, ...]:
-        reasons: list[str] = []
-        for rejected_fact in contract.rejected_facts:
-            if rejected_fact.fact_type != "relation":
-                continue
-            reason = rejected_fact.reason.strip()
-            if not reason or reason in reasons:
-                continue
-            reasons.append(reason)
-        return tuple(reasons)
-
-    @staticmethod
-    def _resolve_rejected_relation_details(
-        contract: ExtractionContract,
-    ) -> tuple[JSONObject, ...]:
-        details: list[JSONObject] = []
-        for rejected_fact in contract.rejected_facts:
-            if rejected_fact.fact_type != "relation":
-                continue
-            normalized_payload: JSONObject = {
-                str(key): to_json_value(value)
-                for key, value in rejected_fact.payload.items()
-            }
-            details.append(
-                {
-                    "reason": rejected_fact.reason.strip(),
-                    "payload": normalized_payload,
-                },
-            )
-        return tuple(details)
-
     def _submit_review_item(
         self,
         *,
@@ -397,6 +399,13 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         ingestion_entities_created: int = 0,
         ingestion_observations_created: int = 0,
         persisted_relations_count: int = 0,
+        pending_review_relations_count: int = 0,
+        forbidden_relations_count: int = 0,
+        undefined_relations_count: int = 0,
+        policy_step_run_id: str | None = None,
+        policy_proposals_count: int = 0,
+        relation_rejected_reasons: tuple[str, ...] = (),
+        relation_rejected_details: tuple[JSONObject, ...] = (),
         seed_entity_ids: tuple[str, ...] = (),
         errors: tuple[str, ...] = (),
     ) -> ExtractionDocumentOutcome:
@@ -415,14 +424,25 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             relations_extracted=len(contract.relations),
             rejected_facts=len(contract.rejected_facts),
             rejected_relation_reasons=(
-                ExtractionService._resolve_rejected_relation_reasons(contract)
+                merge_rejected_relation_reasons(
+                    contract,
+                    relation_rejected_reasons,
+                )
             ),
             rejected_relation_details=(
-                ExtractionService._resolve_rejected_relation_details(contract)
+                merge_rejected_relation_details(
+                    contract,
+                    relation_rejected_details,
+                )
             ),
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
             persisted_relations_count=persisted_relations_count,
+            pending_review_relations_count=pending_review_relations_count,
+            forbidden_relations_count=forbidden_relations_count,
+            undefined_relations_count=undefined_relations_count,
+            policy_step_run_id=policy_step_run_id,
+            policy_proposals_count=policy_proposals_count,
             seed_entity_ids=seed_entity_ids,
             errors=errors,
         )

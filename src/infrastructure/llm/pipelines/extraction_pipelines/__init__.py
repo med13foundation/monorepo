@@ -3,11 +3,15 @@
 from src.infrastructure.llm.pipelines.extraction_pipelines.clinvar_pipeline import (
     create_clinvar_extraction_pipeline,
 )
+from src.infrastructure.llm.pipelines.extraction_pipelines.policy_pipeline import (
+    create_extraction_policy_pipeline,
+)
 from src.infrastructure.llm.pipelines.extraction_pipelines.pubmed_pipeline import (
     create_pubmed_extraction_pipeline,
 )
 
 __all__ = [
     "create_clinvar_extraction_pipeline",
+    "create_extraction_policy_pipeline",
     "create_pubmed_extraction_pipeline",
 ]

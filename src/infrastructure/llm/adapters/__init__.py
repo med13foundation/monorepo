@@ -19,6 +19,9 @@ from src.infrastructure.llm.adapters.entity_recognition_agent_adapter import (
 from src.infrastructure.llm.adapters.extraction_agent_adapter import (
     FlujoExtractionAdapter,
 )
+from src.infrastructure.llm.adapters.extraction_policy_agent_adapter import (
+    FlujoExtractionPolicyAdapter,
+)
 from src.infrastructure.llm.adapters.graph_connection_agent_adapter import (
     FlujoGraphConnectionAdapter,
 )
@@ -31,6 +34,7 @@ __all__ = [
     "FlujoContentEnrichmentAdapter",
     "FlujoEntityRecognitionAdapter",
     "FlujoExtractionAdapter",
+    "FlujoExtractionPolicyAdapter",
     "FlujoGraphConnectionAdapter",
     "FlujoGraphSearchAdapter",
     "FlujoQueryAgentAdapter",

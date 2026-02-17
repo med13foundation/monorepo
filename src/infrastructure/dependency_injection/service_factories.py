@@ -36,6 +36,7 @@ from src.infrastructure.llm.adapters import (
     FlujoContentEnrichmentAdapter,
     FlujoEntityRecognitionAdapter,
     FlujoExtractionAdapter,
+    FlujoExtractionPolicyAdapter,
     FlujoGraphConnectionAdapter,
     FlujoGraphSearchAdapter,
     FlujoQueryAgentAdapter,
@@ -186,12 +187,17 @@ class ApplicationServiceFactoryMixin(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
         )
+        extraction_policy_agent = FlujoExtractionPolicyAdapter(
+            model=model_spec.model_id,
+        )
         extraction_service = ExtractionService(
             dependencies=ExtractionServiceDependencies(
                 extraction_agent=extraction_agent,
+                extraction_policy_agent=extraction_policy_agent,
                 ingestion_pipeline=ingestion_pipeline,
                 relation_repository=SqlAlchemyKernelRelationRepository(session),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
+                dictionary_service=dictionary_service,
                 governance_service=governance_service,
                 review_queue_submitter=self._build_review_queue_submitter(session),
             ),
@@ -220,12 +226,17 @@ class ApplicationServiceFactoryMixin(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
         )
+        extraction_policy_agent = FlujoExtractionPolicyAdapter(
+            model=model_spec.model_id,
+        )
         return ExtractionService(
             dependencies=ExtractionServiceDependencies(
                 extraction_agent=extraction_agent,
+                extraction_policy_agent=extraction_policy_agent,
                 ingestion_pipeline=create_ingestion_pipeline(session),
                 relation_repository=SqlAlchemyKernelRelationRepository(session),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
+                dictionary_service=dictionary_service,
                 governance_service=GovernanceService(),
                 review_queue_submitter=self._build_review_queue_submitter(session),
             ),

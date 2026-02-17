@@ -97,6 +97,19 @@ class _EntityRecognitionMetadataHelpers:
             "extraction_stage_persisted_relations": (
                 extraction_outcome.persisted_relations_count
             ),
+            "extraction_stage_pending_review_relations": (
+                extraction_outcome.pending_review_relations_count
+            ),
+            "extraction_stage_forbidden_relations": (
+                extraction_outcome.forbidden_relations_count
+            ),
+            "extraction_stage_undefined_relations": (
+                extraction_outcome.undefined_relations_count
+            ),
+            "extraction_stage_policy_run_id": extraction_outcome.policy_step_run_id,
+            "extraction_stage_policy_proposals": (
+                extraction_outcome.policy_proposals_count
+            ),
             "extraction_stage_errors": list(extraction_outcome.errors),
         }
 

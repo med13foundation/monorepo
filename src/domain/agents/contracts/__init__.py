@@ -29,6 +29,12 @@ from src.domain.agents.contracts.extraction import (
     ExtractionContract,
     RejectedFact,
 )
+from src.domain.agents.contracts.extraction_policy import (
+    ExtractionPolicyContract,
+    RelationConstraintProposal,
+    RelationTypeMappingProposal,
+    UnknownRelationPattern,
+)
 from src.domain.agents.contracts.graph_connection import (
     GraphConnectionContract,
     ProposedRelation,
@@ -50,6 +56,7 @@ __all__ = [
     "ExtractedObservation",
     "ExtractedRelation",
     "ExtractionContract",
+    "ExtractionPolicyContract",
     "GraphConnectionContract",
     "GraphSearchContract",
     "GraphSearchResultEntry",
@@ -58,6 +65,9 @@ __all__ = [
     "QueryGenerationContract",
     "RejectedCandidate",
     "RejectedFact",
+    "RelationConstraintProposal",
+    "RelationTypeMappingProposal",
     "RecognizedEntityCandidate",
     "RecognizedObservationCandidate",
+    "UnknownRelationPattern",
 ]

@@ -13,6 +13,9 @@ from src.domain.agents.contexts.entity_recognition_context import (
     EntityRecognitionContext,
 )
 from src.domain.agents.contexts.extraction_context import ExtractionContext
+from src.domain.agents.contexts.extraction_policy_context import (
+    ExtractionPolicyContext,
+)
 from src.domain.agents.contexts.graph_connection_context import (
     GraphConnectionContext,
 )
@@ -24,6 +27,7 @@ __all__ = [
     "ContentEnrichmentContext",
     "EntityRecognitionContext",
     "ExtractionContext",
+    "ExtractionPolicyContext",
     "GraphConnectionContext",
     "GraphSearchContext",
     "QueryGenerationContext",

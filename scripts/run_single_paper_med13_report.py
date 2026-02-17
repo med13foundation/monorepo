@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,11 @@ from uuid import UUID
 from sqlalchemy import desc, func, inspect, or_, select
 from sqlalchemy.orm import aliased
 
+from src.application.agents.services._relation_endpoint_label_resolution_helpers import (
+    build_concept_family_key,
+    build_concept_family_key_from_label,
+    is_conceptual_entity_type,
+)
 from src.database.session import SessionLocal, set_session_rls_context
 from src.models.database.extraction_queue import ExtractionQueueItemModel
 from src.models.database.ingestion_job import IngestionJobModel
@@ -48,6 +54,35 @@ _DICTIONARY_SCAN_LIMIT = 300
 _MAX_TRIMMED_LIST_ITEMS = 10
 _MAX_TRIMMED_TEXT_CHARS = 500
 _YEAR_PREFIX_LENGTH = 4
+_MAX_ANCHOR_IDS = 50
+_MAX_ANCHOR_TERMS = 12
+_MIN_ANCHOR_TERM_LENGTH = 3
+_REVIEW_CURATION_STATUSES = frozenset({"PENDING_REVIEW", "UNDER_REVIEW"})
+_CONCEPT_FAMILY_NAMESPACE = "CONCEPT_FAMILY"
+_GENERIC_FOCUS_TERMS = frozenset(
+    {
+        "gene expression",
+        "proteins",
+        "homo sapiens",
+        "mutation",
+        "mutations",
+        "complex",
+        "gene",
+    },
+)
+_QUERY_STOPWORDS = frozenset(
+    {
+        "AND",
+        "OR",
+        "NOT",
+        "TITLE",
+        "ABSTRACT",
+        "MESH",
+        "TERMS",
+        "PMID",
+        "PUBMED",
+    },
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -630,25 +665,248 @@ def _collect_document_relation_edges(
     return edges
 
 
-def _collect_med13_graph(
+def _collect_target_anchor_ids(summary_payload: JSONObject) -> tuple[UUID, ...]:
+    metadata_payload = summary_payload.get("metadata")
+    if not isinstance(metadata_payload, dict):
+        return ()
+    raw_seed_ids = metadata_payload.get("graph_active_seed_ids")
+    if not isinstance(raw_seed_ids, list):
+        return ()
+
+    resolved_ids: list[UUID] = []
+    seen_ids: set[UUID] = set()
+    for raw_value in raw_seed_ids:
+        if not isinstance(raw_value, str):
+            continue
+        parsed = _safe_uuid(raw_value.strip())
+        if parsed is None or parsed in seen_ids:
+            continue
+        seen_ids.add(parsed)
+        resolved_ids.append(parsed)
+        if len(resolved_ids) >= _MAX_ANCHOR_IDS:
+            break
+    return tuple(resolved_ids)
+
+
+def _append_focus_term(
+    *,
+    raw_term: str,
+    target_terms: list[str],
+    seen_terms: set[str],
+) -> None:
+    normalized = " ".join(raw_term.strip().split())
+    if len(normalized) < _MIN_ANCHOR_TERM_LENGTH:
+        return
+    if normalized.casefold() in _GENERIC_FOCUS_TERMS:
+        return
+    upper = normalized.upper()
+    if upper in _QUERY_STOPWORDS:
+        return
+    dedupe_key = normalized.casefold()
+    if dedupe_key in seen_terms:
+        return
+    seen_terms.add(dedupe_key)
+    target_terms.append(normalized)
+
+
+def _extract_family_key_from_term(term: str) -> str | None:
+    normalized_term = " ".join(term.strip().split())
+    if " " in normalized_term and not any(char.isdigit() for char in normalized_term):
+        return None
+    if (
+        not any(char.isdigit() for char in normalized_term)
+        and normalized_term != normalized_term.upper()
+    ):
+        return None
+    direct_family = build_concept_family_key_from_label(term)
+    if direct_family is None:
+        return None
+    if direct_family.casefold() in _GENERIC_FOCUS_TERMS:
+        return None
+    if direct_family.upper() in _QUERY_STOPWORDS:
+        return None
+    return direct_family
+
+
+def _extract_focus_terms(
+    *,
+    target_payload: JSONObject,
+    summary_payload: JSONObject,
+) -> tuple[str, ...]:
+    terms: list[str] = []
+    seen_terms: set[str] = set()
+
+    executed_query = summary_payload.get("executed_query")
+    if isinstance(executed_query, str):
+        for phrase in re.findall(r'"([^"]+)"', executed_query):
+            _append_focus_term(
+                raw_term=phrase,
+                target_terms=terms,
+                seen_terms=seen_terms,
+            )
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", executed_query):
+            _append_focus_term(
+                raw_term=token,
+                target_terms=terms,
+                seen_terms=seen_terms,
+            )
+
+    research_space_name = target_payload.get("research_space_name")
+    if isinstance(research_space_name, str):
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", research_space_name):
+            _append_focus_term(
+                raw_term=token,
+                target_terms=terms,
+                seen_terms=seen_terms,
+            )
+
+    source_name = target_payload.get("source_name")
+    if isinstance(source_name, str):
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", source_name):
+            _append_focus_term(
+                raw_term=token,
+                target_terms=terms,
+                seen_terms=seen_terms,
+            )
+
+    return tuple(terms[:_MAX_ANCHOR_TERMS])
+
+
+def _normalize_concept_token(raw_value: str | None) -> str | None:
+    if not isinstance(raw_value, str):
+        return None
+    without_parenthetical = re.sub(r"\([^)]*\)", " ", raw_value)
+    tokens = re.findall(r"[A-Za-z0-9]+", without_parenthetical.upper())
+    if not tokens:
+        return None
+    for token in tokens:
+        if any(char.isdigit() for char in token):
+            return token
+    first = tokens[0].strip()
+    if len(first) < _MIN_ANCHOR_TERM_LENGTH:
+        return None
+    return first
+
+
+def _collect_term_anchor_entities(
     session: Session,
     *,
     research_space_id: UUID,
-) -> JSONObject:
-    label_candidates = (
+    focus_terms: tuple[str, ...],
+) -> dict[UUID, EntityModel]:
+    anchors_by_id: dict[UUID, EntityModel] = {}
+    for term in focus_terms:
+        lowered = term.lower()
+        label_rows = (
+            session.execute(
+                select(EntityModel)
+                .where(EntityModel.research_space_id == research_space_id)
+                .where(
+                    func.lower(func.coalesce(EntityModel.display_label, "")).like(
+                        f"%{lowered}%",
+                    ),
+                )
+                .limit(_DICTIONARY_SCAN_LIMIT),
+            )
+            .scalars()
+            .all()
+        )
+        for entity in label_rows:
+            if not is_conceptual_entity_type(entity.entity_type):
+                continue
+            anchors_by_id[entity.id] = entity
+
+        identifier_rows = (
+            session.execute(
+                select(EntityModel)
+                .join(
+                    EntityIdentifierModel,
+                    EntityIdentifierModel.entity_id == EntityModel.id,
+                )
+                .where(EntityModel.research_space_id == research_space_id)
+                .where(
+                    func.lower(EntityIdentifierModel.identifier_value).like(
+                        f"{lowered}%",
+                    ),
+                )
+                .limit(_DICTIONARY_SCAN_LIMIT),
+            )
+            .scalars()
+            .all()
+        )
+        for entity in identifier_rows:
+            if not is_conceptual_entity_type(entity.entity_type):
+                continue
+            anchors_by_id[entity.id] = entity
+    return anchors_by_id
+
+
+def _load_concept_family_identifier_map(
+    session: Session,
+    *,
+    entity_ids: tuple[UUID, ...],
+) -> dict[UUID, str]:
+    if not entity_ids:
+        return {}
+    rows = (
         session.execute(
-            select(EntityModel)
-            .where(EntityModel.research_space_id == research_space_id)
-            .where(
-                func.lower(func.coalesce(EntityModel.display_label, "")).like(
-                    "%med13%",
-                ),
-            ),
+            select(EntityIdentifierModel)
+            .where(EntityIdentifierModel.entity_id.in_(entity_ids))
+            .where(EntityIdentifierModel.namespace == _CONCEPT_FAMILY_NAMESPACE),
         )
         .scalars()
         .all()
     )
-    identifier_candidates = (
+    family_map: dict[UUID, str] = {}
+    for row in rows:
+        family_value = row.identifier_value.strip()
+        if not family_value:
+            continue
+        if row.entity_id not in family_map:
+            family_map[row.entity_id] = family_value
+    return family_map
+
+
+def _resolve_anchor_family_keys(
+    session: Session,
+    *,
+    anchors_by_id: dict[UUID, EntityModel],
+    focus_terms: tuple[str, ...],
+) -> tuple[str, ...]:
+    focus_family_keys: set[str] = set()
+    for term in focus_terms:
+        family_key = _extract_family_key_from_term(term)
+        if family_key is not None:
+            focus_family_keys.add(family_key)
+
+    seed_ids = tuple(anchors_by_id.keys())
+    identifier_map = _load_concept_family_identifier_map(session, entity_ids=seed_ids)
+    family_keys: set[str] = set(focus_family_keys)
+    for entity in anchors_by_id.values():
+        identifier_family = identifier_map.get(entity.id)
+        if identifier_family is not None:
+            family_keys.add(identifier_family)
+            continue
+        derived_family = build_concept_family_key(
+            entity.entity_type,
+            entity.display_label or "",
+        )
+        if derived_family is not None:
+            family_keys.add(derived_family)
+    return tuple(sorted(family_keys))
+
+
+def _collect_family_anchor_entities(
+    session: Session,
+    *,
+    research_space_id: UUID,
+    family_keys: tuple[str, ...],
+) -> dict[UUID, EntityModel]:
+    if not family_keys:
+        return {}
+
+    anchors_by_id: dict[UUID, EntityModel] = {}
+    rows = (
         session.execute(
             select(EntityModel)
             .join(
@@ -656,21 +914,422 @@ def _collect_med13_graph(
                 EntityIdentifierModel.entity_id == EntityModel.id,
             )
             .where(EntityModel.research_space_id == research_space_id)
-            .where(func.lower(EntityIdentifierModel.identifier_value).like("med13%")),
+            .where(EntityIdentifierModel.namespace == _CONCEPT_FAMILY_NAMESPACE)
+            .where(EntityIdentifierModel.identifier_value.in_(family_keys))
+            .limit(_DICTIONARY_SCAN_LIMIT),
         )
         .scalars()
         .all()
     )
-    anchors_by_id: dict[UUID, EntityModel] = {}
-    for entity in [*label_candidates, *identifier_candidates]:
+    for entity in rows:
+        if not is_conceptual_entity_type(entity.entity_type):
+            continue
         anchors_by_id[entity.id] = entity
+
+    if anchors_by_id:
+        return anchors_by_id
+
+    fallback_rows = (
+        session.execute(
+            select(EntityModel)
+            .where(EntityModel.research_space_id == research_space_id)
+            .limit(_DICTIONARY_SCAN_LIMIT),
+        )
+        .scalars()
+        .all()
+    )
+    family_key_set = set(family_keys)
+    for entity in fallback_rows:
+        if not is_conceptual_entity_type(entity.entity_type):
+            continue
+        derived_family = build_concept_family_key(
+            entity.entity_type,
+            entity.display_label or "",
+        )
+        if derived_family is None or derived_family not in family_key_set:
+            continue
+        anchors_by_id[entity.id] = entity
+    return anchors_by_id
+
+
+def _expand_anchors_by_concept_token(
+    session: Session,
+    *,
+    research_space_id: UUID,
+    anchors_by_id: dict[UUID, EntityModel],
+    focus_terms: tuple[str, ...],
+) -> None:
+    concept_tokens: set[str] = set()
+    for entity in anchors_by_id.values():
+        concept_token = _normalize_concept_token(entity.display_label)
+        if concept_token is not None:
+            concept_tokens.add(concept_token.lower())
+    for term in focus_terms:
+        concept_token = _normalize_concept_token(term)
+        if concept_token is not None:
+            concept_tokens.add(concept_token.lower())
+
+    for token in concept_tokens:
+        if len(token) < _MIN_ANCHOR_TERM_LENGTH:
+            continue
+        label_matches = (
+            session.execute(
+                select(EntityModel)
+                .where(EntityModel.research_space_id == research_space_id)
+                .where(
+                    func.lower(func.coalesce(EntityModel.display_label, "")).like(
+                        f"%{token}%",
+                    ),
+                )
+                .limit(_DICTIONARY_SCAN_LIMIT),
+            )
+            .scalars()
+            .all()
+        )
+        for entity in label_matches:
+            if not is_conceptual_entity_type(entity.entity_type):
+                continue
+            anchors_by_id[entity.id] = entity
+
+        identifier_matches = (
+            session.execute(
+                select(EntityModel)
+                .join(
+                    EntityIdentifierModel,
+                    EntityIdentifierModel.entity_id == EntityModel.id,
+                )
+                .where(EntityModel.research_space_id == research_space_id)
+                .where(
+                    func.lower(EntityIdentifierModel.identifier_value).like(
+                        f"{token}%",
+                    ),
+                )
+                .limit(_DICTIONARY_SCAN_LIMIT),
+            )
+            .scalars()
+            .all()
+        )
+        for entity in identifier_matches:
+            if not is_conceptual_entity_type(entity.entity_type):
+                continue
+            anchors_by_id[entity.id] = entity
+
+
+def _build_canonical_anchor_groups(
+    anchors_by_id: dict[UUID, EntityModel],
+) -> tuple[list[JSONObject], int]:
+    grouped: dict[str, list[EntityModel]] = {}
+    for entity in anchors_by_id.values():
+        concept_family = build_concept_family_key(
+            entity.entity_type,
+            entity.display_label or "",
+        )
+        concept_key = (
+            concept_family
+            if concept_family is not None
+            else f"entity:{entity.entity_type}:{entity.id}"
+        )
+        grouped.setdefault(concept_key, []).append(entity)
+
+    payload: list[JSONObject] = []
+    for concept_key, entities in sorted(grouped.items(), key=lambda item: item[0]):
+        payload.append(
+            {
+                "concept_key": concept_key,
+                "entity_count": len(entities),
+                "entities": [
+                    {
+                        "id": str(entity.id),
+                        "label": entity.display_label,
+                        "entity_type": entity.entity_type,
+                    }
+                    for entity in sorted(
+                        entities,
+                        key=lambda item: (
+                            str(item.entity_type),
+                            str(item.display_label or ""),
+                            str(item.id),
+                        ),
+                    )
+                ],
+            },
+        )
+
+    merged_groups = sum(
+        1
+        for group in payload
+        if isinstance(group.get("entity_count"), int) and group["entity_count"] > 1
+    )
+    return payload, merged_groups
+
+
+def _resolve_concept_node_key(endpoint: object) -> str:
+    if not isinstance(endpoint, dict):
+        return "ENTITY::UNKNOWN::unknown"
+    entity_type_raw = endpoint.get("entity_type")
+    entity_type = (
+        entity_type_raw.strip().upper()
+        if isinstance(entity_type_raw, str) and entity_type_raw.strip()
+        else "UNKNOWN"
+    )
+    label = endpoint.get("label")
+    if is_conceptual_entity_type(entity_type) and isinstance(label, str):
+        family_key = build_concept_family_key(entity_type, label)
+        if family_key is not None:
+            return f"CONCEPT::{family_key}"
+    entity_id = endpoint.get("id")
+    if isinstance(entity_id, str) and entity_id.strip():
+        return f"ENTITY::{entity_type}::{entity_id.strip()}"
+    if isinstance(label, str) and label.strip():
+        normalized_label = " ".join(label.strip().split()).upper()
+        return f"ENTITY::{entity_type}::{normalized_label}"
+    return f"ENTITY::{entity_type}::unknown"
+
+
+def _accumulate_collapsed_node(
+    *,
+    node_key: str,
+    endpoint: object,
+    node_entity_ids: dict[str, set[str]],
+    node_labels: dict[str, set[str]],
+    node_entity_types: dict[str, set[str]],
+) -> None:
+    node_entity_ids.setdefault(node_key, set())
+    node_labels.setdefault(node_key, set())
+    node_entity_types.setdefault(node_key, set())
+    if not isinstance(endpoint, dict):
+        return
+    entity_id = endpoint.get("id")
+    if isinstance(entity_id, str) and entity_id.strip():
+        node_entity_ids[node_key].add(entity_id.strip())
+    label = endpoint.get("label")
+    if isinstance(label, str) and label.strip():
+        node_labels[node_key].add(" ".join(label.strip().split()))
+    entity_type = endpoint.get("entity_type")
+    if isinstance(entity_type, str) and entity_type.strip():
+        node_entity_types[node_key].add(entity_type.strip().upper())
+
+
+def _build_concept_collapsed_graph(
+    edges: list[JSONObject],
+) -> JSONObject:
+    node_entity_ids: dict[str, set[str]] = {}
+    node_labels: dict[str, set[str]] = {}
+    node_entity_types: dict[str, set[str]] = {}
+    edge_counts: dict[tuple[str, str, str], int] = {}
+    edge_relation_ids: dict[tuple[str, str, str], set[str]] = {}
+    edge_statuses: dict[tuple[str, str, str], set[str]] = {}
+    edge_confidence_totals: dict[tuple[str, str, str], float] = {}
+    edge_confidence_samples: dict[tuple[str, str, str], int] = {}
+
+    for edge in edges:
+        source_endpoint = edge.get("source")
+        target_endpoint = edge.get("target")
+        source_key = _resolve_concept_node_key(source_endpoint)
+        target_key = _resolve_concept_node_key(target_endpoint)
+        _accumulate_collapsed_node(
+            node_key=source_key,
+            endpoint=source_endpoint,
+            node_entity_ids=node_entity_ids,
+            node_labels=node_labels,
+            node_entity_types=node_entity_types,
+        )
+        _accumulate_collapsed_node(
+            node_key=target_key,
+            endpoint=target_endpoint,
+            node_entity_ids=node_entity_ids,
+            node_labels=node_labels,
+            node_entity_types=node_entity_types,
+        )
+
+        relation_type_raw = edge.get("relation_type")
+        relation_type = (
+            relation_type_raw.strip().upper()
+            if isinstance(relation_type_raw, str) and relation_type_raw.strip()
+            else "UNKNOWN_RELATION"
+        )
+        edge_key = (source_key, relation_type, target_key)
+        edge_counts[edge_key] = edge_counts.get(edge_key, 0) + 1
+
+        edge_relation_ids.setdefault(edge_key, set())
+        relation_id = edge.get("relation_id")
+        if isinstance(relation_id, str) and relation_id.strip():
+            edge_relation_ids[edge_key].add(relation_id.strip())
+
+        edge_statuses.setdefault(edge_key, set())
+        curation_status = edge.get("curation_status")
+        if isinstance(curation_status, str) and curation_status.strip():
+            edge_statuses[edge_key].add(curation_status.strip().upper())
+
+        confidence = edge.get("aggregate_confidence")
+        if isinstance(confidence, int | float):
+            edge_confidence_totals[edge_key] = edge_confidence_totals.get(
+                edge_key,
+                0.0,
+            ) + float(confidence)
+            edge_confidence_samples[edge_key] = (
+                edge_confidence_samples.get(edge_key, 0) + 1
+            )
+
+    nodes: list[JSONObject] = [
+        {
+            "node_key": node_key,
+            "entity_ids": sorted(node_entity_ids[node_key]),
+            "labels": sorted(node_labels[node_key]),
+            "entity_types": sorted(node_entity_types[node_key]),
+        }
+        for node_key in sorted(node_entity_ids)
+    ]
+
+    collapsed_edges: list[JSONObject] = []
+    for source_key, relation_type, target_key in sorted(edge_counts):
+        edge_key = (source_key, relation_type, target_key)
+        confidence_sample_count = edge_confidence_samples.get(edge_key, 0)
+        mean_confidence = (
+            edge_confidence_totals[edge_key] / confidence_sample_count
+            if confidence_sample_count > 0
+            else None
+        )
+        collapsed_edges.append(
+            {
+                "source_node_key": source_key,
+                "relation_type": relation_type,
+                "target_node_key": target_key,
+                "edge_instances": edge_counts[edge_key],
+                "relation_ids": sorted(edge_relation_ids.get(edge_key, set())),
+                "curation_statuses": sorted(edge_statuses.get(edge_key, set())),
+                "mean_aggregate_confidence": mean_confidence,
+            },
+        )
+
+    return {
+        "node_count": len(nodes),
+        "edge_count": len(collapsed_edges),
+        "nodes": nodes,
+        "edges": collapsed_edges,
+    }
+
+
+def _resolve_seed_mode_anchors(
+    session: Session,
+    *,
+    research_space_id: UUID,
+    anchors_by_id: dict[UUID, EntityModel],
+    focus_terms: tuple[str, ...],
+) -> dict[UUID, EntityModel]:
+    family_keys = _resolve_anchor_family_keys(
+        session,
+        anchors_by_id=anchors_by_id,
+        focus_terms=focus_terms,
+    )
+    conceptual_seed_anchors = {
+        entity_id: entity
+        for entity_id, entity in anchors_by_id.items()
+        if is_conceptual_entity_type(entity.entity_type)
+    }
+    family_anchors = _collect_family_anchor_entities(
+        session,
+        research_space_id=research_space_id,
+        family_keys=family_keys,
+    )
+    if family_anchors:
+        resolved_anchors = dict(conceptual_seed_anchors)
+        resolved_anchors.update(family_anchors)
+        return resolved_anchors
+
+    resolved_anchors = dict(conceptual_seed_anchors)
+    if not resolved_anchors and focus_terms:
+        resolved_anchors.update(
+            _collect_term_anchor_entities(
+                session,
+                research_space_id=research_space_id,
+                focus_terms=focus_terms,
+            ),
+        )
+    if resolved_anchors:
+        _expand_anchors_by_concept_token(
+            session,
+            research_space_id=research_space_id,
+            anchors_by_id=resolved_anchors,
+            focus_terms=focus_terms,
+        )
+    return resolved_anchors
+
+
+def _collect_target_centered_graph(
+    session: Session,
+    *,
+    research_space_id: UUID,
+    preferred_anchor_entity_ids: tuple[UUID, ...],
+    focus_terms: tuple[str, ...],
+) -> JSONObject:
+    anchors_by_id: dict[UUID, EntityModel] = {}
+    anchor_mode = "none"
+
+    if preferred_anchor_entity_ids:
+        explicit_rows = (
+            session.execute(
+                select(EntityModel)
+                .where(EntityModel.research_space_id == research_space_id)
+                .where(EntityModel.id.in_(preferred_anchor_entity_ids))
+                .limit(_DICTIONARY_SCAN_LIMIT),
+            )
+            .scalars()
+            .all()
+        )
+        for entity in explicit_rows:
+            anchors_by_id[entity.id] = entity
+        if anchors_by_id:
+            anchor_mode = "graph_active_seed_ids"
+
+    if not anchors_by_id and focus_terms:
+        term_anchors = _collect_term_anchor_entities(
+            session,
+            research_space_id=research_space_id,
+            focus_terms=focus_terms,
+        )
+        anchors_by_id.update(term_anchors)
+        if anchors_by_id:
+            anchor_mode = "focus_terms"
+
+    if anchor_mode == "graph_active_seed_ids" and anchors_by_id:
+        anchors_by_id = _resolve_seed_mode_anchors(
+            session,
+            research_space_id=research_space_id,
+            anchors_by_id=anchors_by_id,
+            focus_terms=focus_terms,
+        )
+    elif anchors_by_id:
+        _expand_anchors_by_concept_token(
+            session,
+            research_space_id=research_space_id,
+            anchors_by_id=anchors_by_id,
+            focus_terms=focus_terms,
+        )
+
     anchor_ids = list(anchors_by_id.keys())
 
     if not anchor_ids:
         return {
+            "anchor_strategy": {
+                "mode": anchor_mode,
+                "requested_anchor_ids": [
+                    str(anchor_id) for anchor_id in preferred_anchor_entity_ids
+                ],
+                "resolved_anchor_ids": [],
+                "focus_terms": list(focus_terms),
+            },
             "anchor_entities": [],
+            "canonical_anchor_groups": [],
+            "merged_alias_groups": 0,
             "edge_count": 0,
             "edges": [],
+            "concept_collapsed": {
+                "node_count": 0,
+                "edge_count": 0,
+                "nodes": [],
+                "edges": [],
+            },
         }
 
     src_entity = aliased(EntityModel)
@@ -713,11 +1372,39 @@ def _collect_med13_graph(
         }
         for entity in anchors_by_id.values()
     ]
+    canonical_groups, merged_alias_groups = _build_canonical_anchor_groups(
+        anchors_by_id,
+    )
+    concept_collapsed = _build_concept_collapsed_graph(edges)
     return {
+        "anchor_strategy": {
+            "mode": anchor_mode,
+            "requested_anchor_ids": [
+                str(anchor_id) for anchor_id in preferred_anchor_entity_ids
+            ],
+            "resolved_anchor_ids": [str(anchor_id) for anchor_id in anchor_ids],
+            "focus_terms": list(focus_terms),
+        },
         "anchor_entities": anchor_entities,
+        "canonical_anchor_groups": canonical_groups,
+        "merged_alias_groups": merged_alias_groups,
         "edge_count": len(edges),
         "edges": edges,
+        "concept_collapsed": concept_collapsed,
     }
+
+
+def _collect_med13_graph(
+    session: Session,
+    *,
+    research_space_id: UUID,
+) -> JSONObject:
+    return _collect_target_centered_graph(
+        session,
+        research_space_id=research_space_id,
+        preferred_anchor_entity_ids=(),
+        focus_terms=("MED13",),
+    )
 
 
 def _collect_full_graph_snapshot(
@@ -969,6 +1656,167 @@ def _resolve_publication_year(
     return None
 
 
+def _relation_endpoint_label(endpoint: object) -> str:
+    if not isinstance(endpoint, dict):
+        return "UNKNOWN_ENTITY"
+    label = endpoint.get("label")
+    if isinstance(label, str) and label.strip():
+        return label.strip()
+    entity_type = endpoint.get("entity_type")
+    if isinstance(entity_type, str) and entity_type.strip():
+        return entity_type.strip()
+    return "UNKNOWN_ENTITY"
+
+
+def _relation_candidate_label_from_payload(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return "UNSPECIFIED_CANDIDATE"
+    source = payload.get("source_label")
+    if not isinstance(source, str) or not source.strip():
+        source = payload.get("source_type")
+    target = payload.get("target_label")
+    if not isinstance(target, str) or not target.strip():
+        target = payload.get("target_type")
+    relation = payload.get("relation_type")
+
+    source_label = source.strip() if isinstance(source, str) and source.strip() else "?"
+    relation_label = (
+        relation.strip() if isinstance(relation, str) and relation.strip() else "?"
+    )
+    target_label = target.strip() if isinstance(target, str) and target.strip() else "?"
+    return f"{source_label} -[{relation_label}]-> {target_label}"
+
+
+def _build_persisted_edge_decisions(
+    persisted_edges: object,
+) -> list[JSONObject]:
+    if not isinstance(persisted_edges, list):
+        return []
+    decisions: list[JSONObject] = []
+    for edge in persisted_edges:
+        if not isinstance(edge, dict):
+            continue
+        source_label = _relation_endpoint_label(edge.get("source"))
+        target_label = _relation_endpoint_label(edge.get("target"))
+        relation_type = edge.get("relation_type")
+        relation_label = (
+            relation_type.strip()
+            if isinstance(relation_type, str) and relation_type.strip()
+            else "UNKNOWN_RELATION"
+        )
+        curation_status = edge.get("curation_status")
+        normalized_status = (
+            curation_status.strip().upper()
+            if isinstance(curation_status, str)
+            else "DRAFT"
+        )
+        queued_for_review = normalized_status in _REVIEW_CURATION_STATUSES
+        state = "UNDEFINED" if queued_for_review else "ALLOWED"
+        decisions.append(
+            {
+                "candidate": f"{source_label} -[{relation_label}]-> {target_label}",
+                "state": state,
+                "persisted": True,
+                "queued_for_review": queued_for_review,
+                "reason": (
+                    "persisted_pending_review" if queued_for_review else "persisted"
+                ),
+                "source": "persisted_relation_edge",
+            },
+        )
+    return decisions
+
+
+def _build_rejected_detail_decisions(
+    rejected_details: object,
+) -> list[JSONObject]:
+    if not isinstance(rejected_details, list):
+        return []
+    decisions: list[JSONObject] = []
+    for detail in rejected_details:
+        if not isinstance(detail, dict):
+            continue
+        reason = detail.get("reason")
+        normalized_reason = (
+            reason.strip() if isinstance(reason, str) and reason.strip() else "rejected"
+        )
+        reason_key = normalized_reason.lower()
+        detail_status = detail.get("status")
+        normalized_detail_status = (
+            detail_status.strip().lower()
+            if isinstance(detail_status, str) and detail_status.strip()
+            else ""
+        )
+        persisted = (
+            "persisted_pending_review" in reason_key
+            or normalized_detail_status == "pending_review"
+        )
+        queued_for_review = persisted
+        validation_state = detail.get("validation_state")
+        if isinstance(validation_state, str) and validation_state.strip():
+            state = validation_state.strip().upper()
+        elif persisted:
+            state = "UNDEFINED"
+        else:
+            state = "FORBIDDEN"
+        payload = detail.get("payload")
+        decisions.append(
+            {
+                "candidate": _relation_candidate_label_from_payload(payload),
+                "state": state,
+                "persisted": persisted,
+                "queued_for_review": queued_for_review,
+                "reason": normalized_reason,
+                "source": "rejected_relation_detail",
+            },
+        )
+    return decisions
+
+
+def _build_rejected_reason_decisions(
+    rejected_reasons: object,
+) -> list[JSONObject]:
+    if not isinstance(rejected_reasons, list):
+        return []
+    decisions: list[JSONObject] = []
+    for reason in rejected_reasons:
+        if not isinstance(reason, str) or not reason.strip():
+            continue
+        decisions.append(
+            {
+                "candidate": "UNSPECIFIED_CANDIDATE",
+                "state": "FORBIDDEN",
+                "persisted": False,
+                "queued_for_review": False,
+                "reason": reason.strip(),
+                "source": "rejected_relation_reason",
+            },
+        )
+    return decisions
+
+
+def _build_candidate_decisions(analysis: JSONObject) -> list[JSONObject]:
+    decisions = _build_persisted_edge_decisions(
+        analysis.get("document_relation_edges"),
+    )
+    decisions.extend(
+        _build_rejected_detail_decisions(
+            analysis.get("extraction_stage_rejected_relation_details"),
+        ),
+    )
+    if decisions:
+        return decisions
+    return _build_rejected_reason_decisions(
+        analysis.get("extraction_stage_rejected_relation_reasons"),
+    )
+
+
+def _markdown_cell(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).replace("|", "\\|").replace("\n", " ")
+
+
 def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
     target = report.get("target")
     paper = report.get("paper")
@@ -979,7 +1827,7 @@ def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
     smoke = workflow.get("smoke_check", {})
 
     lines: list[str] = []
-    lines.append("# MED13 One-Paper Full Workflow Report")
+    lines.append("# One-Paper Full Workflow Report")
     lines.append("")
     lines.append(f"- Generated at: `{report.get('generated_at')}`")
     lines.append(
@@ -1066,6 +1914,30 @@ def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
     lines.append("```")
     lines.append("")
 
+    lines.append("### Candidate Decision Table")
+    lines.append("")
+    candidate_decisions = analysis.get("candidate_decisions")
+    if isinstance(candidate_decisions, list) and candidate_decisions:
+        lines.append(
+            "| Candidate | State | Persisted | Queued for review | Reason | Source |",
+        )
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for decision in candidate_decisions:
+            if not isinstance(decision, dict):
+                continue
+            lines.append(
+                "| "
+                f"{_markdown_cell(decision.get('candidate'))} | "
+                f"{_markdown_cell(decision.get('state'))} | "
+                f"{_markdown_cell(decision.get('persisted'))} | "
+                f"{_markdown_cell(decision.get('queued_for_review'))} | "
+                f"{_markdown_cell(decision.get('reason'))} | "
+                f"{_markdown_cell(decision.get('source'))} |",
+            )
+    else:
+        lines.append("_No candidate decisions available._")
+    lines.append("")
+
     lines.append("## 4. Dictionary Entries")
     lines.append("")
     lines.append(
@@ -1094,16 +1966,48 @@ def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
     lines.append("```")
     lines.append("")
 
-    lines.append("## 5. MED13-Centered Graph")
+    lines.append("## 5. Target-Centered Graph")
     lines.append("")
-    med13_graph = graph.get("med13_centered")
+    target_graph = graph.get("target_centered")
+    if not isinstance(target_graph, dict):
+        fallback_graph = graph.get("med13_centered")
+        target_graph = fallback_graph if isinstance(fallback_graph, dict) else {}
+    anchor_strategy = target_graph.get("anchor_strategy")
+    if not isinstance(anchor_strategy, dict):
+        anchor_strategy = {}
     lines.append(
-        f"- MED13 anchor entities: `{len(med13_graph.get('anchor_entities', []))}`",
+        f"- Anchor selection mode: `{anchor_strategy.get('mode')}`",
     )
-    lines.append(f"- MED13-centered edge count: `{med13_graph.get('edge_count')}`")
+    lines.append(
+        f"- Focus terms: `{anchor_strategy.get('focus_terms')}`",
+    )
+    lines.append(
+        f"- Anchor entities: `{len(target_graph.get('anchor_entities', []))}`",
+    )
+    lines.append(
+        f"- Canonical alias groups (size > 1): `{target_graph.get('merged_alias_groups')}`",
+    )
+    lines.append(f"- Target-centered edge count: `{target_graph.get('edge_count')}`")
+    concept_collapsed = target_graph.get("concept_collapsed")
+    if not isinstance(concept_collapsed, dict):
+        concept_collapsed = {}
+    lines.append(
+        f"- Concept-collapsed nodes: `{concept_collapsed.get('node_count')}`",
+    )
+    lines.append(
+        f"- Concept-collapsed edges: `{concept_collapsed.get('edge_count')}`",
+    )
+    lines.append("")
+    lines.append("### Raw Target-Centered Graph Payload")
     lines.append("")
     lines.append("```json")
-    lines.append(json.dumps(med13_graph, indent=2, sort_keys=True))
+    lines.append(json.dumps(target_graph, indent=2, sort_keys=True))
+    lines.append("```")
+    lines.append("")
+    lines.append("### Concept-Collapsed Graph View")
+    lines.append("")
+    lines.append("```json")
+    lines.append(json.dumps(concept_collapsed, indent=2, sort_keys=True))
     lines.append("```")
     lines.append("")
 
@@ -1327,7 +2231,17 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 source_document.id if source_document is not None else None
             ),
         )
-        med13_graph = _collect_med13_graph(session, research_space_id=research_space_id)
+        preferred_anchor_entity_ids = _collect_target_anchor_ids(summary_payload)
+        focus_terms = _extract_focus_terms(
+            target_payload=target_payload,
+            summary_payload=summary_payload,
+        )
+        target_graph = _collect_target_centered_graph(
+            session,
+            research_space_id=research_space_id,
+            preferred_anchor_entity_ids=preferred_anchor_entity_ids,
+            focus_terms=focus_terms,
+        )
         full_graph = _collect_full_graph_snapshot(
             session,
             research_space_id=research_space_id,
@@ -1479,10 +2393,16 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 "created_entries_by_table": dictionary_entries_created,
             },
             "graph": {
-                "med13_centered": med13_graph,
+                "target_centered": target_graph,
+                "med13_centered": target_graph,
                 "full_space_snapshot": full_graph,
             },
         }
+        analysis_payload = report.get("analysis")
+        if isinstance(analysis_payload, dict):
+            analysis_payload["candidate_decisions"] = _build_candidate_decisions(
+                analysis_payload,
+            )
         smoke_passed, smoke_reason, smoke_criterion = _evaluate_smoke_pass(
             report["analysis"],
         )

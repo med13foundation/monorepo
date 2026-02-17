@@ -14,6 +14,9 @@ from src.domain.agents.contexts.entity_recognition_context import (
     EntityRecognitionContext,
 )
 from src.domain.agents.contexts.extraction_context import ExtractionContext
+from src.domain.agents.contexts.extraction_policy_context import (
+    ExtractionPolicyContext,
+)
 from src.domain.agents.contexts.graph_connection_context import (
     GraphConnectionContext,
 )
@@ -35,6 +38,12 @@ from src.domain.agents.contracts.extraction import (
     ExtractedRelation,
     ExtractionContract,
     RejectedFact,
+)
+from src.domain.agents.contracts.extraction_policy import (
+    ExtractionPolicyContract,
+    RelationConstraintProposal,
+    RelationTypeMappingProposal,
+    UnknownRelationPattern,
 )
 from src.domain.agents.contracts.graph_connection import (
     GraphConnectionContract,
@@ -64,6 +73,7 @@ __all__ = [
     "ExtractedObservation",
     "ExtractedRelation",
     "ExtractionContract",
+    "ExtractionPolicyContract",
     "GraphConnectionContract",
     "GraphSearchContract",
     "GraphSearchResultEntry",
@@ -72,13 +82,17 @@ __all__ = [
     "QueryGenerationContract",
     "RejectedCandidate",
     "RejectedFact",
+    "RelationConstraintProposal",
+    "RelationTypeMappingProposal",
     "RecognizedEntityCandidate",
     "RecognizedObservationCandidate",
+    "UnknownRelationPattern",
     # Contexts
     "BaseAgentContext",
     "ContentEnrichmentContext",
     "EntityRecognitionContext",
     "ExtractionContext",
+    "ExtractionPolicyContext",
     "GraphConnectionContext",
     "GraphSearchContext",
     "QueryGenerationContext",
