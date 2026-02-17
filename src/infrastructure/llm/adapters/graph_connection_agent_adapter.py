@@ -4,47 +4,46 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from typing import TYPE_CHECKING, Literal
+import time
+from typing import TYPE_CHECKING
 
-from flujo.domain.models import PipelineResult, StepResult
 from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
 
-from src.domain.agents.contracts.base import EvidenceItem
-from src.domain.agents.contracts.graph_connection import (
-    GraphConnectionContract,
-    RejectedCandidate,
-)
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
+from src.infrastructure.llm.adapters._graph_connection_adapter_pipeline_mixin import (
+    _GraphConnectionAdapterPipelineMixin,
+)
+from src.infrastructure.llm.adapters._graph_connection_adapter_trace_mixin import (
+    _GraphConnectionAdapterTraceMixin,
+)
 from src.infrastructure.llm.config.governance import GovernanceConfig
 from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.llm.pipelines.graph_connection_pipelines import (
     create_clinvar_graph_connection_pipeline,
     create_pubmed_graph_connection_pipeline,
 )
-from src.infrastructure.llm.skills.registry import build_graph_connection_tools
-from src.infrastructure.llm.state.backend_manager import get_state_backend
-from src.infrastructure.llm.state.lifecycle import get_lifecycle_manager
+from src.infrastructure.llm.state import backend_manager, lifecycle
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from flujo import Flujo
+    from flujo.state.backends.base import StateBackend
 
     from src.domain.agents.contexts.graph_connection_context import (
         GraphConnectionContext,
     )
+    from src.domain.agents.contracts.graph_connection import GraphConnectionContract
     from src.domain.ports.dictionary_port import DictionaryPort
     from src.domain.ports.graph_query_port import GraphQueryPort
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
-    from src.type_definitions.common import JSONObject
+    from src.infrastructure.llm.state.lifecycle import FlujoLifecycleManager
 
 logger = logging.getLogger(__name__)
 
-_INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
 
 if TYPE_CHECKING:
@@ -53,13 +52,51 @@ if TYPE_CHECKING:
         Flujo[str, GraphConnectionContract, GraphConnectionContext],
     ]
 
+
+def get_state_backend() -> StateBackend:
+    """Patch-friendly indirection for tests and adapter construction."""
+    return backend_manager.get_state_backend()
+
+
+def get_lifecycle_manager() -> FlujoLifecycleManager:
+    """Patch-friendly indirection for tests and adapter construction."""
+    return lifecycle.get_lifecycle_manager()
+
+
+def build_graph_connection_tools(
+    *,
+    dictionary_service: DictionaryPort,
+    graph_query_service: GraphQueryPort,
+    relation_repository: KernelRelationRepository,
+    research_space_id: str,
+) -> tuple[object, ...]:
+    """Load graph tool builders lazily while preserving patchable module API."""
+    registry_module = __import__(
+        "src.infrastructure.llm.skills.registry",
+        fromlist=["build_graph_connection_tools"],
+    )
+    builder = registry_module.build_graph_connection_tools
+    return tuple(
+        builder(
+            dictionary_service=dictionary_service,
+            graph_query_service=graph_query_service,
+            relation_repository=relation_repository,
+            research_space_id=research_space_id,
+        ),
+    )
+
+
 _PIPELINE_FACTORIES: dict[str, GraphConnectionPipelineFactory] = {
     "clinvar": create_clinvar_graph_connection_pipeline,
     "pubmed": create_pubmed_graph_connection_pipeline,
 }
 
 
-class FlujoGraphConnectionAdapter(GraphConnectionPort):
+class FlujoGraphConnectionAdapter(
+    _GraphConnectionAdapterPipelineMixin,
+    _GraphConnectionAdapterTraceMixin,
+    GraphConnectionPort,
+):
     """Adapter that executes graph-connection workflows through Flujo."""
 
     def __init__(
@@ -115,23 +152,97 @@ class FlujoGraphConnectionAdapter(GraphConnectionPort):
         pipeline = self._get_or_create_pipeline(effective_model, context=context)
         input_text = self._build_input_text(context)
         initial_context = context.model_dump(mode="json")
+        trace_enabled = self._is_trace_dump_enabled()
+        trace_events: list[dict[str, object]] = []
+        input_chars = len(input_text)
+        initial_context_chars = self._estimate_json_chars(initial_context)
+        started_at = time.monotonic()
+        logger.info(
+            "Graph-connection pipeline run started",
+            extra={
+                "graph_source_type": source_type,
+                "graph_model_id": effective_model,
+                "graph_seed_entity_id": context.seed_entity_id,
+                "graph_research_space_id": context.research_space_id,
+                "graph_shadow_mode": context.shadow_mode,
+                "graph_max_depth": context.max_depth,
+                "graph_relation_type_count": (
+                    len(context.relation_types)
+                    if isinstance(context.relation_types, list)
+                    else 0
+                ),
+                "graph_input_chars": input_chars,
+                "graph_initial_context_chars": initial_context_chars,
+            },
+        )
 
         try:
-            return await self._execute_pipeline(
+            result = await self._execute_pipeline(
                 pipeline,
                 input_text=input_text,
                 initial_context=initial_context,
                 fallback_context=context,
+                trace_events=trace_events if trace_enabled else None,
             )
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            logger.info(
+                "Graph-connection pipeline run completed",
+                extra={
+                    "graph_source_type": source_type,
+                    "graph_model_id": effective_model,
+                    "graph_seed_entity_id": context.seed_entity_id,
+                    "graph_research_space_id": context.research_space_id,
+                    "graph_duration_ms": duration_ms,
+                    "graph_decision": result.decision,
+                    "graph_confidence_score": result.confidence_score,
+                    "graph_proposed_relations": len(result.proposed_relations),
+                    "graph_rejected_candidates": len(result.rejected_candidates),
+                },
+            )
+            if trace_enabled:
+                self._emit_trace_dump(
+                    status="completed",
+                    context=context,
+                    effective_model=effective_model,
+                    input_text=input_text,
+                    initial_context=initial_context,
+                    trace_events=trace_events,
+                    output_contract=result,
+                    duration_ms=duration_ms,
+                    error_message=None,
+                )
         except (PausedException, PipelineAbortSignal):
             raise
         except FlujoError as exc:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
             logger.warning(
-                "Graph-connection pipeline failed for seed=%s: %s",
-                context.seed_entity_id,
-                exc,
+                "Graph-connection pipeline failed; returning heuristic fallback",
+                extra={
+                    "graph_source_type": source_type,
+                    "graph_model_id": effective_model,
+                    "graph_seed_entity_id": context.seed_entity_id,
+                    "graph_research_space_id": context.research_space_id,
+                    "graph_duration_ms": duration_ms,
+                    "graph_failure_type": type(exc).__name__,
+                    "graph_failure_message": str(exc),
+                },
             )
-            return self._heuristic_contract(context, decision="fallback")
+            fallback_contract = self._heuristic_contract(context, decision="fallback")
+            if trace_enabled:
+                self._emit_trace_dump(
+                    status="flujo_error_fallback",
+                    context=context,
+                    effective_model=effective_model,
+                    input_text=input_text,
+                    initial_context=initial_context,
+                    trace_events=trace_events,
+                    output_contract=fallback_contract,
+                    duration_ms=duration_ms,
+                    error_message=str(exc),
+                )
+            return fallback_contract
+        else:
+            return result
 
     async def close(self) -> None:
         for cache_key, pipeline in self._pipelines.items():
@@ -146,16 +257,6 @@ class FlujoGraphConnectionAdapter(GraphConnectionPort):
                     exc,
                 )
         self._pipelines.clear()
-
-    @staticmethod
-    def _has_openai_key() -> bool:
-        raw_value = os.getenv("OPENAI_API_KEY") or os.getenv("FLUJO_OPENAI_API_KEY")
-        if raw_value is None:
-            return False
-        normalized = raw_value.strip()
-        if not normalized:
-            return False
-        return normalized.lower() not in _INVALID_OPENAI_KEYS
 
     def _resolve_model_id(self, model_id: str | None) -> str:
         if model_id is not None and self._registry.validate_model_for_capability(
@@ -219,15 +320,14 @@ class FlujoGraphConnectionAdapter(GraphConnectionPort):
         self._lifecycle_manager.register_runner(pipeline)
         return pipeline
 
-    @staticmethod
-    def _build_input_text(context: GraphConnectionContext) -> str:
+    def _build_input_text(self, context: GraphConnectionContext) -> str:
         relation_types = (
             json.dumps(context.relation_types, default=str)
             if context.relation_types is not None
             else "null"
         )
         settings_payload = json.dumps(context.research_space_settings, default=str)
-        return (
+        base_input = (
             f"SOURCE TYPE: {context.source_type}\n"
             f"RESEARCH SPACE ID: {context.research_space_id}\n"
             f"SEED ENTITY ID: {context.seed_entity_id}\n"
@@ -236,139 +336,31 @@ class FlujoGraphConnectionAdapter(GraphConnectionPort):
             f"SHADOW MODE: {context.shadow_mode}\n\n"
             f"RESEARCH SPACE SETTINGS JSON:\n{settings_payload}"
         )
-
-    async def _execute_pipeline(
-        self,
-        pipeline: Flujo[str, GraphConnectionContract, GraphConnectionContext],
-        *,
-        input_text: str,
-        initial_context: JSONObject,
-        fallback_context: GraphConnectionContext,
-    ) -> GraphConnectionContract:
-        final_output: GraphConnectionContract | None = None
-
-        async for item in pipeline.run_async(
-            input_text,
-            initial_context_data=initial_context,
-        ):
-            if isinstance(item, StepResult):
-                candidate = self._extract_contract(item.output)
-                if candidate is not None:
-                    final_output = candidate
-            elif isinstance(item, PipelineResult):
-                self._capture_run_id(item)
-                candidate = self._extract_from_pipeline_result(item)
-                if candidate is not None:
-                    final_output = candidate
-
-        if final_output is None:
-            return self._heuristic_contract(fallback_context, decision="fallback")
-        return final_output
-
-    def _extract_from_pipeline_result(
-        self,
-        result: PipelineResult[GraphConnectionContext],
-    ) -> GraphConnectionContract | None:
-        step_history = getattr(result, "step_history", None)
-        if not isinstance(step_history, list):
-            return None
-        for step_result in reversed(step_history):
-            if not isinstance(step_result, StepResult):
-                continue
-            candidate = self._extract_contract(step_result.output)
-            if candidate is not None:
-                return candidate
-        return None
-
-    @staticmethod
-    def _extract_contract(output: object) -> GraphConnectionContract | None:
-        if isinstance(output, GraphConnectionContract):
-            return output
-        wrapped_output = getattr(output, "output", None)
-        if isinstance(wrapped_output, GraphConnectionContract):
-            return wrapped_output
-        return None
-
-    def _capture_run_id(self, result: PipelineResult[GraphConnectionContext]) -> None:
-        context = result.final_pipeline_context
-        run_id = getattr(context, "run_id", None)
-        if isinstance(run_id, str) and run_id.strip():
-            self._last_run_id = run_id.strip()
-
-    def _heuristic_contract(
-        self,
-        context: GraphConnectionContext,
-        *,
-        decision: Literal["generated", "fallback", "escalate"],
-    ) -> GraphConnectionContract:
-        rejected_candidates: list[RejectedCandidate] = []
-        relation_count = 0
-        if self._graph_query_service is not None:
-            neighborhood = self._graph_query_service.graph_query_neighbourhood(
-                research_space_id=context.research_space_id,
-                entity_id=context.seed_entity_id,
-                depth=1,
-                relation_types=context.relation_types,
-                limit=10,
+        snapshot_payload = self._build_seed_snapshot(context)
+        if snapshot_payload is None:
+            logger.info(
+                "Graph-connection context payload assembled without seed snapshot",
+                extra={
+                    "graph_seed_entity_id": context.seed_entity_id,
+                    "graph_research_space_id": context.research_space_id,
+                    "graph_settings_chars": len(settings_payload),
+                    "graph_snapshot_chars": 0,
+                    "graph_input_chars": len(base_input),
+                },
             )
-            relation_count = len(neighborhood)
-            for relation in neighborhood[:3]:
-                source_is_seed = str(relation.source_id) == context.seed_entity_id
-                target_id = (
-                    str(relation.target_id)
-                    if source_is_seed
-                    else str(relation.source_id)
-                )
-                rejected_candidates.append(
-                    RejectedCandidate(
-                        source_id=context.seed_entity_id,
-                        relation_type=relation.relation_type,
-                        target_id=target_id,
-                        reason="heuristic_fallback_no_llm_reasoning",
-                        confidence=min(relation.aggregate_confidence, 0.49),
-                    ),
-                )
-
-        evidence = [
-            EvidenceItem(
-                source_type="db",
-                locator=f"seed_entity:{context.seed_entity_id}",
-                excerpt=(
-                    "Heuristic graph fallback executed using deterministic "
-                    "neighbourhood scan"
-                ),
-                relevance=0.65 if relation_count > 0 else 0.35,
-            ),
-        ]
-
-        return GraphConnectionContract(
-            decision=decision,
-            confidence_score=0.45 if relation_count > 0 else 0.3,
-            rationale="Heuristic graph-connection fallback executed",
-            evidence=evidence,
-            source_type=context.source_type,
-            research_space_id=context.research_space_id,
-            seed_entity_id=context.seed_entity_id,
-            proposed_relations=[],
-            rejected_candidates=rejected_candidates,
-            shadow_mode=context.shadow_mode,
-            agent_run_id=self._last_run_id,
+            return base_input
+        composed_input = f"{base_input}{self._INPUT_SNAPSHOT_MARKER}{snapshot_payload}"
+        logger.info(
+            "Graph-connection context payload assembled",
+            extra={
+                "graph_seed_entity_id": context.seed_entity_id,
+                "graph_research_space_id": context.research_space_id,
+                "graph_settings_chars": len(settings_payload),
+                "graph_snapshot_chars": len(snapshot_payload),
+                "graph_input_chars": len(composed_input),
+            },
         )
-
-    @staticmethod
-    def _unsupported_source_contract(
-        context: GraphConnectionContext,
-    ) -> GraphConnectionContract:
-        return GraphConnectionContract(
-            decision="escalate",
-            confidence_score=0.0,
-            rationale=f"Source type '{context.source_type}' is not supported",
-            evidence=[],
-            source_type=context.source_type,
-            research_space_id=context.research_space_id,
-            seed_entity_id=context.seed_entity_id,
-            shadow_mode=context.shadow_mode,
-        )
+        return composed_input
 
 
 __all__ = ["FlujoGraphConnectionAdapter"]

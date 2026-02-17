@@ -19,7 +19,7 @@ def test_pubmed_graph_connection_prompt_is_pubmed_specific() -> None:
     assert "ClinVar-backed research spaces" not in prompt
 
 
-def test_create_pubmed_graph_connection_pipeline_has_pubmed_step_name() -> None:
+def test_create_pubmed_graph_connection_pipeline_has_pubmed_subagent_steps() -> None:
     with patch(
         "src.infrastructure.llm.factories.graph_connection_agent_factory.make_agent_async",
         return_value=MagicMock(name="agent"),
@@ -28,4 +28,10 @@ def test_create_pubmed_graph_connection_pipeline_has_pubmed_step_name() -> None:
 
     assert pipeline.pipeline is not None
     step_names = [step.name for step in pipeline.pipeline.steps]
-    assert "discover_pubmed_graph_connections" in step_names
+    assert "discover_pubmed_graph_connection_candidates" in step_names
+    assert "synthesize_pubmed_graph_connections" in step_names
+    assert step_names.index(
+        "discover_pubmed_graph_connection_candidates",
+    ) < step_names.index(
+        "synthesize_pubmed_graph_connections",
+    )

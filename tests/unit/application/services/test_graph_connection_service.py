@@ -20,6 +20,7 @@ from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.graph_connection import (
     GraphConnectionContract,
     ProposedRelation,
+    RejectedCandidate,
 )
 from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
 
@@ -56,10 +57,30 @@ class StubRelationRepository:
 
     def __post_init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.neighbourhood: list[_StubNeighbourhoodRelation] = []
 
     def create(self, **kwargs: object) -> object:
         self.calls.append(kwargs)
         return object()
+
+    def find_neighborhood(
+        self,
+        entity_id: str,
+        *,
+        depth: int = 1,
+        relation_types: list[str] | None = None,
+    ) -> list[_StubNeighbourhoodRelation]:
+        _ = entity_id, depth, relation_types
+        return list(self.neighbourhood)
+
+
+@dataclass(frozen=True)
+class _StubNeighbourhoodRelation:
+    source_id: str
+    relation_type: str
+    target_id: str
+    aggregate_confidence: float
+    provenance_id: str | None = None
 
 
 def _build_governance_service() -> GovernanceService:
@@ -105,6 +126,58 @@ def _build_contract(
                 reasoning="Multiple independent edges support this inferred relation.",
             ),
         ],
+        rejected_candidates=[],
+        shadow_mode=False,
+    )
+
+
+def _build_contract_with_rejected_candidate() -> GraphConnectionContract:
+    return GraphConnectionContract(
+        decision="fallback",
+        confidence_score=0.35,
+        rationale="No high-confidence relation candidates survived policy checks",
+        evidence=[
+            EvidenceItem(
+                source_type="db",
+                locator=f"relation:{uuid4()}",
+                excerpt="Candidate rejected due uncertainty",
+                relevance=0.6,
+            ),
+        ],
+        source_type="clinvar",
+        research_space_id=str(uuid4()),
+        seed_entity_id=str(uuid4()),
+        proposed_relations=[],
+        rejected_candidates=[
+            RejectedCandidate(
+                source_id=str(uuid4()),
+                relation_type="associates_with",
+                target_id=str(uuid4()),
+                reason="insufficient_supporting_documents",
+                confidence=0.44,
+            ),
+        ],
+        shadow_mode=False,
+    )
+
+
+def _build_empty_contract() -> GraphConnectionContract:
+    return GraphConnectionContract(
+        decision="fallback",
+        confidence_score=0.25,
+        rationale="No candidates produced",
+        evidence=[
+            EvidenceItem(
+                source_type="db",
+                locator=f"relation:{uuid4()}",
+                excerpt="No candidates produced",
+                relevance=0.5,
+            ),
+        ],
+        source_type="clinvar",
+        research_space_id=str(uuid4()),
+        seed_entity_id=str(uuid4()),
+        proposed_relations=[],
         rejected_candidates=[],
         shadow_mode=False,
     )
@@ -256,6 +329,111 @@ async def test_discover_connections_for_seed_enqueues_review_item() -> None:
     )
 
     assert outcome.review_required is True
+    assert queued_items == [
+        (
+            "graph_connection_seed",
+            contract.seed_entity_id,
+            contract.research_space_id,
+            "medium",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_discover_connections_for_seed_promotes_rejected_candidates() -> None:
+    contract = _build_contract_with_rejected_candidate()
+    relation_repository = StubRelationRepository()
+    queued_items: list[tuple[str, str, str | None, str]] = []
+
+    def submit_review_item(
+        entity_type: str,
+        entity_id: str,
+        research_space_id: str | None,
+        priority: str,
+    ) -> None:
+        queued_items.append((entity_type, entity_id, research_space_id, priority))
+
+    service = GraphConnectionService(
+        dependencies=GraphConnectionServiceDependencies(
+            graph_connection_agent=StubGraphConnectionAgent(contract),
+            relation_repository=relation_repository,
+            governance_service=_build_governance_service(),
+            review_queue_submitter=submit_review_item,
+        ),
+    )
+
+    outcome = await service.discover_connections_for_seed(
+        research_space_id=contract.research_space_id,
+        seed_entity_id=contract.seed_entity_id,
+        source_type="clinvar",
+        research_space_settings={},
+        shadow_mode=False,
+    )
+
+    assert outcome.status == "discovered"
+    assert outcome.wrote_to_graph is True
+    assert outcome.persisted_relations_count == 1
+    assert outcome.reason == "processed_promoted_rejected_candidates"
+    assert outcome.review_required is True
+    assert len(relation_repository.calls) == 1
+    assert relation_repository.calls[0]["relation_type"] == "ASSOCIATES_WITH"
+    assert queued_items == [
+        (
+            "graph_connection_seed",
+            contract.seed_entity_id,
+            contract.research_space_id,
+            "medium",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_discover_connections_for_seed_uses_neighbourhood_fallback() -> None:
+    contract = _build_empty_contract()
+    relation_repository = StubRelationRepository()
+    relation_repository.neighbourhood = [
+        _StubNeighbourhoodRelation(
+            source_id=str(uuid4()),
+            relation_type="ASSOCIATED_WITH",
+            target_id=str(uuid4()),
+            aggregate_confidence=0.82,
+            provenance_id=str(uuid4()),
+        ),
+    ]
+    queued_items: list[tuple[str, str, str | None, str]] = []
+
+    def submit_review_item(
+        entity_type: str,
+        entity_id: str,
+        research_space_id: str | None,
+        priority: str,
+    ) -> None:
+        queued_items.append((entity_type, entity_id, research_space_id, priority))
+
+    service = GraphConnectionService(
+        dependencies=GraphConnectionServiceDependencies(
+            graph_connection_agent=StubGraphConnectionAgent(contract),
+            relation_repository=relation_repository,
+            governance_service=_build_governance_service(),
+            review_queue_submitter=submit_review_item,
+        ),
+    )
+
+    outcome = await service.discover_connections_for_seed(
+        research_space_id=contract.research_space_id,
+        seed_entity_id=contract.seed_entity_id,
+        source_type="clinvar",
+        research_space_settings={},
+        shadow_mode=False,
+    )
+
+    assert outcome.status == "discovered"
+    assert outcome.wrote_to_graph is True
+    assert outcome.persisted_relations_count == 1
+    assert outcome.reason == "processed_seed_neighbourhood_fallback"
+    assert outcome.review_required is True
+    assert len(relation_repository.calls) == 1
+    assert relation_repository.calls[0]["relation_type"] == "ASSOCIATED_WITH"
     assert queued_items == [
         (
             "graph_connection_seed",

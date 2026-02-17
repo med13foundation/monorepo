@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
-import os
+import time
 from inspect import isawaitable
 from typing import TYPE_CHECKING, TypeGuard
 
 from flujo.agents import make_agent_async
+from flujo.domain.agent_result import FlujoAgentResult
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits as PydanticAIUsageLimits
 
@@ -15,6 +17,11 @@ from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.graph_connection import GraphConnectionContract
 from src.domain.agents.models import ModelCapability, ModelSpec
 from src.infrastructure.llm.config.model_registry import get_model_registry
+from src.infrastructure.llm.factories._graph_connection_env_helpers import (
+    resolve_graph_connection_max_retries,
+    resolve_graph_connection_timeout_seconds,
+    resolve_graph_connection_usage_limits,
+)
 from src.infrastructure.llm.factories.base_factory import BaseAgentFactory, FlujoAgent
 from src.infrastructure.llm.prompts.graph_connection import (
     CLINVAR_GRAPH_CONNECTION_SYSTEM_PROMPT,
@@ -30,25 +37,35 @@ _GRAPH_CONNECTION_PROMPTS: dict[str, str] = {
 }
 SUPPORTED_GRAPH_CONNECTION_SOURCES = frozenset(_GRAPH_CONNECTION_PROMPTS)
 logger = logging.getLogger(__name__)
-_GRAPH_CONNECTION_REQUEST_LIMIT = 48
-_GRAPH_CONNECTION_TOOL_CALL_LIMIT = 96
+_GRAPH_CONNECTION_REQUEST_LIMIT = 960
+_GRAPH_CONNECTION_TOOL_CALL_LIMIT = 1920
 _ENV_GRAPH_CONNECTION_REQUEST_LIMIT = "MED13_GRAPH_CONNECTION_REQUEST_LIMIT"
 _ENV_GRAPH_CONNECTION_TOOL_CALL_LIMIT = "MED13_GRAPH_CONNECTION_TOOL_CALL_LIMIT"
+_ENV_GRAPH_CONNECTION_TIMEOUT_SECONDS = "MED13_GRAPH_CONNECTION_TIMEOUT_SECONDS"
+_ENV_GRAPH_CONNECTION_MAX_RETRIES = "MED13_GRAPH_CONNECTION_MAX_RETRIES"
 
 
 class _GraphConnectionUsageGuard:
     """Wrap graph-connection agents with conservative per-run usage limits."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         delegate: FlujoAgent,
         *,
         request_limit: int = _GRAPH_CONNECTION_REQUEST_LIMIT,
         tool_calls_limit: int = _GRAPH_CONNECTION_TOOL_CALL_LIMIT,
+        timeout_seconds: int = 30,
+        max_retries: int = 1,
+        source_type: str = "unknown",
+        model_id: str | None = None,
     ) -> None:
         self._delegate = delegate
         self._request_limit = request_limit
         self._tool_calls_limit = tool_calls_limit
+        self._timeout_seconds = timeout_seconds
+        self._max_retries = max_retries
+        self._source_type = source_type
+        self._model_id = model_id
 
     @property
     def _agent(self) -> object:
@@ -56,6 +73,12 @@ class _GraphConnectionUsageGuard:
         return self
 
     async def run(self, *args: object, **kwargs: object) -> object:
+        diagnostics = self._build_run_diagnostics(args=args, kwargs=kwargs)
+        started_at = time.monotonic()
+        logger.info(
+            "Graph-connection agent invocation started",
+            extra=diagnostics,
+        )
         self._ensure_usage_limits(kwargs)
         run_callable = self._resolve_delegate_run_callable()
         try:
@@ -63,13 +86,44 @@ class _GraphConnectionUsageGuard:
             if isawaitable(result):
                 result = await result
         except UsageLimitExceeded as exc:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            logger.warning(
+                "Graph-connection agent invocation exceeded usage limits",
+                extra={
+                    **diagnostics,
+                    "graph_run_scenario": "usage_limit_exceeded",
+                    "graph_run_duration_ms": duration_ms,
+                    "graph_run_error": str(exc),
+                },
+            )
             return self._handle_usage_limit_exception(kwargs.get("context"), exc)
         except Exception as exc:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            scenario = self._classify_runtime_exception(exc)
+            logger.warning(
+                "Graph-connection agent invocation raised runtime exception",
+                extra={
+                    **diagnostics,
+                    "graph_run_scenario": scenario,
+                    "graph_run_duration_ms": duration_ms,
+                    "graph_run_exception_type": type(exc).__name__,
+                    "graph_run_error": str(exc),
+                },
+            )
             if self._is_control_flow_exception(exc):
                 raise
             return self._handle_runtime_exception(kwargs.get("context"), exc)
         else:
-            return result
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            logger.info(
+                "Graph-connection agent invocation completed",
+                extra={
+                    **diagnostics,
+                    "graph_run_scenario": "completed",
+                    "graph_run_duration_ms": duration_ms,
+                },
+            )
+            return self._normalize_output_for_flujo(result)
 
     async def run_async(self, *args: object, **kwargs: object) -> object:
         return await self.run(*args, **kwargs)
@@ -96,7 +150,7 @@ class _GraphConnectionUsageGuard:
         self,
         context_obj: object,
         exc: UsageLimitExceeded,
-    ) -> GraphConnectionContract:
+    ) -> object:
         fallback = self._build_usage_limit_fallback(context_obj, str(exc))
         if fallback is None:
             raise exc
@@ -104,13 +158,13 @@ class _GraphConnectionUsageGuard:
             "Graph-connection usage cap reached; returning fallback contract. %s",
             exc,
         )
-        return fallback
+        return self._normalize_graph_output(fallback)
 
     def _handle_runtime_exception(
         self,
         context_obj: object,
         exc: Exception,
-    ) -> GraphConnectionContract:
+    ) -> object:
         message = str(exc)
         if self._is_usage_limit_error(exc, message):
             fallback = self._build_usage_limit_fallback(context_obj, message)
@@ -120,15 +174,27 @@ class _GraphConnectionUsageGuard:
                     "returning fallback contract. %s",
                     exc,
                 )
-                return fallback
+                return self._normalize_graph_output(fallback)
         fallback = self._build_runtime_fallback(context_obj, message)
         if fallback is not None:
             logger.info(
                 "Graph-connection agent failed; returning fallback contract. %s",
                 exc,
             )
-            return fallback
+            return self._normalize_graph_output(fallback)
         raise exc
+
+    def _normalize_output_for_flujo(self, result: object) -> object:
+        if isinstance(result, FlujoAgentResult):
+            return self._normalize_graph_output(result.output)
+        return self._normalize_graph_output(result)
+
+    @staticmethod
+    def _normalize_graph_output(output: object) -> object:
+        if isinstance(output, GraphConnectionContract):
+            payload = output.model_dump(mode="json")
+            return json.dumps(payload, ensure_ascii=True, sort_keys=True)
+        return output
 
     @staticmethod
     def _is_control_flow_exception(exc: Exception) -> bool:
@@ -150,6 +216,49 @@ class _GraphConnectionUsageGuard:
                 "would exceed the",
             )
         )
+
+    @staticmethod
+    def _classify_runtime_exception(exc: Exception) -> str:
+        if isinstance(exc, TimeoutError):
+            return "timeout_error"
+        exception_name = type(exc).__name__
+        lowered = str(exc).lower()
+        if "timeout" in lowered or "deadline" in lowered:
+            return "timeout_error"
+        if exception_name in {"UsageLimitExceeded", "UsageLimitExceededError"}:
+            return "usage_limit_exceeded"
+        if exception_name == "ValidationError":
+            return "output_validation_error"
+        return "runtime_exception"
+
+    def _build_run_diagnostics(
+        self,
+        *,
+        args: tuple[object, ...],
+        kwargs: dict[str, object],
+    ) -> dict[str, object]:
+        first_arg = args[0] if args else None
+        input_chars = len(first_arg) if isinstance(first_arg, str) else 0
+        context_obj = kwargs.get("context")
+        relation_types_obj = getattr(context_obj, "relation_types", None)
+        relation_type_count = (
+            len(relation_types_obj) if isinstance(relation_types_obj, list) else 0
+        )
+        return {
+            "graph_source_type": self._source_type,
+            "graph_model_id": self._model_id,
+            "graph_timeout_seconds": self._timeout_seconds,
+            "graph_max_retries": self._max_retries,
+            "graph_request_limit": self._request_limit,
+            "graph_tool_calls_limit": self._tool_calls_limit,
+            "graph_input_chars": input_chars,
+            "graph_seed_entity_id": getattr(context_obj, "seed_entity_id", None),
+            "graph_research_space_id": getattr(context_obj, "research_space_id", None),
+            "graph_shadow_mode": getattr(context_obj, "shadow_mode", None),
+            "graph_max_depth": getattr(context_obj, "max_depth", None),
+            "graph_relation_type_count": relation_type_count,
+            "graph_usage_limits_injected": kwargs.get("usage_limits") is None,
+        }
 
     @classmethod
     def _build_runtime_fallback(
@@ -253,15 +362,29 @@ def create_graph_connection_agent_for_source(
         raise ValueError(msg)
 
     model_spec = _get_model_spec(model)
-    request_limit, tool_calls_limit = _resolve_graph_connection_usage_limits()
+    resolved_timeout_seconds = resolve_graph_connection_timeout_seconds(
+        model_spec=model_spec,
+        timeout_env=_ENV_GRAPH_CONNECTION_TIMEOUT_SECONDS,
+    )
+    resolved_max_retries = resolve_graph_connection_max_retries(
+        model_spec=model_spec,
+        fallback=max_retries,
+        retries_env=_ENV_GRAPH_CONNECTION_MAX_RETRIES,
+    )
+    request_limit, tool_calls_limit = resolve_graph_connection_usage_limits(
+        request_limit_default=_GRAPH_CONNECTION_REQUEST_LIMIT,
+        tool_calls_limit_default=_GRAPH_CONNECTION_TOOL_CALL_LIMIT,
+        request_limit_env=_ENV_GRAPH_CONNECTION_REQUEST_LIMIT,
+        tool_calls_limit_env=_ENV_GRAPH_CONNECTION_TOOL_CALL_LIMIT,
+    )
     reasoning_settings = model_spec.get_reasoning_settings()
     if reasoning_settings:
         agent = make_agent_async(
             model=model_spec.model_id,
             system_prompt=prompt,
             output_type=GraphConnectionContract,
-            max_retries=model_spec.max_retries,
-            timeout=int(model_spec.timeout_seconds),
+            max_retries=resolved_max_retries,
+            timeout=resolved_timeout_seconds,
             model_settings=reasoning_settings,
             tools=tools or [],
         )
@@ -269,44 +392,28 @@ def create_graph_connection_agent_for_source(
             agent,
             request_limit=request_limit,
             tool_calls_limit=tool_calls_limit,
+            timeout_seconds=resolved_timeout_seconds,
+            max_retries=resolved_max_retries,
+            source_type=normalized_source,
+            model_id=model_spec.model_id,
         )
     agent = make_agent_async(
         model=model_spec.model_id,
         system_prompt=prompt,
         output_type=GraphConnectionContract,
-        max_retries=max_retries,
+        max_retries=resolved_max_retries,
+        timeout=resolved_timeout_seconds,
         tools=tools or [],
     )
     return _GraphConnectionUsageGuard(
         agent,
         request_limit=request_limit,
         tool_calls_limit=tool_calls_limit,
+        timeout_seconds=resolved_timeout_seconds,
+        max_retries=resolved_max_retries,
+        source_type=normalized_source,
+        model_id=model_spec.model_id,
     )
-
-
-def _resolve_graph_connection_usage_limits() -> tuple[int, int]:
-    request_limit = _read_positive_int_from_env(
-        name=_ENV_GRAPH_CONNECTION_REQUEST_LIMIT,
-        default=_GRAPH_CONNECTION_REQUEST_LIMIT,
-    )
-    tool_calls_limit = _read_positive_int_from_env(
-        name=_ENV_GRAPH_CONNECTION_TOOL_CALL_LIMIT,
-        default=_GRAPH_CONNECTION_TOOL_CALL_LIMIT,
-    )
-    return request_limit, tool_calls_limit
-
-
-def _read_positive_int_from_env(*, name: str, default: int) -> int:
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    normalized = raw_value.strip()
-    if not normalized:
-        return default
-    if normalized.isdigit():
-        parsed = int(normalized)
-        return parsed if parsed > 0 else default
-    return default
 
 
 def create_clinvar_graph_connection_agent(

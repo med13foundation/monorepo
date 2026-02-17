@@ -18,6 +18,7 @@ from src.application.agents.services._relation_persistence_payload_helpers impor
     normalize_run_id,
     relation_payload,
 )
+from src.domain.value_objects.relation_types import normalize_relation_type
 
 if TYPE_CHECKING:
     from src.domain.agents.contracts.extraction import (
@@ -177,7 +178,7 @@ class _ExtractionRelationPersistenceHelpers(
 
         for relation in relations:
             normalized_source_type = self._normalize_component(relation.source_type)
-            normalized_relation_type = self._normalize_component(relation.relation_type)
+            normalized_relation_type = normalize_relation_type(relation.relation_type)
             normalized_target_type = self._normalize_component(relation.target_type)
             payload = relation_payload(relation)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.domain.value_objects.relation_types import normalize_relation_type
 from src.infrastructure.ingestion.types import NormalizedObservation
 from src.infrastructure.ingestion.validation.observation_validator import (
     ObservationValidator,
@@ -93,7 +94,7 @@ def make_validate_triple_tool(
         Validate a relation triple against dictionary relation constraints.
         """
         normalized_source_type = source_type.strip().upper()
-        normalized_relation_type = relation_type.strip().upper()
+        normalized_relation_type = normalize_relation_type(relation_type)
         normalized_target_type = target_type.strip().upper()
         if (
             not normalized_source_type

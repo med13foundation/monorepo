@@ -18,6 +18,7 @@ from src.application.agents.services.governance_service import (
     GovernanceService,
 )
 from src.domain.agents.contexts.extraction_context import ExtractionContext
+from src.domain.value_objects.relation_types import normalize_relation_type
 from src.type_definitions.ingestion import RawRecord
 from src.type_definitions.json_utils import to_json_value
 
@@ -336,7 +337,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
     ) -> tuple[str, ...] | None:
         relation_types: list[str] = []
         for relation in contract.relations:
-            normalized = relation.relation_type.strip().upper()
+            normalized = normalize_relation_type(relation.relation_type)
             if not normalized or normalized in relation_types:
                 continue
             relation_types.append(normalized)

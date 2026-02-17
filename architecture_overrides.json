@@ -44,8 +44,8 @@
     },
     {
       "path": "src/application/agents/services/entity_recognition_service.py",
-      "max_lines": 1250,
-      "reason": "Entity recognition orchestration split is planned after contract and queue interfaces stabilize.",
+      "max_lines": 1350,
+      "reason": "Entity recognition orchestration now includes graph-fallback and review-queue integration; split remains planned after contract and queue interfaces stabilize.",
       "expires_on": "2026-12-31"
     },
     {

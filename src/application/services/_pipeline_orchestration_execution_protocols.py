@@ -79,27 +79,30 @@ class _PipelineExecutionSelf(Protocol):
         graph_persisted_relations: int,
     ) -> IngestionJob | None: ...
 
-    def _resolve_run_id(self, raw_run_id: str | None) -> str: ...
+    @staticmethod
+    def _resolve_run_id(raw_run_id: str | None) -> str: ...
 
+    @staticmethod
     def _resolve_resume_stage(
-        self,
         resume_from_stage: PipelineStageName | None,
     ) -> PipelineStageName | None: ...
 
+    @staticmethod
     def _should_run_stage(
-        self,
         *,
         stage: PipelineStageName,
         resume_from_stage: PipelineStageName | None,
     ) -> bool: ...
 
+    @classmethod
     def _normalize_graph_seed_entity_ids(
-        self,
+        cls,
         seed_entity_ids: list[str] | None,
     ) -> list[str]: ...
 
+    @classmethod
     def _extract_seed_entity_ids_from_extraction_summary(
-        self,
+        cls,
         extraction_summary: object,
     ) -> list[str]: ...
 
@@ -120,8 +123,9 @@ class _PipelineExecutionSelf(Protocol):
         source_type: str | None,
     ) -> str: ...
 
+    @classmethod
     def _extract_seed_entity_ids_from_graph_search(
-        self,
+        cls,
         search_contract: object,
     ) -> list[str]: ...
 
@@ -137,17 +141,11 @@ class _PipelineExecutionSelf(Protocol):
         source_id: UUID,
     ) -> tuple[str, ...]: ...
 
+    @staticmethod
     def _extract_job_query_hint(
-        self,
         *,
         metadata: object,
     ) -> str | None: ...
-
-    def _resolve_latest_ingestion_job_id(
-        self,
-        *,
-        source_id: UUID,
-    ) -> UUID | None: ...
 
 
 __all__ = ["_PipelineExecutionSelf"]

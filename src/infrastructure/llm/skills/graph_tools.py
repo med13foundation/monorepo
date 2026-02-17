@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Literal
 
 from src.type_definitions.json_utils import to_json_value
@@ -17,6 +18,9 @@ if TYPE_CHECKING:
 else:
     type JSONObject = dict[str, object]
     type JSONValue = object
+
+_GRAPH_TOOL_DEFAULT_MAX_LIMIT = 50
+_GRAPH_TOOL_MAX_LIMIT_ENV = "MED13_GRAPH_TOOL_MAX_LIMIT"
 
 
 def _model_to_json(model: object) -> JSONObject:
@@ -42,6 +46,28 @@ def _normalize_space_id(research_space_id: str | None) -> str:
     return normalized
 
 
+def _read_positive_int_from_env(*, name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip()
+    if not normalized:
+        return default
+    if normalized.isdigit():
+        parsed = int(normalized)
+        return parsed if parsed > 0 else default
+    return default
+
+
+def _resolve_limit(limit: int) -> int:
+    normalized = limit if limit > 0 else _GRAPH_TOOL_DEFAULT_MAX_LIMIT
+    max_allowed = _read_positive_int_from_env(
+        name=_GRAPH_TOOL_MAX_LIMIT_ENV,
+        default=_GRAPH_TOOL_DEFAULT_MAX_LIMIT,
+    )
+    return min(normalized, max_allowed)
+
+
 def make_graph_query_neighbourhood_tool(
     *,
     graph_query_service: GraphQueryPort,
@@ -57,13 +83,17 @@ def make_graph_query_neighbourhood_tool(
         relation_types: list[str] | None = None,
         limit: int = 200,
     ) -> list[JSONObject]:
-        relations = graph_query_service.graph_query_neighbourhood(
-            research_space_id=space_id,
-            entity_id=entity_id,
-            depth=depth,
-            relation_types=relation_types,
-            limit=limit,
-        )
+        resolved_limit = _resolve_limit(limit)
+        try:
+            relations = graph_query_service.graph_query_neighbourhood(
+                research_space_id=space_id,
+                entity_id=entity_id,
+                depth=depth,
+                relation_types=relation_types,
+                limit=resolved_limit,
+            )
+        except (TypeError, ValueError):
+            return []
         return [_model_to_json(relation) for relation in relations]
 
     return graph_query_neighbourhood
@@ -83,12 +113,16 @@ def make_graph_query_entities_tool(
         query_text: str | None = None,
         limit: int = 200,
     ) -> list[JSONObject]:
-        entities = graph_query_service.graph_query_entities(
-            research_space_id=space_id,
-            entity_type=entity_type,
-            query_text=query_text,
-            limit=limit,
-        )
+        resolved_limit = _resolve_limit(limit)
+        try:
+            entities = graph_query_service.graph_query_entities(
+                research_space_id=space_id,
+                entity_type=entity_type,
+                query_text=query_text,
+                limit=resolved_limit,
+            )
+        except (TypeError, ValueError):
+            return []
         return [_model_to_json(entity) for entity in entities]
 
     return graph_query_entities
@@ -108,12 +142,16 @@ def make_graph_query_shared_subjects_tool(
         entity_id_b: str,
         limit: int = 100,
     ) -> list[JSONObject]:
-        entities = graph_query_service.graph_query_shared_subjects(
-            research_space_id=space_id,
-            entity_id_a=entity_id_a,
-            entity_id_b=entity_id_b,
-            limit=limit,
-        )
+        resolved_limit = _resolve_limit(limit)
+        try:
+            entities = graph_query_service.graph_query_shared_subjects(
+                research_space_id=space_id,
+                entity_id_a=entity_id_a,
+                entity_id_b=entity_id_b,
+                limit=resolved_limit,
+            )
+        except (TypeError, ValueError):
+            return []
         return [_model_to_json(entity) for entity in entities]
 
     return graph_query_shared_subjects
@@ -138,14 +176,18 @@ def make_graph_query_relations_tool(
         depth: int = 1,
         limit: int = 200,
     ) -> list[JSONObject]:
-        relations = graph_query_service.graph_query_relations(
-            research_space_id=space_id,
-            entity_id=entity_id,
-            relation_types=relation_types,
-            direction=direction,
-            depth=depth,
-            limit=limit,
-        )
+        resolved_limit = _resolve_limit(limit)
+        try:
+            relations = graph_query_service.graph_query_relations(
+                research_space_id=space_id,
+                entity_id=entity_id,
+                relation_types=relation_types,
+                direction=direction,
+                depth=depth,
+                limit=resolved_limit,
+            )
+        except (TypeError, ValueError):
+            return []
         return [_model_to_json(relation) for relation in relations]
 
     return graph_query_relations
@@ -165,12 +207,16 @@ def make_graph_query_observations_tool(
         variable_ids: list[str] | None = None,
         limit: int = 200,
     ) -> list[JSONObject]:
-        observations = graph_query_service.graph_query_observations(
-            research_space_id=space_id,
-            entity_id=entity_id,
-            variable_ids=variable_ids,
-            limit=limit,
-        )
+        resolved_limit = _resolve_limit(limit)
+        try:
+            observations = graph_query_service.graph_query_observations(
+                research_space_id=space_id,
+                entity_id=entity_id,
+                variable_ids=variable_ids,
+                limit=resolved_limit,
+            )
+        except (TypeError, ValueError):
+            return []
         return [_model_to_json(observation) for observation in observations]
 
     return graph_query_observations
@@ -194,13 +240,17 @@ def make_graph_query_by_observation_tool(
         value: JSONValue | None = None,
         limit: int = 200,
     ) -> list[JSONObject]:
-        entities = graph_query_service.graph_query_by_observation(
-            research_space_id=space_id,
-            variable_id=variable_id,
-            operator=operator,
-            value=value,
-            limit=limit,
-        )
+        resolved_limit = _resolve_limit(limit)
+        try:
+            entities = graph_query_service.graph_query_by_observation(
+                research_space_id=space_id,
+                variable_id=variable_id,
+                operator=operator,
+                value=value,
+                limit=resolved_limit,
+            )
+        except (TypeError, ValueError):
+            return []
         return [_model_to_json(entity) for entity in entities]
 
     return graph_query_by_observation
@@ -219,11 +269,15 @@ def make_graph_query_relation_evidence_tool(
         relation_id: str,
         limit: int = 200,
     ) -> list[JSONObject]:
-        evidences = graph_query_service.graph_query_relation_evidence(
-            research_space_id=space_id,
-            relation_id=relation_id,
-            limit=limit,
-        )
+        resolved_limit = _resolve_limit(limit)
+        try:
+            evidences = graph_query_service.graph_query_relation_evidence(
+                research_space_id=space_id,
+                relation_id=relation_id,
+                limit=resolved_limit,
+            )
+        except (TypeError, ValueError):
+            return []
         return [_model_to_json(evidence) for evidence in evidences]
 
     return graph_query_relation_evidence
@@ -243,12 +297,20 @@ def make_graph_aggregate_tool(
         entity_type: str | None = None,
         aggregation: Literal["count", "mean", "min", "max"] = "count",
     ) -> JSONObject:
-        return graph_query_service.graph_aggregate(
-            research_space_id=space_id,
-            variable_id=variable_id,
-            entity_type=entity_type,
-            aggregation=aggregation,
-        )
+        try:
+            return graph_query_service.graph_aggregate(
+                research_space_id=space_id,
+                variable_id=variable_id,
+                entity_type=entity_type,
+                aggregation=aggregation,
+            )
+        except (TypeError, ValueError):
+            return {
+                "aggregation": aggregation,
+                "entity_type": entity_type,
+                "error": "invalid_graph_aggregate_inputs",
+                "variable_id": variable_id,
+            }
 
     return graph_aggregate
 
@@ -271,16 +333,25 @@ def make_upsert_relation_tool(
         evidence_tier: str | None = "COMPUTATIONAL",
         provenance_id: str | None = None,
     ) -> JSONObject:
-        relation = relation_repository.create(
-            research_space_id=space_id,
-            source_id=source_id,
-            relation_type=relation_type,
-            target_id=target_id,
-            confidence=confidence,
-            evidence_summary=evidence_summary,
-            evidence_tier=evidence_tier,
-            provenance_id=provenance_id,
-        )
+        try:
+            relation = relation_repository.create(
+                research_space_id=space_id,
+                source_id=source_id,
+                relation_type=relation_type,
+                target_id=target_id,
+                confidence=confidence,
+                evidence_summary=evidence_summary,
+                evidence_tier=evidence_tier,
+                provenance_id=provenance_id,
+            )
+        except (TypeError, ValueError):
+            return {
+                "created": False,
+                "error": "invalid_relation_payload",
+                "source_id": source_id,
+                "relation_type": relation_type,
+                "target_id": target_id,
+            }
         return _model_to_json(relation)
 
     return upsert_relation

@@ -8,16 +8,24 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
+from src.application.agents.services._graph_connection_fallback_helpers import (
+    build_seed_neighbourhood_fallback_relations,
+    resolve_relations_for_persistence,
+)
 from src.application.agents.services.governance_service import (
     GovernanceDecision,
     GovernanceService,
 )
 from src.domain.agents.contexts.graph_connection_context import GraphConnectionContext
+from src.domain.value_objects.relation_types import normalize_relation_type
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.domain.agents.contracts.graph_connection import GraphConnectionContract
+    from src.domain.agents.contracts.graph_connection import (
+        GraphConnectionContract,
+        ProposedRelation,
+    )
     from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
@@ -69,7 +77,7 @@ class GraphConnectionService:
         self._research_spaces = dependencies.research_space_repository
         self._review_queue_submitter = dependencies.review_queue_submitter
 
-    async def discover_connections_for_seed(  # noqa: PLR0913
+    async def discover_connections_for_seed(  # noqa: PLR0913, C901, PLR0912, PLR0915
         self,
         *,
         research_space_id: str,
@@ -81,6 +89,7 @@ class GraphConnectionService:
         max_depth: int = 2,
         shadow_mode: bool | None = None,
         pipeline_run_id: str | None = None,
+        fallback_relations: tuple[ProposedRelation, ...] | None = None,
     ) -> GraphConnectionOutcome:
         """Run one graph-connection discovery pass for a seed entity."""
         resolved_settings = self._resolve_research_space_settings(
@@ -121,30 +130,97 @@ class GraphConnectionService:
                 run_id=run_id,
                 wrote_to_graph=False,
                 reason="shadow_mode_enabled",
+                review_required=governance.requires_review,
             )
 
-        if not governance.allow_write:
+        external_fallback_relations = tuple(fallback_relations or ())
+        allow_write = governance.allow_write or bool(external_fallback_relations)
+        if not allow_write:
             return self._build_outcome(
                 contract=contract,
                 governance=governance,
                 run_id=run_id,
                 wrote_to_graph=False,
                 reason=governance.reason,
+                review_required=governance.requires_review,
                 errors=(governance.reason,),
+            )
+
+        (
+            relations_for_persistence,
+            promoted_rejected_count,
+            extraction_fallback_count,
+        ) = resolve_relations_for_persistence(
+            tuple(contract.proposed_relations),
+            tuple(contract.rejected_candidates),
+        )
+        if external_fallback_relations:
+            (
+                relations_for_persistence,
+                promoted_rejected_count,
+                extraction_fallback_count,
+            ) = resolve_relations_for_persistence(
+                tuple(contract.proposed_relations),
+                tuple(contract.rejected_candidates),
+                fallback_relations=external_fallback_relations,
+                prefer_fallback=not governance.allow_write,
+            )
+        used_neighbourhood_fallback = False
+        used_extraction_fallback = extraction_fallback_count > 0
+        if not relations_for_persistence:
+            relations_for_persistence = build_seed_neighbourhood_fallback_relations(
+                self._relations,
+                seed_entity_id=contract.seed_entity_id,
+            )
+            used_neighbourhood_fallback = bool(relations_for_persistence)
+
+        fallback_requires_pending_review = (
+            promoted_rejected_count > 0
+            or used_neighbourhood_fallback
+            or used_extraction_fallback
+            or not governance.allow_write
+        )
+        review_required = governance.requires_review or fallback_requires_pending_review
+        if promoted_rejected_count > 0 and not governance.requires_review:
+            self._submit_review_item(
+                research_space_id=contract.research_space_id,
+                seed_entity_id=contract.seed_entity_id,
+                reason="promoted_rejected_candidates",
+            )
+        if used_extraction_fallback and not governance.requires_review:
+            self._submit_review_item(
+                research_space_id=contract.research_space_id,
+                seed_entity_id=contract.seed_entity_id,
+                reason="extraction_relation_fallback",
+            )
+        if used_neighbourhood_fallback and not governance.requires_review:
+            self._submit_review_item(
+                research_space_id=contract.research_space_id,
+                seed_entity_id=contract.seed_entity_id,
+                reason="seed_neighbourhood_fallback",
             )
 
         persisted_count = 0
         persistence_errors: list[str] = []
-        for relation in contract.proposed_relations:
+        for relation in relations_for_persistence:
+            normalized_relation_type = normalize_relation_type(relation.relation_type)
+            if not normalized_relation_type:
+                persistence_errors.append("relation_type_missing")
+                continue
             try:
                 self._relations.create(
                     research_space_id=research_space_id,
                     source_id=relation.source_id,
-                    relation_type=relation.relation_type,
+                    relation_type=normalized_relation_type,
                     target_id=relation.target_id,
                     confidence=relation.confidence,
                     evidence_summary=relation.evidence_summary,
                     evidence_tier=relation.evidence_tier,
+                    curation_status=(
+                        "PENDING_REVIEW"
+                        if fallback_requires_pending_review
+                        else "DRAFT"
+                    ),
                     provenance_id=(
                         relation.supporting_provenance_ids[0]
                         if relation.supporting_provenance_ids
@@ -160,7 +236,7 @@ class GraphConnectionService:
                         "seed_entity_id": seed_entity_id,
                         "pipeline_run_id": pipeline_run_id,
                         "graph_connection_run_id": run_id,
-                        "relation_type": relation.relation_type,
+                        "relation_type": normalized_relation_type,
                         "relation_source_id": relation.source_id,
                         "relation_target_id": relation.target_id,
                     },
@@ -174,7 +250,7 @@ class GraphConnectionService:
                         "seed_entity_id": seed_entity_id,
                         "pipeline_run_id": pipeline_run_id,
                         "graph_connection_run_id": run_id,
-                        "relation_type": relation.relation_type,
+                        "relation_type": normalized_relation_type,
                         "relation_source_id": relation.source_id,
                         "relation_target_id": relation.target_id,
                         "error": str(exc),
@@ -183,6 +259,12 @@ class GraphConnectionService:
 
         wrote_to_graph = persisted_count > 0
         reason = "processed" if wrote_to_graph else "no_relations_persisted"
+        if wrote_to_graph and used_extraction_fallback:
+            reason = "processed_extraction_relation_fallback"
+        elif wrote_to_graph and promoted_rejected_count > 0:
+            reason = "processed_promoted_rejected_candidates"
+        elif wrote_to_graph and used_neighbourhood_fallback:
+            reason = "processed_seed_neighbourhood_fallback"
         if persistence_errors and not wrote_to_graph:
             reason = "relation_persistence_failed"
 
@@ -192,6 +274,7 @@ class GraphConnectionService:
             run_id=run_id,
             wrote_to_graph=wrote_to_graph,
             reason=reason,
+            review_required=review_required,
             persisted_relations_count=persisted_count,
             errors=tuple(persistence_errors),
         )
@@ -271,7 +354,7 @@ class GraphConnectionService:
     ) -> tuple[str, ...] | None:
         relation_types: list[str] = []
         for relation in contract.proposed_relations:
-            normalized = relation.relation_type.strip().upper()
+            normalized = normalize_relation_type(relation.relation_type)
             if not normalized or normalized in relation_types:
                 continue
             relation_types.append(normalized)
@@ -305,7 +388,12 @@ class GraphConnectionService:
     def _review_priority_for_reason(reason: str) -> str:
         if reason in {"agent_requested_escalation", "evidence_required"}:
             return "high"
-        if reason == "confidence_below_threshold":
+        if reason in {
+            "confidence_below_threshold",
+            "promoted_rejected_candidates",
+            "extraction_relation_fallback",
+            "seed_neighbourhood_fallback",
+        }:
             return "medium"
         return "low"
 
@@ -325,6 +413,7 @@ class GraphConnectionService:
         run_id: str | None,
         wrote_to_graph: bool,
         reason: str,
+        review_required: bool,
         persisted_relations_count: int = 0,
         errors: tuple[str, ...] = (),
     ) -> GraphConnectionOutcome:
@@ -336,7 +425,7 @@ class GraphConnectionService:
             research_space_id=contract.research_space_id,
             status=status,
             reason=reason,
-            review_required=governance.requires_review,
+            review_required=review_required,
             shadow_mode=governance.shadow_mode,
             wrote_to_graph=wrote_to_graph,
             run_id=run_id,

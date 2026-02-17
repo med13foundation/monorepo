@@ -112,6 +112,48 @@
     "requires_evidence": false
   },
   {
+    "source_type": "PUBLICATION",
+    "relation_type": "MENTIONS",
+    "target_type": "GENE",
+    "is_allowed": true,
+    "requires_evidence": false
+  },
+  {
+    "source_type": "PUBLICATION",
+    "relation_type": "MENTIONS",
+    "target_type": "PROTEIN",
+    "is_allowed": true,
+    "requires_evidence": false
+  },
+  {
+    "source_type": "PUBLICATION",
+    "relation_type": "MENTIONS",
+    "target_type": "VARIANT",
+    "is_allowed": true,
+    "requires_evidence": false
+  },
+  {
+    "source_type": "PUBLICATION",
+    "relation_type": "CITES",
+    "target_type": "PUBLICATION",
+    "is_allowed": true,
+    "requires_evidence": false
+  },
+  {
+    "source_type": "PUBLICATION",
+    "relation_type": "HAS_AUTHOR",
+    "target_type": "AUTHOR",
+    "is_allowed": true,
+    "requires_evidence": false
+  },
+  {
+    "source_type": "PUBLICATION",
+    "relation_type": "HAS_KEYWORD",
+    "target_type": "KEYWORD",
+    "is_allowed": true,
+    "requires_evidence": false
+  },
+  {
     "source_type": "PATIENT",
     "relation_type": "HAS_VARIANT",
     "target_type": "VARIANT",

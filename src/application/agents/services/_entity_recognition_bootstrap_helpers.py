@@ -11,6 +11,71 @@ if TYPE_CHECKING:
 _DEFAULT_BOOTSTRAP_RELATION_TYPE = "ASSOCIATED_WITH"
 _DEFAULT_INTERACTION_RELATION_TYPE = "PHYSICALLY_INTERACTS_WITH"
 _MIN_BOOTSTRAP_ENTITY_TYPES_FOR_RELATION = 2
+_PUBMED_PUBLICATION_BASELINE_ENTITY_TYPES: tuple[str, ...] = (
+    "PUBLICATION",
+    "AUTHOR",
+    "KEYWORD",
+    "GENE",
+    "PROTEIN",
+    "VARIANT",
+    "PHENOTYPE",
+    "DRUG",
+    "MECHANISM",
+)
+_PUBMED_PUBLICATION_BASELINE_RELATION_TYPES: tuple[
+    tuple[str, str, str, bool, str | None],
+    ...,
+] = (
+    (
+        "MENTIONS",
+        "Mentions",
+        "Publication reference relationship for documented entities.",
+        True,
+        "MENTIONED_BY",
+    ),
+    (
+        "SUPPORTS",
+        "Supports",
+        "Publication evidence support relationship.",
+        True,
+        "SUPPORTED_BY",
+    ),
+    (
+        "CITES",
+        "Cites",
+        "Citation relationship between publications.",
+        True,
+        "CITED_BY",
+    ),
+    (
+        "HAS_AUTHOR",
+        "Has Author",
+        "Authorship relationship from publication to author entity.",
+        True,
+        "AUTHOR_OF",
+    ),
+    (
+        "HAS_KEYWORD",
+        "Has Keyword",
+        "Keyword tagging relationship from publication to keyword entity.",
+        True,
+        "KEYWORD_OF",
+    ),
+)
+_PUBMED_PUBLICATION_BASELINE_CONSTRAINTS: tuple[tuple[str, str, str, bool], ...] = (
+    ("PUBLICATION", "MENTIONS", "GENE", False),
+    ("PUBLICATION", "MENTIONS", "PROTEIN", False),
+    ("PUBLICATION", "MENTIONS", "VARIANT", False),
+    ("PUBLICATION", "MENTIONS", "PHENOTYPE", False),
+    ("PUBLICATION", "MENTIONS", "DRUG", False),
+    ("PUBLICATION", "SUPPORTS", "GENE", False),
+    ("PUBLICATION", "SUPPORTS", "PROTEIN", False),
+    ("PUBLICATION", "SUPPORTS", "VARIANT", False),
+    ("PUBLICATION", "SUPPORTS", "MECHANISM", False),
+    ("PUBLICATION", "HAS_AUTHOR", "AUTHOR", False),
+    ("PUBLICATION", "HAS_KEYWORD", "KEYWORD", False),
+    ("PUBLICATION", "CITES", "PUBLICATION", False),
+)
 
 
 class _EntityRecognitionBootstrapHelpers:
@@ -143,16 +208,23 @@ class _EntityRecognitionBootstrapHelpers:
                     created_entity_types += 1
 
             self._ensure_relation_constraint_for_type(
-                source_type="GENE",
-                relation_type=_DEFAULT_INTERACTION_RELATION_TYPE,
-                target_type="GENE",
+                relation_triplet=("GENE", _DEFAULT_INTERACTION_RELATION_TYPE, "GENE"),
                 source_ref=source_ref,
                 research_space_settings=bootstrap_review_settings,
             )
             self._ensure_relation_constraint_for_type(
-                source_type="PROTEIN",
-                relation_type=_DEFAULT_INTERACTION_RELATION_TYPE,
-                target_type="PROTEIN",
+                relation_triplet=(
+                    "PROTEIN",
+                    _DEFAULT_INTERACTION_RELATION_TYPE,
+                    "PROTEIN",
+                ),
+                source_ref=source_ref,
+                research_space_settings=bootstrap_review_settings,
+            )
+
+        if source_type.strip().lower() == "pubmed":
+            created_entity_types += self._ensure_pubmed_publication_baseline(
+                domain_context=domain_context,
                 source_ref=source_ref,
                 research_space_settings=bootstrap_review_settings,
             )
@@ -181,22 +253,84 @@ class _EntityRecognitionBootstrapHelpers:
     def _ensure_relation_constraint_for_type(
         self: _EntityRecognitionBootstrapContext,
         *,
-        source_type: str,
-        relation_type: str,
-        target_type: str,
+        relation_triplet: tuple[str, str, str],
         source_ref: str,
         research_space_settings: ResearchSpaceSettings,
+        requires_evidence: bool = True,
     ) -> None:
+        source_type, relation_type, target_type = relation_triplet
         self._dictionary.create_relation_constraint(
             source_type=source_type,
             relation_type=relation_type,
             target_type=target_type,
             is_allowed=True,
-            requires_evidence=True,
+            requires_evidence=requires_evidence,
             created_by=self._agent_created_by,
             source_ref=source_ref,
             research_space_settings=research_space_settings,
         )
+
+    def _ensure_pubmed_publication_baseline(
+        self: _EntityRecognitionBootstrapContext,
+        *,
+        domain_context: str,
+        source_ref: str,
+        research_space_settings: ResearchSpaceSettings,
+    ) -> int:
+        created_entity_types = 0
+
+        for entity_type_id in _PUBMED_PUBLICATION_BASELINE_ENTITY_TYPES:
+            if self._dictionary.get_entity_type(entity_type_id) is not None:
+                continue
+            self._dictionary.create_entity_type(
+                entity_type=entity_type_id,
+                display_name=self._to_display_name(entity_type_id),
+                description=(
+                    "PubMed publication-graph bootstrap entity type used for "
+                    "relation validation."
+                ),
+                domain_context=domain_context,
+                created_by=self._agent_created_by,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
+            created_entity_types += 1
+
+        for (
+            relation_type_id,
+            display_name,
+            description,
+            is_directional,
+            inverse_label,
+        ) in _PUBMED_PUBLICATION_BASELINE_RELATION_TYPES:
+            if self._dictionary.get_relation_type(relation_type_id) is not None:
+                continue
+            self._dictionary.create_relation_type(
+                relation_type=relation_type_id,
+                display_name=display_name,
+                description=description,
+                domain_context=domain_context,
+                is_directional=is_directional,
+                inverse_label=inverse_label,
+                created_by=self._agent_created_by,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
+
+        for (
+            source_type,
+            relation_type,
+            target_type,
+            requires_evidence,
+        ) in _PUBMED_PUBLICATION_BASELINE_CONSTRAINTS:
+            self._ensure_relation_constraint_for_type(
+                relation_triplet=(source_type, relation_type, target_type),
+                requires_evidence=requires_evidence,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
+
+        return created_entity_types
 
     @staticmethod
     def _bootstrap_entity_types_for_domain(domain_context: str) -> tuple[str, ...]:
@@ -321,9 +455,16 @@ class _EntityRecognitionBootstrapContext(Protocol):
     def _ensure_relation_constraint_for_type(
         self,
         *,
-        source_type: str,
-        relation_type: str,
-        target_type: str,
+        relation_triplet: tuple[str, str, str],
         source_ref: str,
         research_space_settings: ResearchSpaceSettings,
+        requires_evidence: bool = True,
     ) -> None: ...
+
+    def _ensure_pubmed_publication_baseline(
+        self,
+        *,
+        domain_context: str,
+        source_ref: str,
+        research_space_settings: ResearchSpaceSettings,
+    ) -> int: ...

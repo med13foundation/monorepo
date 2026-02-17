@@ -484,6 +484,81 @@ def _select_source_document_for_queue_item(
     ).scalar_one_or_none()
 
 
+def _source_document_matches_pmid(
+    *,
+    source_document: SourceDocumentModel,
+    pmid: str,
+) -> bool:
+    normalized_pmid = pmid.strip()
+    if not normalized_pmid:
+        return False
+    parts = source_document.external_record_id.split(":")
+    if parts and parts[-1].strip() == normalized_pmid:
+        return True
+    metadata_payload = source_document.metadata_payload
+    if not isinstance(metadata_payload, dict):
+        return False
+    raw_record = metadata_payload.get("raw_record")
+    if not isinstance(raw_record, dict):
+        return False
+    raw_pmid = raw_record.get("pubmed_id")
+    return isinstance(raw_pmid, str) and raw_pmid.strip() == normalized_pmid
+
+
+def _select_source_document_for_pmid(
+    session: Session,
+    *,
+    source_id: UUID,
+    pmid: str,
+) -> SourceDocumentModel | None:
+    external_record_id = f"pubmed:pubmed_id:{pmid}"
+    exact_match = session.execute(
+        select(SourceDocumentModel)
+        .where(SourceDocumentModel.source_id == str(source_id))
+        .where(SourceDocumentModel.external_record_id == external_record_id)
+        .order_by(desc(SourceDocumentModel.updated_at))
+        .limit(1),
+    ).scalar_one_or_none()
+    if exact_match is not None:
+        return exact_match
+
+    candidates = (
+        session.execute(
+            select(SourceDocumentModel)
+            .where(SourceDocumentModel.source_id == str(source_id))
+            .order_by(desc(SourceDocumentModel.updated_at))
+            .limit(_DICTIONARY_SCAN_LIMIT),
+        )
+        .scalars()
+        .all()
+    )
+    for candidate in candidates:
+        if _source_document_matches_pmid(source_document=candidate, pmid=pmid):
+            return candidate
+    return None
+
+
+def _select_queue_item_for_pmid(
+    session: Session,
+    *,
+    source_id: UUID,
+    pmid: str,
+) -> ExtractionQueueItemModel | None:
+    external_record_id = f"pubmed:pubmed_id:{pmid}"
+    return session.execute(
+        select(ExtractionQueueItemModel)
+        .where(ExtractionQueueItemModel.source_id == str(source_id))
+        .where(
+            or_(
+                ExtractionQueueItemModel.pubmed_id == pmid,
+                ExtractionQueueItemModel.source_record_id == external_record_id,
+            ),
+        )
+        .order_by(desc(ExtractionQueueItemModel.updated_at))
+        .limit(1),
+    ).scalar_one_or_none()
+
+
 def _select_publication_extraction(
     session: Session,
     *,
@@ -663,6 +738,117 @@ def _collect_document_relation_edges(
             ),
         )
     return edges
+
+
+def _to_relation_id_set(edges: list[JSONObject]) -> set[str]:
+    relation_ids: set[str] = set()
+    for edge in edges:
+        relation_id = edge.get("relation_id")
+        if isinstance(relation_id, str):
+            normalized = relation_id.strip()
+            if normalized:
+                relation_ids.add(normalized)
+    return relation_ids
+
+
+def _edge_brief(edge: JSONObject) -> JSONObject:
+    source_payload = edge.get("source")
+    target_payload = edge.get("target")
+    source_label = (
+        source_payload.get("label")
+        if isinstance(source_payload, dict)
+        and isinstance(source_payload.get("label"), str)
+        else None
+    )
+    target_label = (
+        target_payload.get("label")
+        if isinstance(target_payload, dict)
+        and isinstance(target_payload.get("label"), str)
+        else None
+    )
+    return {
+        "relation_id": edge.get("relation_id"),
+        "relation_type": edge.get("relation_type"),
+        "source": source_label,
+        "target": target_label,
+        "curation_status": edge.get("curation_status"),
+        "aggregate_confidence": edge.get("aggregate_confidence"),
+    }
+
+
+def _read_int(payload: object, key: str) -> int:
+    if not isinstance(payload, dict):
+        return 0
+    raw_value = payload.get(key)
+    if isinstance(raw_value, int):
+        return raw_value
+    if isinstance(raw_value, float):
+        return int(raw_value)
+    return 0
+
+
+def _build_edge_scope_breakdown(
+    *,
+    workflow_payload: JSONObject,
+    document_relation_edges: list[JSONObject],
+    target_centered_raw_edges: list[JSONObject],
+    target_centered_conceptual_edge_count: int,
+) -> JSONObject:
+    document_relation_ids = _to_relation_id_set(document_relation_edges)
+    target_relation_ids = _to_relation_id_set(target_centered_raw_edges)
+
+    in_target_edges: list[JSONObject] = []
+    outside_target_edges: list[JSONObject] = []
+    for edge in document_relation_edges:
+        relation_id = edge.get("relation_id")
+        if isinstance(relation_id, str) and relation_id.strip() in target_relation_ids:
+            in_target_edges.append(edge)
+        else:
+            outside_target_edges.append(edge)
+
+    target_not_in_document_edges: list[JSONObject] = []
+    for edge in target_centered_raw_edges:
+        relation_id = edge.get("relation_id")
+        if (
+            isinstance(relation_id, str)
+            and relation_id.strip() in document_relation_ids
+        ):
+            continue
+        target_not_in_document_edges.append(edge)
+
+    delta_payload = workflow_payload.get("delta")
+    pipeline_summary = workflow_payload.get("pipeline_summary")
+    relation_rows_created_this_run = _read_int(delta_payload, "relations_total_delta")
+    relation_evidence_rows_created_this_run = _read_int(
+        delta_payload,
+        "relation_evidence_total_delta",
+    )
+    graph_persisted_relations_this_run = _read_int(
+        pipeline_summary,
+        "graph_persisted_relations",
+    )
+
+    return {
+        "document_relation_edges_total": len(document_relation_edges),
+        "target_centered_raw_edges_total": len(target_centered_raw_edges),
+        "target_centered_conceptual_edges_total": target_centered_conceptual_edge_count,
+        "document_edges_in_target_centered_count": len(in_target_edges),
+        "document_edges_outside_target_centered_count": len(outside_target_edges),
+        "target_centered_edges_not_linked_to_document_count": len(
+            target_not_in_document_edges,
+        ),
+        "relation_rows_created_this_run": relation_rows_created_this_run,
+        "relation_evidence_rows_created_this_run": (
+            relation_evidence_rows_created_this_run
+        ),
+        "graph_persisted_relations_this_run": graph_persisted_relations_this_run,
+        "document_edges_outside_target_centered": [
+            _edge_brief(edge) for edge in outside_target_edges
+        ],
+        "target_centered_edges_not_linked_to_document": [
+            _edge_brief(edge) for edge in target_not_in_document_edges
+        ],
+    }
 
 
 def _collect_target_anchor_ids(summary_payload: JSONObject) -> tuple[UUID, ...]:
@@ -1914,6 +2100,72 @@ def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
     lines.append("```")
     lines.append("")
 
+    lines.append("### Edge Scope Breakdown (Document vs Target-Centered)")
+    lines.append("")
+    edge_scope = analysis.get("edge_scope_breakdown")
+    if isinstance(edge_scope, dict):
+        lines.append(
+            f"- Document-linked raw edges: `{edge_scope.get('document_relation_edges_total')}`",
+        )
+        lines.append(
+            f"- Target-centered raw edges: `{edge_scope.get('target_centered_raw_edges_total')}`",
+        )
+        lines.append(
+            "- Target-centered conceptual edges: "
+            f"`{edge_scope.get('target_centered_conceptual_edges_total')}`",
+        )
+        lines.append(
+            "- Document edges covered by target-centered view: "
+            f"`{edge_scope.get('document_edges_in_target_centered_count')}`",
+        )
+        lines.append(
+            "- Document edges outside target-centered view: "
+            f"`{edge_scope.get('document_edges_outside_target_centered_count')}`",
+        )
+        lines.append(
+            "- Target-centered edges not linked to selected document: "
+            f"`{edge_scope.get('target_centered_edges_not_linked_to_document_count')}`",
+        )
+        lines.append(
+            "- New relation rows created in this run: "
+            f"`{edge_scope.get('relation_rows_created_this_run')}`",
+        )
+        lines.append(
+            "- New relation evidence rows created in this run: "
+            f"`{edge_scope.get('relation_evidence_rows_created_this_run')}`",
+        )
+        lines.append(
+            "- Graph-stage persisted relations in this run: "
+            f"`{edge_scope.get('graph_persisted_relations_this_run')}`",
+        )
+        lines.append("")
+        lines.append("#### Document edges outside target-centered view")
+        lines.append("")
+        lines.append("```json")
+        lines.append(
+            json.dumps(
+                edge_scope.get("document_edges_outside_target_centered"),
+                indent=2,
+                sort_keys=True,
+            ),
+        )
+        lines.append("```")
+        lines.append("")
+        lines.append("#### Target-centered edges not linked to selected document")
+        lines.append("")
+        lines.append("```json")
+        lines.append(
+            json.dumps(
+                edge_scope.get("target_centered_edges_not_linked_to_document"),
+                indent=2,
+                sort_keys=True,
+            ),
+        )
+        lines.append("```")
+    else:
+        lines.append("_No edge scope breakdown available._")
+    lines.append("")
+
     lines.append("### Candidate Decision Table")
     lines.append("")
     candidate_decisions = analysis.get("candidate_decisions")
@@ -2178,6 +2430,31 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 pipeline_run_id=pipeline_run_id,
             )
 
+        if normalized_pmid is not None:
+            locked_source_document = _select_source_document_for_pmid(
+                session,
+                source_id=source_id,
+                pmid=normalized_pmid,
+            )
+            if locked_source_document is None:
+                msg = (
+                    f"Requested PMID {normalized_pmid} was not found for source "
+                    f"{source_id}. Cannot build strict one-paper report."
+                )
+                raise SystemExit(msg)
+            source_document = locked_source_document
+            queue_item = _select_queue_item_for_pmid(
+                session,
+                source_id=source_id,
+                pmid=normalized_pmid,
+            )
+            if queue_item is None:
+                queue_item = _select_queue_item(
+                    session,
+                    source_id=source_id,
+                    external_record_id=source_document.external_record_id,
+                )
+
         if source_document is None:
             msg = (
                 "No source document found for selected source after workflow run. "
@@ -2199,6 +2476,12 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             queue_item=queue_item,
             source_document=source_document,
         )
+        if normalized_pmid is not None and pubmed_id != normalized_pmid:
+            msg = (
+                f"Strict PMID lock failed: requested {normalized_pmid}, "
+                f"resolved {pubmed_id!r}."
+            )
+            raise SystemExit(msg)
         publication = _select_publication(session, pubmed_id=pubmed_id)
 
         metadata_payload: JSONObject = {}
@@ -2241,6 +2524,24 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             research_space_id=research_space_id,
             preferred_anchor_entity_ids=preferred_anchor_entity_ids,
             focus_terms=focus_terms,
+        )
+        target_centered_raw_edges: list[JSONObject] = []
+        target_centered_conceptual_edge_count = 0
+        if isinstance(target_graph.get("edges"), list):
+            target_centered_raw_edges = [
+                edge for edge in target_graph.get("edges", []) if isinstance(edge, dict)
+            ]
+        concept_collapsed_payload = target_graph.get("concept_collapsed")
+        if isinstance(concept_collapsed_payload, dict):
+            target_centered_conceptual_edge_count = _read_int(
+                concept_collapsed_payload,
+                "edge_count",
+            )
+        edge_scope_breakdown = _build_edge_scope_breakdown(
+            workflow_payload=workflow_payload,
+            document_relation_edges=document_relation_edges,
+            target_centered_raw_edges=target_centered_raw_edges,
+            target_centered_conceptual_edge_count=target_centered_conceptual_edge_count,
         )
         full_graph = _collect_full_graph_snapshot(
             session,
@@ -2386,6 +2687,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 ),
                 "document_relation_edges_count": len(document_relation_edges),
                 "document_relation_edges": document_relation_edges,
+                "edge_scope_breakdown": edge_scope_breakdown,
             },
             "dictionary": {
                 "changelog_count": len(dictionary_changelog),

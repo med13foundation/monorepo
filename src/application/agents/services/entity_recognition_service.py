@@ -85,6 +85,7 @@ class EntityRecognitionDocumentOutcome:
     ingestion_entities_created: int = 0
     ingestion_observations_created: int = 0
     seed_entity_ids: tuple[str, ...] = ()
+    graph_fallback_relation_payloads: tuple[JSONObject, ...] = ()
     errors: tuple[str, ...] = ()
 
 
@@ -108,6 +109,7 @@ class EntityRecognitionRunSummary:
     errors: tuple[str, ...]
     started_at: datetime
     completed_at: datetime
+    derived_graph_fallback_relation_payloads: tuple[JSONObject, ...] = ()
 
 
 class EntityRecognitionService(
@@ -935,6 +937,10 @@ class EntityRecognitionService(
         extraction_run_uuid = (
             self._try_parse_uuid(extraction_outcome.run_id) or run_uuid
         )
+        graph_fallback_relation_payloads = self._build_graph_fallback_relation_payloads(
+            seed_entity_ids=extraction_outcome.seed_entity_ids,
+            rejected_relation_details=extraction_outcome.rejected_relation_details,
+        )
         metadata_patch = self._build_outcome_metadata(
             contract=contract,
             governance=governance,
@@ -978,6 +984,7 @@ class EntityRecognitionService(
                     extraction_outcome.ingestion_observations_created
                 ),
                 seed_entity_ids=extraction_outcome.seed_entity_ids,
+                graph_fallback_relation_payloads=graph_fallback_relation_payloads,
                 errors=extraction_outcome.errors,
             )
 
@@ -1002,6 +1009,7 @@ class EntityRecognitionService(
                 extraction_outcome.ingestion_observations_created
             ),
             seed_entity_ids=extraction_outcome.seed_entity_ids,
+            graph_fallback_relation_payloads=graph_fallback_relation_payloads,
             errors=extraction_outcome.errors,
         )
 
@@ -1044,7 +1052,7 @@ class EntityRecognitionService(
         return records
 
     @staticmethod
-    def _build_run_summary(
+    def _build_run_summary(  # noqa: C901
         *,
         outcomes: list[EntityRecognitionDocumentOutcome],
         requested: int,
@@ -1077,6 +1085,66 @@ class EntityRecognitionService(
         for outcome in outcomes:
             errors.extend(outcome.errors)
         derived_graph_seed_entity_ids: list[str] = []
+        derived_graph_fallback_relation_payloads: list[JSONObject] = []
+        fallback_relation_keys: set[tuple[str, str, str, str]] = set()
+        fallback_seed_ids: list[str] = []
+        for outcome in outcomes:
+            for raw_payload in outcome.graph_fallback_relation_payloads:
+                seed_value = raw_payload.get("seed_entity_id")
+                source_value = raw_payload.get("source_id")
+                relation_value = raw_payload.get("relation_type")
+                target_value = raw_payload.get("target_id")
+                if (
+                    not isinstance(
+                        seed_value,
+                        str,
+                    )
+                    or not isinstance(
+                        source_value,
+                        str,
+                    )
+                    or not isinstance(
+                        relation_value,
+                        str,
+                    )
+                    or not isinstance(
+                        target_value,
+                        str,
+                    )
+                ):
+                    continue
+                normalized_seed = seed_value.strip()
+                normalized_source = source_value.strip()
+                normalized_relation = relation_value.strip().upper()
+                normalized_target = target_value.strip()
+                if (
+                    not normalized_seed
+                    or not normalized_source
+                    or not normalized_relation
+                    or not normalized_target
+                ):
+                    continue
+                relation_key = (
+                    normalized_seed,
+                    normalized_source,
+                    normalized_relation,
+                    normalized_target,
+                )
+                if relation_key in fallback_relation_keys:
+                    continue
+                fallback_relation_keys.add(relation_key)
+                normalized_payload: JSONObject = {
+                    str(key): to_json_value(value) for key, value in raw_payload.items()
+                }
+                derived_graph_fallback_relation_payloads.append(normalized_payload)
+                if normalized_seed not in fallback_seed_ids:
+                    fallback_seed_ids.append(normalized_seed)
+
+        for seed_entity_id in fallback_seed_ids:
+            if seed_entity_id in derived_graph_seed_entity_ids:
+                continue
+            derived_graph_seed_entity_ids.append(seed_entity_id)
+
         for outcome in outcomes:
             for seed_entity_id in outcome.seed_entity_ids:
                 if seed_entity_id in derived_graph_seed_entity_ids:
@@ -1097,10 +1165,129 @@ class EntityRecognitionService(
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
             derived_graph_seed_entity_ids=tuple(derived_graph_seed_entity_ids),
+            derived_graph_fallback_relation_payloads=tuple(
+                derived_graph_fallback_relation_payloads,
+            ),
             errors=tuple(errors),
             started_at=started_at,
             completed_at=completed_at,
         )
+
+    @classmethod
+    def _build_graph_fallback_relation_payloads(  # noqa: C901, PLR0912, PLR0915
+        cls,
+        *,
+        seed_entity_ids: tuple[str, ...],
+        rejected_relation_details: tuple[JSONObject, ...],
+    ) -> tuple[JSONObject, ...]:
+        fallback_payloads: list[JSONObject] = []
+        seen_keys: set[tuple[str, str, str, str]] = set()
+
+        known_seed_ids: list[str] = []
+        for seed_entity_id in seed_entity_ids:
+            normalized_seed = seed_entity_id.strip()
+            if not normalized_seed:
+                continue
+            if cls._try_parse_uuid(normalized_seed) is None:
+                continue
+            if normalized_seed in known_seed_ids:
+                continue
+            known_seed_ids.append(normalized_seed)
+
+        for detail in rejected_relation_details:
+            payload_value = detail.get("payload")
+            if not isinstance(payload_value, dict):
+                continue
+            source_value = payload_value.get("source_entity_id")
+            target_value = payload_value.get("target_entity_id")
+            relation_value = payload_value.get("relation_type")
+            if (
+                not isinstance(source_value, str)
+                or not isinstance(target_value, str)
+                or not isinstance(relation_value, str)
+            ):
+                continue
+            normalized_source = source_value.strip()
+            normalized_target = target_value.strip()
+            normalized_relation = relation_value.strip().upper()
+            if (
+                not normalized_source
+                or not normalized_target
+                or not normalized_relation
+                or normalized_source == normalized_target
+            ):
+                continue
+            if cls._try_parse_uuid(normalized_source) is None:
+                continue
+            if cls._try_parse_uuid(normalized_target) is None:
+                continue
+
+            reason_value = detail.get("reason")
+            normalized_reason = (
+                reason_value.strip()
+                if isinstance(reason_value, str) and reason_value.strip()
+                else "rejected_relation_candidate"
+            )
+            validation_state_value = payload_value.get("validation_state")
+            normalized_validation_state = (
+                validation_state_value.strip().upper()
+                if isinstance(validation_state_value, str)
+                and validation_state_value.strip()
+                else "UNDEFINED"
+            )
+
+            confidence_value = payload_value.get("confidence")
+            if isinstance(confidence_value, bool):
+                normalized_confidence = 0.35
+            elif isinstance(confidence_value, float | int):
+                normalized_confidence = max(
+                    0.05,
+                    min(float(confidence_value), 0.49),
+                )
+            else:
+                normalized_confidence = 0.35
+
+            evidence_summary = (
+                "Promoted from extraction relation candidate "
+                f"({normalized_validation_state}:{normalized_reason}) for graph "
+                "fallback review."
+            )
+
+            endpoint_seed_ids: list[str] = []
+            for endpoint_seed in (normalized_source, normalized_target):
+                if endpoint_seed not in endpoint_seed_ids:
+                    endpoint_seed_ids.append(endpoint_seed)
+            for known_seed_id in known_seed_ids:
+                if known_seed_id in endpoint_seed_ids:
+                    continue
+                if known_seed_id not in {normalized_source, normalized_target}:
+                    continue
+                endpoint_seed_ids.append(known_seed_id)
+
+            for endpoint_seed in endpoint_seed_ids:
+                relation_key = (
+                    endpoint_seed,
+                    normalized_source,
+                    normalized_relation,
+                    normalized_target,
+                )
+                if relation_key in seen_keys:
+                    continue
+                seen_keys.add(relation_key)
+                fallback_payloads.append(
+                    {
+                        "seed_entity_id": endpoint_seed,
+                        "source_id": normalized_source,
+                        "relation_type": normalized_relation,
+                        "target_id": normalized_target,
+                        "confidence": normalized_confidence,
+                        "reason": normalized_reason,
+                        "validation_state": normalized_validation_state,
+                        "evidence_summary": evidence_summary,
+                    },
+                )
+
+        return tuple(fallback_payloads)
 
 
 __all__ = [

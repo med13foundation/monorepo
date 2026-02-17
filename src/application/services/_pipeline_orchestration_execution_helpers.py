@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -12,6 +11,11 @@ from src.application.services._pipeline_orchestration_contracts import (
     PipelineRunSummary,
     PipelineStageName,
     PipelineStageStatus,
+)
+from src.application.services._pipeline_orchestration_graph_fallback_helpers import (
+    extract_graph_fallback_relations_from_extraction_summary,
+    resolve_graph_seed_limit,
+    resolve_latest_ingestion_job_id,
 )
 from src.application.services._pipeline_orchestration_seed_helpers import (
     _PipelineOrchestrationContextSeedHelpers,
@@ -23,6 +27,7 @@ if TYPE_CHECKING:
     from src.application.services._pipeline_orchestration_execution_protocols import (
         _PipelineExecutionSelf,
     )
+    from src.domain.agents.contracts.graph_connection import ProposedRelation
 
 
 class _PipelineOrchestrationExecutionHelpers(
@@ -81,6 +86,10 @@ class _PipelineOrchestrationExecutionHelpers(
             graph_seed_entity_ids,
         )
         derived_graph_seed_entity_ids: list[str] = []
+        extraction_graph_fallback_relations: dict[
+            str,
+            tuple[ProposedRelation, ...],
+        ] = {}
         inferred_graph_seed_entity_ids: list[str] = []
         active_graph_seed_entity_ids = list(explicit_graph_seed_entity_ids)
         graph_seed_mode = "explicit" if explicit_graph_seed_entity_ids else "none"
@@ -141,7 +150,8 @@ class _PipelineOrchestrationExecutionHelpers(
                     if isinstance(fallback_reason, str) and fallback_reason.strip()
                     else None
                 )
-                active_ingestion_job_id = self._resolve_latest_ingestion_job_id(
+                active_ingestion_job_id = resolve_latest_ingestion_job_id(
+                    ingestion_service=self._ingestion,
                     source_id=source_id,
                 )
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
@@ -271,6 +281,11 @@ class _PipelineOrchestrationExecutionHelpers(
                         extraction_summary,
                     )
                 )
+                extraction_graph_fallback_relations = (
+                    extract_graph_fallback_relations_from_extraction_summary(
+                        extraction_summary,
+                    )
+                )
                 errors.extend(extraction_summary.errors)
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                 extraction_status = "failed"
@@ -306,8 +321,11 @@ class _PipelineOrchestrationExecutionHelpers(
             graph_seed_mode = "ai_inferred_from_context"
         else:
             active_graph_seed_entity_ids = list(explicit_graph_seed_entity_ids)
-        graph_seed_limit = (
-            _PipelineOrchestrationExecutionHelpers._resolve_graph_seed_limit()
+        graph_seed_limit = resolve_graph_seed_limit(
+            env_name=_PipelineOrchestrationExecutionHelpers._ENV_GRAPH_MAX_SEEDS_PER_RUN,
+            default=(
+                _PipelineOrchestrationExecutionHelpers._DEFAULT_GRAPH_MAX_SEEDS_PER_RUN
+            ),
         )
         if len(active_graph_seed_entity_ids) > graph_seed_limit:
             active_graph_seed_entity_ids = active_graph_seed_entity_ids[
@@ -329,17 +347,36 @@ class _PipelineOrchestrationExecutionHelpers(
             )
             graph_status = "completed"
             for seed_entity_id in active_graph_seed_entity_ids:
+                fallback_relations = extraction_graph_fallback_relations.get(
+                    seed_entity_id,
+                    (),
+                )
                 try:
-                    graph_outcome = await self._graph.discover_connections_for_seed(
-                        research_space_id=str(research_space_id),
-                        seed_entity_id=seed_entity_id,
-                        source_type=normalized_source,
-                        model_id=model_id,
-                        relation_types=graph_relation_types,
-                        max_depth=graph_max_depth,
-                        shadow_mode=shadow_mode,
-                        pipeline_run_id=normalized_run_id,
-                    )
+                    try:
+                        graph_outcome = await self._graph.discover_connections_for_seed(
+                            research_space_id=str(research_space_id),
+                            seed_entity_id=seed_entity_id,
+                            source_type=normalized_source,
+                            model_id=model_id,
+                            relation_types=graph_relation_types,
+                            max_depth=graph_max_depth,
+                            shadow_mode=shadow_mode,
+                            pipeline_run_id=normalized_run_id,
+                            fallback_relations=fallback_relations,
+                        )
+                    except TypeError as exc:
+                        if "fallback_relations" not in str(exc):
+                            raise
+                        graph_outcome = await self._graph.discover_connections_for_seed(
+                            research_space_id=str(research_space_id),
+                            seed_entity_id=seed_entity_id,
+                            source_type=normalized_source,
+                            model_id=model_id,
+                            relation_types=graph_relation_types,
+                            max_depth=graph_max_depth,
+                            shadow_mode=shadow_mode,
+                            pipeline_run_id=normalized_run_id,
+                        )
                     graph_processed += 1
                     graph_persisted_relations += graph_outcome.persisted_relations_count
                     errors.extend(graph_outcome.errors)
@@ -442,34 +479,12 @@ class _PipelineOrchestrationExecutionHelpers(
                 "graph_inferred_seed_count": len(inferred_graph_seed_entity_ids),
                 "graph_active_seed_ids": list(active_graph_seed_entity_ids),
                 "graph_seed_limit": graph_seed_limit,
+                "graph_extraction_fallback_seed_count": len(
+                    extraction_graph_fallback_relations,
+                ),
+                "graph_extraction_fallback_relation_count": sum(
+                    len(relations)
+                    for relations in extraction_graph_fallback_relations.values()
+                ),
             },
         )
-
-    @classmethod
-    def _resolve_graph_seed_limit(cls) -> int:
-        raw_value = os.getenv(cls._ENV_GRAPH_MAX_SEEDS_PER_RUN)
-        if raw_value is None:
-            return cls._DEFAULT_GRAPH_MAX_SEEDS_PER_RUN
-        normalized = raw_value.strip()
-        if not normalized:
-            return cls._DEFAULT_GRAPH_MAX_SEEDS_PER_RUN
-        if normalized.isdigit():
-            parsed = int(normalized)
-            return max(parsed, 1)
-        return cls._DEFAULT_GRAPH_MAX_SEEDS_PER_RUN
-
-    def _resolve_latest_ingestion_job_id(
-        self: _PipelineExecutionSelf,
-        *,
-        source_id: UUID,
-    ) -> UUID | None:
-        try:
-            recent_jobs = self._ingestion.get_job_repository().find_by_source(
-                source_id,
-                limit=1,
-            )
-        except AttributeError:
-            return None
-        if not recent_jobs:
-            return None
-        return recent_jobs[0].id

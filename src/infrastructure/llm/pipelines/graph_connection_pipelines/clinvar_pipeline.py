@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
-from flujo import Flujo, Pipeline
+from flujo import Flujo, Pipeline, Step
 from flujo.domain.agent_result import FlujoAgentResult
-from flujo.domain.dsl import ConditionalStep, GranularStep, HumanInTheLoopStep
+from flujo.domain.dsl import ConditionalStep, HumanInTheLoopStep
 from flujo.domain.models import UsageLimits as FlujoUsageLimits
 
 from src.domain.agents.contexts.graph_connection_context import GraphConnectionContext
 from src.infrastructure.llm.config.governance import GovernanceConfig, UsageLimits
 from src.infrastructure.llm.factories.graph_connection_agent_factory import (
     create_graph_connection_agent_for_source,
+)
+from src.infrastructure.llm.prompts.graph_connection.clinvar import (
+    CLINVAR_GRAPH_CONNECTION_DISCOVERY_SYSTEM_PROMPT,
+    CLINVAR_GRAPH_CONNECTION_SYNTHESIS_SYSTEM_PROMPT,
 )
 
 if TYPE_CHECKING:
@@ -27,16 +32,45 @@ def _unwrap_agent_output(output: object) -> object:
     return output
 
 
-def _check_graph_connection_confidence(
+def _check_graph_connection_confidence(  # noqa: C901, PLR0912
     output: object,
     _ctx: GraphConnectionContext | None,
 ) -> str:
     governance = GovernanceConfig.from_environment()
     threshold = governance.confidence_threshold
     resolved_output = _unwrap_agent_output(output)
-    decision = getattr(resolved_output, "decision", None)
-    confidence_score = getattr(resolved_output, "confidence_score", 0.0)
-    evidence = getattr(resolved_output, "evidence", [])
+    decision: str | None = None
+    confidence_score = 0.0
+    evidence: list[object] = []
+
+    if isinstance(resolved_output, str):
+        try:
+            maybe_payload = json.loads(resolved_output)
+        except json.JSONDecodeError:
+            maybe_payload = None
+        if isinstance(maybe_payload, dict):
+            resolved_output = maybe_payload
+
+    if isinstance(resolved_output, dict):
+        raw_decision = resolved_output.get("decision")
+        if isinstance(raw_decision, str):
+            decision = raw_decision
+        raw_confidence = resolved_output.get("confidence_score", 0.0)
+        if isinstance(raw_confidence, int | float):
+            confidence_score = float(raw_confidence)
+        raw_evidence = resolved_output.get("evidence", [])
+        if isinstance(raw_evidence, list):
+            evidence = raw_evidence
+    else:
+        raw_decision = getattr(resolved_output, "decision", None)
+        if isinstance(raw_decision, str):
+            decision = raw_decision
+        raw_confidence = getattr(resolved_output, "confidence_score", 0.0)
+        if isinstance(raw_confidence, int | float):
+            confidence_score = float(raw_confidence)
+        raw_evidence = getattr(resolved_output, "evidence", [])
+        if isinstance(raw_evidence, list):
+            evidence = raw_evidence
 
     if decision == "escalate":
         return "escalate"
@@ -58,24 +92,33 @@ def create_clinvar_graph_connection_pipeline(
     """Create a ClinVar graph-connection pipeline."""
     governance = GovernanceConfig.from_environment()
     limits = usage_limits or governance.usage_limits
-    agent = create_graph_connection_agent_for_source(
+    discovery_agent = create_graph_connection_agent_for_source(
         "clinvar",
         model=model,
+        system_prompt=CLINVAR_GRAPH_CONNECTION_DISCOVERY_SYSTEM_PROMPT,
+        tools=tools,
+    )
+    synthesis_agent = create_graph_connection_agent_for_source(
+        "clinvar",
+        model=model,
+        system_prompt=CLINVAR_GRAPH_CONNECTION_SYNTHESIS_SYSTEM_PROMPT,
         tools=tools,
     )
 
-    steps: list[GranularStep | ConditionalStep[GraphConnectionContext]] = [
-        GranularStep(
-            name="discover_graph_connections",
-            agent=agent,
-            enforce_idempotency=True,
-            history_max_tokens=8192,
+    steps: list[Step[object, object] | ConditionalStep[GraphConnectionContext]] = [
+        Step(
+            name="discover_clinvar_graph_connection_candidates",
+            agent=discovery_agent,
+        ),
+        Step(
+            name="synthesize_clinvar_graph_connections",
+            agent=synthesis_agent,
         ),
     ]
 
     if use_governance:
         steps.append(
-            ConditionalStep(
+            ConditionalStep[GraphConnectionContext](
                 name="graph_connection_confidence_gate",
                 condition_callable=_check_graph_connection_confidence,
                 branches={
