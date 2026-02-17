@@ -62,14 +62,19 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
         *,
         limit: int = 25,
         source_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
         research_space_id: UUID | None = None,
         source_type: str | None = None,
         model_id: str | None = None,
         pipeline_run_id: str | None = None,
     ) -> ContentEnrichmentRunSummary:
         started_at = datetime.now(UTC)
+        requested_limit = max(limit, 1)
+        fetch_limit = requested_limit
+        if ingestion_job_id is not None:
+            fetch_limit = max(requested_limit * 20, 200)
         pending_documents = self._source_documents.list_pending_enrichment(
-            limit=max(limit, 1),
+            limit=fetch_limit,
             source_id=source_id,
             research_space_id=research_space_id,
         )
@@ -82,6 +87,17 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
                 for document in pending_documents
                 if document.source_type.value.strip().lower() == normalized_source_type
             ]
+        if ingestion_job_id is not None:
+            pending_documents = [
+                document
+                for document in pending_documents
+                if document.ingestion_job_id == ingestion_job_id
+            ]
+        pending_documents = sorted(
+            pending_documents,
+            key=lambda document: document.created_at,
+            reverse=True,
+        )[:requested_limit]
 
         outcomes = [
             await self._process_document(

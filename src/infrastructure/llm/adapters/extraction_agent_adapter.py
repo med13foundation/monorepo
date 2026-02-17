@@ -7,6 +7,7 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
+from flujo.domain.agent_result import FlujoAgentResult
 from flujo.domain.models import PipelineResult, StepResult
 from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
 
@@ -292,8 +293,9 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             initial_context_data=initial_context,
         ):
             if isinstance(item, StepResult):
-                if isinstance(item.output, ExtractionContract):
-                    final_output = item.output
+                candidate = self._extract_contract(item.output)
+                if candidate is not None:
+                    final_output = candidate
             elif isinstance(item, PipelineResult):
                 self._capture_run_id(item)
                 candidate = self._extract_from_pipeline_result(item)
@@ -338,6 +340,16 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             agent_run_id=self._last_run_id,
         )
 
+    @staticmethod
+    def _extract_contract(output: object) -> ExtractionContract | None:
+        if isinstance(output, ExtractionContract):
+            return output
+        if isinstance(output, FlujoAgentResult):
+            wrapped_output = output.output
+            if isinstance(wrapped_output, ExtractionContract):
+                return wrapped_output
+        return None
+
     def _extract_from_pipeline_result(
         self,
         result: PipelineResult[ExtractionContext],
@@ -346,11 +358,11 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         if not isinstance(step_history, list):
             return None
         for step_result in reversed(step_history):
-            if isinstance(
-                step_result,
-                StepResult,
-            ) and isinstance(step_result.output, ExtractionContract):
-                return step_result.output
+            if not isinstance(step_result, StepResult):
+                continue
+            candidate = self._extract_contract(step_result.output)
+            if candidate is not None:
+                return candidate
         return None
 
     def _capture_run_id(self, result: PipelineResult[ExtractionContext]) -> None:

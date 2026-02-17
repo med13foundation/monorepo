@@ -94,6 +94,9 @@ class _EntityRecognitionMetadataHelpers:
             "extraction_stage_ingestion_observations_created": (
                 extraction_outcome.ingestion_observations_created
             ),
+            "extraction_stage_persisted_relations": (
+                extraction_outcome.persisted_relations_count
+            ),
             "extraction_stage_errors": list(extraction_outcome.errors),
         }
 

@@ -73,6 +73,12 @@ class PubMedQueryConfig(BaseModel):
         le=10,
         description="Relevance score threshold for filtering articles",
     )
+    pinned_pubmed_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional strict PubMed ID filter used for deterministic smoke tests."
+        ),
+    )
     agent_config: AiAgentConfig = Field(
         default_factory=AiAgentConfig,
         description="AI agent steering configuration",
@@ -94,6 +100,19 @@ class PubMedQueryConfig(BaseModel):
     def validate_date_range(cls, value: str | None) -> str | None:
         """Simple passthrough; ordering enforced in model validator."""
         return value
+
+    @field_validator("pinned_pubmed_id")
+    @classmethod
+    def validate_pinned_pubmed_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if not normalized.isdigit():
+            msg = "pinned_pubmed_id must be digits only"
+            raise ValueError(msg)
+        return normalized
 
     @model_validator(mode="after")
     def ensure_date_order(self) -> PubMedQueryConfig:

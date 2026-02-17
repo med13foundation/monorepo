@@ -7,6 +7,7 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
+from flujo.domain.agent_result import FlujoAgentResult
 from flujo.domain.models import PipelineResult, StepResult
 from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
 
@@ -312,8 +313,9 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             initial_context_data=initial_context,
         ):
             if isinstance(item, StepResult):
-                if isinstance(item.output, EntityRecognitionContract):
-                    final_output = item.output
+                candidate = self._extract_contract(item.output)
+                if candidate is not None:
+                    final_output = candidate
             elif isinstance(item, PipelineResult):
                 self._capture_run_id(item)
                 candidate = self._extract_from_pipeline_result(item)
@@ -364,6 +366,16 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             agent_run_id=self._last_run_id,
         )
 
+    @staticmethod
+    def _extract_contract(output: object) -> EntityRecognitionContract | None:
+        if isinstance(output, EntityRecognitionContract):
+            return output
+        if isinstance(output, FlujoAgentResult):
+            wrapped_output = output.output
+            if isinstance(wrapped_output, EntityRecognitionContract):
+                return wrapped_output
+        return None
+
     def _extract_from_pipeline_result(
         self,
         result: PipelineResult[EntityRecognitionContext],
@@ -372,11 +384,11 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         if not isinstance(step_history, list):
             return None
         for step_result in reversed(step_history):
-            if isinstance(
-                step_result,
-                StepResult,
-            ) and isinstance(step_result.output, EntityRecognitionContract):
-                return step_result.output
+            if not isinstance(step_result, StepResult):
+                continue
+            candidate = self._extract_contract(step_result.output)
+            if candidate is not None:
+                return candidate
         return None
 
     def _capture_run_id(

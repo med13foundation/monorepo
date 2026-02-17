@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 class _PipelineOrchestrationStageHelpers:
     """Shared helpers for stage control and seed normalization."""
 
-    _MAX_GRAPH_SEED_ENTITY_IDS = 200
+    _MAX_GRAPH_SEED_ENTITY_IDS = 5
 
     @staticmethod
     def _resolve_run_id(raw_run_id: str | None) -> str:
@@ -116,8 +116,8 @@ class _PipelineOrchestrationContextSeedHelpers(_PipelineOrchestrationStageHelper
             search_contract = await graph_search_service.search(
                 question=prompt,
                 research_space_id=str(research_space_id),
-                max_depth=2,
-                top_k=25,
+                max_depth=1,
+                top_k=5,
                 include_evidence_chains=False,
                 force_agent=True,
                 model_id=model_id,

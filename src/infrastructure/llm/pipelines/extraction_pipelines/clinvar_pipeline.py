@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from flujo import Flujo, Pipeline
+from flujo.domain.agent_result import FlujoAgentResult
 from flujo.domain.dsl import ConditionalStep, GranularStep, HumanInTheLoopStep
 from flujo.domain.models import UsageLimits as FlujoUsageLimits
 
@@ -23,15 +24,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _unwrap_agent_output(output: object) -> object:
+    if isinstance(output, FlujoAgentResult):
+        return output.output
+    return output
+
+
 def _check_extraction_confidence(
     output: object,
     _ctx: ExtractionContext | None,
 ) -> str:
     governance = GovernanceConfig.from_environment()
     threshold = governance.confidence_threshold
-    decision = getattr(output, "decision", None)
-    confidence_score = getattr(output, "confidence_score", 0.0)
-    evidence = getattr(output, "evidence", [])
+    resolved_output = _unwrap_agent_output(output)
+    decision = getattr(resolved_output, "decision", None)
+    confidence_score = getattr(resolved_output, "confidence_score", 0.0)
+    evidence = getattr(resolved_output, "evidence", [])
 
     if decision == "escalate":
         return "escalate"

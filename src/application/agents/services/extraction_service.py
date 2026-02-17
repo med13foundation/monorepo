@@ -6,6 +6,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from src.application.agents.services._extraction_relation_persistence_helpers import (
+    _ExtractionRelationPersistenceHelpers,
+)
 from src.application.agents.services.governance_service import (
     GovernanceDecision,
     GovernanceService,
@@ -25,6 +28,10 @@ if TYPE_CHECKING:
     from src.domain.agents.contracts.extraction import ExtractionContract
     from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
     from src.domain.entities.source_document import SourceDocument
+    from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
+    from src.domain.repositories.kernel.relation_repository import (
+        KernelRelationRepository,
+    )
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
@@ -36,6 +43,8 @@ class ExtractionServiceDependencies:
 
     extraction_agent: ExtractionAgentPort
     ingestion_pipeline: IngestionPipelinePort
+    relation_repository: KernelRelationRepository | None = None
+    entity_repository: KernelEntityRepository | None = None
     governance_service: GovernanceService | None = None
     review_queue_submitter: Callable[[str, str, str | None, str], None] | None = None
 
@@ -58,16 +67,19 @@ class ExtractionDocumentOutcome:
     rejected_relation_details: tuple[JSONObject, ...] = ()
     ingestion_entities_created: int = 0
     ingestion_observations_created: int = 0
+    persisted_relations_count: int = 0
     seed_entity_ids: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
 
-class ExtractionService:
+class ExtractionService(_ExtractionRelationPersistenceHelpers):
     """Coordinate Extraction Agent -> Governance -> Kernel ingestion."""
 
     def __init__(self, dependencies: ExtractionServiceDependencies) -> None:
         self._agent = dependencies.extraction_agent
         self._ingestion_pipeline = dependencies.ingestion_pipeline
+        self._relations = dependencies.relation_repository
+        self._entities = dependencies.entity_repository
         self._governance = dependencies.governance_service or GovernanceService()
         self._review_queue_submitter = dependencies.review_queue_submitter
 
@@ -114,7 +126,7 @@ class ExtractionService:
         governance = self._governance.evaluate(
             confidence_score=contract.confidence_score,
             evidence_count=len(contract.evidence),
-            decision=contract.decision,
+            decision=self._resolve_governance_decision(contract),
             requested_shadow_mode=requested_shadow_mode,
             research_space_settings=research_space_settings,
             relation_types=self._resolve_relation_types(contract),
@@ -182,6 +194,16 @@ class ExtractionService:
                 errors=tuple(ingestion_result.errors),
             )
 
+        persisted_relations_count, relation_persistence_errors = (
+            self._persist_extracted_relations(
+                research_space_id=str(document.research_space_id),
+                document=document,
+                contract=contract,
+                publication_entity_ids=tuple(ingestion_result.entity_ids_touched),
+                run_id=run_id,
+            )
+        )
+
         return self._build_outcome(
             document=document,
             contract=contract,
@@ -191,10 +213,11 @@ class ExtractionService:
             reason="processed",
             ingestion_entities_created=ingestion_result.entities_created,
             ingestion_observations_created=ingestion_result.observations_created,
+            persisted_relations_count=persisted_relations_count,
             seed_entity_ids=self._normalize_seed_entity_ids(
                 ingestion_result.entity_ids_touched,
             ),
-            errors=tuple(ingestion_result.errors),
+            errors=tuple(ingestion_result.errors) + relation_persistence_errors,
         )
 
     async def close(self) -> None:
@@ -215,6 +238,20 @@ class ExtractionService:
             return None
         normalized = run_id.strip()
         return normalized or None
+
+    @staticmethod
+    def _resolve_governance_decision(
+        contract: ExtractionContract,
+    ) -> Literal["generated", "fallback", "escalate"]:
+        if contract.decision != "escalate":
+            return contract.decision
+        has_structured_output = bool(
+            contract.observations
+            or contract.relations
+            or contract.rejected_facts
+            or contract.pipeline_payloads,
+        )
+        return "generated" if has_structured_output else contract.decision
 
     @staticmethod
     def _build_pipeline_records(
@@ -359,6 +396,7 @@ class ExtractionService:
         reason: str,
         ingestion_entities_created: int = 0,
         ingestion_observations_created: int = 0,
+        persisted_relations_count: int = 0,
         seed_entity_ids: tuple[str, ...] = (),
         errors: tuple[str, ...] = (),
     ) -> ExtractionDocumentOutcome:
@@ -384,6 +422,7 @@ class ExtractionService:
             ),
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
+            persisted_relations_count=persisted_relations_count,
             seed_entity_ids=seed_entity_ids,
             errors=errors,
         )

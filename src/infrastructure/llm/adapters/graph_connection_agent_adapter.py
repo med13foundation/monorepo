@@ -252,8 +252,9 @@ class FlujoGraphConnectionAdapter(GraphConnectionPort):
             initial_context_data=initial_context,
         ):
             if isinstance(item, StepResult):
-                if isinstance(item.output, GraphConnectionContract):
-                    final_output = item.output
+                candidate = self._extract_contract(item.output)
+                if candidate is not None:
+                    final_output = candidate
             elif isinstance(item, PipelineResult):
                 self._capture_run_id(item)
                 candidate = self._extract_from_pipeline_result(item)
@@ -272,11 +273,20 @@ class FlujoGraphConnectionAdapter(GraphConnectionPort):
         if not isinstance(step_history, list):
             return None
         for step_result in reversed(step_history):
-            if isinstance(
-                step_result,
-                StepResult,
-            ) and isinstance(step_result.output, GraphConnectionContract):
-                return step_result.output
+            if not isinstance(step_result, StepResult):
+                continue
+            candidate = self._extract_contract(step_result.output)
+            if candidate is not None:
+                return candidate
+        return None
+
+    @staticmethod
+    def _extract_contract(output: object) -> GraphConnectionContract | None:
+        if isinstance(output, GraphConnectionContract):
+            return output
+        wrapped_output = getattr(output, "output", None)
+        if isinstance(wrapped_output, GraphConnectionContract):
+            return wrapped_output
         return None
 
     def _capture_run_id(self, result: PipelineResult[GraphConnectionContext]) -> None:

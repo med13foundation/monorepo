@@ -92,19 +92,35 @@ def make_validate_triple_tool(
         """
         Validate a relation triple against dictionary relation constraints.
         """
+        normalized_source_type = source_type.strip().upper()
+        normalized_relation_type = relation_type.strip().upper()
+        normalized_target_type = target_type.strip().upper()
+        if (
+            not normalized_source_type
+            or not normalized_relation_type
+            or not normalized_target_type
+        ):
+            return {
+                "allowed": False,
+                "requires_evidence": True,
+                "reason": "source_type, relation_type, and target_type are required",
+            }
         allowed = dictionary_service.is_relation_allowed(
-            source_type=source_type,
-            relation_type=relation_type,
-            target_type=target_type,
+            source_type=normalized_source_type,
+            relation_type=normalized_relation_type,
+            target_type=normalized_target_type,
         )
         requires_evidence = dictionary_service.requires_evidence(
-            source_type=source_type,
-            relation_type=relation_type,
-            target_type=target_type,
+            source_type=normalized_source_type,
+            relation_type=normalized_relation_type,
+            target_type=normalized_target_type,
         )
         return {
             "allowed": allowed,
             "requires_evidence": requires_evidence,
+            "source_type": normalized_source_type,
+            "relation_type": normalized_relation_type,
+            "target_type": normalized_target_type,
         }
 
     return validate_triple

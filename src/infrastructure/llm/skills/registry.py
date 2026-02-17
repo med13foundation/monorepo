@@ -430,11 +430,13 @@ def register_all_skills() -> None:
                 "canonical_name": {"type": "string"},
                 "display_name": {"type": "string"},
                 "data_type": {"type": "string"},
-                "domain_context": {"type": "string", "default": "general"},
-                "sensitivity": {"type": "string", "default": "INTERNAL"},
-                "preferred_unit": {"type": "string"},
-                "constraints": {"type": "object"},
-                "description": {"type": "string"},
+                "options": {
+                    "type": "string",
+                    "description": (
+                        "Optional JSON object string with domain_context, "
+                        "sensitivity, preferred_unit, constraints, description."
+                    ),
+                },
             },
             "required": ["variable_id", "canonical_name", "display_name", "data_type"],
         },
@@ -471,7 +473,10 @@ def register_all_skills() -> None:
                 "description": {"type": "string"},
                 "domain_context": {"type": "string"},
                 "external_ontology_ref": {"type": "string"},
-                "expected_properties": {"type": "object"},
+                "expected_properties": {
+                    "type": "string",
+                    "description": "JSON object string for entity-type properties.",
+                },
             },
             "required": [
                 "entity_type",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from typing import TYPE_CHECKING
 
@@ -70,13 +71,54 @@ def _optional_string(value: object) -> str | None:
     return None
 
 
-def _optional_constraints(value: object) -> JSONObject | None:
+def _optional_json_object(
+    value: object | None,
+    *,
+    field_name: str,
+) -> JSONObject | None:
     if value is None:
         return None
-    if isinstance(value, dict):
-        return {str(key): to_json_value(raw) for key, raw in value.items()}
-    msg = "constraints must be a JSON object when provided"
-    raise TypeError(msg)
+    if not isinstance(value, str):
+        msg = f"{field_name} must be a JSON object string when provided"
+        raise TypeError(msg)
+    normalized = value.strip()
+    if not normalized:
+        return None
+    try:
+        decoded = json.loads(normalized)
+    except json.JSONDecodeError as exc:
+        msg = f"{field_name} must be valid JSON text when provided"
+        raise TypeError(msg) from exc
+    if not isinstance(decoded, dict):
+        msg = f"{field_name} must decode to a JSON object when provided"
+        raise TypeError(msg)
+    return {str(key): to_json_value(raw) for key, raw in decoded.items()}
+
+
+def _variable_options(
+    options: object | None,
+) -> tuple[str, str, str | None, JSONObject | None, str | None]:
+    parsed = _optional_json_object(options, field_name="options")
+    if parsed is None:
+        return ("general", "INTERNAL", None, None, None)
+    raw_constraints = parsed.get("constraints")
+    normalized_constraints: JSONObject | None
+    if raw_constraints is None:
+        normalized_constraints = None
+    elif isinstance(raw_constraints, dict):
+        normalized_constraints = {
+            str(key): to_json_value(value) for key, value in raw_constraints.items()
+        }
+    else:
+        msg = "options.constraints must be a JSON object when provided"
+        raise TypeError(msg)
+    return (
+        _normalized_string(parsed.get("domain_context"), default="general"),
+        _normalized_string(parsed.get("sensitivity"), default="INTERNAL"),
+        _optional_string(parsed.get("preferred_unit")),
+        _constraints_payload(normalized_constraints),
+        _optional_string(parsed.get("description")),
+    )
 
 
 def make_dictionary_search_tool(
@@ -152,32 +194,32 @@ def make_create_variable_tool(
         canonical_name: str,
         display_name: str,
         data_type: str,
-        **optional_params: object,
+        options: str | None = None,
     ) -> JSONObject:
         """
         Create a new dictionary variable definition.
 
         Call this only after searching and confirming no good existing match.
+        Pass optional fields as a JSON object string via `options`.
         """
+        (
+            domain_context,
+            sensitivity,
+            preferred_unit,
+            constraints,
+            description,
+        ) = _variable_options(options)
         with _MUTATION_TOOL_LOCK:
             created = dictionary_service.create_variable(
                 variable_id=variable_id,
                 canonical_name=canonical_name,
                 display_name=display_name,
                 data_type=data_type,
-                domain_context=_normalized_string(
-                    optional_params.get("domain_context"),
-                    default="general",
-                ),
-                sensitivity=_normalized_string(
-                    optional_params.get("sensitivity"),
-                    default="INTERNAL",
-                ),
-                preferred_unit=_optional_string(optional_params.get("preferred_unit")),
-                constraints=_constraints_payload(
-                    _optional_constraints(optional_params.get("constraints")),
-                ),
-                description=_optional_string(optional_params.get("description")),
+                domain_context=domain_context,
+                sensitivity=sensitivity,
+                preferred_unit=preferred_unit,
+                constraints=constraints,
+                description=description,
                 created_by=actor,
                 source_ref=source_ref,
                 research_space_settings=research_space_settings,
@@ -229,7 +271,7 @@ def make_create_entity_type_tool(
     source_ref: str | None = None,
     research_space_settings: ResearchSpaceSettings | None = None,
     **_: object,
-) -> Callable[[str, str, str, str, str | None, JSONObject | None], JSONObject]:
+) -> Callable[[str, str, str, str, str | None, str | None], JSONObject]:
     """Build the create_entity_type tool callable."""
     actor = _normalized_created_by(created_by)
 
@@ -239,12 +281,13 @@ def make_create_entity_type_tool(
         description: str,
         domain_context: str,
         external_ontology_ref: str | None = None,
-        expected_properties: JSONObject | None = None,
+        expected_properties: str | None = None,
     ) -> JSONObject:
         """
         Create a first-class dictionary entity type.
 
         Use only when the concept is absent from existing entity types.
+        Pass expected_properties as a JSON object string when needed.
         """
         with _MUTATION_TOOL_LOCK:
             created = dictionary_service.create_entity_type(
@@ -253,7 +296,12 @@ def make_create_entity_type_tool(
                 description=description,
                 domain_context=domain_context,
                 external_ontology_ref=external_ontology_ref,
-                expected_properties=_expected_properties_payload(expected_properties),
+                expected_properties=_expected_properties_payload(
+                    _optional_json_object(
+                        expected_properties,
+                        field_name="expected_properties",
+                    ),
+                ),
                 created_by=actor,
                 source_ref=source_ref,
                 research_space_settings=research_space_settings,

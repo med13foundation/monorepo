@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -28,6 +29,9 @@ class _PipelineOrchestrationExecutionHelpers(
     _PipelineOrchestrationContextSeedHelpers,
 ):
     """Execution-stage helpers for unified pipeline runs."""
+
+    _ENV_GRAPH_MAX_SEEDS_PER_RUN = "MED13_GRAPH_MAX_SEEDS_PER_RUN"
+    _DEFAULT_GRAPH_MAX_SEEDS_PER_RUN = 5
 
     async def run_for_source(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self: _PipelineExecutionSelf,
@@ -83,6 +87,7 @@ class _PipelineOrchestrationExecutionHelpers(
         graph_requested = len(active_graph_seed_entity_ids)
         graph_processed = 0
         graph_persisted_relations = 0
+        active_ingestion_job_id: UUID | None = None
         pipeline_run_job = self._start_or_resume_pipeline_run(
             source_id=source_id,
             research_space_id=research_space_id,
@@ -136,6 +141,9 @@ class _PipelineOrchestrationExecutionHelpers(
                     if isinstance(fallback_reason, str) and fallback_reason.strip()
                     else None
                 )
+                active_ingestion_job_id = self._resolve_latest_ingestion_job_id(
+                    source_id=source_id,
+                )
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                 ingestion_status = "failed"
                 errors.append(f"ingestion:{exc!s}")
@@ -162,14 +170,31 @@ class _PipelineOrchestrationExecutionHelpers(
         )
         if should_run_enrichment and can_run_enrichment:
             try:
-                enrichment_summary = await self._enrichment.process_pending_documents(
-                    limit=max(enrichment_limit, 1),
-                    source_id=source_id,
-                    research_space_id=research_space_id,
-                    source_type=normalized_source_type,
-                    model_id=model_id,
-                    pipeline_run_id=normalized_run_id,
-                )
+                try:
+                    enrichment_summary = (
+                        await self._enrichment.process_pending_documents(
+                            limit=max(enrichment_limit, 1),
+                            source_id=source_id,
+                            ingestion_job_id=active_ingestion_job_id,
+                            research_space_id=research_space_id,
+                            source_type=normalized_source_type,
+                            model_id=model_id,
+                            pipeline_run_id=normalized_run_id,
+                        )
+                    )
+                except TypeError as exc:
+                    if "ingestion_job_id" not in str(exc):
+                        raise
+                    enrichment_summary = (
+                        await self._enrichment.process_pending_documents(
+                            limit=max(enrichment_limit, 1),
+                            source_id=source_id,
+                            research_space_id=research_space_id,
+                            source_type=normalized_source_type,
+                            model_id=model_id,
+                            pipeline_run_id=normalized_run_id,
+                        )
+                    )
                 enrichment_status = "completed"
                 enrichment_processed = enrichment_summary.processed
                 enrichment_enriched = enrichment_summary.enriched
@@ -210,15 +235,33 @@ class _PipelineOrchestrationExecutionHelpers(
         )
         if should_run_extraction and can_run_extraction:
             try:
-                extraction_summary = await self._extraction.process_pending_documents(
-                    limit=max(extraction_limit, 1),
-                    source_id=source_id,
-                    research_space_id=research_space_id,
-                    source_type=normalized_source_type,
-                    model_id=model_id,
-                    shadow_mode=shadow_mode,
-                    pipeline_run_id=normalized_run_id,
-                )
+                try:
+                    extraction_summary = (
+                        await self._extraction.process_pending_documents(
+                            limit=max(extraction_limit, 1),
+                            source_id=source_id,
+                            ingestion_job_id=active_ingestion_job_id,
+                            research_space_id=research_space_id,
+                            source_type=normalized_source_type,
+                            model_id=model_id,
+                            shadow_mode=shadow_mode,
+                            pipeline_run_id=normalized_run_id,
+                        )
+                    )
+                except TypeError as exc:
+                    if "ingestion_job_id" not in str(exc):
+                        raise
+                    extraction_summary = (
+                        await self._extraction.process_pending_documents(
+                            limit=max(extraction_limit, 1),
+                            source_id=source_id,
+                            research_space_id=research_space_id,
+                            source_type=normalized_source_type,
+                            model_id=model_id,
+                            shadow_mode=shadow_mode,
+                            pipeline_run_id=normalized_run_id,
+                        )
+                    )
                 extraction_status = "completed"
                 extraction_processed = extraction_summary.processed
                 extraction_extracted = extraction_summary.extracted
@@ -263,6 +306,13 @@ class _PipelineOrchestrationExecutionHelpers(
             graph_seed_mode = "ai_inferred_from_context"
         else:
             active_graph_seed_entity_ids = list(explicit_graph_seed_entity_ids)
+        graph_seed_limit = (
+            _PipelineOrchestrationExecutionHelpers._resolve_graph_seed_limit()
+        )
+        if len(active_graph_seed_entity_ids) > graph_seed_limit:
+            active_graph_seed_entity_ids = active_graph_seed_entity_ids[
+                :graph_seed_limit
+            ]
         graph_requested = len(active_graph_seed_entity_ids)
 
         can_run_graph = extraction_status == "completed" or (
@@ -375,6 +425,11 @@ class _PipelineOrchestrationExecutionHelpers(
                 ),
                 "query_generation_execution_mode": query_generation_execution_mode,
                 "query_generation_fallback_reason": query_generation_fallback_reason,
+                "ingestion_job_id": (
+                    str(active_ingestion_job_id)
+                    if active_ingestion_job_id is not None
+                    else None
+                ),
                 "enrichment_ai_runs": enrichment_ai_runs,
                 "enrichment_deterministic_runs": enrichment_deterministic_runs,
                 "ingestion_status": ingestion_status,
@@ -386,5 +441,35 @@ class _PipelineOrchestrationExecutionHelpers(
                 "graph_derived_seed_count": len(derived_graph_seed_entity_ids),
                 "graph_inferred_seed_count": len(inferred_graph_seed_entity_ids),
                 "graph_active_seed_ids": list(active_graph_seed_entity_ids),
+                "graph_seed_limit": graph_seed_limit,
             },
         )
+
+    @classmethod
+    def _resolve_graph_seed_limit(cls) -> int:
+        raw_value = os.getenv(cls._ENV_GRAPH_MAX_SEEDS_PER_RUN)
+        if raw_value is None:
+            return cls._DEFAULT_GRAPH_MAX_SEEDS_PER_RUN
+        normalized = raw_value.strip()
+        if not normalized:
+            return cls._DEFAULT_GRAPH_MAX_SEEDS_PER_RUN
+        if normalized.isdigit():
+            parsed = int(normalized)
+            return max(parsed, 1)
+        return cls._DEFAULT_GRAPH_MAX_SEEDS_PER_RUN
+
+    def _resolve_latest_ingestion_job_id(
+        self: _PipelineExecutionSelf,
+        *,
+        source_id: UUID,
+    ) -> UUID | None:
+        try:
+            recent_jobs = self._ingestion.get_job_repository().find_by_source(
+                source_id,
+                limit=1,
+            )
+        except AttributeError:
+            return None
+        if not recent_jobs:
+            return None
+        return recent_jobs[0].id

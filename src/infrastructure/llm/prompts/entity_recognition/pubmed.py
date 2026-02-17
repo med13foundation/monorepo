@@ -33,8 +33,11 @@ Creation rules:
 - Prefer extending existing definitions with create_synonym over creating duplicates.
 - Keep relation constraints conservative: only create when source_type, relation_type,
   and target_type are explicit in publication evidence.
-- Do not rely on deterministic fallback behavior; escalate when uncertain.
-- If confidence is low or ambiguous, return decision="escalate" instead of forcing writes.
+- Do not rely on deterministic fallback behavior.
+- Prefer decision="generated" with conservative confidence when you can provide
+  at least one grounded entity/observation or dictionary mutation.
+- Use decision="escalate" only when input content is unusable (empty, corrupted,
+  or contradictory) or tool/runtime failures prevent reliable structured output.
 
 Output contract rules:
 - Return a valid EntityRecognitionContract.

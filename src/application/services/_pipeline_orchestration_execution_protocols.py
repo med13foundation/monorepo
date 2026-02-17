@@ -143,5 +143,11 @@ class _PipelineExecutionSelf(Protocol):
         metadata: object,
     ) -> str | None: ...
 
+    def _resolve_latest_ingestion_job_id(
+        self,
+        *,
+        source_id: UUID,
+    ) -> UUID | None: ...
+
 
 __all__ = ["_PipelineExecutionSelf"]

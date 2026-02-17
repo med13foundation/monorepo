@@ -134,10 +134,18 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
             checkpoint_before=checkpoint_before,
         )
         raw_records_data = fetch_result.records
+        forced_external_record_ids: set[str] | None = None
+        if isinstance(config.pinned_pubmed_id, str) and config.pinned_pubmed_id.strip():
+            normalized_pmid = config.pinned_pubmed_id.strip()
+            forced_external_record_ids = {
+                f"pubmed:pmid:{normalized_pmid}",
+                f"pubmed:pubmed_id:{normalized_pmid}",
+            }
         dedup_outcome = self._build_ledger_dedup_outcome(
             source=source,
             records=raw_records_data,
             context=context,
+            force_external_record_ids=forced_external_record_ids,
         )
         filtered_records = dedup_outcome.filtered_records
 

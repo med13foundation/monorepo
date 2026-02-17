@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from src.domain.entities.kernel.dictionary import (
@@ -24,18 +24,17 @@ from src.domain.entities.kernel.dictionary import (
     DictionaryRelationType,
     DictionarySearchResult,
     EntityResolutionPolicy,
-    RelationConstraint,
-    TransformRegistry,
-    TransformVerificationResult,
     ValueSet,
     ValueSetItem,
     VariableDefinition,
     VariableSynonym,
 )
 from src.domain.repositories.kernel.dictionary_repository import DictionaryRepository
-from src.infrastructure.ingestion.normalization.transform_runtime import (
-    is_supported_transform,
-    verify_transform_fixture,
+from src.infrastructure.repositories.kernel._kernel_dictionary_repository_constraints_merge_mixin import (
+    _KernelDictionaryRepositoryConstraintsMergeMixin,
+)
+from src.infrastructure.repositories.kernel._kernel_dictionary_repository_transform_mixin import (
+    _KernelDictionaryRepositoryTransformMixin,
 )
 from src.infrastructure.repositories.kernel.dictionary_search import (
     search_dictionary_entries,
@@ -49,8 +48,6 @@ from src.models.database.kernel.dictionary import (
     DictionaryRelationTypeModel,
     DictionarySensitivityLevelModel,
     EntityResolutionPolicyModel,
-    RelationConstraintModel,
-    TransformRegistryModel,
     ValueSetItemModel,
     ValueSetModel,
     VariableDefinitionModel,
@@ -132,7 +129,11 @@ def _normalize_synonyms(synonyms: list[str] | None) -> list[str]:
     return normalized
 
 
-class SqlAlchemyDictionaryRepository(DictionaryRepository):
+class SqlAlchemyDictionaryRepository(
+    _KernelDictionaryRepositoryConstraintsMergeMixin,
+    _KernelDictionaryRepositoryTransformMixin,
+    DictionaryRepository,
+):
     """SQLAlchemy implementation of the dictionary repository."""
 
     def __init__(self, session: Session) -> None:
@@ -297,6 +298,18 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         )
         normalized_sensitivity = self._ensure_sensitivity_reference(sensitivity)
 
+        existing_by_id = self._session.get(VariableDefinitionModel, variable_id)
+        if existing_by_id is not None:
+            return VariableDefinition.model_validate(existing_by_id)
+
+        existing_by_canonical = self._session.scalars(
+            select(VariableDefinitionModel).where(
+                VariableDefinitionModel.canonical_name == canonical_name,
+            ),
+        ).first()
+        if existing_by_canonical is not None:
+            return VariableDefinition.model_validate(existing_by_canonical)
+
         model = VariableDefinitionModel(
             id=variable_id,
             canonical_name=canonical_name,
@@ -314,8 +327,22 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             source_ref=source_ref,
             review_status=review_status,
         )
-        self._session.add(model)
-        self._session.flush()
+        try:
+            self._session.add(model)
+            self._session.flush()
+        except IntegrityError:
+            self._session.rollback()
+            existing_after_conflict = self._session.scalars(
+                select(VariableDefinitionModel).where(
+                    or_(
+                        VariableDefinitionModel.id == variable_id,
+                        VariableDefinitionModel.canonical_name == canonical_name,
+                    ),
+                ),
+            ).first()
+            if existing_after_conflict is not None:
+                return VariableDefinition.model_validate(existing_after_conflict)
+            raise
         self._record_change(
             table_name=VariableDefinitionModel.__tablename__,
             record_id=model.id,
@@ -376,6 +403,8 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
         normalized_source = source.strip() if isinstance(source, str) else source
         if normalized_source == "":
             normalized_source = None
+        if isinstance(normalized_source, str):
+            normalized_source = normalized_source[:64]
 
         existing_stmt = select(VariableSynonymModel).where(
             VariableSynonymModel.variable_id == variable_id,
@@ -686,6 +715,13 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             domain_context,
         )
 
+        existing_entity_type = self._session.get(
+            DictionaryEntityTypeModel,
+            normalized_entity_type,
+        )
+        if existing_entity_type is not None:
+            return DictionaryEntityType.model_validate(existing_entity_type)
+
         model = DictionaryEntityTypeModel(
             id=normalized_entity_type,
             display_name=display_name,
@@ -700,8 +736,18 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             source_ref=source_ref,
             review_status=review_status,
         )
-        self._session.add(model)
-        self._session.flush()
+        try:
+            self._session.add(model)
+            self._session.flush()
+        except IntegrityError:
+            self._session.rollback()
+            existing_after_conflict = self._session.get(
+                DictionaryEntityTypeModel,
+                normalized_entity_type,
+            )
+            if existing_after_conflict is not None:
+                return DictionaryEntityType.model_validate(existing_after_conflict)
+            raise
         self._record_change(
             table_name=DictionaryEntityTypeModel.__tablename__,
             record_id=model.id,
@@ -850,6 +896,13 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             domain_context,
         )
 
+        existing_relation_type = self._session.get(
+            DictionaryRelationTypeModel,
+            normalized_relation_type,
+        )
+        if existing_relation_type is not None:
+            return DictionaryRelationType.model_validate(existing_relation_type)
+
         model = DictionaryRelationTypeModel(
             id=normalized_relation_type,
             display_name=display_name,
@@ -864,8 +917,18 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             source_ref=source_ref,
             review_status=review_status,
         )
-        self._session.add(model)
-        self._session.flush()
+        try:
+            self._session.add(model)
+            self._session.flush()
+        except IntegrityError:
+            self._session.rollback()
+            existing_after_conflict = self._session.get(
+                DictionaryRelationTypeModel,
+                normalized_relation_type,
+            )
+            if existing_after_conflict is not None:
+                return DictionaryRelationType.model_validate(existing_after_conflict)
+            raise
         self._record_change(
             table_name=DictionaryRelationTypeModel.__tablename__,
             record_id=model.id,
@@ -1046,467 +1109,8 @@ class SqlAlchemyDictionaryRepository(DictionaryRepository):
             include_inactive=include_inactive,
         )
 
-    # ── Relation constraints ──────────────────────────────────────────
-
-    def create_relation_constraint(  # noqa: PLR0913
-        self,
-        *,
-        source_type: str,
-        relation_type: str,
-        target_type: str,
-        is_allowed: bool = True,
-        requires_evidence: bool = True,
-        created_by: str = "seed",
-        source_ref: str | None = None,
-        review_status: ReviewStatus = "ACTIVE",
-    ) -> RelationConstraint:
-        normalized_source_type = source_type.strip().upper()
-        if not normalized_source_type:
-            msg = "source_type is required"
-            raise ValueError(msg)
-        normalized_relation_type = relation_type.strip().upper()
-        if not normalized_relation_type:
-            msg = "relation_type is required"
-            raise ValueError(msg)
-        normalized_target_type = target_type.strip().upper()
-        if not normalized_target_type:
-            msg = "target_type is required"
-            raise ValueError(msg)
-
-        model = RelationConstraintModel(
-            source_type=normalized_source_type,
-            relation_type=normalized_relation_type,
-            target_type=normalized_target_type,
-            is_allowed=is_allowed,
-            requires_evidence=requires_evidence,
-            created_by=created_by,
-            source_ref=source_ref,
-            review_status=review_status,
-        )
-        self._session.add(model)
-        self._session.flush()
-        self._record_change(
-            table_name=RelationConstraintModel.__tablename__,
-            record_id=str(model.id),
-            action="CREATE",
-            before_snapshot=None,
-            after_snapshot=_snapshot_model(model),
-            changed_by=created_by,
-            source_ref=source_ref,
-        )
-        return RelationConstraint.model_validate(model)
-
-    def get_constraints(
-        self,
-        *,
-        source_type: str | None = None,
-        relation_type: str | None = None,
-        include_inactive: bool = False,
-    ) -> list[RelationConstraint]:
-        stmt = select(RelationConstraintModel)
-        if not include_inactive:
-            stmt = stmt.where(RelationConstraintModel.is_active.is_(True))
-        if source_type is not None:
-            stmt = stmt.where(RelationConstraintModel.source_type == source_type)
-        if relation_type is not None:
-            stmt = stmt.where(RelationConstraintModel.relation_type == relation_type)
-        return [
-            RelationConstraint.model_validate(model)
-            for model in self._session.scalars(stmt).all()
-        ]
-
-    def is_triple_allowed(
-        self,
-        source_type: str,
-        relation_type: str,
-        target_type: str,
-    ) -> bool:
-        stmt = select(RelationConstraintModel).where(
-            and_(
-                RelationConstraintModel.source_type == source_type,
-                RelationConstraintModel.relation_type == relation_type,
-                RelationConstraintModel.target_type == target_type,
-                RelationConstraintModel.is_allowed.is_(True),
-                RelationConstraintModel.review_status == "ACTIVE",
-                RelationConstraintModel.is_active.is_(True),
-            ),
-        )
-        return self._session.scalars(stmt).first() is not None
-
-    def requires_evidence(
-        self,
-        source_type: str,
-        relation_type: str,
-        target_type: str,
-    ) -> bool:
-        stmt = select(RelationConstraintModel).where(
-            and_(
-                RelationConstraintModel.source_type == source_type,
-                RelationConstraintModel.relation_type == relation_type,
-                RelationConstraintModel.target_type == target_type,
-                RelationConstraintModel.review_status == "ACTIVE",
-                RelationConstraintModel.is_active.is_(True),
-            ),
-        )
-        constraint = self._session.scalars(stmt).first()
-        if constraint is None:
-            # If no constraint exists, default to requiring evidence
-            return True
-        return constraint.requires_evidence
-
-    # ── Transform registry ────────────────────────────────────────────
-
-    def create_transform(  # noqa: PLR0913
-        self,
-        *,
-        transform_id: str,
-        input_unit: str,
-        output_unit: str,
-        implementation_ref: str,
-        category: str = "UNIT_CONVERSION",
-        input_data_type: str | None = None,
-        output_data_type: str | None = None,
-        is_deterministic: bool = True,
-        is_production_allowed: bool = False,
-        test_input: JSONValue | None = None,
-        expected_output: JSONValue | None = None,
-        description: str | None = None,
-        status: str = "ACTIVE",
-        created_by: str = "seed",
-        source_ref: str | None = None,
-        review_status: ReviewStatus = "ACTIVE",
-    ) -> TransformRegistry:
-        normalized_transform_id = transform_id.strip()
-        if not normalized_transform_id:
-            msg = "transform_id is required"
-            raise ValueError(msg)
-        normalized_input_unit = input_unit.strip()
-        if not normalized_input_unit:
-            msg = "input_unit is required"
-            raise ValueError(msg)
-        normalized_output_unit = output_unit.strip()
-        if not normalized_output_unit:
-            msg = "output_unit is required"
-            raise ValueError(msg)
-        normalized_impl_ref = implementation_ref.strip()
-        if not normalized_impl_ref:
-            msg = "implementation_ref is required"
-            raise ValueError(msg)
-
-        normalized_category = category.strip().upper()
-        if normalized_category not in {
-            "UNIT_CONVERSION",
-            "NORMALIZATION",
-            "DERIVATION",
-        }:
-            msg = f"Unsupported transform category: {category}"
-            raise ValueError(msg)
-
-        normalized_status = status.strip().upper()
-        if not normalized_status:
-            msg = "status is required"
-            raise ValueError(msg)
-
-        normalized_input_data_type = (
-            self._ensure_data_type_reference(input_data_type)
-            if input_data_type is not None
-            else None
-        )
-        normalized_output_data_type = (
-            self._ensure_data_type_reference(output_data_type)
-            if output_data_type is not None
-            else None
-        )
-
-        model = TransformRegistryModel(
-            id=normalized_transform_id,
-            input_unit=normalized_input_unit,
-            output_unit=normalized_output_unit,
-            category=normalized_category,
-            input_data_type=normalized_input_data_type,
-            output_data_type=normalized_output_data_type,
-            implementation_ref=normalized_impl_ref,
-            is_deterministic=is_deterministic,
-            is_production_allowed=is_production_allowed,
-            test_input=test_input,
-            expected_output=expected_output,
-            description=description,
-            status=normalized_status,
-            created_by=created_by,
-            source_ref=source_ref,
-            review_status=review_status,
-        )
-        self._session.add(model)
-        self._session.flush()
-        self._record_change(
-            table_name=TransformRegistryModel.__tablename__,
-            record_id=model.id,
-            action="CREATE",
-            before_snapshot=None,
-            after_snapshot=_snapshot_model(model),
-            changed_by=created_by,
-            source_ref=source_ref,
-        )
-        return TransformRegistry.model_validate(model)
-
-    def get_transform(
-        self,
-        input_unit: str,
-        output_unit: str,
-        *,
-        include_inactive: bool = False,
-        require_production: bool = False,
-    ) -> TransformRegistry | None:
-        stmt = select(TransformRegistryModel).where(
-            and_(
-                TransformRegistryModel.input_unit == input_unit,
-                TransformRegistryModel.output_unit == output_unit,
-                TransformRegistryModel.status == "ACTIVE",
-            ),
-        )
-        if not include_inactive:
-            stmt = stmt.where(TransformRegistryModel.is_active.is_(True))
-        if require_production:
-            stmt = stmt.where(TransformRegistryModel.is_production_allowed.is_(True))
-        model = self._session.scalars(stmt).first()
-        return TransformRegistry.model_validate(model) if model is not None else None
-
-    def find_transforms(
-        self,
-        *,
-        status: str = "ACTIVE",
-        include_inactive: bool = False,
-        production_only: bool = False,
-    ) -> list[TransformRegistry]:
-        stmt = select(TransformRegistryModel).where(
-            TransformRegistryModel.status == status,
-        )
-        if not include_inactive:
-            stmt = stmt.where(TransformRegistryModel.is_active.is_(True))
-        if production_only:
-            stmt = stmt.where(TransformRegistryModel.is_production_allowed.is_(True))
-        return [
-            TransformRegistry.model_validate(model)
-            for model in self._session.scalars(stmt).all()
-        ]
-
-    def verify_transform(self, transform_id: str) -> TransformVerificationResult:
-        model = self._session.get(TransformRegistryModel, transform_id)
-        checked_at = datetime.now(UTC)
-        if model is None:
-            msg = f"Transform '{transform_id}' not found"
-            raise ValueError(msg)
-
-        if model.test_input is None or model.expected_output is None:
-            return TransformVerificationResult(
-                transform_id=model.id,
-                passed=False,
-                message="Verification fixture is missing test_input and/or expected_output",
-                actual_output=None,
-                expected_output=model.expected_output,
-                checked_at=checked_at,
-            )
-
-        if not is_supported_transform(model.implementation_ref):
-            return TransformVerificationResult(
-                transform_id=model.id,
-                passed=False,
-                message=(
-                    "Unsupported implementation_ref; no runtime transform function "
-                    "is registered"
-                ),
-                actual_output=None,
-                expected_output=model.expected_output,
-                checked_at=checked_at,
-            )
-
-        passed, message, actual_output = verify_transform_fixture(
-            implementation_ref=model.implementation_ref,
-            test_input=_to_json_value(model.test_input),
-            expected_output=_to_json_value(model.expected_output),
-        )
-        return TransformVerificationResult(
-            transform_id=model.id,
-            passed=passed,
-            message=message,
-            actual_output=actual_output,
-            expected_output=_to_json_value(model.expected_output),
-            checked_at=checked_at,
-        )
-
-    def verify_all_transforms(
-        self,
-        *,
-        status: str = "ACTIVE",
-        include_inactive: bool = False,
-    ) -> list[TransformVerificationResult]:
-        stmt = select(TransformRegistryModel).where(
-            TransformRegistryModel.status == status,
-        )
-        if not include_inactive:
-            stmt = stmt.where(TransformRegistryModel.is_active.is_(True))
-        models = self._session.scalars(stmt).all()
-        return [
-            self.verify_transform(model.id)
-            for model in models
-            if model.test_input is not None and model.expected_output is not None
-        ]
-
-    def promote_transform(
-        self,
-        transform_id: str,
-        *,
-        reviewed_by: str,
-    ) -> TransformRegistry:
-        model = self._session.get(TransformRegistryModel, transform_id)
-        if model is None:
-            msg = f"Transform '{transform_id}' not found"
-            raise ValueError(msg)
-        if not model.is_active:
-            msg = f"Transform '{transform_id}' must be active to promote"
-            raise ValueError(msg)
-
-        verification_result = self.verify_transform(transform_id)
-        if not verification_result.passed:
-            msg = (
-                f"Transform '{transform_id}' failed verification and cannot be promoted: "
-                f"{verification_result.message}"
-            )
-            raise ValueError(msg)
-
-        model.is_production_allowed = True
-        model.reviewed_by = reviewed_by
-        model.reviewed_at = datetime.now(UTC)
-        model.review_status = "ACTIVE"
-        if model.revocation_reason:
-            model.revocation_reason = None
-
-        self._session.flush()
-        return TransformRegistry.model_validate(model)
-
-    def merge_variable_definition(
-        self,
-        source_variable_id: str,
-        target_variable_id: str,
-        *,
-        reason: str,
-        reviewed_by: str | None = None,
-    ) -> VariableDefinition:
-        source = self._session.get(VariableDefinitionModel, source_variable_id)
-        if source is None:
-            msg = f"Variable '{source_variable_id}' not found"
-            raise ValueError(msg)
-        target = self._session.get(VariableDefinitionModel, target_variable_id)
-        if target is None:
-            msg = f"Variable '{target_variable_id}' not found"
-            raise ValueError(msg)
-        if not target.is_active:
-            msg = f"Variable '{target_variable_id}' must be active for merge"
-            raise ValueError(msg)
-
-        before_snapshot = _snapshot_model(source)
-        source.review_status = "REVOKED"
-        source.reviewed_by = reviewed_by
-        source.reviewed_at = datetime.now(UTC)
-        source.revocation_reason = reason
-        source.is_active = False
-        source.valid_to = datetime.now(UTC)
-        source.superseded_by = target.id
-        self._session.flush()
-        self._record_change(
-            table_name=VariableDefinitionModel.__tablename__,
-            record_id=source.id,
-            action="MERGE",
-            before_snapshot=before_snapshot,
-            after_snapshot=_snapshot_model(source),
-            changed_by=reviewed_by,
-            source_ref=source.source_ref,
-        )
-        return VariableDefinition.model_validate(source)
-
-    def merge_entity_type(
-        self,
-        source_entity_type_id: str,
-        target_entity_type_id: str,
-        *,
-        reason: str,
-        reviewed_by: str | None = None,
-    ) -> DictionaryEntityType:
-        normalized_source = source_entity_type_id.strip().upper()
-        normalized_target = target_entity_type_id.strip().upper()
-        source = self._session.get(DictionaryEntityTypeModel, normalized_source)
-        if source is None:
-            msg = f"Entity type '{source_entity_type_id}' not found"
-            raise ValueError(msg)
-        target = self._session.get(DictionaryEntityTypeModel, normalized_target)
-        if target is None:
-            msg = f"Entity type '{target_entity_type_id}' not found"
-            raise ValueError(msg)
-        if not target.is_active:
-            msg = f"Entity type '{target_entity_type_id}' must be active for merge"
-            raise ValueError(msg)
-
-        before_snapshot = _snapshot_model(source)
-        source.review_status = "REVOKED"
-        source.reviewed_by = reviewed_by
-        source.reviewed_at = datetime.now(UTC)
-        source.revocation_reason = reason
-        source.is_active = False
-        source.valid_to = datetime.now(UTC)
-        source.superseded_by = target.id
-        self._session.flush()
-        self._record_change(
-            table_name=DictionaryEntityTypeModel.__tablename__,
-            record_id=source.id,
-            action="MERGE",
-            before_snapshot=before_snapshot,
-            after_snapshot=_snapshot_model(source),
-            changed_by=reviewed_by,
-            source_ref=source.source_ref,
-        )
-        return DictionaryEntityType.model_validate(source)
-
-    def merge_relation_type(
-        self,
-        source_relation_type_id: str,
-        target_relation_type_id: str,
-        *,
-        reason: str,
-        reviewed_by: str | None = None,
-    ) -> DictionaryRelationType:
-        normalized_source = source_relation_type_id.strip().upper()
-        normalized_target = target_relation_type_id.strip().upper()
-        source = self._session.get(DictionaryRelationTypeModel, normalized_source)
-        if source is None:
-            msg = f"Relation type '{source_relation_type_id}' not found"
-            raise ValueError(msg)
-        target = self._session.get(DictionaryRelationTypeModel, normalized_target)
-        if target is None:
-            msg = f"Relation type '{target_relation_type_id}' not found"
-            raise ValueError(msg)
-        if not target.is_active:
-            msg = f"Relation type '{target_relation_type_id}' must be active for merge"
-            raise ValueError(msg)
-
-        before_snapshot = _snapshot_model(source)
-        source.review_status = "REVOKED"
-        source.reviewed_by = reviewed_by
-        source.reviewed_at = datetime.now(UTC)
-        source.revocation_reason = reason
-        source.is_active = False
-        source.valid_to = datetime.now(UTC)
-        source.superseded_by = target.id
-        self._session.flush()
-        self._record_change(
-            table_name=DictionaryRelationTypeModel.__tablename__,
-            record_id=source.id,
-            action="MERGE",
-            before_snapshot=before_snapshot,
-            after_snapshot=_snapshot_model(source),
-            changed_by=reviewed_by,
-            source_ref=source.source_ref,
-        )
-        return DictionaryRelationType.model_validate(source)
+    # Relation-constraint, transform, and merge helpers are implemented in
+    # dedicated mixins to keep this module focused on dictionary CRUD.
 
 
 __all__ = ["SqlAlchemyDictionaryRepository"]

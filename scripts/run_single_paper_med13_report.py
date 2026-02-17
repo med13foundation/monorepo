@@ -17,6 +17,7 @@ from sqlalchemy.orm import aliased
 
 from src.database.session import SessionLocal, set_session_rls_context
 from src.models.database.extraction_queue import ExtractionQueueItemModel
+from src.models.database.ingestion_job import IngestionJobModel
 from src.models.database.kernel.dictionary import (
     DictionaryChangelogModel,
     DictionaryEntityTypeModel,
@@ -74,6 +75,15 @@ def _parse_args() -> argparse.Namespace:
         help="Connector source type for workflow execution. Default: pubmed.",
     )
     parser.add_argument(
+        "--pmid",
+        type=str,
+        default=None,
+        help=(
+            "Optional PubMed ID strict filter for deterministic one-paper tests. "
+            "Applies only for pubmed runs."
+        ),
+    )
+    parser.add_argument(
         "--workflow-log",
         type=Path,
         default=None,
@@ -129,6 +139,21 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable debug logging.",
     )
+    parser.add_argument(
+        "--low-call-mode",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Reduce AI graph-call budgets for smoke tests while keeping AI enabled.",
+    )
+    parser.add_argument(
+        "--require-smoke-pass",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Fail when neither a relation edge is persisted nor explicit rejected "
+            "relation reasons/details are present."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -180,6 +205,18 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _normalize_pmid(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+    normalized = raw_value.strip()
+    if not normalized:
+        return None
+    if not normalized.isdigit():
+        msg = f"Invalid PMID value: {raw_value!r}. Expected digits only."
+        raise ValueError(msg)
+    return normalized
+
+
 def _run_minimal_workflow_and_load_log(args: argparse.Namespace) -> JSONObject:
     if args.workflow_log is not None:
         logger.info("Reusing existing workflow log: %s", args.workflow_log)
@@ -210,6 +247,9 @@ def _run_minimal_workflow_and_load_log(args: argparse.Namespace) -> JSONObject:
         command.extend(["--source-id", str(args.source_id)])
     if args.space_id is not None:
         command.extend(["--space-id", str(args.space_id)])
+    if args.pmid is not None:
+        command.extend(["--pmid", str(args.pmid)])
+    command.append("--low-call-mode" if args.low_call_mode else "--no-low-call-mode")
     command.append("--shadow-mode" if args.shadow_mode else "--no-shadow-mode")
     command.append("--require-graph-success")
     if args.verbose:
@@ -258,6 +298,67 @@ def _select_source_document(
     return documents[0]
 
 
+def _select_ingestion_job_for_run_window(
+    session: Session,
+    *,
+    source_id: UUID,
+    started_at: datetime | None,
+    completed_at: datetime | None,
+) -> IngestionJobModel | None:
+    rows = (
+        session.execute(
+            select(IngestionJobModel)
+            .where(IngestionJobModel.source_id == str(source_id))
+            .order_by(desc(IngestionJobModel.triggered_at))
+            .limit(_DICTIONARY_SCAN_LIMIT),
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return None
+
+    completed_rows = [
+        row for row in rows if str(row.status).lower().endswith("completed")
+    ]
+    candidates = completed_rows if completed_rows else rows
+    if started_at is None or completed_at is None:
+        return candidates[0]
+
+    window_start = started_at - timedelta(minutes=_WINDOW_PADDING_MINUTES)
+    window_end = completed_at + timedelta(minutes=_WINDOW_PADDING_MINUTES)
+
+    for row in candidates:
+        job_times = (
+            _parse_iso_datetime(row.triggered_at),
+            _parse_iso_datetime(row.started_at),
+            _parse_iso_datetime(row.completed_at),
+        )
+        for job_time in job_times:
+            if job_time is None:
+                continue
+            if window_start <= job_time <= window_end:
+                return row
+    return candidates[0]
+
+
+def _select_source_document_for_ingestion_job(
+    session: Session,
+    *,
+    source_id: UUID,
+    ingestion_job_id: str | None,
+) -> SourceDocumentModel | None:
+    if not ingestion_job_id:
+        return None
+    return session.execute(
+        select(SourceDocumentModel)
+        .where(SourceDocumentModel.source_id == str(source_id))
+        .where(SourceDocumentModel.ingestion_job_id == ingestion_job_id)
+        .order_by(desc(SourceDocumentModel.updated_at))
+        .limit(1),
+    ).scalar_one_or_none()
+
+
 def _select_queue_item(
     session: Session,
     *,
@@ -270,6 +371,29 @@ def _select_queue_item(
         .where(ExtractionQueueItemModel.source_record_id == external_record_id)
         .order_by(desc(ExtractionQueueItemModel.updated_at))
         .limit(1),
+    ).scalar_one_or_none()
+
+
+def _select_queue_item_for_ingestion_job(
+    session: Session,
+    *,
+    source_id: UUID,
+    ingestion_job_id: str | None,
+    external_record_id: str | None = None,
+) -> ExtractionQueueItemModel | None:
+    if not ingestion_job_id:
+        return None
+    stmt = (
+        select(ExtractionQueueItemModel)
+        .where(ExtractionQueueItemModel.source_id == str(source_id))
+        .where(ExtractionQueueItemModel.ingestion_job_id == ingestion_job_id)
+    )
+    if isinstance(external_record_id, str) and external_record_id.strip():
+        stmt = stmt.where(
+            ExtractionQueueItemModel.source_record_id == external_record_id,
+        )
+    return session.execute(
+        stmt.order_by(desc(ExtractionQueueItemModel.updated_at)).limit(1),
     ).scalar_one_or_none()
 
 
@@ -852,6 +976,7 @@ def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
     dictionary = report.get("dictionary")
     graph = report.get("graph")
     workflow = report.get("workflow")
+    smoke = workflow.get("smoke_check", {})
 
     lines: list[str] = []
     lines.append("# MED13 One-Paper Full Workflow Report")
@@ -864,6 +989,7 @@ def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
         f"- Research space: `{target.get('research_space_name')}` (`{target.get('research_space_id')}`)",
     )
     lines.append(f"- Workflow run id: `{workflow.get('pipeline_run_id')}`")
+    lines.append(f"- Smoke pass: `{smoke.get('passed')}` ({smoke.get('reason')})")
     lines.append("")
 
     lines.append("## 1. Paper Selected")
@@ -897,6 +1023,18 @@ def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
     lines.append("")
     lines.append(f"- Extracted facts count: `{analysis.get('extracted_facts_count')}`")
     lines.append(
+        f"- Entity-recognition decision: `{analysis.get('entity_recognition_decision')}`",
+    )
+    lines.append(
+        f"- Entity-recognition governance reason: `{analysis.get('entity_recognition_governance_reason')}`",
+    )
+    lines.append(
+        f"- Extraction stage status: `{analysis.get('extraction_stage_status')}`",
+    )
+    lines.append(
+        f"- Extraction stage reason: `{analysis.get('extraction_stage_reason')}`",
+    )
+    lines.append(
         f"- Extraction relations extracted: `{analysis.get('extraction_stage_relations_extracted')}`",
     )
     lines.append(
@@ -904,6 +1042,9 @@ def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
     )
     lines.append(
         f"- Document relation edges persisted: `{analysis.get('document_relation_edges_count')}`",
+    )
+    lines.append(
+        f"- Smoke check pass condition: `{smoke.get('criterion')}`",
     )
     lines.append("")
     lines.append("### Extracted Facts")
@@ -995,9 +1136,55 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _relation_rejections_are_explicit(analysis: JSONObject) -> bool:
+    rejected_details = analysis.get("extraction_stage_rejected_relation_details")
+    if isinstance(rejected_details, list) and rejected_details:
+        return all(
+            isinstance(item, dict)
+            and isinstance(item.get("reason"), str)
+            and item.get("reason", "").strip()
+            for item in rejected_details
+        )
+
+    rejected_reasons = analysis.get("extraction_stage_rejected_relation_reasons")
+    if isinstance(rejected_reasons, list) and rejected_reasons:
+        return all(
+            isinstance(reason, str) and reason.strip() for reason in rejected_reasons
+        )
+    return False
+
+
+def _evaluate_smoke_pass(analysis: JSONObject) -> tuple[bool, str, str]:
+    persisted_edges_raw = analysis.get("document_relation_edges_count")
+    persisted_edges = (
+        int(persisted_edges_raw) if isinstance(persisted_edges_raw, int | float) else 0
+    )
+    if persisted_edges > 0:
+        return (
+            True,
+            "relation_edges_persisted",
+            "persisted_relation_edges>0 OR explicit_rejected_relation_reasons",
+        )
+
+    if _relation_rejections_are_explicit(analysis):
+        return (
+            True,
+            "all_candidates_rejected_with_explicit_reasons",
+            "persisted_relation_edges>0 OR explicit_rejected_relation_reasons",
+        )
+
+    return (
+        False,
+        "no_persisted_edges_and_no_explicit_rejection_reasons",
+        "persisted_relation_edges>0 OR explicit_rejected_relation_reasons",
+    )
+
+
 def main() -> None:  # noqa: PLR0912, PLR0915
     args = _parse_args()
     _configure_logging(verbose=args.verbose)
+    normalized_pmid = _normalize_pmid(args.pmid)
+    args.pmid = normalized_pmid
     report_json_path, report_md_path = _default_output_paths()
     if args.report_json is not None:
         report_json_path = args.report_json
@@ -1025,23 +1212,48 @@ def main() -> None:  # noqa: PLR0912, PLR0915
     session = SessionLocal()
     try:
         set_session_rls_context(session, bypass_rls=True)
-        queue_item = _select_queue_item_for_run_window(
+        ingestion_job = _select_ingestion_job_for_run_window(
             session,
             source_id=source_id,
             started_at=started_at,
             completed_at=completed_at,
         )
-        source_document = _select_source_document_for_queue_item(
+        ingestion_job_id = ingestion_job.id if ingestion_job is not None else None
+
+        source_document = _select_source_document_for_ingestion_job(
             session,
             source_id=source_id,
-            queue_item=queue_item,
+            ingestion_job_id=ingestion_job_id,
         )
+        queue_item = _select_queue_item_for_ingestion_job(
+            session,
+            source_id=source_id,
+            ingestion_job_id=ingestion_job_id,
+            external_record_id=(
+                source_document.external_record_id
+                if source_document is not None
+                else None
+            ),
+        )
+
         if source_document is None:
-            source_document = _select_source_document(
+            queue_item = _select_queue_item_for_run_window(
                 session,
                 source_id=source_id,
-                pipeline_run_id=pipeline_run_id,
+                started_at=started_at,
+                completed_at=completed_at,
             )
+            source_document = _select_source_document_for_queue_item(
+                session,
+                source_id=source_id,
+                queue_item=queue_item,
+            )
+            if source_document is None:
+                source_document = _select_source_document(
+                    session,
+                    source_id=source_id,
+                    pipeline_run_id=pipeline_run_id,
+                )
         if queue_item is None and source_document is not None:
             queue_item = _select_queue_item(
                 session,
@@ -1141,6 +1353,8 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             "generated_at": datetime.now(UTC).isoformat(),
             "workflow": {
                 "pipeline_run_id": pipeline_run_id,
+                "ingestion_job_id": ingestion_job_id,
+                "requested_pmid": normalized_pmid,
                 "started_at": (
                     started_at.isoformat() if started_at is not None else None
                 ),
@@ -1160,6 +1374,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 "research_space_name": str(
                     target_payload.get("research_space_name", ""),
                 ),
+                "requested_pmid": normalized_pmid,
             },
             "paper": {
                 "source_document_id": source_document.id if source_document else None,
@@ -1211,14 +1426,40 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                     len(extraction.facts) if extraction is not None else 0
                 ),
                 "extracted_facts": extraction.facts if extraction is not None else [],
+                "entity_recognition_decision": metadata_payload.get(
+                    "entity_recognition_decision",
+                ),
+                "entity_recognition_governance_reason": metadata_payload.get(
+                    "entity_recognition_governance_reason",
+                ),
+                "extraction_stage_status": metadata_payload.get(
+                    "extraction_stage_status",
+                ),
+                "extraction_stage_reason": metadata_payload.get(
+                    "extraction_stage_reason",
+                ),
                 "extraction_stage_relations_extracted": metadata_payload.get(
                     "extraction_stage_relations_extracted",
                 ),
-                "extraction_stage_rejected_relation_reasons": metadata_payload.get(
-                    "extraction_stage_rejected_relation_reasons",
+                "extraction_stage_rejected_relation_reasons": (
+                    metadata_payload.get("extraction_stage_rejected_relation_reasons")
+                    if isinstance(
+                        metadata_payload.get(
+                            "extraction_stage_rejected_relation_reasons",
+                        ),
+                        list,
+                    )
+                    else []
                 ),
-                "extraction_stage_rejected_relation_details": metadata_payload.get(
-                    "extraction_stage_rejected_relation_details",
+                "extraction_stage_rejected_relation_details": (
+                    metadata_payload.get("extraction_stage_rejected_relation_details")
+                    if isinstance(
+                        metadata_payload.get(
+                            "extraction_stage_rejected_relation_details",
+                        ),
+                        list,
+                    )
+                    else []
                 ),
                 "entity_recognition_dictionary_entity_types_created": metadata_payload.get(
                     "entity_recognition_dictionary_entity_types_created",
@@ -1242,6 +1483,14 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 "full_space_snapshot": full_graph,
             },
         }
+        smoke_passed, smoke_reason, smoke_criterion = _evaluate_smoke_pass(
+            report["analysis"],
+        )
+        report["workflow"]["smoke_check"] = {
+            "passed": smoke_passed,
+            "reason": smoke_reason,
+            "criterion": smoke_criterion,
+        }
     finally:
         session.close()
 
@@ -1250,6 +1499,14 @@ def main() -> None:  # noqa: PLR0912, PLR0915
     _write_text(report_md_path, markdown)
     logger.info("Detailed JSON report: %s", report_json_path)
     logger.info("Detailed Markdown report: %s", report_md_path)
+    smoke_payload = report.get("workflow", {}).get("smoke_check", {})
+    if args.require_smoke_pass and not bool(smoke_payload.get("passed")):
+        msg = (
+            "Smoke pass criteria not met: "
+            f"{smoke_payload.get('reason')}. "
+            f"Criterion={smoke_payload.get('criterion')}"
+        )
+        raise SystemExit(msg)
 
 
 if __name__ == "__main__":

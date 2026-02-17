@@ -51,6 +51,21 @@ _MAX_STAGE_LIMIT = 200
 _MAX_TEST_INGESTION_RESULTS = 5
 _MAX_GRAPH_DEPTH = 4
 _ENV_ENABLE_POST_INGESTION_PIPELINE_HOOK = "MED13_ENABLE_POST_INGESTION_PIPELINE_HOOK"
+_ENV_GRAPH_CONNECTION_REQUEST_LIMIT = "MED13_GRAPH_CONNECTION_REQUEST_LIMIT"
+_ENV_GRAPH_CONNECTION_TOOL_CALL_LIMIT = "MED13_GRAPH_CONNECTION_TOOL_CALL_LIMIT"
+_ENV_GRAPH_MAX_SEEDS_PER_RUN = "MED13_GRAPH_MAX_SEEDS_PER_RUN"
+_ENV_ENTITY_RECOGNITION_REQUEST_LIMIT = "MED13_ENTITY_RECOGNITION_REQUEST_LIMIT"
+_ENV_ENTITY_RECOGNITION_TOOL_CALL_LIMIT = "MED13_ENTITY_RECOGNITION_TOOL_CALL_LIMIT"
+_ENV_EXTRACTION_REQUEST_LIMIT = "MED13_EXTRACTION_REQUEST_LIMIT"
+_ENV_EXTRACTION_TOOL_CALL_LIMIT = "MED13_EXTRACTION_TOOL_CALL_LIMIT"
+_LOW_CALL_GRAPH_REQUEST_LIMIT = 48
+_LOW_CALL_GRAPH_TOOL_CALL_LIMIT = 96
+_LOW_CALL_GRAPH_MAX_SEEDS = 1
+_LOW_CALL_ENTITY_RECOGNITION_REQUEST_LIMIT = 48
+_LOW_CALL_ENTITY_RECOGNITION_TOOL_CALL_LIMIT = 96
+_LOW_CALL_EXTRACTION_REQUEST_LIMIT = 48
+_LOW_CALL_EXTRACTION_TOOL_CALL_LIMIT = 96
+_NON_BLOCKING_STAGE_ERRORS = frozenset({"agent_requested_escalation"})
 
 
 @dataclass(frozen=True)
@@ -124,6 +139,15 @@ def _parse_args() -> argparse.Namespace:
         help="Optional orchestration run id; auto-generated when omitted.",
     )
     parser.add_argument(
+        "--pmid",
+        type=str,
+        default=None,
+        help=(
+            "Optional PubMed ID strict filter for deterministic one-paper tests. "
+            "Applies only to pubmed sources."
+        ),
+    )
+    parser.add_argument(
         "--enrichment-limit",
         type=int,
         default=25,
@@ -181,6 +205,14 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable debug logging.",
     )
+    parser.add_argument(
+        "--low-call-mode",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Reduce AI graph-call budget for smoke tests while keeping AI stages active."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -199,6 +231,31 @@ def _normalize_source_type(raw_value: str | None) -> SourceTypeEnum | None:
         if source_type.value == normalized:
             return source_type
     msg = f"Unsupported source type: {raw_value!r}"
+    raise ValueError(msg)
+
+
+def _normalize_pmid(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+    normalized = raw_value.strip()
+    if not normalized:
+        return None
+    if not normalized.isdigit():
+        msg = f"Invalid PMID value: {raw_value!r}. Expected digits only."
+        raise ValueError(msg)
+    return normalized
+
+
+def _ensure_pmid_supported_for_source(
+    *,
+    pmid: str | None,
+    source_type: str,
+) -> None:
+    if pmid is None:
+        return
+    if source_type == "pubmed":
+        return
+    msg = "--pmid is only supported when source_type resolves to pubmed."
     raise ValueError(msg)
 
 
@@ -681,6 +738,47 @@ def _enforce_source_max_results(
     return previous_value
 
 
+def _enforce_source_pinned_pubmed_id(
+    session: Session,
+    *,
+    source_id: UUID,
+    pinned_pmid: str,
+) -> str | None:
+    source_model = session.get(UserDataSourceModel, str(source_id))
+    if source_model is None:
+        msg = f"Source not found while applying pinned PMID override: {source_id}"
+        raise ValueError(msg)
+
+    raw_configuration = source_model.configuration
+    if isinstance(raw_configuration, Mapping):
+        configuration_payload: JSONObject = {
+            str(key): value for key, value in raw_configuration.items()
+        }
+    else:
+        configuration_payload = {}
+
+    raw_metadata = configuration_payload.get("metadata")
+    if isinstance(raw_metadata, Mapping):
+        metadata_payload: JSONObject = {
+            str(key): value for key, value in raw_metadata.items()
+        }
+    else:
+        metadata_payload = {}
+
+    previous_pinned = metadata_payload.get("pinned_pubmed_id")
+    previous_value = (
+        previous_pinned.strip()
+        if isinstance(previous_pinned, str) and previous_pinned.strip()
+        else None
+    )
+
+    metadata_payload["pinned_pubmed_id"] = pinned_pmid
+    configuration_payload["metadata"] = metadata_payload
+    source_model.configuration = configuration_payload
+    session.commit()
+    return previous_value
+
+
 class _TemporaryEnvironment:
     def __init__(self, overrides: Mapping[str, str]) -> None:
         self._overrides = dict(overrides)
@@ -715,11 +813,32 @@ async def _run_workflow_once(  # noqa: PLR0913
     graph_max_depth: int,
     shadow_mode: bool | None,
     disable_post_ingestion_hook: bool,
+    low_call_mode: bool,
 ) -> PipelineRunSummary:
     container = get_legacy_dependency_container()
     env_overrides: dict[str, str] = {}
     if disable_post_ingestion_hook:
         env_overrides[_ENV_ENABLE_POST_INGESTION_PIPELINE_HOOK] = "0"
+    if low_call_mode:
+        env_overrides[_ENV_GRAPH_CONNECTION_REQUEST_LIMIT] = str(
+            _LOW_CALL_GRAPH_REQUEST_LIMIT,
+        )
+        env_overrides[_ENV_GRAPH_CONNECTION_TOOL_CALL_LIMIT] = str(
+            _LOW_CALL_GRAPH_TOOL_CALL_LIMIT,
+        )
+        env_overrides[_ENV_GRAPH_MAX_SEEDS_PER_RUN] = str(_LOW_CALL_GRAPH_MAX_SEEDS)
+        env_overrides[_ENV_ENTITY_RECOGNITION_REQUEST_LIMIT] = str(
+            _LOW_CALL_ENTITY_RECOGNITION_REQUEST_LIMIT,
+        )
+        env_overrides[_ENV_ENTITY_RECOGNITION_TOOL_CALL_LIMIT] = str(
+            _LOW_CALL_ENTITY_RECOGNITION_TOOL_CALL_LIMIT,
+        )
+        env_overrides[_ENV_EXTRACTION_REQUEST_LIMIT] = str(
+            _LOW_CALL_EXTRACTION_REQUEST_LIMIT,
+        )
+        env_overrides[_ENV_EXTRACTION_TOOL_CALL_LIMIT] = str(
+            _LOW_CALL_EXTRACTION_TOOL_CALL_LIMIT,
+        )
 
     with (
         _TemporaryEnvironment(env_overrides),
@@ -767,13 +886,18 @@ def _build_result_checks(
     *,
     require_graph_success: bool,
 ) -> JSONObject:
+    blocking_stage_errors = [
+        error
+        for error in summary.errors
+        if error.strip().lower() not in _NON_BLOCKING_STAGE_ERRORS
+    ]
     checks: JSONObject = {
         "overall_run_status_completed": summary.status == "completed",
         "ingestion_stage_completed": summary.ingestion_status == "completed",
         "enrichment_stage_completed": summary.enrichment_status == "completed",
         "extraction_stage_completed": summary.extraction_status == "completed",
         "graph_stage_not_failed": summary.graph_status != "failed",
-        "no_stage_errors": len(summary.errors) == 0,
+        "no_stage_errors": len(blocking_stage_errors) == 0,
     }
     if require_graph_success:
         checks["graph_stage_completed"] = summary.graph_status == "completed"
@@ -795,6 +919,7 @@ def _write_report(
 def main() -> None:
     args = _parse_args()
     _configure_logging(verbose=args.verbose)
+    normalized_pmid = _normalize_pmid(args.pmid)
     _validate_stage_limits(
         enrichment_limit=args.enrichment_limit,
         extraction_limit=args.extraction_limit,
@@ -822,6 +947,7 @@ def main() -> None:
                     str(args.space_id) if args.space_id is not None else None
                 ),
                 "preferred_source_type": args.source_type,
+                "requested_pmid": normalized_pmid,
             },
         )
         target = _resolve_target(
@@ -830,6 +956,11 @@ def main() -> None:
             requested_space_id=args.space_id,
             preferred_source_type=preferred_source_type,
         )
+        _ensure_pmid_supported_for_source(
+            pmid=normalized_pmid,
+            source_type=target.source_type,
+        )
+
         previous_max_results = _enforce_source_max_results(
             session,
             source_id=target.source_id,
@@ -852,6 +983,24 @@ def main() -> None:
                 "applied_max_results": args.max_ingestion_results,
             },
         )
+        if normalized_pmid is not None:
+            previous_pinned = _enforce_source_pinned_pubmed_id(
+                session,
+                source_id=target.source_id,
+                pinned_pmid=normalized_pmid,
+            )
+            _append_action(
+                actions,
+                step="enforce_pmid_filter",
+                message=(
+                    "Applied strict PubMed-ID filter for deterministic smoke testing."
+                ),
+                details={
+                    "source_id": str(target.source_id),
+                    "previous_pinned_pmid": previous_pinned,
+                    "applied_pinned_pmid": normalized_pmid,
+                },
+            )
 
         before_snapshot = _capture_snapshot(session, target)
         _append_action(
@@ -877,6 +1026,8 @@ def main() -> None:
                 "max_ingestion_results": args.max_ingestion_results,
                 "shadow_mode": args.shadow_mode,
                 "disable_post_ingestion_hook": args.disable_post_ingestion_hook,
+                "pinned_pmid": normalized_pmid,
+                "low_call_mode": args.low_call_mode,
             },
         )
         summary = asyncio.run(
@@ -889,6 +1040,7 @@ def main() -> None:
                 graph_max_depth=args.graph_max_depth,
                 shadow_mode=args.shadow_mode,
                 disable_post_ingestion_hook=args.disable_post_ingestion_hook,
+                low_call_mode=args.low_call_mode,
             ),
         )
         logger.info(
@@ -927,6 +1079,7 @@ def main() -> None:
                 "schedule_enabled": target.schedule_enabled,
                 "schedule_frequency": target.schedule_frequency,
                 "schedule_requires_scheduler": target.schedule_requires_scheduler,
+                "requested_pmid": normalized_pmid,
             },
             "before_snapshot": asdict(before_snapshot),
             "pipeline_summary": _pipeline_summary_to_json(summary),

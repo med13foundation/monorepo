@@ -86,6 +86,20 @@ class PubMedIngestor(BaseIngestor, PubMedRecordParserMixin):
 
     async def fetch_page(self, **kwargs: JSONValue) -> PubMedFetchPage:
         """Fetch one PubMed page with explicit cursor metadata."""
+        pinned_pubmed_id_raw = kwargs.get("pinned_pubmed_id")
+        if isinstance(pinned_pubmed_id_raw, str) and pinned_pubmed_id_raw.strip():
+            pinned_pubmed_id = pinned_pubmed_id_raw.strip()
+            records = await self._fetch_article_details([pinned_pubmed_id])
+            retmax = max(self._coerce_int(kwargs.get("max_results"), 1), 1)
+            total_count = 1 if records else 0
+            return PubMedFetchPage(
+                records=records,
+                total_count=total_count,
+                retstart=0,
+                retmax=retmax,
+                returned_count=len(records),
+            )
+
         # Step 1: Search for publications
         query_value = kwargs.get("query")
         query = query_value if isinstance(query_value, str) else "MED13"

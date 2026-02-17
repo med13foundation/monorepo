@@ -30,6 +30,22 @@ _SUPPORTED_DATA_TYPES: Final[frozenset[str]] = frozenset(
         "JSON",
     },
 )
+_DATA_TYPE_ALIASES: Final[dict[str, str]] = {
+    "TEXT": "STRING",
+    "STR": "STRING",
+    "INT": "INTEGER",
+    "LONG": "INTEGER",
+    "DOUBLE": "FLOAT",
+    "DECIMAL": "FLOAT",
+    "NUMBER": "FLOAT",
+    "BOOL": "BOOLEAN",
+    "OBJECT": "JSON",
+    "MAP": "JSON",
+    "DICT": "JSON",
+    "STRUCT": "JSON",
+    "ARRAY": "JSON",
+    "LIST": "JSON",
+}
 
 
 class _BaseConstraints(BaseModel):
@@ -206,7 +222,15 @@ _CONSTRAINT_MODEL_BY_DATA_TYPE: Final[dict[str, type[_BaseConstraints]]] = {
 
 def normalize_dictionary_data_type(data_type: str) -> str:
     """Normalize a dictionary data type identifier."""
-    return data_type.strip().upper()
+    normalized = data_type.strip().upper()
+    if normalized in _SUPPORTED_DATA_TYPES:
+        return normalized
+    alias = _DATA_TYPE_ALIASES.get(normalized)
+    if alias is not None:
+        return alias
+    if normalized.endswith(("_LIST", "_ARRAY")):
+        return "JSON"
+    return normalized
 
 
 def get_constraint_schema_for_data_type(data_type: str) -> JSONObject:

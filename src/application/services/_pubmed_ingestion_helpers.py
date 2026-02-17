@@ -119,9 +119,14 @@ class PubMedIngestionServiceHelpers:
         )
         result = await self._query_generation_service.resolve_query(request)
 
-        resolved_config = config
+        resolved_query = config.query
         if result.query.strip() and result.query.strip() != config.query:
-            resolved_config = config.model_copy(update={"query": result.query.strip()})
+            resolved_query = result.query.strip()
+        resolved_query = self._apply_pinned_pubmed_filter(
+            query=resolved_query,
+            pinned_pubmed_id=config.pinned_pubmed_id,
+        )
+        resolved_config = config.model_copy(update={"query": resolved_query})
 
         if result.decision == "escalate":
             logger.warning(
@@ -148,16 +153,36 @@ class PubMedIngestionServiceHelpers:
             query_generation_fallback_reason=result.fallback_reason,
         )
 
+    @staticmethod
+    def _apply_pinned_pubmed_filter(
+        *,
+        query: str,
+        pinned_pubmed_id: str | None,
+    ) -> str:
+        if pinned_pubmed_id is None:
+            return query
+        normalized_pmid = pinned_pubmed_id.strip()
+        if not normalized_pmid:
+            return query
+        pmid_filter = f"{normalized_pmid}[PMID]"
+        lowered_query = query.casefold()
+        if pmid_filter.casefold() in lowered_query:
+            return query
+        return f"(({query})) AND ({pmid_filter})"
+
     async def _fetch_records_with_checkpoint(
         self: PubMedIngestionService,
         *,
         config: data_source_configs.PubMedQueryConfig,
         checkpoint_before: JSONObject | None,
     ) -> pubmed_ingestion.PubMedGatewayFetchResult:
+        checkpoint_for_fetch = checkpoint_before
+        if isinstance(config.pinned_pubmed_id, str) and config.pinned_pubmed_id.strip():
+            checkpoint_for_fetch = None
         if isinstance(self._gateway, pubmed_ingestion.PubMedIncrementalGateway):
             return await self._gateway.fetch_records_incremental(
                 config,
-                checkpoint=checkpoint_before,
+                checkpoint=checkpoint_for_fetch,
             )
 
         records = await self._gateway.fetch_records(config)
@@ -212,6 +237,7 @@ class PubMedIngestionServiceHelpers:
         source: user_data_source.UserDataSource,
         records: list[JSONObject],
         context: IngestionRunContext | None,
+        force_external_record_ids: set[str] | None = None,
     ) -> _LedgerDedupOutcome:
         if context is None or context.source_record_ledger_repository is None:
             return _LedgerDedupOutcome(
@@ -238,6 +264,7 @@ class PubMedIngestionServiceHelpers:
         )
 
         now = datetime.now(UTC)
+        forced_external_ids = force_external_record_ids or set()
         current_entries: dict[str, SourceRecordLedgerEntry] = dict(
             existing_by_external_id,
         )
@@ -276,7 +303,9 @@ class PubMedIngestionServiceHelpers:
             )
             entries_to_upsert.append(updated_entry)
             current_entries[external_id] = updated_entry
-            if existing_entry.payload_hash == payload_hash:
+            payload_changed = existing_entry.payload_hash != payload_hash
+            force_process = external_id in forced_external_ids
+            if not payload_changed and not force_process:
                 unchanged_records += 1
                 continue
             updated_records += 1

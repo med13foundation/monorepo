@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from inspect import isawaitable
 from typing import TYPE_CHECKING, TypeGuard
 
@@ -29,8 +30,10 @@ _GRAPH_CONNECTION_PROMPTS: dict[str, str] = {
 }
 SUPPORTED_GRAPH_CONNECTION_SOURCES = frozenset(_GRAPH_CONNECTION_PROMPTS)
 logger = logging.getLogger(__name__)
-_GRAPH_CONNECTION_REQUEST_LIMIT = 12
-_GRAPH_CONNECTION_TOOL_CALL_LIMIT = 24
+_GRAPH_CONNECTION_REQUEST_LIMIT = 48
+_GRAPH_CONNECTION_TOOL_CALL_LIMIT = 96
+_ENV_GRAPH_CONNECTION_REQUEST_LIMIT = "MED13_GRAPH_CONNECTION_REQUEST_LIMIT"
+_ENV_GRAPH_CONNECTION_TOOL_CALL_LIMIT = "MED13_GRAPH_CONNECTION_TOOL_CALL_LIMIT"
 
 
 class _GraphConnectionUsageGuard:
@@ -250,6 +253,7 @@ def create_graph_connection_agent_for_source(
         raise ValueError(msg)
 
     model_spec = _get_model_spec(model)
+    request_limit, tool_calls_limit = _resolve_graph_connection_usage_limits()
     reasoning_settings = model_spec.get_reasoning_settings()
     if reasoning_settings:
         agent = make_agent_async(
@@ -261,7 +265,11 @@ def create_graph_connection_agent_for_source(
             model_settings=reasoning_settings,
             tools=tools or [],
         )
-        return _GraphConnectionUsageGuard(agent)
+        return _GraphConnectionUsageGuard(
+            agent,
+            request_limit=request_limit,
+            tool_calls_limit=tool_calls_limit,
+        )
     agent = make_agent_async(
         model=model_spec.model_id,
         system_prompt=prompt,
@@ -269,7 +277,36 @@ def create_graph_connection_agent_for_source(
         max_retries=max_retries,
         tools=tools or [],
     )
-    return _GraphConnectionUsageGuard(agent)
+    return _GraphConnectionUsageGuard(
+        agent,
+        request_limit=request_limit,
+        tool_calls_limit=tool_calls_limit,
+    )
+
+
+def _resolve_graph_connection_usage_limits() -> tuple[int, int]:
+    request_limit = _read_positive_int_from_env(
+        name=_ENV_GRAPH_CONNECTION_REQUEST_LIMIT,
+        default=_GRAPH_CONNECTION_REQUEST_LIMIT,
+    )
+    tool_calls_limit = _read_positive_int_from_env(
+        name=_ENV_GRAPH_CONNECTION_TOOL_CALL_LIMIT,
+        default=_GRAPH_CONNECTION_TOOL_CALL_LIMIT,
+    )
+    return request_limit, tool_calls_limit
+
+
+def _read_positive_int_from_env(*, name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip()
+    if not normalized:
+        return default
+    if normalized.isdigit():
+        parsed = int(normalized)
+        return parsed if parsed > 0 else default
+    return default
 
 
 def create_clinvar_graph_connection_agent(

@@ -26,6 +26,8 @@ class PubMedSourceGateway(PubMedGateway):
             "max_results": config.max_results,
             "open_access_only": config.open_access_only,
         }
+        if isinstance(config.pinned_pubmed_id, str) and config.pinned_pubmed_id.strip():
+            params["pinned_pubmed_id"] = config.pinned_pubmed_id.strip()
 
         raw_records = await self._ingestor.fetch_data(**params)
         return self._apply_relevance_threshold(raw_records, config.relevance_threshold)
@@ -48,6 +50,8 @@ class PubMedSourceGateway(PubMedGateway):
             "retstart": retstart,
             "open_access_only": config.open_access_only,
         }
+        if isinstance(config.pinned_pubmed_id, str) and config.pinned_pubmed_id.strip():
+            params["pinned_pubmed_id"] = config.pinned_pubmed_id.strip()
 
         if hasattr(self._ingestor, "fetch_page"):
             page = await self._ingestor.fetch_page(**params)

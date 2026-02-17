@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
-from uuid import UUID
 
 from src.application.agents.services._entity_recognition_bootstrap_helpers import (
     _EntityRecognitionBootstrapHelpers,
 )
 from src.application.agents.services._entity_recognition_metadata_helpers import (
     _EntityRecognitionMetadataHelpers,
+)
+from src.application.agents.services._entity_recognition_runtime_helpers import (
+    _EntityRecognitionRuntimeHelpers,
 )
 from src.application.agents.services.governance_service import (
     GovernanceDecision,
@@ -30,6 +31,8 @@ from src.type_definitions.ingestion import RawRecord
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from src.application.agents.services.extraction_service import (
         ExtractionService,
     )
@@ -45,14 +48,11 @@ if TYPE_CHECKING:
     from src.domain.repositories.source_document_repository import (
         SourceDocumentRepository,
     )
-    from src.type_definitions.common import JSONObject, JSONValue, ResearchSpaceSettings
+    from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
 
 _AGENT_CREATED_BY = "agent:entity_recognition"
-_ID_CLEANUP_PATTERN = re.compile(r"[^A-Za-z0-9_]+")
-_SEPARATOR_PATTERN = re.compile(r"[_\s]+")
-_ISO_DATE_ONLY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 @dataclass(frozen=True)
@@ -111,6 +111,7 @@ class EntityRecognitionRunSummary:
 
 
 class EntityRecognitionService(
+    _EntityRecognitionRuntimeHelpers,
     _EntityRecognitionBootstrapHelpers,
     _EntityRecognitionMetadataHelpers,
 ):
@@ -139,6 +140,7 @@ class EntityRecognitionService(
         *,
         limit: int = 25,
         source_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
         research_space_id: UUID | None = None,
         source_type: str | None = None,
         model_id: str | None = None,
@@ -147,8 +149,12 @@ class EntityRecognitionService(
     ) -> EntityRecognitionRunSummary:
         """Process pending extraction documents through entity recognition."""
         started_at = datetime.now(UTC)
+        requested_limit = max(limit, 1)
+        fetch_limit = requested_limit
+        if ingestion_job_id is not None:
+            fetch_limit = max(requested_limit * 20, 200)
         pending_documents = self._source_documents.list_pending_extraction(
-            limit=max(limit, 1),
+            limit=fetch_limit,
             source_id=source_id,
             research_space_id=research_space_id,
         )
@@ -161,6 +167,17 @@ class EntityRecognitionService(
                 for document in pending_documents
                 if document.source_type.value.strip().lower() == normalized_source_type
             ]
+        if ingestion_job_id is not None:
+            pending_documents = [
+                document
+                for document in pending_documents
+                if document.ingestion_job_id == ingestion_job_id
+            ]
+        pending_documents = sorted(
+            pending_documents,
+            key=lambda document: document.created_at,
+            reverse=True,
+        )[:requested_limit]
 
         outcomes: list[EntityRecognitionDocumentOutcome] = []
         for document in pending_documents:
@@ -310,7 +327,7 @@ class EntityRecognitionService(
         governance = self._governance.evaluate(
             confidence_score=contract.confidence_score,
             evidence_count=len(contract.evidence),
-            decision=contract.decision,
+            decision=self._resolve_governance_decision(contract),
             requested_shadow_mode=requested_shadow_mode,
             research_space_settings=research_space_settings,
         )
@@ -343,6 +360,33 @@ class EntityRecognitionService(
 
         if not governance.allow_write:
             failure_reason = governance.reason
+            if (
+                failure_reason == "agent_requested_escalation"
+                and self._extraction_service is not None
+                and document.research_space_id is not None
+            ):
+                (
+                    bootstrap_variables_created,
+                    bootstrap_entity_types_created,
+                ) = self._ensure_domain_bootstrap(
+                    source_type=document.source_type.value,
+                    source_ref=f"source_document:{document.id}",
+                    research_space_settings=research_space_settings,
+                )
+                return await self._process_document_with_extraction(
+                    document=document,
+                    contract=contract,
+                    governance=governance,
+                    run_id=run_id,
+                    run_uuid=run_uuid,
+                    model_id=model_id,
+                    requested_shadow_mode=requested_shadow_mode,
+                    research_space_settings=research_space_settings,
+                    dictionary_variables_created=bootstrap_variables_created,
+                    dictionary_synonyms_created=0,
+                    dictionary_entity_types_created=bootstrap_entity_types_created,
+                    pipeline_run_id=pipeline_run_id,
+                )
             self._persist_failed_document(
                 document=document,
                 run_uuid=run_uuid,
@@ -998,164 +1042,6 @@ class EntityRecognitionService(
                 ),
             )
         return records
-
-    def _persist_extracted_document(
-        self,
-        *,
-        document: SourceDocument,
-        run_uuid: UUID | None,
-        metadata_patch: JSONObject,
-    ) -> SourceDocument:
-        extracted = document.mark_extracted(
-            extraction_agent_run_id=run_uuid,
-            extracted_at=datetime.now(UTC),
-        )
-        updated = extracted.model_copy(
-            update={
-                "metadata": self._merge_metadata(
-                    extracted.metadata,
-                    metadata_patch,
-                ),
-            },
-        )
-        return self._source_documents.upsert(updated)
-
-    def _persist_failed_document(
-        self,
-        *,
-        document: SourceDocument,
-        run_uuid: UUID | None,
-        metadata_patch: JSONObject,
-    ) -> SourceDocument:
-        failed = document.model_copy(
-            update={
-                "extraction_status": DocumentExtractionStatus.FAILED,
-                "extraction_agent_run_id": run_uuid,
-                "updated_at": datetime.now(UTC),
-                "metadata": self._merge_metadata(document.metadata, metadata_patch),
-            },
-        )
-        return self._source_documents.upsert(failed)
-
-    @staticmethod
-    def _merge_metadata(
-        existing: JSONObject,
-        patch: JSONObject,
-    ) -> JSONObject:
-        merged: JSONObject = {
-            str(key): to_json_value(value) for key, value in existing.items()
-        }
-        for key, value in patch.items():
-            merged[str(key)] = to_json_value(value)
-        return merged
-
-    @staticmethod
-    def _resolve_run_id(contract: EntityRecognitionContract) -> str | None:
-        run_id = contract.agent_run_id
-        if not isinstance(run_id, str):
-            return None
-        normalized = run_id.strip()
-        return normalized or None
-
-    @staticmethod
-    def _try_parse_uuid(raw_value: str | None) -> UUID | None:
-        if raw_value is None:
-            return None
-        try:
-            return UUID(raw_value)
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _normalize_identifier(
-        value: str,
-        *,
-        prefix: str,
-        max_length: int,
-    ) -> str:
-        stripped = value.strip()
-        cleaned = _ID_CLEANUP_PATTERN.sub("_", stripped.upper())
-        normalized = cleaned.strip("_")
-        normalized = re.sub(r"_+", "_", normalized)
-        if not normalized:
-            normalized = prefix
-        return normalized[:max_length]
-
-    @classmethod
-    def _to_canonical_name(cls, field_name: str) -> str:
-        base = cls._normalize_identifier(
-            field_name,
-            prefix="field",
-            max_length=128,
-        )
-        return base.lower()
-
-    @staticmethod
-    def _to_display_name(field_name: str) -> str:
-        tokens = _SEPARATOR_PATTERN.split(field_name.strip())
-        words = [token.capitalize() for token in tokens if token]
-        display = " ".join(words)
-        return display[:255] if display else "Unnamed Field"
-
-    @classmethod
-    def _resolve_variable_id(
-        cls,
-        *,
-        explicit_variable_id: str | None,
-        field_name: str,
-    ) -> str:
-        if isinstance(explicit_variable_id, str) and explicit_variable_id.strip():
-            return cls._normalize_identifier(
-                explicit_variable_id,
-                prefix="VAR_AUTO",
-                max_length=64,
-            )
-        normalized_field = cls._normalize_identifier(
-            field_name,
-            prefix="FIELD",
-            max_length=56,
-        )
-        return f"VAR_{normalized_field}"[:64]
-
-    @staticmethod
-    def _infer_data_type(value: JSONValue) -> str:  # noqa: PLR0911
-        if isinstance(value, bool):
-            return "BOOLEAN"
-        if isinstance(value, int):
-            return "INTEGER"
-        if isinstance(value, float):
-            return "FLOAT"
-        if isinstance(value, dict | list):
-            return "JSON"
-        if isinstance(value, str):
-            normalized = value.strip()
-            if _ISO_DATE_ONLY_PATTERN.match(normalized):
-                return "DATE"
-            try:
-                datetime.fromisoformat(normalized)
-            except ValueError:
-                return "STRING"
-            return "DATE"
-        return "STRING"
-
-    @staticmethod
-    def _infer_domain_context(source_type: str) -> str:
-        normalized = source_type.strip().lower()
-        if normalized == "clinvar":
-            return "genomics"
-        if normalized == "pubmed":
-            return "clinical"
-        return "general"
-
-    @staticmethod
-    def _normalize_seed_entity_ids(seed_entity_ids: list[str]) -> tuple[str, ...]:
-        normalized_ids: list[str] = []
-        for seed_entity_id in seed_entity_ids:
-            normalized = seed_entity_id.strip()
-            if not normalized or normalized in normalized_ids:
-                continue
-            normalized_ids.append(normalized)
-        return tuple(normalized_ids)
 
     @staticmethod
     def _build_run_summary(
