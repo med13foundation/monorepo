@@ -46,18 +46,18 @@ default_limit_usd = 1.0
 # The application loads models from this section at startup.
 #
 # Environment variable overrides for defaults:
-#   MED13_AI_QUERY_MODEL=openai:gpt-5-nano
-#   MED13_AI_EXTRACTION_MODEL=openai:gpt-5.2
-#   MED13_AI_CURATION_MODEL=openai:gpt-5.2
-#   MED13_AI_JUDGE_MODEL=openai:gpt-4o-mini
+#   MED13_AI_QUERY_GENERATION_MODEL=openai:gpt-5-nano
+#   MED13_AI_EVIDENCE_EXTRACTION_MODEL=openai:gpt-5-nano
+#   MED13_AI_CURATION_MODEL=openai:gpt-5-nano
+#   MED13_AI_JUDGE_MODEL=openai:gpt-5-nano
 # =============================================================================
 
 [models]
 # System-wide defaults by capability (can be overridden per-user/space/source)
-default_query_generation = "openai:gpt-5.2"
-default_evidence_extraction = "openai:gpt-5.2"
-default_curation = "openai:gpt-5.2"
-default_judge = "openai:gpt-5.2"
+default_query_generation = "openai:gpt-5-nano"
+default_evidence_extraction = "openai:gpt-5-nano"
+default_curation = "openai:gpt-5-nano"
+default_judge = "openai:gpt-5-nano"
 
 # -----------------------------------------------------------------------------
 # GPT-4o Mini - Fast, cost-effective model for simple tasks

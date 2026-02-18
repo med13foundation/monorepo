@@ -17,5 +17,14 @@ class TextEmbeddingPort(ABC):
     ) -> list[float] | None:
         """Return an embedding vector for text, or None when unavailable."""
 
+    def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        model_name: str,
+    ) -> list[list[float] | None]:
+        """Return embedding vectors for texts, preserving input order."""
+        return [self.embed_text(text, model_name=model_name) for text in texts]
+
 
 __all__ = ["TextEmbeddingPort"]

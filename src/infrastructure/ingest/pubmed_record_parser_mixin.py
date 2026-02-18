@@ -151,18 +151,77 @@ class PubMedRecordParserMixin:
     def _extract_doi(self, citation: Element) -> str | None:
         """Extract DOI if available."""
         for id_elem in citation.findall(".//ArticleId"):
-            id_type = id_elem.get("IdType")
+            id_type = (id_elem.get("IdType") or "").strip().lower()
+            if id_type == "doi" and id_elem.text:
+                return id_elem.text.strip()
+        for id_elem in citation.findall(".//ELocationID"):
+            id_type = (id_elem.get("EIdType") or "").strip().lower()
             if id_type == "doi" and id_elem.text:
                 return id_elem.text.strip()
         return None
 
     def _extract_pmc_id(self, citation: Element) -> str | None:
         """Extract PMC ID if available."""
+        pmc_from_article_ids = self._extract_pmc_from_article_ids(citation)
+        if pmc_from_article_ids is not None:
+            return pmc_from_article_ids
+
+        pmc_from_other_ids = self._extract_pmc_from_other_ids(citation)
+        if pmc_from_other_ids is not None:
+            return pmc_from_other_ids
+
+        return self._extract_pmc_from_accession_numbers(citation)
+
+    def _extract_pmc_from_article_ids(self, citation: Element) -> str | None:
         for id_elem in citation.findall(".//ArticleId"):
-            id_type = id_elem.get("IdType")
-            if id_type == "pmc" and id_elem.text:
-                return id_elem.text.strip()
+            candidate = self._normalize_identifier_text(id_elem.text)
+            if candidate is None:
+                continue
+            id_type = (id_elem.get("IdType") or "").strip().lower()
+            if id_type in {"pmc", "pmcid"} or (
+                not id_type and self._looks_like_pmc(candidate)
+            ):
+                return self._normalize_pmc_identifier(candidate)
         return None
+
+    def _extract_pmc_from_other_ids(self, citation: Element) -> str | None:
+        for id_elem in citation.findall(".//OtherID"):
+            candidate = self._normalize_identifier_text(id_elem.text)
+            if candidate is None:
+                continue
+            source = (id_elem.get("Source") or "").strip().lower()
+            if source in {"pmc", "pmcid", "pubmed central"} or self._looks_like_pmc(
+                candidate,
+            ):
+                return self._normalize_pmc_identifier(candidate)
+        return None
+
+    def _extract_pmc_from_accession_numbers(self, citation: Element) -> str | None:
+        for accession_elem in citation.findall(".//AccessionNumber"):
+            candidate = self._normalize_identifier_text(accession_elem.text)
+            if candidate is not None and self._looks_like_pmc(candidate):
+                return self._normalize_pmc_identifier(candidate)
+        return None
+
+    @staticmethod
+    def _normalize_identifier_text(value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        return normalized
+
+    @staticmethod
+    def _looks_like_pmc(value: str) -> bool:
+        return value.upper().startswith("PMC")
+
+    @staticmethod
+    def _normalize_pmc_identifier(value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized.startswith("PMC"):
+            return normalized
+        return f"PMC{normalized}"
 
     def _assess_med13_relevance(self, record: RawRecord) -> RawRecord:
         """

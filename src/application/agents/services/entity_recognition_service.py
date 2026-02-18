@@ -597,7 +597,7 @@ class EntityRecognitionService(
             errors=tuple(ingestion_result.errors),
         )
 
-    def _resolve_research_space_settings(  # noqa: C901, PLR0912
+    def _resolve_research_space_settings(  # noqa: C901, PLR0912, PLR0915
         self,
         document: SourceDocument,
     ) -> ResearchSpaceSettings:
@@ -650,6 +650,14 @@ class EntityRecognitionService(
                     )
             if relation_review_thresholds:
                 settings["relation_review_thresholds"] = relation_review_thresholds
+
+        relation_governance_mode = raw_settings.get("relation_governance_mode")
+        if isinstance(relation_governance_mode, str):
+            normalized_mode = relation_governance_mode.strip().upper()
+            if normalized_mode == "HUMAN_IN_LOOP":
+                settings["relation_governance_mode"] = "HUMAN_IN_LOOP"
+            elif normalized_mode == "FULL_AUTO":
+                settings["relation_governance_mode"] = "FULL_AUTO"
 
         creation_policy = raw_settings.get("dictionary_agent_creation_policy")
         if isinstance(creation_policy, str):

@@ -9,16 +9,32 @@ from src.infrastructure.ingestion.types import NormalizedObservation
 from src.infrastructure.ingestion.validation.observation_validator import (
     ObservationValidator,
 )
+from src.infrastructure.llm.skills._extraction_relation_dictionary_helpers import (
+    ensure_full_auto_relation_dictionary_entry,
+    resolve_relation_mapping_candidate,
+)
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import Literal
 
     from src.domain.ports.dictionary_port import DictionaryPort
-    from src.type_definitions.common import JSONObject, JSONValue
+    from src.type_definitions.common import JSONObject, JSONValue, ResearchSpaceSettings
 else:
     type JSONObject = dict[str, object]
     type JSONValue = object
+
+
+def _resolve_relation_governance_mode(
+    research_space_settings: ResearchSpaceSettings | None,
+) -> Literal["HUMAN_IN_LOOP", "FULL_AUTO"]:
+    if research_space_settings is None:
+        return "HUMAN_IN_LOOP"
+    raw_mode = research_space_settings.get("relation_governance_mode")
+    if isinstance(raw_mode, str) and raw_mode.strip().upper() == "FULL_AUTO":
+        return "FULL_AUTO"
+    return "HUMAN_IN_LOOP"
 
 
 def _to_json_payload(value: object) -> JSONObject:
@@ -81,9 +97,13 @@ def make_validate_observation_tool(
 def make_validate_triple_tool(
     *,
     dictionary_service: DictionaryPort,
+    research_space_settings: ResearchSpaceSettings | None = None,
     **_: object,
 ) -> Callable[[str, str, str], JSONObject]:
     """Build a tool callable for relation-triple validation."""
+    relation_governance_mode = _resolve_relation_governance_mode(
+        research_space_settings,
+    )
 
     def validate_triple(
         source_type: str,
@@ -116,12 +136,82 @@ def make_validate_triple_tool(
             relation_type=normalized_relation_type,
             target_type=normalized_target_type,
         )
+        if allowed:
+            return {
+                "allowed": allowed,
+                "requires_evidence": requires_evidence,
+                "source_type": normalized_source_type,
+                "relation_type": normalized_relation_type,
+                "target_type": normalized_target_type,
+                "reason": "allowed_by_dictionary_constraint",
+            }
+        if relation_governance_mode != "FULL_AUTO":
+            return {
+                "allowed": False,
+                "requires_evidence": requires_evidence,
+                "source_type": normalized_source_type,
+                "relation_type": normalized_relation_type,
+                "target_type": normalized_target_type,
+                "reason": "relation_not_allowed_by_dictionary_constraint",
+            }
+
+        mapped_relation_type = resolve_relation_mapping_candidate(
+            dictionary_service=dictionary_service,
+            source_type=normalized_source_type,
+            relation_type=normalized_relation_type,
+            target_type=normalized_target_type,
+        )
+        if mapped_relation_type is not None:
+            mapped_requires_evidence = dictionary_service.requires_evidence(
+                source_type=normalized_source_type,
+                relation_type=mapped_relation_type,
+                target_type=normalized_target_type,
+            )
+            return {
+                "allowed": True,
+                "requires_evidence": mapped_requires_evidence,
+                "source_type": normalized_source_type,
+                "relation_type": mapped_relation_type,
+                "target_type": normalized_target_type,
+                "relation_governance_mode": relation_governance_mode,
+                "dictionary_allowed": False,
+                "dictionary_requires_evidence": requires_evidence,
+                "reason": "mapped_to_existing_relation_type",
+            }
+
+        created, creation_reason = ensure_full_auto_relation_dictionary_entry(
+            dictionary_service=dictionary_service,
+            source_type=normalized_source_type,
+            relation_type=normalized_relation_type,
+            target_type=normalized_target_type,
+        )
+        if created:
+            final_requires_evidence = dictionary_service.requires_evidence(
+                source_type=normalized_source_type,
+                relation_type=normalized_relation_type,
+                target_type=normalized_target_type,
+            )
+            return {
+                "allowed": True,
+                "requires_evidence": final_requires_evidence,
+                "source_type": normalized_source_type,
+                "relation_type": normalized_relation_type,
+                "target_type": normalized_target_type,
+                "relation_governance_mode": relation_governance_mode,
+                "dictionary_allowed": False,
+                "dictionary_requires_evidence": requires_evidence,
+                "reason": creation_reason,
+            }
         return {
-            "allowed": allowed,
+            "allowed": False,
             "requires_evidence": requires_evidence,
             "source_type": normalized_source_type,
             "relation_type": normalized_relation_type,
             "target_type": normalized_target_type,
+            "relation_governance_mode": relation_governance_mode,
+            "dictionary_allowed": False,
+            "dictionary_requires_evidence": requires_evidence,
+            "reason": creation_reason,
         }
 
     return validate_triple

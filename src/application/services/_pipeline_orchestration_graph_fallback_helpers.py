@@ -159,17 +159,39 @@ def resolve_latest_ingestion_job_id(
     if not callable(repository_getter):
         return None
     try:
-        recent_jobs = repository_getter().find_by_source(source_id, limit=1)
+        recent_jobs = repository_getter().find_by_source(source_id, limit=25)
     except AttributeError:
         return None
     if not recent_jobs:
         return None
     import uuid
 
-    latest_job_id = getattr(recent_jobs[0], "id", None)
-    if isinstance(latest_job_id, uuid.UUID):
-        return latest_job_id
+    for candidate in recent_jobs:
+        if _is_pipeline_checkpoint_job(candidate):
+            continue
+        latest_job_id = getattr(candidate, "id", None)
+        if isinstance(latest_job_id, uuid.UUID):
+            return latest_job_id
+
+    for candidate in recent_jobs:
+        latest_job_id = getattr(candidate, "id", None)
+        if isinstance(latest_job_id, uuid.UUID):
+            return latest_job_id
     return None
+
+
+def _is_pipeline_checkpoint_job(job: object) -> bool:
+    metadata = getattr(job, "metadata", None)
+    if isinstance(metadata, dict):
+        pipeline_payload = metadata.get("pipeline_run")
+        if isinstance(pipeline_payload, dict):
+            return True
+
+    provenance = getattr(job, "provenance", None)
+    acquired_by = getattr(provenance, "acquired_by", None)
+    if isinstance(acquired_by, str):
+        return acquired_by.strip() == "pipeline_orchestration_service"
+    return False
 
 
 __all__ = [

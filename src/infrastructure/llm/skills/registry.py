@@ -851,6 +851,7 @@ def build_entity_recognition_dictionary_tools(  # noqa: PLR0913
 def build_extraction_validation_tools(
     *,
     dictionary_service: DictionaryPort,
+    research_space_settings: ResearchSpaceSettings | None = None,
 ) -> list[SkillCallable]:
     """
     Build toolset used by the Extraction Agent for validation and normalization.
@@ -863,6 +864,7 @@ def build_extraction_validation_tools(
         skill = registry.get_callable(
             skill_id,
             dictionary_service=dictionary_service,
+            research_space_settings=research_space_settings,
         )
         if skill is None:
             msg = f"Required skill '{skill_id}' is not registered"

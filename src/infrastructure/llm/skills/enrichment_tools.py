@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote
-from urllib.request import urlopen
 
+from src.infrastructure.llm import content_enrichment_full_text as full_text_helpers
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
@@ -17,6 +15,12 @@ if TYPE_CHECKING:
 else:
     type JSONObject = dict[str, object]
 
+_http_get_text_obj = getattr(full_text_helpers, "_http_get_text", None)
+if not callable(_http_get_text_obj):
+    msg = "content_enrichment_full_text._http_get_text is unavailable"
+    raise TypeError(msg)
+_http_get_text = _http_get_text_obj
+
 
 def _normalize_identifier(value: str | None) -> str | None:
     if value is None:
@@ -25,11 +29,10 @@ def _normalize_identifier(value: str | None) -> str | None:
     return normalized or None
 
 
-def _normalize_pmcid(pmcid: str) -> str:
-    candidate = pmcid.strip().upper()
-    if candidate.startswith("PMC"):
-        return candidate
-    return f"PMC{candidate}"
+def _sync_full_text_http_helper() -> None:
+    current_helper = getattr(full_text_helpers, "_http_get_text", None)
+    if current_helper is not _http_get_text:
+        full_text_helpers.__dict__["_http_get_text"] = _http_get_text
 
 
 def _parse_payload_json(payload: str | None) -> JSONObject | None:
@@ -54,47 +57,21 @@ def _parse_payload_json(payload: str | None) -> JSONObject | None:
     return {str(key): to_json_value(value) for key, value in decoded.items()}
 
 
-def _http_get_text(url: str, *, timeout_seconds: int) -> str:
-    with urlopen(url, timeout=timeout_seconds) as response:  # noqa: S310
-        payload = response.read()
-    if not isinstance(payload, bytes | bytearray):
-        msg = "Expected HTTP response payload to be bytes"
-        raise TypeError(msg)
-    return bytes(payload).decode("utf-8", errors="replace")
-
-
 def make_fetch_pmc_oa_tool(
     *,
     http_timeout_seconds: int = 20,
     **_: object,
 ) -> Callable[[str], JSONObject]:
-    """Build a tool callable for fetching PMC OA XML metadata."""
+    """Build a tool callable for deterministic PMC OA full-text fetching."""
 
     def fetch_pmc_oa(pmcid: str) -> JSONObject:
-        normalized = _normalize_pmcid(pmcid)
-        encoded = quote(normalized, safe="")
-        url = f"https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id={encoded}"
-        try:
-            content_text = _http_get_text(url, timeout_seconds=http_timeout_seconds)
-        except (HTTPError, URLError, OSError, UnicodeDecodeError) as exc:
-            return {
-                "found": False,
-                "acquisition_method": "pmc_oa",
-                "content_format": "xml",
-                "content_text": None,
-                "content_length_chars": 0,
-                "warning": f"PMC OA fetch failed: {exc!s}",
-                "source_url": url,
-            }
-
-        return {
-            "found": True,
-            "acquisition_method": "pmc_oa",
-            "content_format": "xml",
-            "content_text": content_text,
-            "content_length_chars": len(content_text),
-            "source_url": url,
-        }
+        _sync_full_text_http_helper()
+        normalized = full_text_helpers.normalize_pmcid(pmcid)
+        result = full_text_helpers.fetch_pmc_open_access_full_text(
+            normalized,
+            timeout_seconds=http_timeout_seconds,
+        )
+        return result.as_json()
 
     return fetch_pmc_oa
 
@@ -104,7 +81,7 @@ def make_fetch_europe_pmc_tool(
     http_timeout_seconds: int = 20,
     **_: object,
 ) -> Callable[[str], JSONObject]:
-    """Build a tool callable for fetching Europe PMC full-text XML."""
+    """Build a tool callable for deterministic Europe PMC full-text fetching."""
 
     def fetch_europe_pmc(identifier: str) -> JSONObject:
         normalized = _normalize_identifier(identifier)
@@ -112,35 +89,19 @@ def make_fetch_europe_pmc_tool(
             return {
                 "found": False,
                 "acquisition_method": "europe_pmc",
-                "content_format": "xml",
+                "content_format": "text",
                 "content_text": None,
                 "content_length_chars": 0,
                 "warning": "Identifier is required for Europe PMC fetch",
+                "attempted_sources": [],
             }
 
-        encoded = quote(normalized, safe="")
-        url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/{encoded}/fullTextXML"
-        try:
-            content_text = _http_get_text(url, timeout_seconds=http_timeout_seconds)
-        except (HTTPError, URLError, OSError, UnicodeDecodeError) as exc:
-            return {
-                "found": False,
-                "acquisition_method": "europe_pmc",
-                "content_format": "xml",
-                "content_text": None,
-                "content_length_chars": 0,
-                "warning": f"Europe PMC fetch failed: {exc!s}",
-                "source_url": url,
-            }
-
-        return {
-            "found": True,
-            "acquisition_method": "europe_pmc",
-            "content_format": "xml",
-            "content_text": content_text,
-            "content_length_chars": len(content_text),
-            "source_url": url,
-        }
+        _sync_full_text_http_helper()
+        result = full_text_helpers.fetch_europe_pmc_full_text(
+            normalized,
+            timeout_seconds=http_timeout_seconds,
+        )
+        return result.as_json()
 
     return fetch_europe_pmc
 
@@ -160,7 +121,7 @@ def make_check_open_access_tool(
             return {
                 "is_open_access": True,
                 "reason": "pmcid_present",
-                "pmcid": _normalize_pmcid(normalized_pmcid),
+                "pmcid": full_text_helpers.normalize_pmcid(normalized_pmcid),
                 "doi": normalized_doi,
             }
         return {

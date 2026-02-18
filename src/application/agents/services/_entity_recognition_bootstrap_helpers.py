@@ -367,6 +367,9 @@ class _EntityRecognitionBootstrapHelpers:
             normalized["relation_default_review_threshold"] = settings[
                 "relation_default_review_threshold"
             ]
+        relation_governance_mode = settings.get("relation_governance_mode")
+        if relation_governance_mode in {"HUMAN_IN_LOOP", "FULL_AUTO"}:
+            normalized["relation_governance_mode"] = relation_governance_mode
         relation_review_thresholds = settings.get("relation_review_thresholds")
         if isinstance(relation_review_thresholds, dict):
             normalized["relation_review_thresholds"] = dict(relation_review_thresholds)

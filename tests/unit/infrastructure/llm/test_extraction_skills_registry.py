@@ -84,3 +84,40 @@ def test_build_extraction_tools_calls_dictionary_service() -> None:
 
     transform_result = lookup_transform("mg", "g")
     assert transform_result["found"] is False
+
+
+def test_build_extraction_tools_full_auto_maps_to_existing_relation_type() -> None:
+    dictionary_service = Mock()
+    dictionary_service.get_variable.return_value = _build_variable()
+    dictionary_service.list_value_sets.return_value = []
+    dictionary_service.get_relation_type.return_value = None
+    dictionary_service.list_relation_types.return_value = []
+    dictionary_service.get_constraints.return_value = []
+    relation_search_hit = Mock()
+    relation_search_hit.dimension = "relation_types"
+    relation_search_hit.entry_id = "PHYSICALLY_INTERACTS_WITH"
+    relation_search_hit.match_method = "synonym"
+    relation_search_hit.similarity_score = 0.94
+    dictionary_service.dictionary_search.return_value = [relation_search_hit]
+    dictionary_service.is_relation_allowed.side_effect = (
+        lambda source_type, relation_type, target_type: (
+            relation_type == "PHYSICALLY_INTERACTS_WITH"
+        )
+    )
+    dictionary_service.requires_evidence.return_value = True
+    dictionary_service.get_transform.return_value = None
+
+    tools = build_extraction_validation_tools(
+        dictionary_service=dictionary_service,
+        research_space_settings={"relation_governance_mode": "FULL_AUTO"},
+    )
+    validate_triple = _tool_by_name(tools, "validate_triple")
+
+    triple_result = validate_triple("PROTEIN", "BINDS_TO", "PROTEIN")
+    assert triple_result["allowed"] is True
+    assert triple_result["relation_governance_mode"] == "FULL_AUTO"
+    assert triple_result["relation_type"] == "PHYSICALLY_INTERACTS_WITH"
+    assert triple_result["dictionary_allowed"] is False
+    assert triple_result["reason"] == "mapped_to_existing_relation_type"
+    dictionary_service.create_relation_type.assert_not_called()
+    dictionary_service.create_relation_constraint.assert_not_called()

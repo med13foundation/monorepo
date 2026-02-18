@@ -574,6 +574,64 @@ def _select_publication_extraction(
     ).scalar_one_or_none()
 
 
+def _resolve_analysis_text_source(
+    *,
+    extraction: PublicationExtractionModel | None,
+    raw_record: JSONObject,
+    metadata_payload: JSONObject,
+) -> str | None:
+    full_text_raw = raw_record.get("full_text")
+    has_full_text = isinstance(full_text_raw, str) and bool(full_text_raw.strip())
+    full_text_methods = {"pmc_oa", "europe_pmc", "publisher_pdf"}
+
+    full_text_source = raw_record.get("full_text_source")
+    from_full_text_source = (
+        isinstance(full_text_source, str)
+        and full_text_source.strip().lower() in full_text_methods
+    )
+    from_enrichment_acquisition = (
+        isinstance(
+            metadata_payload.get("content_enrichment_acquisition_method"),
+            str,
+        )
+        and str(
+            metadata_payload.get("content_enrichment_acquisition_method"),
+        )
+        .strip()
+        .lower()
+        in full_text_methods
+    )
+    from_enrichment_flag = bool(
+        metadata_payload.get("content_enrichment_full_text_acquired"),
+    )
+
+    if has_full_text and (
+        from_full_text_source or from_enrichment_acquisition or from_enrichment_flag
+    ):
+        return "full_text"
+
+    if extraction is not None and isinstance(extraction.text_source, str):
+        normalized = extraction.text_source.strip().lower()
+        if normalized:
+            if normalized == "title_abstract" and has_full_text:
+                return "full_text"
+            return normalized
+
+    title = raw_record.get("title")
+    has_title = isinstance(title, str) and bool(title.strip())
+    abstract = raw_record.get("abstract")
+    has_abstract = isinstance(abstract, str) and bool(abstract.strip())
+    if has_full_text:
+        return "full_text"
+    if has_title and has_abstract:
+        return "title_abstract"
+    if has_abstract:
+        return "abstract"
+    if has_title:
+        return "title"
+    return None
+
+
 def _extract_pubmed_id(
     *,
     queue_item: ExtractionQueueItemModel | None,
@@ -2620,8 +2678,10 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 ),
             },
             "analysis": {
-                "text_source": (
-                    extraction.text_source if extraction is not None else None
+                "text_source": _resolve_analysis_text_source(
+                    extraction=extraction,
+                    raw_record=raw_record,
+                    metadata_payload=metadata_payload,
                 ),
                 "has_full_text": bool(
                     isinstance(raw_record.get("full_text"), str)

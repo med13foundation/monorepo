@@ -25,12 +25,13 @@ from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import Literal
 
     from flujo import Flujo
 
     from src.domain.agents.contexts.extraction_context import ExtractionContext
     from src.domain.ports.dictionary_port import DictionaryPort
-    from src.type_definitions.common import JSONObject
+    from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         self._registry = get_model_registry()
         self._lifecycle_manager = get_lifecycle_manager()
         self._pipelines: dict[
-            tuple[str, str, bool],
+            tuple[str, str, bool, str],
             Flujo[str, ExtractionContract, ExtractionContext],
         ] = {}
         self._last_run_id: str | None = None
@@ -99,10 +100,14 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             )
 
         effective_model = self._resolve_model_id(model_id)
+        relation_governance_mode = self._resolve_relation_governance_mode(
+            context.research_space_settings,
+        )
         pipeline = self._get_or_create_pipeline(
             effective_model,
             source_type=source_type,
             bind_tools=True,
+            relation_governance_mode=relation_governance_mode,
         )
         input_text = self._build_input_text(context)
         initial_context = context.model_dump(mode="json")
@@ -178,17 +183,32 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         *,
         source_type: str,
         bind_tools: bool = True,
+        relation_governance_mode: str = "HUMAN_IN_LOOP",
     ) -> Flujo[str, ExtractionContract, ExtractionContext]:
-        cache_key = (source_type, model_id, bind_tools)
+        normalized_relation_governance_mode: Literal["HUMAN_IN_LOOP", "FULL_AUTO"]
+        if relation_governance_mode.strip().upper() == "FULL_AUTO":
+            normalized_relation_governance_mode = "FULL_AUTO"
+        else:
+            normalized_relation_governance_mode = "HUMAN_IN_LOOP"
+        cache_key = (
+            source_type,
+            model_id,
+            bind_tools,
+            normalized_relation_governance_mode,
+        )
         if cache_key in self._pipelines:
             return self._pipelines[cache_key]
 
         tools: list[object] | None = None
         if bind_tools and self._dictionary_service is not None:
             try:
+                tool_settings: ResearchSpaceSettings = {
+                    "relation_governance_mode": normalized_relation_governance_mode,
+                }
                 tools = list(
                     build_extraction_validation_tools(
                         dictionary_service=self._dictionary_service,
+                        research_space_settings=tool_settings,
                     ),
                 )
             except (LookupError, PermissionError) as exc:
@@ -223,10 +243,14 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         input_text: str,
         initial_context: JSONObject,
     ) -> ExtractionContract | None:
+        relation_governance_mode = self._resolve_relation_governance_mode(
+            context.research_space_settings,
+        )
         retry_pipeline = self._get_or_create_pipeline(
             model_id,
             source_type=source_type,
             bind_tools=False,
+            relation_governance_mode=relation_governance_mode,
         )
         retry_initial_context = self._build_retry_initial_context(initial_context)
         try:
@@ -245,6 +269,15 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
                 exc,
             )
             return None
+
+    @staticmethod
+    def _resolve_relation_governance_mode(
+        settings: ResearchSpaceSettings,
+    ) -> str:
+        raw_mode = settings.get("relation_governance_mode")
+        if isinstance(raw_mode, str) and raw_mode.strip().upper() == "FULL_AUTO":
+            return "FULL_AUTO"
+        return "HUMAN_IN_LOOP"
 
     @staticmethod
     def _build_retry_initial_context(initial_context: JSONObject) -> JSONObject:

@@ -121,13 +121,23 @@ class DictionaryManagementService(DictionaryPort):
         if self._embedding_provider is None:
             return None
 
-        embeddings: dict[str, list[float]] = {}
+        unique_terms: list[str] = []
+        seen_terms: set[str] = set()
         for term in terms:
             normalized_term = term.strip().casefold()
-            if not normalized_term or normalized_term in embeddings:
+            if not normalized_term or normalized_term in seen_terms:
                 continue
+            seen_terms.add(normalized_term)
+            unique_terms.append(normalized_term)
 
-            embedding = self._embed_text(normalized_term, model_name=model_name)
+        embedded_terms = self._embedding_provider.embed_texts(
+            unique_terms,
+            model_name=model_name,
+        )
+
+        embeddings: dict[str, list[float]] = {}
+        for index, normalized_term in enumerate(unique_terms):
+            embedding = embedded_terms[index]
             if embedding is None:
                 continue
             embeddings[normalized_term] = embedding

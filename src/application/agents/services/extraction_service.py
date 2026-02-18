@@ -215,8 +215,8 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         relation_persistence_result = await self._persist_extracted_relations(
             document=document,
             contract=contract,
+            research_space_settings=research_space_settings,
             publication_entity_ids=tuple(ingestion_result.entity_ids_touched),
-            run_id=run_id,
             model_id=model_id,
         )
 

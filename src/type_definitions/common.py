@@ -338,6 +338,7 @@ class ResearchSpaceSettings(TypedDict, total=False):
     review_threshold: float
     relation_default_review_threshold: float
     relation_review_thresholds: dict[str, float]
+    relation_governance_mode: Literal["HUMAN_IN_LOOP", "FULL_AUTO"]
     dictionary_agent_creation_policy: Literal["ACTIVE", "PENDING_REVIEW"]
 
     # Data source settings

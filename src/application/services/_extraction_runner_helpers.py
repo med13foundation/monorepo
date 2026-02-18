@@ -206,10 +206,45 @@ class ExtractionRunnerBatchProcessor:
         item: ExtractionQueueItem,
         publication: Publication | None,
     ) -> ExtractionTextPayload | None:
+        metadata_payload = self._payload_from_metadata(item)
         publication_payload = self._payload_from_publication(publication)
-        if publication_payload is not None:
-            return publication_payload
-        return self._payload_from_metadata(item)
+        return self._select_preferred_payload(
+            metadata_payload,
+            publication_payload,
+        )
+
+    @staticmethod
+    def _select_preferred_payload(
+        metadata_payload: ExtractionTextPayload | None,
+        publication_payload: ExtractionTextPayload | None,
+    ) -> ExtractionTextPayload | None:
+        candidates = [
+            payload
+            for payload in (metadata_payload, publication_payload)
+            if payload is not None
+        ]
+        if not candidates:
+            return None
+
+        return max(
+            candidates,
+            key=lambda payload: (
+                ExtractionRunnerBatchProcessor._payload_priority(payload.text_source),
+                len(payload.text),
+            ),
+        )
+
+    @staticmethod
+    def _payload_priority(text_source: str) -> int:
+        if text_source == "full_text":
+            return 4
+        if text_source == "title_abstract":
+            return 3
+        if text_source == "abstract":
+            return 2
+        if text_source == "title":
+            return 1
+        return 0
 
     def _payload_from_publication(
         self,

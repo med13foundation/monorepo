@@ -6,7 +6,12 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from src.type_definitions.json_utils import to_json_value
+from src.application.agents.services._extraction_relation_rejection_helpers import (
+    index_constraint_proposals,
+    index_mapping_proposals,
+    merge_unique_reasons,
+    record_rejected_relation,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -27,6 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 type RelationValidationState = Literal["ALLOWED", "FORBIDDEN", "UNDEFINED"]
+type RelationGovernanceMode = Literal["HUMAN_IN_LOOP", "FULL_AUTO"]
 
 _POLICY_AGENT_CREATED_BY = "agent:extraction_policy_step"
 
@@ -307,6 +313,19 @@ class _ExtractionRelationPolicyHelpers:
             relation_types.append(normalized)
         return tuple(relation_types)
 
+    @staticmethod
+    def _resolve_relation_governance_mode(
+        settings: ResearchSpaceSettings | None,
+    ) -> RelationGovernanceMode:
+        if settings is None:
+            return "HUMAN_IN_LOOP"
+        raw_mode = settings.get("relation_governance_mode")
+        if isinstance(raw_mode, str):
+            normalized = raw_mode.strip().upper()
+            if normalized == "FULL_AUTO":
+                return "FULL_AUTO"
+        return "HUMAN_IN_LOOP"
+
     def _resolve_relation_validation_state(
         self,
         *,
@@ -352,10 +371,22 @@ class _ExtractionRelationPolicyHelpers:
         *,
         document: SourceDocument,
         candidate: _ResolvedRelationCandidate,
+        relation_governance_mode: RelationGovernanceMode,
         constraint_proposal: RelationConstraintProposal | None,
         mapping_proposal: RelationTypeMappingProposal | None,
     ) -> str:
         parts = [f"Extracted from source_document:{document.id}"]
+        if (
+            relation_governance_mode == "FULL_AUTO"
+            and candidate.validation_state != "ALLOWED"
+        ):
+            parts.append(
+                (
+                    "governance_override:"
+                    f"{candidate.validation_state.lower()}:"
+                    f"{candidate.validation_reason}"
+                ),
+            )
         if candidate.validation_state == "UNDEFINED":
             parts.append(f"validation:{candidate.validation_reason}")
             if constraint_proposal is not None:
@@ -380,41 +411,19 @@ class _ExtractionRelationPolicyHelpers:
         self,
         policy_contract: ExtractionPolicyContract | None,
     ) -> dict[tuple[str, str, str], RelationConstraintProposal]:
-        if policy_contract is None:
-            return {}
-        indexed: dict[tuple[str, str, str], RelationConstraintProposal] = {}
-        for proposal in policy_contract.relation_constraint_proposals:
-            key = self._proposal_triple_key(
-                proposal.source_type,
-                proposal.relation_type,
-                proposal.target_type,
-            )
-            if key is None:
-                continue
-            current = indexed.get(key)
-            if current is None or proposal.confidence > current.confidence:
-                indexed[key] = proposal
-        return indexed
+        return index_constraint_proposals(
+            policy_contract=policy_contract,
+            proposal_triple_key=self._proposal_triple_key,
+        )
 
     def _index_mapping_proposals(
         self,
         policy_contract: ExtractionPolicyContract | None,
     ) -> dict[tuple[str, str, str], RelationTypeMappingProposal]:
-        if policy_contract is None:
-            return {}
-        indexed: dict[tuple[str, str, str], RelationTypeMappingProposal] = {}
-        for proposal in policy_contract.relation_type_mapping_proposals:
-            key = self._proposal_triple_key(
-                proposal.source_type,
-                proposal.observed_relation_type,
-                proposal.target_type,
-            )
-            if key is None:
-                continue
-            current = indexed.get(key)
-            if current is None or proposal.confidence > current.confidence:
-                indexed[key] = proposal
-        return indexed
+        return index_mapping_proposals(
+            policy_contract=policy_contract,
+            proposal_triple_key=self._proposal_triple_key,
+        )
 
     def _proposal_triple_key(
         self,
@@ -438,31 +447,20 @@ class _ExtractionRelationPolicyHelpers:
         payload: JSONObject,
         metadata: JSONObject | None = None,
     ) -> None:
-        normalized_reason = reason.strip()
-        if normalized_reason and normalized_reason not in reasons:
-            reasons.append(normalized_reason)
-        detail: JSONObject = {
-            "reason": normalized_reason,
-            "status": "rejected",
-            "payload": payload,
-        }
-        if metadata is not None:
-            for key, value in metadata.items():
-                detail[str(key)] = to_json_value(value)
-        details.append(detail)
+        record_rejected_relation(
+            reasons=reasons,
+            details=details,
+            reason=reason,
+            payload=payload,
+            metadata=metadata,
+        )
 
     @staticmethod
     def _merge_unique_reasons(
         first: tuple[str, ...],
         second: tuple[str, ...],
     ) -> tuple[str, ...]:
-        merged: list[str] = []
-        for reason in first + second:
-            normalized = reason.strip()
-            if not normalized or normalized in merged:
-                continue
-            merged.append(normalized)
-        return tuple(merged)
+        return merge_unique_reasons(first, second)
 
     def _enqueue_review_item(
         self,

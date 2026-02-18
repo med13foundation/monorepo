@@ -21,6 +21,9 @@ from src.application.agents.services._relation_persistence_payload_helpers impor
 from src.domain.value_objects.relation_types import normalize_relation_type
 
 if TYPE_CHECKING:
+    from src.application.agents.services._extraction_relation_policy_helpers import (
+        RelationGovernanceMode,
+    )
     from src.domain.agents.contracts.extraction import (
         ExtractedRelation,
         ExtractionContract,
@@ -31,7 +34,7 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
-    from src.type_definitions.common import JSONObject
+    from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
 
 @dataclass(frozen=True)
@@ -82,8 +85,8 @@ class _ExtractionRelationPersistenceHelpers(
         *,
         document: SourceDocument,
         contract: ExtractionContract,
+        research_space_settings: ResearchSpaceSettings,
         publication_entity_ids: tuple[str, ...],
-        run_id: str | None,
         model_id: str | None,
     ) -> RelationPersistenceResult:
         if document.research_space_id is None:
@@ -91,6 +94,9 @@ class _ExtractionRelationPersistenceHelpers(
                 errors=("relation_persistence_missing_research_space_id",),
             )
         research_space_id = str(document.research_space_id)
+        relation_governance_mode = self._resolve_relation_governance_mode(
+            research_space_settings,
+        )
         if not contract.relations:
             return RelationPersistenceResult()
         if self._relations is None or self._entities is None:
@@ -129,11 +135,11 @@ class _ExtractionRelationPersistenceHelpers(
             ),
         )
         persist_result = self._persist_relation_candidates(
-            research_space_id=research_space_id,
             document=document,
-            run_id=run_id,
+            run_id=normalize_run_id(contract.agent_run_id),
             candidates=candidate_build.candidates,
             policy_contract=policy_step.contract,
+            relation_governance_mode=relation_governance_mode,
         )
         return RelationPersistenceResult(
             persisted_relations_count=persist_result.persisted_relations_count,
@@ -288,11 +294,11 @@ class _ExtractionRelationPersistenceHelpers(
     def _persist_relation_candidates(
         self,
         *,
-        research_space_id: str,
         document: SourceDocument,
         run_id: str | None,
         candidates: tuple[_ResolvedRelationCandidate, ...],
         policy_contract: ExtractionPolicyContract | None,
+        relation_governance_mode: RelationGovernanceMode,
     ) -> _PersistCandidatesResult:
         if self._relations is None:
             return _PersistCandidatesResult(
@@ -309,6 +315,11 @@ class _ExtractionRelationPersistenceHelpers(
 
         constraint_lookup = self._index_constraint_proposals(policy_contract)
         mapping_lookup = self._index_mapping_proposals(policy_contract)
+        research_space_id = (
+            str(document.research_space_id)
+            if document.research_space_id is not None
+            else ""
+        )
 
         for candidate in candidates:
             payload = candidate_payload(candidate)
@@ -325,6 +336,20 @@ class _ExtractionRelationPersistenceHelpers(
                     },
                 )
                 continue
+            if candidate.validation_state == "UNDEFINED":
+                undefined_count += 1
+                if relation_governance_mode == "FULL_AUTO":
+                    self._record_rejected_relation(
+                        reasons=rejected_reasons,
+                        details=rejected_details,
+                        reason="undefined_relation_rejected_full_auto",
+                        payload=payload,
+                        metadata={
+                            "validation_state": candidate.validation_state,
+                            "validation_reason": candidate.validation_reason,
+                        },
+                    )
+                    continue
 
             try:
                 created_relation = self._relations.create(
@@ -336,6 +361,7 @@ class _ExtractionRelationPersistenceHelpers(
                     evidence_summary=self._build_relation_evidence_summary(
                         document=document,
                         candidate=candidate,
+                        relation_governance_mode=relation_governance_mode,
                         constraint_proposal=constraint_lookup.get(
                             (
                                 candidate.source_type,
@@ -375,7 +401,6 @@ class _ExtractionRelationPersistenceHelpers(
                 continue
 
             pending_count += 1
-            undefined_count += 1
             self._record_rejected_relation(
                 reasons=rejected_reasons,
                 details=rejected_details,

@@ -42,6 +42,14 @@ class _ContentEnrichmentStorageSelf(Protocol):
     _source_documents: SourceDocumentRepository
 
     @staticmethod
+    def _build_inline_storage_result(
+        *,
+        document: SourceDocument,
+        contract: ContentEnrichmentContract,
+        payload: bytes,
+    ) -> StorageResult: ...
+
+    @staticmethod
     def _resolve_existing_or_inline_storage(
         *,
         document: SourceDocument,
@@ -96,15 +104,29 @@ class _ContentEnrichmentStorageHelpers:
         if payload is None:
             return None
         if self._storage_coordinator is None:
-            return None
+            return self._build_inline_storage_result(
+                document=document,
+                contract=contract,
+                payload=payload,
+            )
 
-        return await self._store_generated_payload(
-            document=document,
-            contract=contract,
-            payload=payload,
-            run_id=run_id,
-            pipeline_run_id=pipeline_run_id,
-        )
+        try:
+            return await self._store_generated_payload(
+                document=document,
+                contract=contract,
+                payload=payload,
+                run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
+            )
+        except RuntimeError as exc:
+            missing_storage_message = "No storage configuration defined for use case"
+            if missing_storage_message not in str(exc):
+                raise
+            return self._build_inline_storage_result(
+                document=document,
+                contract=contract,
+                payload=payload,
+            )
 
     @staticmethod
     def _resolve_existing_or_inline_storage(
@@ -165,6 +187,24 @@ class _ContentEnrichmentStorageHelpers:
             storage_key=storage_key,
             content_hash=content_hash,
             content_length_chars=max(content_length_chars, 0),
+        )
+
+    @staticmethod
+    def _build_inline_storage_result(
+        *,
+        document: SourceDocument,
+        contract: ContentEnrichmentContract,
+        payload: bytes,
+    ) -> StorageResult:
+        content_hash = hashlib.sha256(payload).hexdigest()
+        inline_storage_key = (
+            "inline://documents/"
+            f"{document.id}/{contract.acquisition_method}/{content_hash}"
+        )
+        return _ContentEnrichmentStorageHelpers._build_storage_result_for_key(
+            storage_key=inline_storage_key,
+            contract=contract,
+            payload=payload,
         )
 
     async def _store_generated_payload(

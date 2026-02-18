@@ -315,6 +315,18 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
         metadata: JSONObject,
         contract: ContentEnrichmentContract,
     ) -> JSONObject:
+        full_text_methods = frozenset({"pmc_oa", "europe_pmc", "publisher_pdf"})
+        full_text_fetched = contract.acquisition_method in full_text_methods
+        fallback_reason = (
+            None
+            if full_text_fetched
+            else (
+                contract.warning
+                if contract.warning and contract.warning.strip()
+                else "open_access_full_text_not_available"
+            )
+        )
+
         content_text = contract.content_text
         if content_text is None:
             return {}
@@ -335,6 +347,11 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
         raw_record["full_text"] = normalized_text
         raw_record["full_text_source"] = contract.acquisition_method
         raw_record["full_text_length_chars"] = len(normalized_text)
+        raw_record["full_text_fetch_attempted"] = full_text_fetched or bool(
+            contract.warning,
+        )
+        raw_record["full_text_fetch_acquired"] = full_text_fetched
+        raw_record["full_text_fallback_reason"] = fallback_reason
 
         return {"raw_record": raw_record}
 

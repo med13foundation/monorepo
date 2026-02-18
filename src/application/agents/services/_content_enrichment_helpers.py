@@ -31,6 +31,7 @@ PASS_THROUGH_SOURCE_TYPES = frozenset(
         SourceType.FILE_UPLOAD,
     },
 )
+_FULL_TEXT_ACQUISITION_METHODS = frozenset({"pmc_oa", "europe_pmc", "publisher_pdf"})
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,24 @@ def build_metadata_patch(  # noqa: PLR0913
     content_hash: str | None,
 ) -> JSONObject:
     """Build metadata patch persisted to the source document record."""
+    full_text_acquired = (
+        contract.decision == "enriched"
+        and contract.acquisition_method in _FULL_TEXT_ACQUISITION_METHODS
+        and contract.content_length_chars > 0
+    )
+    full_text_attempted = (
+        contract.acquisition_method in _FULL_TEXT_ACQUISITION_METHODS
+        or contract.warning is not None
+    )
+    fallback_reason: str | None = None
+    if not full_text_acquired:
+        if contract.warning is not None and contract.warning.strip():
+            fallback_reason = contract.warning.strip()
+        elif contract.acquisition_method == "pass_through":
+            fallback_reason = "open_access_full_text_unavailable_fell_back_to_metadata"
+        elif reason != "enriched":
+            fallback_reason = reason
+
     metadata: JSONObject = {
         "content_enrichment_decision": contract.decision,
         "content_enrichment_reason": reason,
@@ -150,6 +169,12 @@ def build_metadata_patch(  # noqa: PLR0913
         "content_enrichment_completed_at": datetime.now(UTC).isoformat(),
         "content_enrichment_storage_key": content_storage_key,
         "content_enrichment_content_hash": content_hash,
+        "content_enrichment_full_text_attempted": full_text_attempted,
+        "content_enrichment_full_text_acquired": full_text_acquired,
+        "content_enrichment_full_text_source": (
+            contract.acquisition_method if full_text_acquired else None
+        ),
+        "content_enrichment_fallback_reason": fallback_reason,
     }
     if pipeline_run_id is not None and pipeline_run_id.strip():
         metadata["pipeline_run_id"] = pipeline_run_id.strip()

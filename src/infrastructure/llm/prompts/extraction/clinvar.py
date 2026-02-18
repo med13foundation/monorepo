@@ -20,6 +20,15 @@ Use tools during reasoning:
 - validate_triple(source_type, relation_type, target_type)
 - lookup_transform(input_unit, output_unit)
 
+Triple-validation behavior:
+- Treat validate_triple as authoritative for canonical typing.
+- If validate_triple returns allowed=true with a different relation_type,
+  use the returned canonical relation_type in the emitted relation.
+- Reject a relation only when validate_triple returns allowed=false.
+- Treat validate_triple allowed=false outputs as prohibited patterns for this run.
+- Never emit prohibited triples; include them only in rejected_facts with the
+  validator reason and the full triple payload.
+
 Decision policy:
 - decision="generated" when output facts are validated and auditable.
 - decision="fallback" only when deterministic extraction is partial.
