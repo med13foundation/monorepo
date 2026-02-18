@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from src.application.agents.services._extraction_relation_policy_helpers import (
@@ -49,6 +49,7 @@ class RelationPersistenceResult:
     policy_run_id: str | None = None
     rejected_relation_reasons: tuple[str, ...] = ()
     rejected_relation_details: tuple[JSONObject, ...] = ()
+    funnel: JSONObject = field(default_factory=dict)
     errors: tuple[str, ...] = ()
 
 
@@ -57,6 +58,9 @@ class _CandidateBuildResult:
     candidates: tuple[_ResolvedRelationCandidate, ...] = ()
     rejected_relation_reasons: tuple[str, ...] = ()
     rejected_relation_details: tuple[JSONObject, ...] = ()
+    invalid_components_count: int = 0
+    endpoint_resolution_failed_count: int = 0
+    self_loop_count: int = 0
     errors: tuple[str, ...] = ()
 
 
@@ -68,6 +72,7 @@ class _PersistCandidatesResult:
     undefined_relations_count: int = 0
     rejected_relation_reasons: tuple[str, ...] = ()
     rejected_relation_details: tuple[JSONObject, ...] = ()
+    persistence_failed_count: int = 0
     errors: tuple[str, ...] = ()
 
 
@@ -162,6 +167,41 @@ class _ExtractionRelationPersistenceHelpers(
                 candidate_build.rejected_relation_details
                 + persist_result.rejected_relation_details
             ),
+            funnel={
+                "relation_candidates_generated": len(contract.relations),
+                "relation_candidates_after_prevalidation": len(
+                    candidate_build.candidates,
+                ),
+                "relation_candidates_prevalidation_rejected": (
+                    candidate_build.invalid_components_count
+                    + candidate_build.endpoint_resolution_failed_count
+                    + candidate_build.self_loop_count
+                ),
+                "relation_candidates_invalid_components": (
+                    candidate_build.invalid_components_count
+                ),
+                "relation_candidates_endpoint_resolution_failed": (
+                    candidate_build.endpoint_resolution_failed_count
+                ),
+                "relation_candidates_self_loop": candidate_build.self_loop_count,
+                "relation_candidates_forbidden": (
+                    persist_result.forbidden_relations_count
+                ),
+                "relation_candidates_undefined": (
+                    persist_result.undefined_relations_count
+                ),
+                "relation_candidates_persisted": (
+                    persist_result.persisted_relations_count
+                ),
+                "relation_candidates_pending_review": (
+                    persist_result.pending_review_relations_count
+                ),
+                "relation_candidates_persistence_failed": (
+                    persist_result.persistence_failed_count
+                ),
+                "relation_policy_unknown_patterns": len(unknown_patterns),
+                "relation_policy_proposals_created": proposal_count,
+            },
             errors=(
                 candidate_build.errors
                 + policy_step.errors
@@ -181,6 +221,9 @@ class _ExtractionRelationPersistenceHelpers(
         rejected_reasons: list[str] = []
         rejected_details: list[JSONObject] = []
         errors: list[str] = []
+        invalid_components_count = 0
+        endpoint_resolution_failed_count = 0
+        self_loop_count = 0
 
         for relation in relations:
             normalized_source_type = self._normalize_component(relation.source_type)
@@ -206,6 +249,7 @@ class _ExtractionRelationPersistenceHelpers(
                     },
                 )
                 errors.append("relation_persistence_skipped_invalid_components")
+                invalid_components_count += 1
                 continue
 
             source_entity_id = self._resolve_relation_endpoint_entity_id(
@@ -242,6 +286,7 @@ class _ExtractionRelationPersistenceHelpers(
                         f"{normalized_target_type}"
                     ),
                 )
+                endpoint_resolution_failed_count += 1
                 continue
             if source_entity_id == target_entity_id:
                 self._record_rejected_relation(
@@ -260,6 +305,7 @@ class _ExtractionRelationPersistenceHelpers(
                         f"{normalized_relation_type}:{source_entity_id}"
                     ),
                 )
+                self_loop_count += 1
                 continue
 
             validation_state, validation_reason = (
@@ -288,6 +334,9 @@ class _ExtractionRelationPersistenceHelpers(
             candidates=tuple(candidates),
             rejected_relation_reasons=tuple(rejected_reasons),
             rejected_relation_details=tuple(rejected_details),
+            invalid_components_count=invalid_components_count,
+            endpoint_resolution_failed_count=endpoint_resolution_failed_count,
+            self_loop_count=self_loop_count,
             errors=tuple(errors),
         )
 
@@ -312,6 +361,7 @@ class _ExtractionRelationPersistenceHelpers(
         rejected_reasons: list[str] = []
         rejected_details: list[JSONObject] = []
         errors: list[str] = []
+        persistence_failed_count = 0
 
         constraint_lookup = self._index_constraint_proposals(policy_contract)
         mapping_lookup = self._index_mapping_proposals(policy_contract)
@@ -395,6 +445,7 @@ class _ExtractionRelationPersistenceHelpers(
                         f"->{candidate.target_entity_id}:{exc!s}"
                     ),
                 )
+                persistence_failed_count += 1
                 continue
 
             if candidate.validation_state != "UNDEFINED":
@@ -426,6 +477,7 @@ class _ExtractionRelationPersistenceHelpers(
             undefined_relations_count=undefined_count,
             rejected_relation_reasons=tuple(rejected_reasons),
             rejected_relation_details=tuple(rejected_details),
+            persistence_failed_count=persistence_failed_count,
             errors=tuple(errors),
         )
 

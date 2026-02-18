@@ -2,80 +2,23 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
+
+from src.application.agents.services._entity_recognition_bootstrap_constants import (
+    _DEFAULT_BOOTSTRAP_RELATION_TYPE,
+    _DEFAULT_INTERACTION_RELATION_TYPE,
+    _MIN_BOOTSTRAP_ENTITY_TYPES_FOR_RELATION,
+    _PUBMED_METADATA_VARIABLE_SPECS,
+    _PUBMED_PUBLICATION_BASELINE_CONSTRAINTS,
+    _PUBMED_PUBLICATION_BASELINE_ENTITY_TYPES,
+    _PUBMED_PUBLICATION_BASELINE_RELATION_TYPES,
+)
 
 if TYPE_CHECKING:
-    from src.domain.ports.dictionary_port import DictionaryPort
-    from src.type_definitions.common import ResearchSpaceSettings
-
-_DEFAULT_BOOTSTRAP_RELATION_TYPE = "ASSOCIATED_WITH"
-_DEFAULT_INTERACTION_RELATION_TYPE = "PHYSICALLY_INTERACTS_WITH"
-_MIN_BOOTSTRAP_ENTITY_TYPES_FOR_RELATION = 2
-_PUBMED_PUBLICATION_BASELINE_ENTITY_TYPES: tuple[str, ...] = (
-    "PUBLICATION",
-    "AUTHOR",
-    "KEYWORD",
-    "GENE",
-    "PROTEIN",
-    "VARIANT",
-    "PHENOTYPE",
-    "DRUG",
-    "MECHANISM",
-)
-_PUBMED_PUBLICATION_BASELINE_RELATION_TYPES: tuple[
-    tuple[str, str, str, bool, str | None],
-    ...,
-] = (
-    (
-        "MENTIONS",
-        "Mentions",
-        "Publication reference relationship for documented entities.",
-        True,
-        "MENTIONED_BY",
-    ),
-    (
-        "SUPPORTS",
-        "Supports",
-        "Publication evidence support relationship.",
-        True,
-        "SUPPORTED_BY",
-    ),
-    (
-        "CITES",
-        "Cites",
-        "Citation relationship between publications.",
-        True,
-        "CITED_BY",
-    ),
-    (
-        "HAS_AUTHOR",
-        "Has Author",
-        "Authorship relationship from publication to author entity.",
-        True,
-        "AUTHOR_OF",
-    ),
-    (
-        "HAS_KEYWORD",
-        "Has Keyword",
-        "Keyword tagging relationship from publication to keyword entity.",
-        True,
-        "KEYWORD_OF",
-    ),
-)
-_PUBMED_PUBLICATION_BASELINE_CONSTRAINTS: tuple[tuple[str, str, str, bool], ...] = (
-    ("PUBLICATION", "MENTIONS", "GENE", False),
-    ("PUBLICATION", "MENTIONS", "PROTEIN", False),
-    ("PUBLICATION", "MENTIONS", "VARIANT", False),
-    ("PUBLICATION", "MENTIONS", "PHENOTYPE", False),
-    ("PUBLICATION", "MENTIONS", "DRUG", False),
-    ("PUBLICATION", "SUPPORTS", "GENE", False),
-    ("PUBLICATION", "SUPPORTS", "PROTEIN", False),
-    ("PUBLICATION", "SUPPORTS", "VARIANT", False),
-    ("PUBLICATION", "SUPPORTS", "MECHANISM", False),
-    ("PUBLICATION", "HAS_AUTHOR", "AUTHOR", False),
-    ("PUBLICATION", "HAS_KEYWORD", "KEYWORD", False),
-    ("PUBLICATION", "CITES", "PUBLICATION", False),
-)
+    from src.application.agents.services._entity_recognition_bootstrap_protocols import (
+        _EntityRecognitionBootstrapContext,
+    )
+    from src.type_definitions.common import JSONValue, ResearchSpaceSettings
 
 
 class _EntityRecognitionBootstrapHelpers:
@@ -223,11 +166,16 @@ class _EntityRecognitionBootstrapHelpers:
             )
 
         if source_type.strip().lower() == "pubmed":
-            created_entity_types += self._ensure_pubmed_publication_baseline(
+            (
+                pubmed_entity_types_created,
+                pubmed_variables_created,
+            ) = self._ensure_pubmed_publication_baseline(
                 domain_context=domain_context,
                 source_ref=source_ref,
                 research_space_settings=bootstrap_review_settings,
             )
+            created_entity_types += pubmed_entity_types_created
+            created_variables += pubmed_variables_created
 
         return created_variables, created_entity_types
 
@@ -276,8 +224,9 @@ class _EntityRecognitionBootstrapHelpers:
         domain_context: str,
         source_ref: str,
         research_space_settings: ResearchSpaceSettings,
-    ) -> int:
+    ) -> tuple[int, int]:
         created_entity_types = 0
+        created_variables = 0
 
         for entity_type_id in _PUBMED_PUBLICATION_BASELINE_ENTITY_TYPES:
             if self._dictionary.get_entity_type(entity_type_id) is not None:
@@ -330,7 +279,97 @@ class _EntityRecognitionBootstrapHelpers:
                 research_space_settings=research_space_settings,
             )
 
-        return created_entity_types
+        for (
+            variable_id,
+            canonical_name,
+            display_name,
+            data_type,
+            description,
+            constraints,
+            synonyms,
+        ) in _PUBMED_METADATA_VARIABLE_SPECS:
+            created_variables += self._ensure_pubmed_metadata_variable(
+                variable_id=variable_id,
+                canonical_name=canonical_name,
+                display_name=display_name,
+                data_type=data_type,
+                description=description,
+                constraints=constraints,
+                synonyms=synonyms,
+                domain_context=domain_context,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
+
+        return created_entity_types, created_variables
+
+    def _ensure_pubmed_metadata_variable(  # noqa: PLR0913
+        self: _EntityRecognitionBootstrapContext,
+        *,
+        variable_id: str,
+        canonical_name: str,
+        display_name: str,
+        data_type: str,
+        description: str,
+        constraints: dict[str, JSONValue] | None,
+        synonyms: tuple[str, ...],
+        domain_context: str,
+        source_ref: str,
+        research_space_settings: ResearchSpaceSettings,
+    ) -> int:
+        variable = self._dictionary.get_variable(variable_id)
+        if variable is None:
+            for synonym in synonyms:
+                resolved = self._dictionary.resolve_synonym(synonym)
+                if resolved is not None:
+                    variable = resolved
+                    break
+
+        created_variables = 0
+        if variable is None:
+            variable = self._dictionary.create_variable(
+                variable_id=variable_id,
+                canonical_name=canonical_name,
+                display_name=display_name,
+                data_type=data_type,
+                domain_context=domain_context,
+                sensitivity="PUBLIC",
+                constraints=constraints,
+                description=description,
+                created_by=self._agent_created_by,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
+            created_variables = 1
+
+        self._ensure_variable_synonyms(
+            variable_id=variable.id,
+            synonyms=synonyms,
+            source_ref=source_ref,
+            research_space_settings=research_space_settings,
+        )
+        return created_variables
+
+    def _ensure_variable_synonyms(
+        self: _EntityRecognitionBootstrapContext,
+        *,
+        variable_id: str,
+        synonyms: tuple[str, ...],
+        source_ref: str,
+        research_space_settings: ResearchSpaceSettings,
+    ) -> None:
+        for synonym in synonyms:
+            resolved = self._dictionary.resolve_synonym(synonym)
+            if resolved is not None:
+                continue
+            self._dictionary.create_synonym(
+                variable_id=variable_id,
+                synonym=synonym,
+                source="pubmed",
+                created_by=self._agent_created_by,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
 
     @staticmethod
     def _bootstrap_entity_types_for_domain(domain_context: str) -> tuple[str, ...]:
@@ -411,63 +450,3 @@ class _EntityRecognitionBootstrapHelpers:
 
 
 __all__ = ["_EntityRecognitionBootstrapHelpers"]
-
-
-class _EntityRecognitionBootstrapContext(Protocol):
-    """Structural typing contract consumed by bootstrap helper methods."""
-
-    _dictionary: DictionaryPort
-    _agent_created_by: str
-
-    @staticmethod
-    def _infer_domain_context(source_type: str) -> str: ...
-
-    @staticmethod
-    def _to_display_name(field_name: str) -> str: ...
-
-    @staticmethod
-    def _normalize_identifier(
-        value: str,
-        *,
-        prefix: str,
-        max_length: int,
-    ) -> str: ...
-
-    @staticmethod
-    def _is_domain_bootstrap_enabled(settings: ResearchSpaceSettings) -> bool: ...
-
-    @staticmethod
-    def _bootstrap_entity_types_for_domain(domain_context: str) -> tuple[str, ...]: ...
-
-    @staticmethod
-    def _bootstrap_review_settings(
-        settings: ResearchSpaceSettings,
-    ) -> ResearchSpaceSettings: ...
-
-    def _bootstrap_variable_id(self, domain_context: str) -> str: ...
-
-    def _ensure_relation_constraint(
-        self,
-        *,
-        source_type: str,
-        target_type: str,
-        source_ref: str,
-        research_space_settings: ResearchSpaceSettings,
-    ) -> None: ...
-
-    def _ensure_relation_constraint_for_type(
-        self,
-        *,
-        relation_triplet: tuple[str, str, str],
-        source_ref: str,
-        research_space_settings: ResearchSpaceSettings,
-        requires_evidence: bool = True,
-    ) -> None: ...
-
-    def _ensure_pubmed_publication_baseline(
-        self,
-        *,
-        domain_context: str,
-        source_ref: str,
-        research_space_settings: ResearchSpaceSettings,
-    ) -> int: ...

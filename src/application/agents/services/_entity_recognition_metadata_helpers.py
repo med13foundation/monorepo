@@ -110,6 +110,7 @@ class _EntityRecognitionMetadataHelpers:
             "extraction_stage_policy_proposals": (
                 extraction_outcome.policy_proposals_count
             ),
+            "extraction_stage_funnel": extraction_outcome.extraction_funnel,
             "extraction_stage_errors": list(extraction_outcome.errors),
         }
 

@@ -78,11 +78,10 @@ def test_pipeline_uses_vector_mapper_when_exact_match_is_missing(
         raw_record = RawRecord(
             source_id=str(uuid4()),
             data={
-                "pmid": "123456",
                 "enlarged heart": True,
             },
             metadata={
-                "type": "pubmed",
+                "type": "clinvar",
                 "entity_type": "PUBLICATION",
                 "domain_context": "clinical",
             },

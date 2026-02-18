@@ -3,89 +3,40 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from src.application.agents.services._extraction_outcome_helpers import (
-    merge_rejected_relation_details,
-    merge_rejected_relation_reasons,
+from src.application.agents.services._extraction_chunking_helpers import (
+    ChunkedExtractionSummary,
+    build_chunk_context,
+    build_full_text_chunks,
+    merge_chunk_contracts,
+    should_use_full_text_chunking,
 )
 from src.application.agents.services._extraction_relation_persistence_helpers import (
     _ExtractionRelationPersistenceHelpers,
 )
-from src.application.agents.services.governance_service import (
-    GovernanceDecision,
-    GovernanceService,
+from src.application.agents.services._extraction_service_support import (
+    ExtractionDocumentOutcome,
+    ExtractionServiceDependencies,
+    build_extraction_outcome,
+    build_initial_extraction_funnel,
+    merge_extraction_funnels,
+    normalize_seed_entity_ids,
+    review_priority_for_reason,
 )
+from src.application.agents.services.governance_service import GovernanceService
 from src.domain.agents.contexts.extraction_context import ExtractionContext
 from src.domain.value_objects.relation_types import normalize_relation_type
 from src.type_definitions.ingestion import RawRecord
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from uuid import UUID
-
-    from src.application.services.ports.ingestion_pipeline_port import (
-        IngestionPipelinePort,
-    )
     from src.domain.agents.contracts.entity_recognition import EntityRecognitionContract
     from src.domain.agents.contracts.extraction import ExtractionContract
-    from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
-    from src.domain.agents.ports.extraction_policy_agent_port import (
-        ExtractionPolicyAgentPort,
-    )
     from src.domain.entities.source_document import SourceDocument
-    from src.domain.ports.dictionary_port import DictionaryPort
-    from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
-    from src.domain.repositories.kernel.relation_repository import (
-        KernelRelationRepository,
-    )
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class ExtractionServiceDependencies:
-    """Dependencies required by extraction orchestration."""
-
-    extraction_agent: ExtractionAgentPort
-    ingestion_pipeline: IngestionPipelinePort
-    extraction_policy_agent: ExtractionPolicyAgentPort | None = None
-    relation_repository: KernelRelationRepository | None = None
-    entity_repository: KernelEntityRepository | None = None
-    dictionary_service: DictionaryPort | None = None
-    governance_service: GovernanceService | None = None
-    review_queue_submitter: Callable[[str, str, str | None, str], None] | None = None
-
-
-@dataclass(frozen=True)
-class ExtractionDocumentOutcome:
-    """Outcome of extraction + ingestion for one document."""
-
-    document_id: UUID
-    status: Literal["extracted", "failed"]
-    reason: str
-    review_required: bool
-    shadow_mode: bool
-    wrote_to_kernel: bool
-    run_id: str | None = None
-    observations_extracted: int = 0
-    relations_extracted: int = 0
-    rejected_facts: int = 0
-    rejected_relation_reasons: tuple[str, ...] = ()
-    rejected_relation_details: tuple[JSONObject, ...] = ()
-    ingestion_entities_created: int = 0
-    ingestion_observations_created: int = 0
-    persisted_relations_count: int = 0
-    pending_review_relations_count: int = 0
-    forbidden_relations_count: int = 0
-    undefined_relations_count: int = 0
-    policy_step_run_id: str | None = None
-    policy_proposals_count: int = 0
-    seed_entity_ids: tuple[str, ...] = ()
-    errors: tuple[str, ...] = ()
 
 
 class ExtractionService(_ExtractionRelationPersistenceHelpers):
@@ -138,8 +89,14 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             recognized_observations=recognition_contract.recognized_observations,
             shadow_mode=requested_shadow_mode,
         )
-
-        contract = await self._agent.extract(context, model_id=model_id)
+        contract, chunk_summary = await self._extract_contract_with_optional_chunking(
+            context=context,
+            model_id=model_id,
+        )
+        initial_funnel = build_initial_extraction_funnel(
+            contract=contract,
+            chunk_summary=chunk_summary,
+        )
         run_id = self._resolve_run_id(contract)
         governance = self._governance.evaluate(
             confidence_score=contract.confidence_score,
@@ -155,22 +112,24 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 reason=governance.reason,
             )
         if governance.shadow_mode:
-            return self._build_outcome(
+            return build_extraction_outcome(
                 document=document,
                 contract=contract,
                 governance=governance,
                 run_id=run_id,
                 wrote_to_kernel=False,
                 reason="shadow_mode_enabled",
+                extraction_funnel=initial_funnel,
             )
         if not governance.allow_write:
-            return self._build_outcome(
+            return build_extraction_outcome(
                 document=document,
                 contract=contract,
                 governance=governance,
                 run_id=run_id,
                 wrote_to_kernel=False,
                 reason=governance.reason,
+                extraction_funnel=initial_funnel,
                 errors=(governance.reason,),
             )
 
@@ -182,13 +141,14 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             primary_entity_type=recognition_contract.primary_entity_type,
         )
         if not pipeline_records:
-            return self._build_outcome(
+            return build_extraction_outcome(
                 document=document,
                 contract=contract,
                 governance=governance,
                 run_id=run_id,
                 wrote_to_kernel=False,
                 reason="no_pipeline_payloads",
+                extraction_funnel=initial_funnel,
                 errors=("no_pipeline_payloads",),
             )
 
@@ -197,7 +157,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             str(document.research_space_id),
         )
         if not ingestion_result.success:
-            return self._build_outcome(
+            return build_extraction_outcome(
                 document=document,
                 contract=contract,
                 governance=governance,
@@ -206,7 +166,8 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 reason="kernel_ingestion_failed",
                 ingestion_entities_created=ingestion_result.entities_created,
                 ingestion_observations_created=ingestion_result.observations_created,
-                seed_entity_ids=self._normalize_seed_entity_ids(
+                extraction_funnel=initial_funnel,
+                seed_entity_ids=normalize_seed_entity_ids(
                     ingestion_result.entity_ids_touched,
                 ),
                 errors=tuple(ingestion_result.errors),
@@ -219,8 +180,12 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             publication_entity_ids=tuple(ingestion_result.entity_ids_touched),
             model_id=model_id,
         )
+        merged_funnel = merge_extraction_funnels(
+            initial_funnel=initial_funnel,
+            persistence_funnel=relation_persistence_result.funnel,
+        )
 
-        return self._build_outcome(
+        return build_extraction_outcome(
             document=document,
             contract=contract,
             governance=governance,
@@ -249,7 +214,8 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             relation_rejected_details=(
                 relation_persistence_result.rejected_relation_details
             ),
-            seed_entity_ids=self._normalize_seed_entity_ids(
+            extraction_funnel=merged_funnel,
+            seed_entity_ids=normalize_seed_entity_ids(
                 ingestion_result.entity_ids_touched,
             ),
             errors=tuple(ingestion_result.errors) + relation_persistence_result.errors,
@@ -343,6 +309,90 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             relation_types.append(normalized)
         return tuple(relation_types) if relation_types else None
 
+    async def _extract_contract_with_optional_chunking(
+        self,
+        *,
+        context: ExtractionContext,
+        model_id: str | None,
+    ) -> tuple[ExtractionContract, ChunkedExtractionSummary]:
+        if not should_use_full_text_chunking(context):
+            contract = await self._agent.extract(context, model_id=model_id)
+            return (
+                contract,
+                ChunkedExtractionSummary(
+                    mode="single",
+                    chunk_count=0,
+                    successful_chunks=1,
+                    failed_chunks=0,
+                ),
+            )
+
+        chunks = build_full_text_chunks(context)
+        if not chunks:
+            contract = await self._agent.extract(context, model_id=model_id)
+            return (
+                contract,
+                ChunkedExtractionSummary(
+                    mode="single",
+                    chunk_count=0,
+                    successful_chunks=1,
+                    failed_chunks=0,
+                ),
+            )
+
+        chunk_contracts: list[ExtractionContract] = []
+        for chunk in chunks:
+            chunk_context = build_chunk_context(base_context=context, chunk=chunk)
+            try:
+                chunk_contract = await self._agent.extract(
+                    chunk_context,
+                    model_id=model_id,
+                )
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                LookupError,
+                OSError,
+                ConnectionError,
+                TimeoutError,
+            ) as exc:
+                logger.warning(
+                    "Chunked extraction failed for document_id=%s chunk=%d/%d: %s",
+                    context.document_id,
+                    chunk.index + 1,
+                    chunk.total,
+                    exc,
+                )
+                fallback_contract = await self._agent.extract(
+                    context,
+                    model_id=model_id,
+                )
+                return (
+                    fallback_contract,
+                    ChunkedExtractionSummary(
+                        mode="chunked_fallback_single",
+                        chunk_count=len(chunks),
+                        successful_chunks=len(chunk_contracts),
+                        failed_chunks=1,
+                    ),
+                )
+            chunk_contracts.append(chunk_contract)
+
+        merged_contract = merge_chunk_contracts(
+            base_context=context,
+            contracts=tuple(chunk_contracts),
+        )
+        return (
+            merged_contract,
+            ChunkedExtractionSummary(
+                mode="chunked",
+                chunk_count=len(chunks),
+                successful_chunks=len(chunk_contracts),
+                failed_chunks=0,
+            ),
+        )
+
     def _submit_review_item(
         self,
         *,
@@ -361,7 +411,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                     if document.research_space_id is not None
                     else None
                 ),
-                self._review_priority_for_reason(reason),
+                review_priority_for_reason(reason),
             )
         except Exception as exc:  # noqa: BLE001 - never block extraction on queue write
             logger.warning(
@@ -369,84 +419,6 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 document.id,
                 exc,
             )
-
-    @staticmethod
-    def _review_priority_for_reason(reason: str) -> str:
-        if reason in {"agent_requested_escalation", "evidence_required"}:
-            return "high"
-        if reason == "confidence_below_threshold":
-            return "medium"
-        return "low"
-
-    @staticmethod
-    def _normalize_seed_entity_ids(seed_entity_ids: list[str]) -> tuple[str, ...]:
-        normalized_ids: list[str] = []
-        for seed_entity_id in seed_entity_ids:
-            normalized = seed_entity_id.strip()
-            if not normalized or normalized in normalized_ids:
-                continue
-            normalized_ids.append(normalized)
-        return tuple(normalized_ids)
-
-    @staticmethod
-    def _build_outcome(  # noqa: PLR0913
-        *,
-        document: SourceDocument,
-        contract: ExtractionContract,
-        governance: GovernanceDecision,
-        run_id: str | None,
-        wrote_to_kernel: bool,
-        reason: str,
-        ingestion_entities_created: int = 0,
-        ingestion_observations_created: int = 0,
-        persisted_relations_count: int = 0,
-        pending_review_relations_count: int = 0,
-        forbidden_relations_count: int = 0,
-        undefined_relations_count: int = 0,
-        policy_step_run_id: str | None = None,
-        policy_proposals_count: int = 0,
-        relation_rejected_reasons: tuple[str, ...] = (),
-        relation_rejected_details: tuple[JSONObject, ...] = (),
-        seed_entity_ids: tuple[str, ...] = (),
-        errors: tuple[str, ...] = (),
-    ) -> ExtractionDocumentOutcome:
-        status: Literal["extracted", "failed"] = (
-            "extracted" if wrote_to_kernel or governance.shadow_mode else "failed"
-        )
-        return ExtractionDocumentOutcome(
-            document_id=document.id,
-            status=status,
-            reason=reason,
-            review_required=governance.requires_review,
-            shadow_mode=governance.shadow_mode,
-            wrote_to_kernel=wrote_to_kernel,
-            run_id=run_id,
-            observations_extracted=len(contract.observations),
-            relations_extracted=len(contract.relations),
-            rejected_facts=len(contract.rejected_facts),
-            rejected_relation_reasons=(
-                merge_rejected_relation_reasons(
-                    contract,
-                    relation_rejected_reasons,
-                )
-            ),
-            rejected_relation_details=(
-                merge_rejected_relation_details(
-                    contract,
-                    relation_rejected_details,
-                )
-            ),
-            ingestion_entities_created=ingestion_entities_created,
-            ingestion_observations_created=ingestion_observations_created,
-            persisted_relations_count=persisted_relations_count,
-            pending_review_relations_count=pending_review_relations_count,
-            forbidden_relations_count=forbidden_relations_count,
-            undefined_relations_count=undefined_relations_count,
-            policy_step_run_id=policy_step_run_id,
-            policy_proposals_count=policy_proposals_count,
-            seed_entity_ids=seed_entity_ids,
-            errors=errors,
-        )
 
 
 __all__ = [

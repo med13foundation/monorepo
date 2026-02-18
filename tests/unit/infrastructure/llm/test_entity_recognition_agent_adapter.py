@@ -143,10 +143,16 @@ def test_get_or_create_pipeline_binds_dictionary_tools() -> None:
         )
 
     assert pipeline is mock_pipeline
-    build_tools_mock.assert_called_once()
+    assert build_tools_mock.call_count == 2
     clinvar_factory.assert_called_once()
     called_kwargs = clinvar_factory.call_args.kwargs
-    assert called_kwargs["tools"] is not None
+    assert called_kwargs["discovery_tools"] is not None
+    assert called_kwargs["policy_tools"] is not None
+
+    first_call_kwargs = build_tools_mock.call_args_list[0].kwargs
+    second_call_kwargs = build_tools_mock.call_args_list[1].kwargs
+    assert first_call_kwargs["include_mutation_tools"] is False
+    assert second_call_kwargs["include_mutation_tools"] is True
 
 
 def test_get_or_create_pipeline_dispatches_pubmed_factory() -> None:

@@ -46,18 +46,22 @@ default_limit_usd = 1.0
 # The application loads models from this section at startup.
 #
 # Environment variable overrides for defaults:
-#   MED13_AI_QUERY_GENERATION_MODEL=openai:gpt-5-nano
-#   MED13_AI_EVIDENCE_EXTRACTION_MODEL=openai:gpt-5-nano
-#   MED13_AI_CURATION_MODEL=openai:gpt-5-nano
-#   MED13_AI_JUDGE_MODEL=openai:gpt-5-nano
+#   MED13_AI_QUERY_GENERATION_MODEL=openai:gpt-5-mini
+#   MED13_AI_EVIDENCE_EXTRACTION_MODEL=openai:gpt-5-mini
+#   MED13_AI_CURATION_MODEL=openai:gpt-5-mini
+#   MED13_AI_JUDGE_MODEL=openai:gpt-5-mini
 # =============================================================================
 
 [models]
-# System-wide defaults by capability (can be overridden per-user/space/source)
-default_query_generation = "openai:gpt-5-nano"
-default_evidence_extraction = "openai:gpt-5-nano"
-default_curation = "openai:gpt-5-nano"
-default_judge = "openai:gpt-5-nano"
+# System-wide defaults by capability
+default_query_generation = "openai:gpt-5-mini"
+default_evidence_extraction = "openai:gpt-5-mini"
+default_curation = "openai:gpt-5-mini"
+default_judge = "openai:gpt-5-mini"
+# Single source of truth policy:
+# - false: ignore runtime/per-source model_id overrides, use flujo.toml defaults/profiles
+# - true: allow runtime/per-source model_id overrides
+allow_runtime_model_overrides = false
 
 # -----------------------------------------------------------------------------
 # GPT-4o Mini - Fast, cost-effective model for simple tasks
@@ -76,6 +80,28 @@ is_default = true
 [cost.providers.openai."gpt-4o-mini"]
 prompt_tokens_per_1k = 0.00015
 completion_tokens_per_1k = 0.0006
+
+# -----------------------------------------------------------------------------
+# GPT-5 Mini - Fast, balanced cost/performance
+# -----------------------------------------------------------------------------
+[models.registry."openai:gpt-5-mini"]
+display_name = "GPT-5 Mini"
+provider = "openai"
+capabilities = ["query_generation", "evidence_extraction", "curation", "judge"]
+cost_tier = "low"
+is_reasoning_model = true
+max_retries = 3
+timeout_seconds = 30.0
+is_enabled = true
+is_default = true
+
+[models.registry."openai:gpt-5-mini".default_reasoning_settings]
+effort = "high"
+verbosity = "medium"
+
+[cost.providers.openai."gpt-5-mini"]
+prompt_tokens_per_1k = 0.00025
+completion_tokens_per_1k = 0.002
 
 # -----------------------------------------------------------------------------
 # GPT-5 Nano - Extremely fast, lowest cost
@@ -197,5 +223,5 @@ max_tokens = 16384
 budget_profile = "research"
 
 [source_profiles.clinvar]
-model = "openai:gpt-5-nano"
+model = "openai:gpt-5-mini"
 budget_profile = "research"

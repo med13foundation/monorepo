@@ -173,9 +173,13 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         return normalized.lower() not in _INVALID_OPENAI_KEYS
 
     def _resolve_model_id(self, model_id: str | None) -> str:
-        if model_id is not None and self._registry.validate_model_for_capability(
-            model_id,
-            ModelCapability.EVIDENCE_EXTRACTION,
+        if (
+            self._registry.allow_runtime_model_overrides()
+            and model_id is not None
+            and self._registry.validate_model_for_capability(
+                model_id,
+                ModelCapability.EVIDENCE_EXTRACTION,
+            )
         ):
             return model_id
 
@@ -199,14 +203,24 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         if cache_key in self._pipelines:
             return self._pipelines[cache_key]
 
-        tools: list[object] | None = None
+        discovery_tools: list[object] | None = None
+        policy_tools: list[object] | None = None
         if bind_tools and self._dictionary_service is not None:
             try:
-                tools = list(
+                discovery_tools = list(
                     build_entity_recognition_dictionary_tools(
                         dictionary_service=self._dictionary_service,
                         created_by=self._agent_created_by,
                         research_space_settings=context.research_space_settings,
+                        include_mutation_tools=False,
+                    ),
+                )
+                policy_tools = list(
+                    build_entity_recognition_dictionary_tools(
+                        dictionary_service=self._dictionary_service,
+                        created_by=self._agent_created_by,
+                        research_space_settings=context.research_space_settings,
+                        include_mutation_tools=True,
                     ),
                 )
             except (LookupError, PermissionError) as exc:
@@ -216,7 +230,8 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
                     policy_key,
                     exc,
                 )
-                tools = None
+                discovery_tools = None
+                policy_tools = None
 
         pipeline_factory = _PIPELINE_FACTORIES.get(source_type)
         if pipeline_factory is None:
@@ -228,7 +243,8 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             model=model_id,
             use_governance=self._use_governance,
             usage_limits=self._governance.usage_limits,
-            tools=tools if bind_tools else None,
+            discovery_tools=discovery_tools if bind_tools else None,
+            policy_tools=policy_tools if bind_tools else None,
         )
         self._pipelines[cache_key] = pipeline
         self._lifecycle_manager.register_runner(pipeline)

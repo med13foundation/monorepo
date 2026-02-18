@@ -67,10 +67,20 @@ def make_validate_observation_tool(
 
         Returns validity plus canonical normalization details when available.
         """
+        normalized_variable_id = variable_id.strip()
+        resolved_variable_id = normalized_variable_id
+        existing_variable = dictionary_service.get_variable(normalized_variable_id)
+        if existing_variable is None:
+            resolved_variable = dictionary_service.resolve_synonym(
+                normalized_variable_id,
+            )
+            if resolved_variable is not None:
+                resolved_variable_id = resolved_variable.id
+
         normalized = validator.validate(
             NormalizedObservation(
                 subject_anchor={},
-                variable_id=variable_id,
+                variable_id=resolved_variable_id,
                 value=value,
                 unit=unit,
                 observed_at=None,
@@ -80,13 +90,13 @@ def make_validate_observation_tool(
         if normalized is None:
             return {
                 "valid": False,
-                "variable_id": variable_id,
+                "variable_id": resolved_variable_id,
                 "reason": "Observation failed dictionary validation",
             }
 
         return {
             "valid": True,
-            "variable_id": variable_id,
+            "variable_id": resolved_variable_id,
             "value": to_json_value(normalized.value),
             "unit": normalized.unit,
         }

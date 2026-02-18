@@ -232,6 +232,33 @@
     "description": "Year of publication"
   },
   {
+    "id": "VAR_PUBLICATION_DATE",
+    "canonical_name": "publication_date",
+    "display_name": "Publication Date",
+    "data_type": "DATE",
+    "domain_context": "general",
+    "sensitivity": "PUBLIC",
+    "description": "Publication date when available"
+  },
+  {
+    "id": "VAR_PUBMED_ID",
+    "canonical_name": "pubmed_id",
+    "display_name": "PubMed ID",
+    "data_type": "STRING",
+    "domain_context": "general",
+    "sensitivity": "PUBLIC",
+    "description": "PubMed stable identifier for a publication"
+  },
+  {
+    "id": "VAR_DOI",
+    "canonical_name": "doi",
+    "display_name": "DOI",
+    "data_type": "STRING",
+    "domain_context": "general",
+    "sensitivity": "PUBLIC",
+    "description": "Digital Object Identifier for a publication"
+  },
+  {
     "id": "VAR_ABSTRACT",
     "canonical_name": "abstract",
     "display_name": "Abstract",
@@ -248,6 +275,15 @@
     "domain_context": "general",
     "sensitivity": "PUBLIC",
     "description": "Journal of publication"
+  },
+  {
+    "id": "VAR_KEYWORDS",
+    "canonical_name": "keywords",
+    "display_name": "Keywords",
+    "data_type": "JSON",
+    "domain_context": "general",
+    "sensitivity": "PUBLIC",
+    "description": "Structured keyword list associated with the publication"
   },
   {
     "id": "VAR_AUTHOR_LIST",

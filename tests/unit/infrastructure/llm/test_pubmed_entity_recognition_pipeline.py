@@ -28,4 +28,5 @@ def test_create_pubmed_entity_recognition_pipeline_has_pubmed_step_name() -> Non
 
     assert pipeline.pipeline is not None
     step_names = [step.name for step in pipeline.pipeline.steps]
-    assert "recognize_pubmed_entities" in step_names
+    assert "discover_pubmed_entities" in step_names
+    assert "entity_recognition_dictionary_policy_gate" in step_names

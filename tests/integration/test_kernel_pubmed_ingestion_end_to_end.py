@@ -83,7 +83,7 @@ def test_pubmed_pipeline_writes_publication_entity_and_observations(
 
         assert result.success is True
         assert result.entities_created == 1
-        assert result.observations_created == 2
+        assert result.observations_created == 5
 
         publication_entities = session.execute(
             select(EntityModel).where(
@@ -111,5 +111,32 @@ def test_pubmed_pipeline_writes_publication_entity_and_observations(
         ).scalars()
         abstract_observation = abstract_obs.one()
         assert abstract_observation.value_text == "This is a test abstract."
+
+        pmid_obs = session.execute(
+            select(ObservationModel).where(
+                ObservationModel.subject_id == publication_entity.id,
+                ObservationModel.variable_id == "VAR_PUBMED_ID",
+            ),
+        ).scalars()
+        pmid_observation = pmid_obs.one()
+        assert pmid_observation.value_text == "123456"
+
+        doi_obs = session.execute(
+            select(ObservationModel).where(
+                ObservationModel.subject_id == publication_entity.id,
+                ObservationModel.variable_id == "VAR_DOI",
+            ),
+        ).scalars()
+        doi_observation = doi_obs.one()
+        assert doi_observation.value_text == "10.1000/123456"
+
+        publication_date_obs = session.execute(
+            select(ObservationModel).where(
+                ObservationModel.subject_id == publication_entity.id,
+                ObservationModel.variable_id == "VAR_PUBLICATION_DATE",
+            ),
+        ).scalars()
+        publication_date_observation = publication_date_obs.one()
+        assert publication_date_observation.value_date is not None
     finally:
         session.close()

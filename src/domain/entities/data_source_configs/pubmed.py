@@ -29,7 +29,10 @@ class AiAgentConfig(BaseModel):
     )
     model_id: str | None = Field(
         default=None,
-        description="Override model ID for this source (None = use system default)",
+        description=(
+            "Optional per-source model override; applied only when runtime "
+            "model overrides are enabled in flujo.toml."
+        ),
     )
 
 

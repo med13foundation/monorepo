@@ -66,7 +66,11 @@ logger = logging.getLogger(__name__)
 SkillCallable = Callable[..., object]
 SkillFactory = Callable[..., SkillCallable]
 
-_ENTITY_RECOGNITION_DICTIONARY_SKILL_IDS: tuple[str, ...] = (
+_ENTITY_RECOGNITION_DICTIONARY_DISCOVERY_SKILL_IDS: tuple[str, ...] = (
+    "dictionary_search",
+    "dictionary_search_by_domain",
+)
+_ENTITY_RECOGNITION_DICTIONARY_POLICY_SKILL_IDS: tuple[str, ...] = (
     "dictionary_search",
     "dictionary_search_by_domain",
     "create_variable",
@@ -823,17 +827,24 @@ def build_entity_recognition_dictionary_tools(  # noqa: PLR0913
     created_by: str,
     source_ref: str | None = None,
     research_space_settings: ResearchSpaceSettings | None = None,
+    include_mutation_tools: bool = True,
 ) -> list[SkillCallable]:
     """
     Build the dictionary toolset required by Entity Recognition Agent workflows.
 
     Tool access is filtered through governance allowlists at registry lookup time.
+    When include_mutation_tools=False, only read/search dictionary tools are bound.
     """
     register_all_skills()
     registry = get_skill_registry()
 
+    skill_ids = (
+        _ENTITY_RECOGNITION_DICTIONARY_POLICY_SKILL_IDS
+        if include_mutation_tools
+        else _ENTITY_RECOGNITION_DICTIONARY_DISCOVERY_SKILL_IDS
+    )
     tools: list[SkillCallable] = []
-    for skill_id in _ENTITY_RECOGNITION_DICTIONARY_SKILL_IDS:
+    for skill_id in skill_ids:
         skill = registry.get_callable(
             skill_id,
             dictionary_service=dictionary_service,

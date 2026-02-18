@@ -259,9 +259,13 @@ class FlujoGraphConnectionAdapter(
         self._pipelines.clear()
 
     def _resolve_model_id(self, model_id: str | None) -> str:
-        if model_id is not None and self._registry.validate_model_for_capability(
-            model_id,
-            ModelCapability.EVIDENCE_EXTRACTION,
+        if (
+            self._registry.allow_runtime_model_overrides()
+            and model_id is not None
+            and self._registry.validate_model_for_capability(
+                model_id,
+                ModelCapability.EVIDENCE_EXTRACTION,
+            )
         ):
             return model_id
         if self._default_model is not None:

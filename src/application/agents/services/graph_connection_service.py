@@ -92,15 +92,17 @@ class GraphConnectionService:
         fallback_relations: tuple[ProposedRelation, ...] | None = None,
     ) -> GraphConnectionOutcome:
         """Run one graph-connection discovery pass for a seed entity."""
+        resolved_research_space_id = research_space_id.strip()
+        resolved_seed_entity_id = seed_entity_id.strip()
         resolved_settings = self._resolve_research_space_settings(
-            research_space_id=research_space_id,
+            research_space_id=resolved_research_space_id,
             provided_settings=research_space_settings,
         )
         requested_shadow_mode = shadow_mode if isinstance(shadow_mode, bool) else False
         context = GraphConnectionContext(
-            seed_entity_id=seed_entity_id,
+            seed_entity_id=resolved_seed_entity_id,
             source_type=source_type,
-            research_space_id=research_space_id,
+            research_space_id=resolved_research_space_id,
             research_space_settings=resolved_settings or {},
             relation_types=relation_types,
             max_depth=max_depth,
@@ -118,8 +120,8 @@ class GraphConnectionService:
         )
         if governance.requires_review:
             self._submit_review_item(
-                research_space_id=contract.research_space_id,
-                seed_entity_id=contract.seed_entity_id,
+                research_space_id=resolved_research_space_id,
+                seed_entity_id=resolved_seed_entity_id,
                 reason=governance.reason,
             )
 
@@ -127,6 +129,8 @@ class GraphConnectionService:
             return self._build_outcome(
                 contract=contract,
                 governance=governance,
+                research_space_id=resolved_research_space_id,
+                seed_entity_id=resolved_seed_entity_id,
                 run_id=run_id,
                 wrote_to_graph=False,
                 reason="shadow_mode_enabled",
@@ -139,6 +143,8 @@ class GraphConnectionService:
             return self._build_outcome(
                 contract=contract,
                 governance=governance,
+                research_space_id=resolved_research_space_id,
+                seed_entity_id=resolved_seed_entity_id,
                 run_id=run_id,
                 wrote_to_graph=False,
                 reason=governance.reason,
@@ -183,20 +189,20 @@ class GraphConnectionService:
         review_required = governance.requires_review or fallback_requires_pending_review
         if promoted_rejected_count > 0 and not governance.requires_review:
             self._submit_review_item(
-                research_space_id=contract.research_space_id,
-                seed_entity_id=contract.seed_entity_id,
+                research_space_id=resolved_research_space_id,
+                seed_entity_id=resolved_seed_entity_id,
                 reason="promoted_rejected_candidates",
             )
         if used_extraction_fallback and not governance.requires_review:
             self._submit_review_item(
-                research_space_id=contract.research_space_id,
-                seed_entity_id=contract.seed_entity_id,
+                research_space_id=resolved_research_space_id,
+                seed_entity_id=resolved_seed_entity_id,
                 reason="extraction_relation_fallback",
             )
         if used_neighbourhood_fallback and not governance.requires_review:
             self._submit_review_item(
-                research_space_id=contract.research_space_id,
-                seed_entity_id=contract.seed_entity_id,
+                research_space_id=resolved_research_space_id,
+                seed_entity_id=resolved_seed_entity_id,
                 reason="seed_neighbourhood_fallback",
             )
 
@@ -209,7 +215,7 @@ class GraphConnectionService:
                 continue
             try:
                 self._relations.create(
-                    research_space_id=research_space_id,
+                    research_space_id=resolved_research_space_id,
                     source_id=relation.source_id,
                     relation_type=normalized_relation_type,
                     target_id=relation.target_id,
@@ -233,7 +239,7 @@ class GraphConnectionService:
                     "Graph relation persisted from connection discovery",
                     extra={
                         "research_space_id": research_space_id,
-                        "seed_entity_id": seed_entity_id,
+                        "seed_entity_id": resolved_seed_entity_id,
                         "pipeline_run_id": pipeline_run_id,
                         "graph_connection_run_id": run_id,
                         "relation_type": normalized_relation_type,
@@ -247,7 +253,7 @@ class GraphConnectionService:
                     "Graph relation persistence failed",
                     extra={
                         "research_space_id": research_space_id,
-                        "seed_entity_id": seed_entity_id,
+                        "seed_entity_id": resolved_seed_entity_id,
                         "pipeline_run_id": pipeline_run_id,
                         "graph_connection_run_id": run_id,
                         "relation_type": normalized_relation_type,
@@ -271,6 +277,8 @@ class GraphConnectionService:
         return self._build_outcome(
             contract=contract,
             governance=governance,
+            research_space_id=resolved_research_space_id,
+            seed_entity_id=resolved_seed_entity_id,
             run_id=run_id,
             wrote_to_graph=wrote_to_graph,
             reason=reason,
@@ -410,6 +418,8 @@ class GraphConnectionService:
         *,
         contract: GraphConnectionContract,
         governance: GovernanceDecision,
+        research_space_id: str,
+        seed_entity_id: str,
         run_id: str | None,
         wrote_to_graph: bool,
         reason: str,
@@ -421,8 +431,8 @@ class GraphConnectionService:
             "discovered" if wrote_to_graph or governance.shadow_mode else "failed"
         )
         return GraphConnectionOutcome(
-            seed_entity_id=contract.seed_entity_id,
-            research_space_id=contract.research_space_id,
+            seed_entity_id=seed_entity_id,
+            research_space_id=research_space_id,
             status=status,
             reason=reason,
             review_required=review_required,

@@ -14,9 +14,8 @@ from flujo.domain.models import PipelineResult, StepResult
 
 from src.domain.agents.contexts import QueryGenerationContext
 from src.domain.agents.contracts.query_generation import QueryGenerationContract
-from src.domain.agents.models import ModelCapability
+from src.domain.agents.models import ModelCapability, ModelSpec
 from src.infrastructure.llm.config.governance import GovernanceConfig, UsageLimits
-from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.llm.config.query_profiles import QuerySourcePolicy
 
 PipelineCacheKey = tuple[str, str]
@@ -40,6 +39,20 @@ class _LifecycleManager(Protocol):
     ) -> None: ...
 
 
+class _ModelRegistryProtocol(Protocol):
+    """Minimal model-registry interface used by query adapter helpers."""
+
+    def allow_runtime_model_overrides(self) -> bool: ...
+
+    def validate_model_for_capability(
+        self,
+        model_id: str,
+        capability: ModelCapability,
+    ) -> bool: ...
+
+    def get_default_model(self, capability: ModelCapability) -> ModelSpec: ...
+
+
 def _build_input_text(
     research_space_description: str,
     user_instructions: str,
@@ -61,6 +74,7 @@ class QueryAgentPipelineConfigMixin:
     _query_pipeline_factories: dict[str, QueryPipelineFactory]
     _query_source_policies: dict[str, QuerySourcePolicy]
     _governance: GovernanceConfig
+    _registry: _ModelRegistryProtocol
     _use_governance: bool
     _use_granular: bool
     _state_backend: object
@@ -74,13 +88,9 @@ class QueryAgentPipelineConfigMixin:
         """Initialize default pipelines for supported data sources."""
         default_model = self._default_model
         if default_model is None:
-            default_model = (
-                get_model_registry()
-                .get_default_model(
-                    ModelCapability.QUERY_GENERATION,
-                )
-                .model_id
-            )
+            default_model = self._registry.get_default_model(
+                ModelCapability.QUERY_GENERATION,
+            ).model_id
 
         # Create default PubMed pipeline
         self._get_or_create_pipeline("pubmed", default_model)
@@ -94,8 +104,7 @@ class QueryAgentPipelineConfigMixin:
         if model_id is None:
             model_id = self._default_model
             if model_id is None:
-                registry = get_model_registry()
-                model_id = registry.get_default_model(
+                model_id = self._registry.get_default_model(
                     ModelCapability.QUERY_GENERATION,
                 ).model_id
 
@@ -164,9 +173,14 @@ class QueryAgentPipelineConfigMixin:
         model_id: str | None = None,
     ) -> str:
         """Resolve the effective model ID."""
-        if model_id is not None and get_model_registry().validate_model_for_capability(
-            model_id,
-            ModelCapability.QUERY_GENERATION,
+        registry = self._registry
+        if (
+            registry.allow_runtime_model_overrides()
+            and model_id is not None
+            and registry.validate_model_for_capability(
+                model_id,
+                ModelCapability.QUERY_GENERATION,
+            )
         ):
             return model_id
 
@@ -174,25 +188,16 @@ class QueryAgentPipelineConfigMixin:
             source_type.lower(),
             QuerySourcePolicy(),
         ).model_id
-        if (
-            source_model_id is not None
-            and get_model_registry().validate_model_for_capability(
-                source_model_id,
-                ModelCapability.QUERY_GENERATION,
-            )
+        if source_model_id is not None and registry.validate_model_for_capability(
+            source_model_id,
+            ModelCapability.QUERY_GENERATION,
         ):
             return source_model_id
 
         if self._default_model is not None:
             return self._default_model
 
-        return (
-            get_model_registry()
-            .get_default_model(
-                ModelCapability.QUERY_GENERATION,
-            )
-            .model_id
-        )
+        return registry.get_default_model(ModelCapability.QUERY_GENERATION).model_id
 
     @staticmethod
     def _is_openai_model(model_id: str | None = None) -> bool:

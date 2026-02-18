@@ -48,6 +48,7 @@ class FlujoModelRegistry(ModelRegistryPort):
     _models: dict[str, ModelSpec]
     _defaults: dict[ModelCapability, str]
     _cost_config: dict[str, dict[str, float]]
+    _allow_runtime_model_overrides: bool
 
     def __init__(self, config_path: str | Path | None = None) -> None:
         """
@@ -73,6 +74,9 @@ class FlujoModelRegistry(ModelRegistryPort):
 
         # Store cost config for reference
         self._cost_config = self._parse_cost_config(config)
+        self._allow_runtime_model_overrides = self._parse_allow_runtime_model_overrides(
+            config,
+        )
 
     def _read_config_file(self) -> dict[str, object]:
         """Read and parse the TOML configuration file."""
@@ -223,6 +227,18 @@ class FlujoModelRegistry(ModelRegistryPort):
 
         return result
 
+    def _parse_allow_runtime_model_overrides(
+        self,
+        config: Mapping[str, object],
+    ) -> bool:
+        models_section = config.get("models", {})
+        if isinstance(models_section, dict):
+            raw_value = models_section.get("allow_runtime_model_overrides")
+            if isinstance(raw_value, bool):
+                return raw_value
+
+        return False
+
     def _get_cost_providers(self, config: Mapping[str, object]) -> dict[str, object]:
         """Extract cost.providers section from config."""
         cost = config.get("cost", {})
@@ -345,6 +361,23 @@ class FlujoModelRegistry(ModelRegistryPort):
     def list_model_ids(self) -> list[str]:
         """List all registered model IDs."""
         return list(self._models.keys())
+
+    def allow_runtime_model_overrides(self) -> bool:
+        """
+        Whether runtime/per-source model_id overrides are allowed.
+
+        Environment override:
+        - MED13_AI_ALLOW_RUNTIME_MODEL_OVERRIDES=1|true|yes|on to enable
+        - MED13_AI_ALLOW_RUNTIME_MODEL_OVERRIDES=0|false|no|off to disable
+        """
+        raw_env = os.getenv("MED13_AI_ALLOW_RUNTIME_MODEL_OVERRIDES")
+        if isinstance(raw_env, str):
+            normalized = raw_env.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        return self._allow_runtime_model_overrides
 
     # =========================================================================
     # Convenience Methods

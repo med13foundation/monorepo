@@ -2136,6 +2136,9 @@ def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
         f"- Document relation edges persisted: `{analysis.get('document_relation_edges_count')}`",
     )
     lines.append(
+        f"- Extraction funnel summary: `{analysis.get('extraction_stage_funnel')}`",
+    )
+    lines.append(
         f"- Smoke check pass condition: `{smoke.get('criterion')}`",
     )
     lines.append("")
@@ -2151,6 +2154,18 @@ def _build_markdown_report(report: JSONObject) -> str:  # noqa: PLR0915
     lines.append(
         json.dumps(
             analysis.get("document_relation_edges"),
+            indent=2,
+            sort_keys=True,
+        ),
+    )
+    lines.append("```")
+    lines.append("")
+    lines.append("### Extraction Funnel")
+    lines.append("")
+    lines.append("```json")
+    lines.append(
+        json.dumps(
+            analysis.get("extraction_stage_funnel"),
             indent=2,
             sort_keys=True,
         ),
@@ -2735,6 +2750,14 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                         list,
                     )
                     else []
+                ),
+                "extraction_stage_funnel": (
+                    metadata_payload.get("extraction_stage_funnel")
+                    if isinstance(
+                        metadata_payload.get("extraction_stage_funnel"),
+                        dict,
+                    )
+                    else {}
                 ),
                 "entity_recognition_dictionary_entity_types_created": metadata_payload.get(
                     "entity_recognition_dictionary_entity_types_created",

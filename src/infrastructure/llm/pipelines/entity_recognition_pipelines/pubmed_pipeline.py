@@ -17,6 +17,10 @@ from src.infrastructure.llm.config.governance import GovernanceConfig, UsageLimi
 from src.infrastructure.llm.factories.entity_recognition_agent_factory import (
     create_entity_recognition_agent_for_source,
 )
+from src.infrastructure.llm.prompts.entity_recognition import (
+    PUBMED_ENTITY_RECOGNITION_DISCOVERY_SYSTEM_PROMPT,
+    PUBMED_ENTITY_RECOGNITION_POLICY_SYSTEM_PROMPT,
+)
 
 if TYPE_CHECKING:
     from flujo.state.backends.base import StateBackend
@@ -52,29 +56,97 @@ def _check_recognition_confidence(
     return "proceed" if confidence_score >= threshold else "escalate"
 
 
-def create_pubmed_entity_recognition_pipeline(
+def _check_requires_dictionary_policy_step(
+    output: object,
+    _ctx: EntityRecognitionContext | None,
+) -> str:
+    resolved_output = _unwrap_agent_output(output)
+
+    decision: str | None = None
+    created_payloads: list[object] = []
+    if isinstance(resolved_output, dict):
+        raw_decision = resolved_output.get("decision")
+        if isinstance(raw_decision, str):
+            decision = raw_decision
+        created_payloads = [
+            resolved_output.get("created_definitions"),
+            resolved_output.get("created_synonyms"),
+            resolved_output.get("created_entity_types"),
+            resolved_output.get("created_relation_types"),
+            resolved_output.get("created_relation_constraints"),
+        ]
+    else:
+        raw_decision = getattr(resolved_output, "decision", None)
+        if isinstance(raw_decision, str):
+            decision = raw_decision
+        created_payloads = [
+            getattr(resolved_output, "created_definitions", None),
+            getattr(resolved_output, "created_synonyms", None),
+            getattr(resolved_output, "created_entity_types", None),
+            getattr(resolved_output, "created_relation_types", None),
+            getattr(resolved_output, "created_relation_constraints", None),
+        ]
+
+    if decision == "escalate":
+        return "skip_policy"
+    created_proposal_count = sum(
+        len(payload) for payload in created_payloads if isinstance(payload, list)
+    )
+    return "run_policy" if created_proposal_count > 0 else "skip_policy"
+
+
+def create_pubmed_entity_recognition_pipeline(  # noqa: PLR0913
     state_backend: StateBackend,
     *,
     model: str | None = None,
     use_governance: bool = True,
     usage_limits: UsageLimits | None = None,
+    discovery_tools: list[object] | None = None,
+    policy_tools: list[object] | None = None,
     tools: list[object] | None = None,
 ) -> Flujo[str, EntityRecognitionContract, EntityRecognitionContext]:
     """Create a PubMed entity-recognition pipeline."""
     governance = GovernanceConfig.from_environment()
     limits = usage_limits or governance.usage_limits
-    agent = create_entity_recognition_agent_for_source(
+    shared_tools = tools
+    discovery_toolset = discovery_tools if discovery_tools is not None else shared_tools
+    policy_toolset = policy_tools if policy_tools is not None else shared_tools
+    discovery_agent = create_entity_recognition_agent_for_source(
         "pubmed",
         model=model,
-        tools=tools,
+        system_prompt=PUBMED_ENTITY_RECOGNITION_DISCOVERY_SYSTEM_PROMPT,
+        tools=discovery_toolset,
+    )
+    policy_agent = create_entity_recognition_agent_for_source(
+        "pubmed",
+        model=model,
+        system_prompt=PUBMED_ENTITY_RECOGNITION_POLICY_SYSTEM_PROMPT,
+        tools=policy_toolset,
     )
 
     steps: list[GranularStep | ConditionalStep[EntityRecognitionContext]] = [
         GranularStep(
-            name="recognize_pubmed_entities",
-            agent=agent,
+            name="discover_pubmed_entities",
+            agent=discovery_agent,
             enforce_idempotency=True,
             history_max_tokens=8192,
+        ),
+        ConditionalStep(
+            name="entity_recognition_dictionary_policy_gate",
+            condition_callable=_check_requires_dictionary_policy_step,
+            branches={
+                "run_policy": Pipeline(
+                    steps=[
+                        GranularStep(
+                            name="apply_pubmed_dictionary_policy",
+                            agent=policy_agent,
+                            enforce_idempotency=True,
+                            history_max_tokens=8192,
+                        ),
+                    ],
+                ),
+                "skip_policy": Pipeline(steps=[]),
+            },
         ),
     ]
 

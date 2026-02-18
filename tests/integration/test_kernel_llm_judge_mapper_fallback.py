@@ -134,11 +134,10 @@ def test_pipeline_uses_llm_judge_mapper_when_vector_has_no_match(
         raw_record = RawRecord(
             source_id=str(uuid4()),
             data={
-                "pmid": "123456",
                 "cardiomegaly markr": True,
             },
             metadata={
-                "type": "pubmed",
+                "type": "clinvar",
                 "entity_type": "PUBLICATION",
                 "domain_context": "clinical",
             },
