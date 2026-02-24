@@ -25,6 +25,13 @@ export const createSpaceSchema = z.object({
     .max(50, 'Slug cannot exceed 50 characters')
     .regex(/^[a-z0-9-]+$/, 'Slug must contain only lowercase letters, numbers, and hyphens'),
   description: z.string().max(500, 'Description cannot exceed 500 characters').optional(),
+  governance_mode: z.enum(['FULL_AUTO', 'HUMAN_IN_LOOP']).default('FULL_AUTO'),
+  relation_default_review_threshold: z
+    .number()
+    .min(0, 'Threshold must be >= 0')
+    .max(1, 'Threshold must be <= 1')
+    .default(0.7),
+  relation_review_thresholds_text: z.string().default(''),
   settings: z.record(z.unknown()).optional(),
   tags: z.array(z.string()).max(10, 'Maximum 10 tags allowed').optional(),
 })

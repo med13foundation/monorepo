@@ -24,13 +24,14 @@ import {
   FormLabel,
   FormControl,
   FormDescription,
-  FormMessage,
 } from '@/components/ui/form'
-import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
-import { AiModelSelector } from './AiModelSelector'
+import {
+  AiManagedConfigFields,
+  PubMedConfigFields,
+} from './DataSourceAiConfigFormFields'
 import {
   DEFAULT_CLINVAR_AGENT_PROMPT,
   getSourceAgentConfigSnapshot,
@@ -41,9 +42,12 @@ const aiConfigSchema = z.object({
   use_research_space_context: z.boolean().default(true),
   agent_prompt: z.string().default(''),
   model_id: z.string().nullable().default(null),
+  query: z.string().default(''),
+  max_results: z.number().int().min(1).max(10000).default(100),
+  open_access_only: z.boolean().default(true),
 })
 
-type AiConfigFormValues = z.infer<typeof aiConfigSchema>
+export type AiConfigFormValues = z.infer<typeof aiConfigSchema>
 
 interface DataSourceAiConfigDialogProps {
   source: DataSource | null
@@ -69,6 +73,7 @@ export function DataSourceAiConfigDialog({
   const sourceAgentConfigSnapshot = source
     ? getSourceAgentConfigSnapshot(source)
     : null
+  const isPubMedSource = source?.source_type === 'pubmed'
   const queryAgentSourceType = sourceAgentConfigSnapshot?.queryAgentSourceType ?? null
   const supportsAiConfiguration = sourceAgentConfigSnapshot?.supportsAiControls ?? false
   const defaultIsAiManaged =
@@ -86,6 +91,17 @@ export function DataSourceAiConfigDialog({
       : true
   const defaultModelIdFromConfig =
     typeof agentConfig.model_id === 'string' ? agentConfig.model_id : null
+  const defaultQuery =
+    typeof metadata.query === 'string'
+      ? metadata.query
+      : typeof config.query === 'string'
+        ? config.query
+        : ''
+  const defaultMaxResults =
+    typeof metadata.max_results === 'number' && Number.isFinite(metadata.max_results)
+      ? Math.max(1, Math.min(10000, Math.floor(metadata.max_results)))
+      : 100
+  const defaultOpenAccessOnly = metadata.open_access_only !== false
 
   const defaultValues = useMemo<AiConfigFormValues>(
     () => ({
@@ -93,8 +109,19 @@ export function DataSourceAiConfigDialog({
       use_research_space_context: defaultUseContext,
       agent_prompt: defaultAgentPrompt,
       model_id: defaultModelIdFromConfig,
+      query: defaultQuery,
+      max_results: defaultMaxResults,
+      open_access_only: defaultOpenAccessOnly,
     }),
-    [defaultAgentPrompt, defaultIsAiManaged, defaultUseContext, defaultModelIdFromConfig],
+    [
+      defaultAgentPrompt,
+      defaultIsAiManaged,
+      defaultMaxResults,
+      defaultModelIdFromConfig,
+      defaultOpenAccessOnly,
+      defaultQuery,
+      defaultUseContext,
+    ],
   )
 
   const form = useForm<AiConfigFormValues>({
@@ -121,11 +148,25 @@ export function DataSourceAiConfigDialog({
     if (queryAgentSourceType !== null) {
       updatedAgentConfig.query_agent_source_type = queryAgentSourceType
     }
-    const updatedMetadata = {
+    const updatedMetadata: Record<string, unknown> = {
       ...metadata,
       agent_config: updatedAgentConfig,
     }
-    const updatedConfig = { ...config, metadata: updatedMetadata }
+    if (isPubMedSource) {
+      const normalizedQuery = values.query.trim()
+      if (normalizedQuery.length > 0) {
+        updatedMetadata.query = normalizedQuery
+      }
+      updatedMetadata.max_results = Math.max(1, Math.min(10000, values.max_results))
+      updatedMetadata.open_access_only = true
+    }
+    const updatedConfig: Record<string, unknown> = {
+      ...config,
+      metadata: updatedMetadata,
+    }
+    if (isPubMedSource) {
+      updatedConfig.query = updatedMetadata.query
+    }
 
     try {
       setIsSaving(true)
@@ -181,62 +222,10 @@ export function DataSourceAiConfigDialog({
             />
 
             {isAiManaged && (
-              <>
-                <FormField
-                  control={form.control}
-                  name="model_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>AI Model</FormLabel>
-                      <FormControl>
-                        <AiModelSelector value={field.value} onChange={field.onChange} />
-                      </FormControl>
-                      <FormDescription>
-                        Choose which AI model powers query generation for this source.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="use_research_space_context"
-                  render={({ field }) => (
-                    <FormItem className="flex items-center justify-between rounded-md border p-3">
-                      <div className="space-y-0.5">
-                        <FormLabel>Use research space context</FormLabel>
-                        <FormDescription>
-                          Provide the research space description to the agent.
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="agent_prompt"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Agent instructions</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="e.g. Focus on clinical case studies and mechanistic pathways."
-                          className="min-h-[100px]"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Custom instructions to steer the agent behavior.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </>
+              <AiManagedConfigFields form={form} />
             )}
+
+            {isPubMedSource && <PubMedConfigFields form={form} />}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

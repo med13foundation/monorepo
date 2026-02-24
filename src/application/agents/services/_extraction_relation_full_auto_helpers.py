@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from src.domain.value_objects.relation_types import normalize_relation_type
 
 if TYPE_CHECKING:
     from src.application.agents.services._extraction_relation_policy_helpers import (
+        RelationValidationState,
         _ResolvedRelationCandidate,
     )
     from src.domain.agents.contracts.extraction_policy import (
@@ -16,9 +17,28 @@ if TYPE_CHECKING:
     )
 
 
+class _FullAutoResolutionSelf(Protocol):
+    def _resolve_relation_validation_state(
+        self,
+        *,
+        source_type: str,
+        relation_type: str,
+        target_type: str,
+    ) -> tuple[RelationValidationState, str]: ...
+
+    def _ensure_full_auto_allowed_constraint(
+        self,
+        *,
+        source_type: str,
+        relation_type: str,
+        target_type: str,
+        source_ref: str,
+    ) -> tuple[bool, str]: ...
+
+
 class _ExtractionRelationFullAutoHelpers:
     def _resolve_full_auto_candidate(
-        self,
+        self: _FullAutoResolutionSelf,
         *,
         candidate: _ResolvedRelationCandidate,
         mapping_proposal: RelationTypeMappingProposal | None,

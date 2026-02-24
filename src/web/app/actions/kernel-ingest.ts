@@ -2,10 +2,12 @@
 
 import { revalidatePath } from 'next/cache'
 import {
+  runSpaceSourcePipeline,
   runAllActiveSpaceSourcesIngestion,
   runSingleSpaceSourceIngestion,
 } from '@/lib/api/kernel'
 import type {
+  PipelineRunResponse,
   SpaceRunActiveSourcesResponse,
   SpaceSourceIngestionRunResponse,
 } from '@/types/kernel'
@@ -20,6 +22,7 @@ function revalidateSpaceKernelViews(spaceId: string) {
   revalidatePath(`/spaces/${spaceId}/observations`)
   revalidatePath(`/spaces/${spaceId}/knowledge-graph`)
   revalidatePath(`/spaces/${spaceId}/curation`)
+  revalidatePath(`/spaces/${spaceId}/data-sources`)
   revalidatePath(`/spaces/${spaceId}`)
 }
 
@@ -58,6 +61,47 @@ export async function runSingleSpaceSourceIngestionAction(
     return {
       success: false,
       error: getActionErrorMessage(error, 'Failed to run ingestion for source'),
+    }
+  }
+}
+
+export async function runSpaceSourcePipelineAction(
+  spaceId: string,
+  sourceId: string,
+  options: {
+    source_type?: string | null
+    model_id?: string | null
+    enrichment_limit?: number
+    extraction_limit?: number
+    graph_max_depth?: number
+    smoke_mode?: boolean
+  } = {},
+): Promise<ActionResult<PipelineRunResponse>> {
+  try {
+    const token = await requireAccessToken()
+    const smokeMode = options.smoke_mode === true
+    const response = await runSpaceSourcePipeline(
+      spaceId,
+      {
+        source_id: sourceId,
+        source_type: options.source_type ?? undefined,
+        model_id: options.model_id ?? undefined,
+        enrichment_limit: smokeMode ? 5 : (options.enrichment_limit ?? 25),
+        extraction_limit: smokeMode ? 5 : (options.extraction_limit ?? 25),
+        graph_max_depth: options.graph_max_depth ?? 2,
+      },
+      token,
+    )
+    revalidateSpaceKernelViews(spaceId)
+    revalidatePath(`/spaces/${spaceId}/data-sources/${sourceId}/workflow`)
+    return { success: true, data: response }
+  } catch (error: unknown) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('[ServerAction] runSpaceSourcePipeline failed:', error)
+    }
+    return {
+      success: false,
+      error: getActionErrorMessage(error, 'Failed to run full pipeline for source'),
     }
   }
 }

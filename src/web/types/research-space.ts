@@ -19,6 +19,9 @@ export interface ResearchSpaceSettings {
   auto_approve?: boolean
   require_review?: boolean
   review_threshold?: number
+  relation_governance_mode?: 'FULL_AUTO' | 'HUMAN_IN_LOOP'
+  relation_default_review_threshold?: number
+  relation_review_thresholds?: Record<string, number>
   dictionary_agent_creation_policy?: 'ACTIVE' | 'PENDING_REVIEW'
   max_data_sources?: number
   allowed_source_types?: string[]

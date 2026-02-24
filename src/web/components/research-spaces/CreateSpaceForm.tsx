@@ -6,7 +6,6 @@ import { createResearchSpaceAction } from '@/app/actions/research-spaces'
 import { createSpaceSchema, type CreateSpaceFormData } from '@/lib/schemas/research-space'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Form,
   FormControl,
@@ -16,10 +15,18 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Loader2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { toast } from 'sonner'
+import { CardSection, parseRelationThresholds } from './create-space-form-helpers'
 
 export function CreateSpaceForm() {
   const router = useRouter()
@@ -33,6 +40,9 @@ export function CreateSpaceForm() {
       slug: '',
       description: '',
       tags: [],
+      governance_mode: 'FULL_AUTO',
+      relation_default_review_threshold: 0.7,
+      relation_review_thresholds_text: '',
     },
   })
 
@@ -60,7 +70,21 @@ export function CreateSpaceForm() {
 
     try {
       setIsSubmitting(true)
-      const result = await createResearchSpaceAction(data)
+      const relationReviewThresholds = parseRelationThresholds(
+        data.relation_review_thresholds_text,
+      )
+      const result = await createResearchSpaceAction({
+        name: data.name,
+        slug: data.slug,
+        description: data.description,
+        tags: data.tags,
+        settings: {
+          relation_governance_mode: data.governance_mode,
+          relation_default_review_threshold: data.relation_default_review_threshold,
+          relation_review_thresholds: relationReviewThresholds,
+          dictionary_agent_creation_policy: 'ACTIVE',
+        },
+      })
       if (!result.success) {
         if (result.error.toLowerCase().includes('slug')) {
           setSlugError('This slug is already taken. Please choose another.')
@@ -69,7 +93,7 @@ export function CreateSpaceForm() {
         return
       }
       toast.success('Research space created successfully!')
-      router.push(`/spaces/${result.data.id}`)
+      router.push(`/spaces/${result.data.id}/data-sources?onboarding=1`)
     } catch (error) {
       if (error instanceof Error) {
         setSlugError(error.message)
@@ -151,6 +175,78 @@ export function CreateSpaceForm() {
             </FormItem>
           )}
         />
+
+        <CardSection title="Workflow governance">
+          <FormField
+            control={form.control}
+            name="governance_mode"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Governance mode</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select governance mode" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="FULL_AUTO">FULL_AUTO</SelectItem>
+                    <SelectItem value="HUMAN_IN_LOOP">HUMAN_IN_LOOP</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  FULL_AUTO applies AI-driven approvals. HUMAN_IN_LOOP routes low-confidence
+                  relation decisions for review.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="relation_default_review_threshold"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Default relation review threshold</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={field.value}
+                    onChange={(event) => field.onChange(Number(event.target.value))}
+                  />
+                </FormControl>
+                <FormDescription>
+                  Confidence below this threshold is reviewed (or recorded for review in manual mode).
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="relation_review_thresholds_text"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Per-relation thresholds (optional)</FormLabel>
+                <FormControl>
+                  <textarea
+                    {...field}
+                    className="flex min-h-[70px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    placeholder="PHYSICALLY_INTERACTS_WITH=0.75, ASSOCIATED_WITH=0.65"
+                    rows={3}
+                  />
+                </FormControl>
+                <FormDescription>
+                  Comma-separated `RELATION_TYPE=threshold` pairs.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </CardSection>
 
         <div className="flex gap-4">
           <Button

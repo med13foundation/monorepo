@@ -17,6 +17,10 @@ import type {
   KernelRelationCurationUpdateRequest,
   KernelRelationListResponse,
   KernelRelationResponse,
+  PipelineRunRequest,
+  PipelineRunResponse,
+  SourcePipelineRunsResponse,
+  SourceWorkflowMonitorResponse,
   SpaceRunActiveSourcesResponse,
   SpaceSourceIngestionRunResponse,
 } from '@/types/kernel'
@@ -331,5 +335,74 @@ export async function runSingleSpaceSourceIngestion(
     `/research-spaces/${spaceId}/ingest/sources/${sourceId}/run`,
     {},
     { token },
+  )
+}
+
+export async function runSpaceSourcePipeline(
+  spaceId: string,
+  payload: PipelineRunRequest,
+  token?: string,
+): Promise<PipelineRunResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for runSpaceSourcePipeline')
+  }
+  return apiPost<PipelineRunResponse>(
+    `/research-spaces/${spaceId}/pipeline/run`,
+    payload,
+    { token },
+  )
+}
+
+export interface SourcePipelineRunsParams {
+  limit?: number
+}
+
+export async function fetchSourcePipelineRuns(
+  spaceId: string,
+  sourceId: string,
+  params: SourcePipelineRunsParams = {},
+  token?: string,
+): Promise<SourcePipelineRunsResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchSourcePipelineRuns')
+  }
+  const options: ApiRequestOptions<SourcePipelineRunsResponse> = {
+    token,
+    params: {
+      limit: params.limit ?? 50,
+    },
+  }
+  return apiGet<SourcePipelineRunsResponse>(
+    `/research-spaces/${spaceId}/sources/${sourceId}/pipeline-runs`,
+    options,
+  )
+}
+
+export interface SourceWorkflowMonitorParams {
+  run_id?: string
+  limit?: number
+  include_graph?: boolean
+}
+
+export async function fetchSourceWorkflowMonitor(
+  spaceId: string,
+  sourceId: string,
+  params: SourceWorkflowMonitorParams = {},
+  token?: string,
+): Promise<SourceWorkflowMonitorResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchSourceWorkflowMonitor')
+  }
+  const options: ApiRequestOptions<SourceWorkflowMonitorResponse> = {
+    token,
+    params: {
+      ...(params.run_id ? { run_id: params.run_id } : {}),
+      limit: params.limit ?? 50,
+      include_graph: params.include_graph ?? true,
+    },
+  }
+  return apiGet<SourceWorkflowMonitorResponse>(
+    `/research-spaces/${spaceId}/sources/${sourceId}/workflow-monitor`,
+    options,
   )
 }

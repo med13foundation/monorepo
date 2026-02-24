@@ -28,6 +28,10 @@ jest.mock('@/app/actions/data-sources', () => ({
   updateDataSourceAction: jest.fn(),
 }))
 
+jest.mock('@/app/actions/kernel-ingest', () => ({
+  runSpaceSourcePipelineAction: jest.fn(),
+}))
+
 jest.mock('@/components/data-discovery/DataDiscoveryContent', () => ({
   DataDiscoveryContent: ({ onComplete }: { onComplete?: () => void }) => (
     <div>

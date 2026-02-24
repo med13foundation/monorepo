@@ -7,6 +7,7 @@ import {
   testDataSourceAiConfigurationAction,
   updateDataSourceAction,
 } from '@/app/actions/data-sources'
+import { runSpaceSourcePipelineAction } from '@/app/actions/kernel-ingest'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -26,6 +27,7 @@ import {
 } from '@/components/ui/dialog'
 import {
   Database,
+  FlaskConical,
   Loader2,
   Clock,
   Info,
@@ -45,6 +47,7 @@ import type { DataSource } from '@/types/data-source'
 import { componentRegistry } from '@/lib/components/registry'
 import type { DataSourceAiTestResult, DataSourceListResponse } from '@/lib/api/data-sources'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 
 interface DataSourcesListProps {
   spaceId: string
@@ -53,6 +56,15 @@ interface DataSourcesListProps {
   discoveryState: OrchestratedSessionState | null
   discoveryCatalog: SourceCatalogEntry[]
   discoveryError?: string | null
+  workflowStatusBySource?: Record<string, SourceWorkflowCardStatus>
+}
+
+export interface SourceWorkflowCardStatus {
+  last_pipeline_status: string | null
+  pending_paper_count: number
+  pending_relation_review_count: number
+  graph_edges_delta_last_run: number
+  graph_edges_total: number
 }
 
 export function DataSourcesList({
@@ -62,6 +74,7 @@ export function DataSourcesList({
   discoveryState,
   discoveryCatalog,
   discoveryError,
+  workflowStatusBySource,
 }: DataSourcesListProps) {
   const router = useRouter()
   const [detailSourceId, setDetailSourceId] = useState<string | null>(null)
@@ -76,6 +89,7 @@ export function DataSourcesList({
   const [aiTestDialogSource, setAiTestDialogSource] = useState<DataSource | null>(null)
   const [aiTestResult, setAiTestResult] = useState<DataSourceAiTestResult | null>(null)
   const [isAiTestDialogOpen, setIsAiTestDialogOpen] = useState(false)
+  const [runningPipelineSourceId, setRunningPipelineSourceId] = useState<string | null>(null)
   const StatusBadge = componentRegistry.get<{ status: string }>('dataSource.statusBadge')
 
   if (dataSourcesError) {
@@ -227,6 +241,88 @@ export function DataSourcesList({
     return 'moments away'
   }
 
+  const readSourceMetadata = (source: DataSource): Record<string, unknown> => {
+    const config = source.config
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      return {}
+    }
+    const metadata = (config as Record<string, unknown>).metadata
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      return {}
+    }
+    return metadata as Record<string, unknown>
+  }
+
+  const readSourceAgentConfig = (source: DataSource): Record<string, unknown> => {
+    const metadata = readSourceMetadata(source)
+    const agentConfig = metadata.agent_config
+    if (!agentConfig || typeof agentConfig !== 'object' || Array.isArray(agentConfig)) {
+      return {}
+    }
+    return agentConfig as Record<string, unknown>
+  }
+
+  const parsePubMedSnapshot = (source: DataSource) => {
+    const metadata = readSourceMetadata(source)
+    const queryValue = metadata.query
+    const maxResultsValue = metadata.max_results
+    const openAccessOnlyValue = metadata.open_access_only
+
+    return {
+      query: typeof queryValue === 'string' ? queryValue : null,
+      maxResults:
+        typeof maxResultsValue === 'number' && Number.isFinite(maxResultsValue)
+          ? Math.max(1, Math.floor(maxResultsValue))
+          : null,
+      openAccessOnly: openAccessOnlyValue !== false,
+    }
+  }
+
+  const handleRunFullPipeline = async (source: DataSource, smokeMode: boolean) => {
+    try {
+      if (smokeMode && source.source_type === 'pubmed') {
+        const metadata = readSourceMetadata(source)
+        const query = typeof metadata.query === 'string' ? metadata.query.toLowerCase() : ''
+        const requiredTerms = Array.isArray(metadata.required_query_terms)
+          ? metadata.required_query_terms.filter(
+              (item): item is string => typeof item === 'string' && item.trim().length > 0,
+            )
+          : []
+        const missingRequiredTerm =
+          requiredTerms.length > 0 &&
+          requiredTerms.some((term) => !query.includes(term.trim().toLowerCase()))
+        if (missingRequiredTerm) {
+          toast.error(
+            'Smoke-mode guard: query is missing one or more required target terms for this source.',
+          )
+          return
+        }
+      }
+      setRunningPipelineSourceId(source.id)
+      const agentConfig = readSourceAgentConfig(source)
+      const modelId = typeof agentConfig.model_id === 'string' ? agentConfig.model_id : null
+      const result = await runSpaceSourcePipelineAction(spaceId, source.id, {
+        source_type: source.source_type,
+        model_id: modelId,
+        smoke_mode: smokeMode,
+      })
+      if (!result.success) {
+        toast.error(result.error)
+        return
+      }
+      toast.success(
+        smokeMode
+          ? `Smoke pipeline run completed for ${source.name} (run id: ${result.data.run_id}).`
+          : `Full pipeline run completed for ${source.name} (run id: ${result.data.run_id}).`,
+      )
+      router.refresh()
+    } catch (error) {
+      toast.error('Failed to run full pipeline')
+    } finally {
+      setRunningPipelineSourceId(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -266,6 +362,26 @@ export function DataSourcesList({
           {resolvedDataSources.map((source: DataSource) => {
             const agentConfig = getSourceAgentConfigSnapshot(source)
             const showsAiControls = agentConfig.supportsAiControls
+            const isPubMedSource = source.source_type === 'pubmed'
+            const pubMedSnapshot = isPubMedSource ? parsePubMedSnapshot(source) : null
+            const workflowStatus = workflowStatusBySource?.[source.id]
+            const preActivationChecklist: string[] = []
+            if (source.status !== 'active' && isPubMedSource) {
+              if (!pubMedSnapshot?.query) {
+                preActivationChecklist.push('Set the PubMed query')
+              }
+              if (pubMedSnapshot?.openAccessOnly !== true) {
+                preActivationChecklist.push('Enable OA-only mode (enforced on save)')
+              }
+              const schedule = source.ingestion_schedule
+              if (
+                !schedule ||
+                schedule.enabled !== true ||
+                schedule.frequency === 'manual'
+              ) {
+                preActivationChecklist.push('Configure a non-manual schedule')
+              }
+            }
 
             return (
               <Card key={source.id}>
@@ -304,6 +420,56 @@ export function DataSourcesList({
                       <span className="text-muted-foreground">Last ingested:</span>
                       <span className="font-medium">{formatTimestamp(source.last_ingested_at)}</span>
                     </div>
+                    {isPubMedSource && (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="text-muted-foreground">OA-only:</span>
+                          <Badge variant="secondary">
+                            {pubMedSnapshot?.openAccessOnly ? 'Enforced' : 'Disabled'}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-muted-foreground">Per-run cap:</span>
+                          <span className="font-medium">
+                            {pubMedSnapshot?.maxResults ?? 'Not set'}
+                          </span>
+                        </div>
+                        {pubMedSnapshot?.query && (
+                          <div className="rounded border bg-muted/30 p-2">
+                            <p className="mb-1 text-[11px] uppercase text-muted-foreground">
+                              Query preview
+                            </p>
+                            <p className="line-clamp-3 font-mono text-xs">
+                              {pubMedSnapshot.query}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {workflowStatus && (
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <Badge variant="outline">
+                          Last pipeline: {workflowStatus.last_pipeline_status ?? 'n/a'}
+                        </Badge>
+                        <Badge variant="outline">
+                          Pending papers: {workflowStatus.pending_paper_count}
+                        </Badge>
+                        <Badge variant="outline">
+                          Pending review: {workflowStatus.pending_relation_review_count}
+                        </Badge>
+                        <Badge variant="outline">
+                          Graph Δ edges: {workflowStatus.graph_edges_delta_last_run}
+                        </Badge>
+                      </div>
+                    )}
+                    {preActivationChecklist.length > 0 && (
+                      <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                        <p className="mb-1 font-medium">Pre-activation checklist</p>
+                        {preActivationChecklist.map((item) => (
+                          <p key={item}>- {item}</p>
+                        ))}
+                      </div>
+                    )}
                     {source.tags && source.tags.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
                         {source.tags.map((tag) => (
@@ -374,6 +540,37 @@ export function DataSourcesList({
                             Test AI
                           </Button>
                         )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="default"
+                          onClick={() => handleRunFullPipeline(source, false)}
+                          disabled={runningPipelineSourceId === source.id}
+                        >
+                          {runningPipelineSourceId === source.id ? (
+                            <Loader2 className="mr-2 size-4 animate-spin" />
+                          ) : (
+                            <FlaskConical className="mr-2 size-4" />
+                          )}
+                          Run full pipeline now
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleRunFullPipeline(source, true)}
+                          disabled={runningPipelineSourceId === source.id}
+                        >
+                          {runningPipelineSourceId === source.id ? (
+                            <Loader2 className="mr-2 size-4 animate-spin" />
+                          ) : null}
+                          Run smoke (stage cap 5)
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" asChild>
+                          <Link href={`/spaces/${spaceId}/data-sources/${source.id}/workflow`}>
+                            Workflow monitor
+                          </Link>
+                        </Button>
                         <Button
                           type="button"
                           size="sm"

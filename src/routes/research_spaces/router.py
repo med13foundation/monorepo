@@ -44,6 +44,7 @@ from . import (  # noqa: E402,F401
     ontology_routes,
     pipeline_orchestration_routes,
     space_routes,
+    workflow_monitor_routes,
 )
 
 __all__ = ["research_spaces_router"]

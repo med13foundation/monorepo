@@ -117,6 +117,14 @@ class PubMedQueryConfig(BaseModel):
             raise ValueError(msg)
         return normalized
 
+    @field_validator("open_access_only")
+    @classmethod
+    def enforce_open_access_only(cls, value: object) -> bool:
+        if value is not True:
+            msg = "PubMed sources must enforce open_access_only=true"
+            raise ValueError(msg)
+        return True
+
     @model_validator(mode="after")
     def ensure_date_order(self) -> PubMedQueryConfig:
         """Ensure date_from is not after date_to."""

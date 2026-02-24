@@ -141,6 +141,72 @@ export interface KernelGraphExportResponse {
   edges: KernelRelationResponse[]
 }
 
+export interface PipelineRunRequest {
+  source_id: string
+  run_id?: string | null
+  resume_from_stage?: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
+  enrichment_limit?: number
+  extraction_limit?: number
+  source_type?: string | null
+  model_id?: string | null
+  shadow_mode?: boolean | null
+  graph_seed_entity_ids?: string[] | null
+  graph_max_depth?: number
+  graph_relation_types?: string[] | null
+}
+
+export interface PipelineRunResponse {
+  run_id: string
+  source_id: string
+  research_space_id: string
+  started_at: string
+  completed_at: string
+  status: string
+  resume_from_stage: string | null
+  ingestion_status: string
+  enrichment_status: string
+  extraction_status: string
+  graph_status: string
+  fetched_records: number
+  parsed_publications: number
+  created_publications: number
+  updated_publications: number
+  enrichment_processed: number
+  enrichment_enriched: number
+  enrichment_failed: number
+  extraction_processed: number
+  extraction_extracted: number
+  extraction_failed: number
+  graph_requested: number
+  graph_processed: number
+  graph_persisted_relations: number
+  executed_query: string | null
+  errors: string[]
+  metadata: JSONObject | null
+}
+
+export interface SourcePipelineRunsResponse {
+  source_id: string
+  runs: JSONObject[]
+  total: number
+}
+
+export interface SourceWorkflowMonitorResponse {
+  source_snapshot: JSONObject
+  last_run: JSONObject | null
+  pipeline_runs: JSONObject[]
+  documents: JSONObject[]
+  document_status_counts: Record<string, number>
+  extraction_queue: JSONObject[]
+  extraction_queue_status_counts: Record<string, number>
+  publication_extractions: JSONObject[]
+  publication_extraction_status_counts: Record<string, number>
+  relation_review: JSONObject
+  graph_summary: JSONObject | null
+  operational_counters: JSONObject
+  warnings: string[]
+}
+
 export interface GraphSearchRequest {
   question: string
   max_depth?: number
