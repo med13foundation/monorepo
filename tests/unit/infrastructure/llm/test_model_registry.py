@@ -1,4 +1,4 @@
-"""Tests for FlujoModelRegistry model configuration."""
+"""Tests for ArtanaModelRegistry model configuration."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from src.domain.agents.models import (
     ModelSpec,
 )
 from src.infrastructure.llm.config.model_registry import (
-    FlujoModelRegistry,
+    ArtanaModelRegistry,
     get_model_registry,
 )
 
@@ -67,7 +67,7 @@ class TestModelSpec:
         assert spec.get_reasoning_settings() is None
 
     def test_get_reasoning_settings_reasoning_model(self) -> None:
-        """Reasoning models should return Flujo-compatible settings."""
+        """Reasoning models should return OpenAI-compatible settings."""
         spec = ModelSpec(
             model_id="openai:gpt-5",
             display_name="GPT-5",
@@ -84,7 +84,7 @@ class TestModelSpec:
         assert settings is not None
         assert "reasoning" in settings
         assert settings["reasoning"]["effort"] == "high"
-        # Verbosity maps to text.verbosity in Flujo
+        # Verbosity maps to text.verbosity for OpenAI reasoning models
         assert "text" in settings
         assert settings["text"]["verbosity"] == "high"
 
@@ -138,18 +138,18 @@ class TestModelSpec:
         assert ModelCapability.QUERY_GENERATION in spec.capabilities
 
 
-class TestFlujoModelRegistry:
-    """Tests for the FlujoModelRegistry infrastructure component."""
+class TestArtanaModelRegistry:
+    """Tests for the ArtanaModelRegistry infrastructure component."""
 
-    def test_registry_loads_from_flujo_toml(self) -> None:
-        """Registry should load models from flujo.toml."""
-        registry = FlujoModelRegistry()
+    def test_registry_loads_from_artana_toml(self) -> None:
+        """Registry should load models from artana.toml."""
+        registry = ArtanaModelRegistry()
         models = registry.get_available_models()
         assert len(models) > 0
 
     def test_get_model_returns_spec(self) -> None:
         """Should return a ModelSpec for valid model ID."""
-        registry = FlujoModelRegistry()
+        registry = ArtanaModelRegistry()
         # gpt-4o-mini should be in default config
         spec = registry.get_model("openai:gpt-4o-mini")
         assert spec.model_id == "openai:gpt-4o-mini"
@@ -157,13 +157,13 @@ class TestFlujoModelRegistry:
 
     def test_get_model_raises_for_unknown(self) -> None:
         """Should raise KeyError for unknown model ID."""
-        registry = FlujoModelRegistry()
+        registry = ArtanaModelRegistry()
         with pytest.raises(KeyError):
             registry.get_model("unknown:model-xyz")
 
     def test_get_models_for_capability(self) -> None:
         """Should filter models by capability."""
-        registry = FlujoModelRegistry()
+        registry = ArtanaModelRegistry()
         query_models = registry.get_models_for_capability(
             ModelCapability.QUERY_GENERATION,
         )
@@ -173,14 +173,14 @@ class TestFlujoModelRegistry:
 
     def test_get_default_model_for_capability(self) -> None:
         """Should return default model for a capability."""
-        registry = FlujoModelRegistry()
+        registry = ArtanaModelRegistry()
         default = registry.get_default_model(ModelCapability.QUERY_GENERATION)
         assert default is not None
         assert ModelCapability.QUERY_GENERATION in default.capabilities
 
     def test_validate_model_for_capability_valid(self) -> None:
         """Should return True for valid model/capability combo."""
-        registry = FlujoModelRegistry()
+        registry = ArtanaModelRegistry()
         # gpt-4o-mini should support query generation
         assert registry.validate_model_for_capability(
             "openai:gpt-4o-mini",
@@ -189,7 +189,7 @@ class TestFlujoModelRegistry:
 
     def test_validate_model_for_capability_invalid_model(self) -> None:
         """Should return False for unknown model."""
-        registry = FlujoModelRegistry()
+        registry = ArtanaModelRegistry()
         assert not registry.validate_model_for_capability(
             "unknown:model",
             ModelCapability.QUERY_GENERATION,
@@ -197,21 +197,21 @@ class TestFlujoModelRegistry:
 
     def test_list_model_ids(self) -> None:
         """Should return list of all model IDs."""
-        registry = FlujoModelRegistry()
+        registry = ArtanaModelRegistry()
         ids = registry.list_model_ids()
         assert isinstance(ids, list)
         assert len(ids) > 0
         assert all(isinstance(mid, str) for mid in ids)
 
     def test_env_var_override_for_default(self) -> None:
-        """Environment variable should override flujo.toml default."""
+        """Environment variable should override artana.toml default."""
         # The env var pattern is MED13_AI_{CAPABILITY}_MODEL
         env_model = "openai:gpt-5"
         with patch.dict(
             os.environ,
             {"MED13_AI_QUERY_GENERATION_MODEL": env_model},
         ):
-            registry = FlujoModelRegistry()
+            registry = ArtanaModelRegistry()
             # Check if gpt-5 is configured and supports query_generation
             supports = registry.validate_model_for_capability(
                 env_model,
@@ -237,10 +237,10 @@ class TestGetModelRegistry:
         registry2 = get_model_registry()
         assert registry1 is registry2
 
-    def test_instance_is_flujo_registry(self) -> None:
-        """Should return a FlujoModelRegistry instance."""
+    def test_instance_is_artana_registry(self) -> None:
+        """Should return an ArtanaModelRegistry instance."""
         registry = get_model_registry()
-        assert isinstance(registry, FlujoModelRegistry)
+        assert isinstance(registry, ArtanaModelRegistry)
 
 
 class TestModelCostTier:

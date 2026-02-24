@@ -858,7 +858,7 @@ class EntityRecognitionService(
         """
         Reconcile dictionary mutations already applied by the agent tool loop.
 
-        When a Flujo run id is present we treat dictionary writes as in-agent
+        When an agent run id is present we treat dictionary writes as in-agent
         side effects and avoid duplicating them in post-hoc service logic.
         """
         created_variables = 0

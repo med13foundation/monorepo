@@ -2,7 +2,7 @@
 Model registry implementation for AI agent configurations.
 
 Implements the ModelRegistryPort interface, loading models from
-flujo.toml configuration with environment variable overrides.
+artana.toml configuration with environment variable overrides.
 
 This is the single source of truth for available AI models.
 """
@@ -28,23 +28,23 @@ from src.domain.agents.models import (
 from src.domain.agents.ports import ModelRegistryPort
 
 # Default config path relative to project root
-DEFAULT_CONFIG_PATH = "flujo.toml"
+DEFAULT_CONFIG_PATH = "artana.toml"
 
 
-class FlujoModelRegistry(ModelRegistryPort):
+class ArtanaModelRegistry(ModelRegistryPort):
     """
-    Model registry implementation loading from flujo.toml.
+    Model registry implementation loading from artana.toml.
 
     Provides centralized access to model configurations for
     agent factories, cost tracking, and model selection.
 
     Configuration hierarchy (highest priority first):
     1. Environment variables (MED13_AI_{CAPABILITY}_MODEL)
-    2. flujo.toml [models] section
+    2. artana.toml [models] section
     3. Fallback to first enabled model
     """
 
-    _instance: FlujoModelRegistry | None = None
+    _instance: ArtanaModelRegistry | None = None
     _models: dict[str, ModelSpec]
     _defaults: dict[ModelCapability, str]
     _cost_config: dict[str, dict[str, float]]
@@ -55,7 +55,7 @@ class FlujoModelRegistry(ModelRegistryPort):
         Initialize the registry from configuration.
 
         Args:
-            config_path: Path to flujo.toml (defaults to project root)
+            config_path: Path to artana.toml (defaults to project root)
         """
         self._config_path = (
             Path(config_path) if config_path else Path(DEFAULT_CONFIG_PATH)
@@ -63,7 +63,7 @@ class FlujoModelRegistry(ModelRegistryPort):
         self._load_configuration()
 
     def _load_configuration(self) -> None:
-        """Load models and defaults from flujo.toml."""
+        """Load models and defaults from artana.toml."""
         config = self._read_config_file()
 
         # Parse models from registry section
@@ -320,7 +320,7 @@ class FlujoModelRegistry(ModelRegistryPort):
 
         Resolution order:
         1. Environment variable (MED13_AI_{CAPABILITY}_MODEL)
-        2. flujo.toml [models] defaults
+        2. artana.toml [models] defaults
         3. First enabled model with the capability
         """
         # 1. Check environment variable
@@ -331,7 +331,7 @@ class FlujoModelRegistry(ModelRegistryPort):
             if model.is_enabled and model.supports_capability(capability):
                 return model
 
-        # 2. Check flujo.toml defaults
+        # 2. Check artana.toml defaults
         if capability in self._defaults:
             default_id = self._defaults[capability]
             if default_id in self._models:
@@ -395,7 +395,7 @@ class FlujoModelRegistry(ModelRegistryPort):
 
 
 @lru_cache(maxsize=1)
-def get_model_registry() -> FlujoModelRegistry:
+def get_model_registry() -> ArtanaModelRegistry:
     """
     Get the singleton model registry instance.
 
@@ -403,9 +403,9 @@ def get_model_registry() -> FlujoModelRegistry:
     instance is used throughout the application.
 
     Returns:
-        The global FlujoModelRegistry instance
+        The global ArtanaModelRegistry instance
     """
-    return FlujoModelRegistry()
+    return ArtanaModelRegistry()
 
 
 def get_default_model_id(capability: ModelCapability) -> str:
@@ -428,16 +428,16 @@ def get_default_model_id(capability: ModelCapability) -> str:
 # =============================================================================
 # Legacy Compatibility Layer
 # =============================================================================
-# These maintain backward compatibility with existing code that uses
+# Thin compatibility wrapper for code paths that still use
 # ModelRegistry class methods directly.
 
 
 class ModelRegistry:
     """
-    Legacy compatibility wrapper for FlujoModelRegistry.
+    Compatibility wrapper for ArtanaModelRegistry.
 
     Provides the same class-method interface as the previous
-    implementation for backward compatibility.
+    implementation.
 
     New code should use get_model_registry() instead.
     """

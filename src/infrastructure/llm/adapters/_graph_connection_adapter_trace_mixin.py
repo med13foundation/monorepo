@@ -36,7 +36,7 @@ class _GraphConnectionAdapterTraceMixin:
 
     @classmethod
     def _has_openai_key(cls) -> bool:
-        raw_value = os.getenv("OPENAI_API_KEY") or os.getenv("FLUJO_OPENAI_API_KEY")
+        raw_value = os.getenv("OPENAI_API_KEY") or os.getenv("ARTANA_OPENAI_API_KEY")
         if raw_value is None:
             return False
         normalized = raw_value.strip()

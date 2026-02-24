@@ -269,8 +269,8 @@ class DataSourceAiTestFinding(BaseModel):
     links: list[DataSourceAiTestLink] = Field(default_factory=list)
 
 
-class FlujoTableSummary(BaseModel):
-    """Summary of Flujo table rows recorded during a run."""
+class AgentRunTableSummary(BaseModel):
+    """Summary of runtime state table rows recorded during a run."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -295,8 +295,8 @@ class DataSourceAiTestResult(BaseModel):
     sample_size: int = Field(ge=1)
     findings: list[DataSourceAiTestFinding] = Field(default_factory=list)
     checked_at: datetime
-    flujo_run_id: str | None = None
-    flujo_tables: list[FlujoTableSummary] = Field(default_factory=list)
+    agent_run_id: str | None = None
+    agent_run_tables: list[AgentRunTableSummary] = Field(default_factory=list)
 
 
 class SourceCatalogEntrySeed(TypedDict, total=False):
@@ -320,7 +320,7 @@ __all__ = [
     "DataSourceAiTestFinding",
     "DataSourceAiTestLink",
     "DataSourceAiTestResult",
-    "FlujoTableSummary",
+    "AgentRunTableSummary",
     "IngestionExtractionQueueMetadata",
     "IngestionExtractionRunMetadata",
     "IngestionIdempotencyMetadata",

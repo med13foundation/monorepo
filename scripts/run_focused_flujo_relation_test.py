@@ -201,7 +201,7 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Per-agent timeout in seconds. "
-            "Defaults to model timeout from flujo.toml."
+            "Defaults to model timeout from artana.toml."
         ),
     )
     parser.add_argument(
@@ -210,7 +210,7 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Max retries per agent invocation. "
-            "Defaults to model max_retries from flujo.toml."
+            "Defaults to model max_retries from artana.toml."
         ),
     )
     parser.add_argument(

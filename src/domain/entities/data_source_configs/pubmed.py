@@ -31,7 +31,7 @@ class AiAgentConfig(BaseModel):
         default=None,
         description=(
             "Optional per-source model override; applied only when runtime "
-            "model overrides are enabled in flujo.toml."
+            "model overrides are enabled in artana.toml."
         ),
     )
 

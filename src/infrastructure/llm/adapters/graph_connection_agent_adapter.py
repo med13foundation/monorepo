@@ -1,127 +1,90 @@
-"""Flujo-based adapter for graph-connection agent operations."""
+"""Artana-based adapter for graph-connection agent operations."""
 
 from __future__ import annotations
 
+import hashlib
 import json
-import logging
-import time
 from typing import TYPE_CHECKING
 
-from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
-
+from src.domain.agents.contracts.base import EvidenceItem
+from src.domain.agents.contracts.graph_connection import GraphConnectionContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
-from src.infrastructure.llm.adapters._graph_connection_adapter_pipeline_mixin import (
-    _GraphConnectionAdapterPipelineMixin,
+from src.infrastructure.llm.adapters._openai_json_schema_model_port import (
+    OpenAIJSONSchemaModelPort,
+    has_configured_openai_api_key,
 )
-from src.infrastructure.llm.adapters._graph_connection_adapter_trace_mixin import (
-    _GraphConnectionAdapterTraceMixin,
+from src.infrastructure.llm.config import (
+    GovernanceConfig,
+    get_model_registry,
+    resolve_artana_state_uri,
 )
-from src.infrastructure.llm.config.governance import GovernanceConfig
-from src.infrastructure.llm.config.model_registry import get_model_registry
-from src.infrastructure.llm.pipelines.graph_connection_pipelines import (
-    create_clinvar_graph_connection_pipeline,
-    create_pubmed_graph_connection_pipeline,
+from src.infrastructure.llm.prompts.graph_connection.clinvar import (
+    CLINVAR_GRAPH_CONNECTION_DISCOVERY_SYSTEM_PROMPT,
+    CLINVAR_GRAPH_CONNECTION_SYNTHESIS_SYSTEM_PROMPT,
 )
-from src.infrastructure.llm.state import backend_manager, lifecycle
+from src.infrastructure.llm.prompts.graph_connection.pubmed import (
+    PUBMED_GRAPH_CONNECTION_DISCOVERY_SYSTEM_PROMPT,
+    PUBMED_GRAPH_CONNECTION_SYNTHESIS_SYSTEM_PROMPT,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from flujo import Flujo
-    from flujo.state.backends.base import StateBackend
-
     from src.domain.agents.contexts.graph_connection_context import (
         GraphConnectionContext,
     )
-    from src.domain.agents.contracts.graph_connection import GraphConnectionContract
-    from src.domain.ports.dictionary_port import DictionaryPort
-    from src.domain.ports.graph_query_port import GraphQueryPort
-    from src.domain.repositories.kernel.relation_repository import (
-        KernelRelationRepository,
-    )
-    from src.infrastructure.llm.state.lifecycle import FlujoLifecycleManager
-
-logger = logging.getLogger(__name__)
 
 _SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
+_ARTANA_IMPORT_ERROR: Exception | None = None
 
-if TYPE_CHECKING:
-    GraphConnectionPipelineFactory = Callable[
-        ...,
-        Flujo[str, GraphConnectionContract, GraphConnectionContext],
-    ]
+try:
+    from artana.agent import SingleStepModelClient
+    from artana.kernel import ArtanaKernel
+    from artana.models import TenantContext
+    from artana.store import PostgresStore, SQLiteStore
+except ImportError as exc:  # pragma: no cover - environment-dependent import
+    _ARTANA_IMPORT_ERROR = exc
 
-
-def get_state_backend() -> StateBackend:
-    """Patch-friendly indirection for tests and adapter construction."""
-    return backend_manager.get_state_backend()
-
-
-def get_lifecycle_manager() -> FlujoLifecycleManager:
-    """Patch-friendly indirection for tests and adapter construction."""
-    return lifecycle.get_lifecycle_manager()
+# Backward-compatible alias for adapter unit-test patch hooks.
+_OpenAIChatModelPort = OpenAIJSONSchemaModelPort
 
 
-def build_graph_connection_tools(
-    *,
-    dictionary_service: DictionaryPort,
-    graph_query_service: GraphQueryPort,
-    relation_repository: KernelRelationRepository,
-    research_space_id: str,
-) -> tuple[object, ...]:
-    """Load graph tool builders lazily while preserving patchable module API."""
-    registry_module = __import__(
-        "src.infrastructure.llm.skills.registry",
-        fromlist=["build_graph_connection_tools"],
-    )
-    builder = registry_module.build_graph_connection_tools
-    return tuple(
-        builder(
-            dictionary_service=dictionary_service,
-            graph_query_service=graph_query_service,
-            relation_repository=relation_repository,
-            research_space_id=research_space_id,
-        ),
-    )
-
-
-_PIPELINE_FACTORIES: dict[str, GraphConnectionPipelineFactory] = {
-    "clinvar": create_clinvar_graph_connection_pipeline,
-    "pubmed": create_pubmed_graph_connection_pipeline,
-}
-
-
-class FlujoGraphConnectionAdapter(
-    _GraphConnectionAdapterPipelineMixin,
-    _GraphConnectionAdapterTraceMixin,
-    GraphConnectionPort,
-):
-    """Adapter that executes graph-connection workflows through Flujo."""
+class ArtanaGraphConnectionAdapter(GraphConnectionPort):
+    """Adapter that executes graph-connection workflows through Artana."""
 
     def __init__(
         self,
         model: str | None = None,
         *,
         use_governance: bool = True,
-        dictionary_service: DictionaryPort | None = None,
-        graph_query_service: GraphQueryPort | None = None,
-        relation_repository: KernelRelationRepository | None = None,
+        dictionary_service: object | None = None,
+        graph_query_service: object | None = None,
+        relation_repository: object | None = None,
     ) -> None:
+        if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import-time guard
+            msg = (
+                "artana-kernel is required for graph connection execution. Install dependency "
+                "'artana @ git+https://github.com/aandresalvarez/artana-kernel.git@main'."
+            )
+            raise RuntimeError(msg) from _ARTANA_IMPORT_ERROR
+
         self._default_model = model
         self._use_governance = use_governance
         self._dictionary_service = dictionary_service
         self._graph_query_service = graph_query_service
         self._relation_repository = relation_repository
-        self._state_backend = get_state_backend()
         self._governance = GovernanceConfig.from_environment()
         self._registry = get_model_registry()
-        self._lifecycle_manager = get_lifecycle_manager()
-        self._pipelines: dict[
-            tuple[str, str, str],
-            Flujo[str, GraphConnectionContract, GraphConnectionContext],
-        ] = {}
         self._last_run_id: str | None = None
+        timeout_seconds = self._resolve_timeout_seconds(model)
+        self._model_port = _OpenAIChatModelPort(
+            timeout_seconds=timeout_seconds,
+            schema_name_fallback="graph_connection_contract",
+        )
+        self._kernel = ArtanaKernel(
+            store=self._create_store(),
+            model_port=self._model_port,
+        )
+        self._client = SingleStepModelClient(kernel=self._kernel)
 
     async def discover(
         self,
@@ -135,128 +98,66 @@ class FlujoGraphConnectionAdapter(
             return self._unsupported_source_contract(context)
 
         if not self._has_openai_key():
-            return self._heuristic_contract(context, decision="fallback")
+            return self._heuristic_contract(context, reason="missing_openai_api_key")
 
         if (
             self._dictionary_service is None
             or self._graph_query_service is None
             or self._relation_repository is None
         ):
-            logger.warning(
-                "Graph connection adapter missing required services for tool binding; "
-                "falling back to heuristic mode.",
-            )
-            return self._heuristic_contract(context, decision="fallback")
+            return self._heuristic_contract(context, reason="graph_tools_unavailable")
 
         effective_model = self._resolve_model_id(model_id)
-        pipeline = self._get_or_create_pipeline(effective_model, context=context)
-        input_text = self._build_input_text(context)
-        initial_context = context.model_dump(mode="json")
-        trace_enabled = self._is_trace_dump_enabled()
-        trace_events: list[dict[str, object]] = []
-        input_chars = len(input_text)
-        initial_context_chars = self._estimate_json_chars(initial_context)
-        started_at = time.monotonic()
-        logger.info(
-            "Graph-connection pipeline run started",
-            extra={
-                "graph_source_type": source_type,
-                "graph_model_id": effective_model,
-                "graph_seed_entity_id": context.seed_entity_id,
-                "graph_research_space_id": context.research_space_id,
-                "graph_shadow_mode": context.shadow_mode,
-                "graph_max_depth": context.max_depth,
-                "graph_relation_type_count": (
-                    len(context.relation_types)
-                    if isinstance(context.relation_types, list)
-                    else 0
-                ),
-                "graph_input_chars": input_chars,
-                "graph_initial_context_chars": initial_context_chars,
-            },
+        run_id = self._create_run_id(
+            source_type=source_type,
+            model_id=effective_model,
+            research_space_id=context.research_space_id,
+            seed_entity_id=context.seed_entity_id,
         )
+        self._last_run_id = run_id
 
         try:
-            result = await self._execute_pipeline(
-                pipeline,
-                input_text=input_text,
-                initial_context=initial_context,
-                fallback_context=context,
-                trace_events=trace_events if trace_enabled else None,
+            usage_limits = self._governance.usage_limits
+            budget_limit = (
+                usage_limits.total_cost_usd if usage_limits.total_cost_usd else 1.0
             )
-            duration_ms = int((time.monotonic() - started_at) * 1000)
-            logger.info(
-                "Graph-connection pipeline run completed",
-                extra={
-                    "graph_source_type": source_type,
-                    "graph_model_id": effective_model,
-                    "graph_seed_entity_id": context.seed_entity_id,
-                    "graph_research_space_id": context.research_space_id,
-                    "graph_duration_ms": duration_ms,
-                    "graph_decision": result.decision,
-                    "graph_confidence_score": result.confidence_score,
-                    "graph_proposed_relations": len(result.proposed_relations),
-                    "graph_rejected_candidates": len(result.rejected_candidates),
+            tenant = self._create_tenant(
+                tenant_id=context.research_space_id,
+                budget_usd_limit=max(float(budget_limit), 0.01),
+            )
+            result = await self._client.step(
+                run_id=run_id,
+                tenant=tenant,
+                model=effective_model,
+                prompt=self._build_prompt(source_type=source_type, context=context),
+                output_schema=GraphConnectionContract,
+                step_key=f"graph.connection.{source_type}.v1",
+            )
+            output = result.output
+            contract = (
+                output
+                if isinstance(output, GraphConnectionContract)
+                else GraphConnectionContract.model_validate(output)
+            )
+            return contract.model_copy(
+                update={
+                    "source_type": source_type,
+                    "research_space_id": context.research_space_id,
+                    "seed_entity_id": context.seed_entity_id,
+                    "shadow_mode": context.shadow_mode,
+                    "agent_run_id": contract.agent_run_id or run_id,
                 },
             )
-            if trace_enabled:
-                self._emit_trace_dump(
-                    status="completed",
-                    context=context,
-                    effective_model=effective_model,
-                    input_text=input_text,
-                    initial_context=initial_context,
-                    trace_events=trace_events,
-                    output_contract=result,
-                    duration_ms=duration_ms,
-                    error_message=None,
-                )
-        except (PausedException, PipelineAbortSignal):
-            raise
-        except FlujoError as exc:
-            duration_ms = int((time.monotonic() - started_at) * 1000)
-            logger.warning(
-                "Graph-connection pipeline failed; returning heuristic fallback",
-                extra={
-                    "graph_source_type": source_type,
-                    "graph_model_id": effective_model,
-                    "graph_seed_entity_id": context.seed_entity_id,
-                    "graph_research_space_id": context.research_space_id,
-                    "graph_duration_ms": duration_ms,
-                    "graph_failure_type": type(exc).__name__,
-                    "graph_failure_message": str(exc),
-                },
-            )
-            fallback_contract = self._heuristic_contract(context, decision="fallback")
-            if trace_enabled:
-                self._emit_trace_dump(
-                    status="flujo_error_fallback",
-                    context=context,
-                    effective_model=effective_model,
-                    input_text=input_text,
-                    initial_context=initial_context,
-                    trace_events=trace_events,
-                    output_contract=fallback_contract,
-                    duration_ms=duration_ms,
-                    error_message=str(exc),
-                )
-            return fallback_contract
-        else:
-            return result
+        except Exception:  # noqa: BLE001
+            return self._heuristic_contract(context, reason="agent_execution_failed")
 
     async def close(self) -> None:
-        for cache_key, pipeline in self._pipelines.items():
-            try:
-                if hasattr(pipeline, "aclose"):
-                    await pipeline.aclose()
-                self._lifecycle_manager.unregister_runner(pipeline)
-            except (RuntimeError, OSError, ConnectionError) as exc:
-                logger.warning(
-                    "Error closing graph-connection pipeline for key=%s: %s",
-                    cache_key,
-                    exc,
-                )
-        self._pipelines.clear()
+        await self._model_port.aclose()
+        await self._kernel.close()
+
+    @staticmethod
+    def _has_openai_key() -> bool:
+        return has_configured_openai_api_key()
 
     def _resolve_model_id(self, model_id: str | None) -> str:
         if (
@@ -274,64 +175,63 @@ class FlujoGraphConnectionAdapter(
             ModelCapability.EVIDENCE_EXTRACTION,
         ).model_id
 
-    def _get_or_create_pipeline(
-        self,
-        model_id: str,
-        *,
-        context: GraphConnectionContext,
-    ) -> Flujo[str, GraphConnectionContract, GraphConnectionContext]:
-        source_type = context.source_type.strip().lower()
-        cache_key = (source_type, model_id, context.research_space_id)
-        if cache_key in self._pipelines:
-            return self._pipelines[cache_key]
-
-        tools: list[object] | None = None
-        if (
-            self._dictionary_service is not None
-            and self._graph_query_service is not None
-            and self._relation_repository is not None
-        ):
+    def _resolve_timeout_seconds(self, model: str | None) -> float:
+        if model:
             try:
-                tools = list(
-                    build_graph_connection_tools(
-                        dictionary_service=self._dictionary_service,
-                        graph_query_service=self._graph_query_service,
-                        relation_repository=self._relation_repository,
-                        research_space_id=context.research_space_id,
-                    ),
-                )
-            except (LookupError, PermissionError, ValueError) as exc:
-                logger.warning(
-                    "Graph-connection tools unavailable for research_space_id=%s: %s",
-                    context.research_space_id,
-                    exc,
-                )
-                tools = None
+                model_spec = self._registry.get_model(model)
+                return float(model_spec.timeout_seconds)
+            except (KeyError, ValueError):
+                pass
+        try:
+            default_spec = self._registry.get_default_model(
+                ModelCapability.EVIDENCE_EXTRACTION,
+            )
+            return float(default_spec.timeout_seconds)
+        except (KeyError, ValueError):
+            return 120.0
 
-        pipeline_factory = _PIPELINE_FACTORIES.get(source_type)
-        if pipeline_factory is None:
-            msg = f"Unsupported source type for pipeline dispatch: {source_type}"
-            raise ValueError(msg)
+    @staticmethod
+    def _create_store() -> object:
+        state_uri = resolve_artana_state_uri()
+        if state_uri.startswith("sqlite:///"):
+            sqlite_path = state_uri.removeprefix("sqlite:///")
+            if not sqlite_path:
+                sqlite_path = "artana_state.db"
+            return SQLiteStore(sqlite_path)
+        if state_uri.startswith("postgresql://"):
+            return PostgresStore(state_uri)
+        msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"
+        raise ValueError(msg)
 
-        pipeline = pipeline_factory(
-            state_backend=self._state_backend,
-            model=model_id,
-            use_governance=self._use_governance,
-            usage_limits=self._governance.usage_limits,
-            tools=tools,
+    @staticmethod
+    def _create_run_id(
+        *,
+        source_type: str,
+        model_id: str,
+        research_space_id: str,
+        seed_entity_id: str,
+    ) -> str:
+        payload = f"{source_type}|{model_id}|{research_space_id}|{seed_entity_id}"
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+        return f"graph_connection:{source_type}:{digest}"
+
+    @staticmethod
+    def _create_tenant(tenant_id: str, budget_usd_limit: float) -> TenantContext:
+        return TenantContext(
+            tenant_id=tenant_id,
+            capabilities=frozenset(),
+            budget_usd_limit=budget_usd_limit,
         )
-        self._pipelines[cache_key] = pipeline
-        self._lifecycle_manager.register_runner(pipeline)
-        return pipeline
 
-    def _build_input_text(self, context: GraphConnectionContext) -> str:
+    @staticmethod
+    def _build_input_text(context: GraphConnectionContext) -> str:
         relation_types = (
             json.dumps(context.relation_types, default=str)
             if context.relation_types is not None
             else "null"
         )
         settings_payload = json.dumps(context.research_space_settings, default=str)
-        base_input = (
+        return (
             f"SOURCE TYPE: {context.source_type}\n"
             f"RESEARCH SPACE ID: {context.research_space_id}\n"
             f"SEED ENTITY ID: {context.seed_entity_id}\n"
@@ -340,31 +240,77 @@ class FlujoGraphConnectionAdapter(
             f"SHADOW MODE: {context.shadow_mode}\n\n"
             f"RESEARCH SPACE SETTINGS JSON:\n{settings_payload}"
         )
-        snapshot_payload = self._build_seed_snapshot(context)
-        if snapshot_payload is None:
-            logger.info(
-                "Graph-connection context payload assembled without seed snapshot",
-                extra={
-                    "graph_seed_entity_id": context.seed_entity_id,
-                    "graph_research_space_id": context.research_space_id,
-                    "graph_settings_chars": len(settings_payload),
-                    "graph_snapshot_chars": 0,
-                    "graph_input_chars": len(base_input),
-                },
+
+    @staticmethod
+    def _get_system_prompt(source_type: str) -> str:
+        if source_type == "pubmed":
+            return (
+                f"{PUBMED_GRAPH_CONNECTION_DISCOVERY_SYSTEM_PROMPT}\n\n"
+                f"{PUBMED_GRAPH_CONNECTION_SYNTHESIS_SYSTEM_PROMPT}"
             )
-            return base_input
-        composed_input = f"{base_input}{self._INPUT_SNAPSHOT_MARKER}{snapshot_payload}"
-        logger.info(
-            "Graph-connection context payload assembled",
-            extra={
-                "graph_seed_entity_id": context.seed_entity_id,
-                "graph_research_space_id": context.research_space_id,
-                "graph_settings_chars": len(settings_payload),
-                "graph_snapshot_chars": len(snapshot_payload),
-                "graph_input_chars": len(composed_input),
-            },
+        return (
+            f"{CLINVAR_GRAPH_CONNECTION_DISCOVERY_SYSTEM_PROMPT}\n\n"
+            f"{CLINVAR_GRAPH_CONNECTION_SYNTHESIS_SYSTEM_PROMPT}"
         )
-        return composed_input
+
+    def _build_prompt(
+        self,
+        *,
+        source_type: str,
+        context: GraphConnectionContext,
+    ) -> str:
+        return (
+            f"{self._get_system_prompt(source_type)}\n\n"
+            "---\n"
+            "REQUEST CONTEXT\n"
+            "---\n"
+            f"{self._build_input_text(context)}"
+        )
+
+    def _heuristic_contract(
+        self,
+        context: GraphConnectionContext,
+        *,
+        reason: str,
+    ) -> GraphConnectionContract:
+        return GraphConnectionContract(
+            decision="fallback",
+            confidence_score=0.35,
+            rationale=f"Graph connection fallback triggered ({reason}).",
+            evidence=[
+                EvidenceItem(
+                    source_type="note",
+                    locator=f"graph-connection:{context.research_space_id}",
+                    excerpt=f"Fallback reason: {reason}",
+                    relevance=0.4,
+                ),
+            ],
+            source_type=context.source_type,
+            research_space_id=context.research_space_id,
+            seed_entity_id=context.seed_entity_id,
+            proposed_relations=[],
+            rejected_candidates=[],
+            shadow_mode=context.shadow_mode,
+            agent_run_id=self._last_run_id,
+        )
+
+    def _unsupported_source_contract(
+        self,
+        context: GraphConnectionContext,
+    ) -> GraphConnectionContract:
+        return GraphConnectionContract(
+            decision="escalate",
+            confidence_score=0.0,
+            rationale=f"Source type '{context.source_type}' is not supported",
+            evidence=[],
+            source_type=context.source_type,
+            research_space_id=context.research_space_id,
+            seed_entity_id=context.seed_entity_id,
+            proposed_relations=[],
+            rejected_candidates=[],
+            shadow_mode=context.shadow_mode,
+            agent_run_id=self._last_run_id,
+        )
 
 
-__all__ = ["FlujoGraphConnectionAdapter"]
+__all__ = ["ArtanaGraphConnectionAdapter"]

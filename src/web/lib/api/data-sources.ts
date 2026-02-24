@@ -70,7 +70,7 @@ export interface DataSourceAiTestFinding {
   links: DataSourceAiTestLink[]
 }
 
-export interface FlujoTableSummary {
+export interface AgentRunTableSummary {
   table_name: string
   row_count: number
   latest_created_at?: string | null
@@ -88,8 +88,8 @@ export interface DataSourceAiTestResult {
   sample_size: number
   findings: DataSourceAiTestFinding[]
   checked_at: string
-  flujo_run_id?: string | null
-  flujo_tables?: FlujoTableSummary[]
+  agent_run_id?: string | null
+  agent_run_tables?: AgentRunTableSummary[]
 }
 
 export interface IngestionJobHistoryItem {

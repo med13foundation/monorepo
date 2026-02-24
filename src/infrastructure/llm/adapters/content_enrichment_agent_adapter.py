@@ -1,59 +1,81 @@
-"""Flujo-based adapter for Tier-2 content-enrichment workflows."""
+"""Artana-based adapter for Tier-2 content-enrichment workflows."""
 
 from __future__ import annotations
 
+import hashlib
 import json
-import logging
-import os
 from typing import TYPE_CHECKING
-
-from flujo.domain.models import PipelineResult, StepResult
-from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
 
 from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.content_enrichment import ContentEnrichmentContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.content_enrichment_port import ContentEnrichmentPort
-from src.infrastructure.llm.config.governance import GovernanceConfig
-from src.infrastructure.llm.config.model_registry import get_model_registry
-from src.infrastructure.llm.pipelines.content_enrichment_pipelines import (
-    create_content_enrichment_pipeline,
+from src.infrastructure.llm.adapters._openai_json_schema_model_port import (
+    OpenAIJSONSchemaModelPort,
+    has_configured_openai_api_key,
 )
-from src.infrastructure.llm.skills.registry import build_content_enrichment_tools
-from src.infrastructure.llm.state import get_lifecycle_manager, get_state_backend
+from src.infrastructure.llm.config import (
+    GovernanceConfig,
+    get_model_registry,
+    resolve_artana_state_uri,
+)
+from src.infrastructure.llm.prompts.content_enrichment import (
+    CONTENT_ENRICHMENT_SYSTEM_PROMPT,
+)
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
-    from flujo import Flujo
-
     from src.domain.agents.contexts.content_enrichment_context import (
         ContentEnrichmentContext,
     )
-    from src.type_definitions.common import JSONObject
+    from src.type_definitions.common import JSONObject, JSONValue
+else:
+    type JSONValue = object
+    type JSONObject = dict[str, object]
 
-logger = logging.getLogger(__name__)
-
-_INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _STRUCTURED_SOURCE_TYPES = frozenset({"clinvar", "api", "database", "file_upload"})
+_ARTANA_IMPORT_ERROR: Exception | None = None
+
+try:
+    from artana.agent import SingleStepModelClient
+    from artana.kernel import ArtanaKernel
+    from artana.models import TenantContext
+    from artana.store import PostgresStore, SQLiteStore
+except ImportError as exc:  # pragma: no cover - environment-dependent import
+    _ARTANA_IMPORT_ERROR = exc
+
+# Backward-compatible alias for adapter unit-test patch hooks.
+_OpenAIChatModelPort = OpenAIJSONSchemaModelPort
 
 
-class FlujoContentEnrichmentAdapter(ContentEnrichmentPort):
-    """Adapter that executes content-enrichment workflows through Flujo."""
+class ArtanaContentEnrichmentAdapter(ContentEnrichmentPort):
+    """Adapter that executes content-enrichment workflows through Artana."""
 
     def __init__(
         self,
         model: str | None = None,
     ) -> None:
+        if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import-time guard
+            msg = (
+                "artana-kernel is required for content enrichment execution. Install dependency "
+                "'artana @ git+https://github.com/aandresalvarez/artana-kernel.git@main'."
+            )
+            raise RuntimeError(msg) from _ARTANA_IMPORT_ERROR
+
         self._default_model = model
-        self._state_backend = get_state_backend()
         self._governance = GovernanceConfig.from_environment()
         self._registry = get_model_registry()
-        self._lifecycle_manager = get_lifecycle_manager()
-        self._pipelines: dict[
-            str,
-            Flujo[str, ContentEnrichmentContract, ContentEnrichmentContext],
-        ] = {}
         self._last_run_id: str | None = None
+        timeout_seconds = self._resolve_timeout_seconds(model)
+        self._model_port = _OpenAIChatModelPort(
+            timeout_seconds=timeout_seconds,
+            schema_name_fallback="content_enrichment_contract",
+        )
+        self._kernel = ArtanaKernel(
+            store=self._create_store(),
+            model_port=self._model_port,
+        )
+        self._client = SingleStepModelClient(kernel=self._kernel)
 
     async def enrich(
         self,
@@ -73,53 +95,56 @@ class FlujoContentEnrichmentAdapter(ContentEnrichmentPort):
             )
 
         effective_model = self._resolve_model_id(model_id)
-        pipeline = self._get_or_create_pipeline(effective_model)
-        input_text = self._build_input_text(context)
-        initial_context = context.model_dump(mode="json")
+        run_id = self._create_run_id(
+            source_type=source_type,
+            model_id=effective_model,
+            document_id=context.document_id,
+        )
+        self._last_run_id = run_id
 
         try:
-            return await self._execute_pipeline(
-                pipeline,
-                input_text=input_text,
-                initial_context=initial_context,
-                fallback_context=context,
+            usage_limits = self._governance.usage_limits
+            budget_limit = (
+                usage_limits.total_cost_usd if usage_limits.total_cost_usd else 1.0
             )
-        except (PausedException, PipelineAbortSignal):
-            raise
-        except FlujoError as exc:
-            logger.warning(
-                "Content-enrichment pipeline failed for document=%s: %s",
-                context.document_id,
-                exc,
+            tenant = self._create_tenant(
+                tenant_id=context.research_space_id or "content_enrichment",
+                budget_usd_limit=max(float(budget_limit), 0.01),
             )
+            result = await self._client.step(
+                run_id=run_id,
+                tenant=tenant,
+                model=effective_model,
+                prompt=self._build_prompt(context),
+                output_schema=ContentEnrichmentContract,
+                step_key="content.enrichment.v1",
+            )
+            output = result.output
+            contract = (
+                output
+                if isinstance(output, ContentEnrichmentContract)
+                else ContentEnrichmentContract.model_validate(output)
+            )
+            return contract.model_copy(
+                update={
+                    "document_id": context.document_id,
+                    "source_type": context.source_type,
+                    "agent_run_id": contract.agent_run_id or run_id,
+                },
+            )
+        except Exception:  # noqa: BLE001
             return self._heuristic_contract(
                 context,
                 warning="Content-enrichment agent execution failed.",
             )
 
     async def close(self) -> None:
-        for cache_key, pipeline in self._pipelines.items():
-            try:
-                if hasattr(pipeline, "aclose"):
-                    await pipeline.aclose()
-                self._lifecycle_manager.unregister_runner(pipeline)
-            except (RuntimeError, OSError, ConnectionError) as exc:
-                logger.warning(
-                    "Error closing content-enrichment pipeline for key=%s: %s",
-                    cache_key,
-                    exc,
-                )
-        self._pipelines.clear()
+        await self._model_port.aclose()
+        await self._kernel.close()
 
     @staticmethod
     def _has_openai_key() -> bool:
-        raw_value = os.getenv("OPENAI_API_KEY") or os.getenv("FLUJO_OPENAI_API_KEY")
-        if raw_value is None:
-            return False
-        normalized = raw_value.strip()
-        if not normalized:
-            return False
-        return normalized.lower() not in _INVALID_OPENAI_KEYS
+        return has_configured_openai_api_key()
 
     def _resolve_model_id(self, model_id: str | None) -> str:
         if (
@@ -137,21 +162,47 @@ class FlujoContentEnrichmentAdapter(ContentEnrichmentPort):
             ModelCapability.EVIDENCE_EXTRACTION,
         ).model_id
 
-    def _get_or_create_pipeline(
-        self,
-        model_id: str,
-    ) -> Flujo[str, ContentEnrichmentContract, ContentEnrichmentContext]:
-        if model_id in self._pipelines:
-            return self._pipelines[model_id]
-        pipeline = create_content_enrichment_pipeline(
-            state_backend=self._state_backend,
-            model=model_id,
-            usage_limits=self._governance.usage_limits,
-            tools=list(build_content_enrichment_tools()),
+    def _resolve_timeout_seconds(self, model: str | None) -> float:
+        if model:
+            try:
+                model_spec = self._registry.get_model(model)
+                return float(model_spec.timeout_seconds)
+            except (KeyError, ValueError):
+                pass
+        try:
+            default_spec = self._registry.get_default_model(
+                ModelCapability.EVIDENCE_EXTRACTION,
+            )
+            return float(default_spec.timeout_seconds)
+        except (KeyError, ValueError):
+            return 120.0
+
+    @staticmethod
+    def _create_store() -> object:
+        state_uri = resolve_artana_state_uri()
+        if state_uri.startswith("sqlite:///"):
+            sqlite_path = state_uri.removeprefix("sqlite:///")
+            if not sqlite_path:
+                sqlite_path = "artana_state.db"
+            return SQLiteStore(sqlite_path)
+        if state_uri.startswith("postgresql://"):
+            return PostgresStore(state_uri)
+        msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"
+        raise ValueError(msg)
+
+    @staticmethod
+    def _create_run_id(*, source_type: str, model_id: str, document_id: str) -> str:
+        payload = f"{source_type}|{model_id}|{document_id}"
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+        return f"content_enrichment:{digest}"
+
+    @staticmethod
+    def _create_tenant(tenant_id: str, budget_usd_limit: float) -> TenantContext:
+        return TenantContext(
+            tenant_id=tenant_id,
+            capabilities=frozenset(),
+            budget_usd_limit=budget_usd_limit,
         )
-        self._pipelines[model_id] = pipeline
-        self._lifecycle_manager.register_runner(pipeline)
-        return pipeline
 
     @staticmethod
     def _build_input_text(context: ContentEnrichmentContext) -> str:
@@ -165,60 +216,14 @@ class FlujoContentEnrichmentAdapter(ContentEnrichmentPort):
             f"METADATA JSON:\n{metadata_payload}"
         )
 
-    async def _execute_pipeline(
-        self,
-        pipeline: Flujo[str, ContentEnrichmentContract, ContentEnrichmentContext],
-        *,
-        input_text: str,
-        initial_context: JSONObject,
-        fallback_context: ContentEnrichmentContext,
-    ) -> ContentEnrichmentContract:
-        final_output: ContentEnrichmentContract | None = None
-        async for item in pipeline.run_async(
-            input_text,
-            initial_context_data=initial_context,
-        ):
-            if isinstance(item, StepResult):
-                if isinstance(item.output, ContentEnrichmentContract):
-                    final_output = item.output
-            elif isinstance(item, PipelineResult):
-                self._capture_run_id(item)
-                candidate = self._extract_from_pipeline_result(item)
-                if candidate is not None:
-                    final_output = candidate
-
-        if final_output is None:
-            return self._heuristic_contract(
-                fallback_context,
-                warning="Content-enrichment agent returned no structured result.",
-            )
-        if self._last_run_id is not None and final_output.agent_run_id is None:
-            final_output.agent_run_id = self._last_run_id
-        return final_output
-
-    def _extract_from_pipeline_result(
-        self,
-        result: PipelineResult[ContentEnrichmentContext],
-    ) -> ContentEnrichmentContract | None:
-        step_history = getattr(result, "step_history", None)
-        if not isinstance(step_history, list):
-            return None
-        for step_result in reversed(step_history):
-            if isinstance(step_result, StepResult) and isinstance(
-                step_result.output,
-                ContentEnrichmentContract,
-            ):
-                return step_result.output
-        return None
-
-    def _capture_run_id(
-        self,
-        result: PipelineResult[ContentEnrichmentContext],
-    ) -> None:
-        context = result.final_pipeline_context
-        run_id = getattr(context, "run_id", None)
-        if isinstance(run_id, str) and run_id.strip():
-            self._last_run_id = run_id.strip()
+    def _build_prompt(self, context: ContentEnrichmentContext) -> str:
+        return (
+            f"{CONTENT_ENRICHMENT_SYSTEM_PROMPT}\n\n"
+            "---\n"
+            "REQUEST CONTEXT\n"
+            "---\n"
+            f"{self._build_input_text(context)}"
+        )
 
     def _heuristic_contract(
         self,
@@ -306,16 +311,16 @@ class FlujoContentEnrichmentAdapter(ContentEnrichmentPort):
         )
 
     @staticmethod
-    def _extract_structured_payload(metadata: JSONObject) -> JSONObject:
+    def _extract_structured_payload(metadata: dict[str, JSONValue]) -> JSONObject:
         raw_record = metadata.get("raw_record")
         if isinstance(raw_record, dict):
             return {str(key): to_json_value(value) for key, value in raw_record.items()}
         return {str(key): to_json_value(value) for key, value in metadata.items()}
 
     @staticmethod
-    def _extract_text_from_metadata(metadata: JSONObject) -> str | None:
+    def _extract_text_from_metadata(metadata: dict[str, JSONValue]) -> str | None:
         raw_record = metadata.get("raw_record")
-        candidate_sources: list[JSONObject] = []
+        candidate_sources: list[dict[str, JSONValue]] = []
         if isinstance(raw_record, dict):
             candidate_sources.append(raw_record)
         candidate_sources.append(metadata)
@@ -330,4 +335,4 @@ class FlujoContentEnrichmentAdapter(ContentEnrichmentPort):
         return None
 
 
-__all__ = ["FlujoContentEnrichmentAdapter"]
+__all__ = ["ArtanaContentEnrichmentAdapter"]

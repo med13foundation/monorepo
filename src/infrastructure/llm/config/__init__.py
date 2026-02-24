@@ -1,18 +1,18 @@
 """
-Flujo configuration management.
+Artana runtime configuration management.
 
 Provides configuration helpers for state backend, model registry,
 governance settings, usage limits, and shadow evaluation.
 """
 
-from src.infrastructure.llm.config.flujo_config import resolve_flujo_state_uri
+from src.infrastructure.llm.config.artana_config import resolve_artana_state_uri
 from src.infrastructure.llm.config.governance import (
     GovernanceConfig,
     ShadowEvalConfig,
     UsageLimits,
 )
 from src.infrastructure.llm.config.model_registry import (
-    FlujoModelRegistry,
+    ArtanaModelRegistry,
     ModelRegistry,
     get_default_model_id,
     get_model_registry,
@@ -24,7 +24,7 @@ from src.infrastructure.llm.config.query_profiles import (
 )
 
 __all__ = [
-    "FlujoModelRegistry",
+    "ArtanaModelRegistry",
     "GovernanceConfig",
     "ModelRegistry",
     "QuerySourcePolicy",
@@ -34,5 +34,5 @@ __all__ = [
     "get_default_model_id",
     "get_model_registry",
     "resolve_source_policy",
-    "resolve_flujo_state_uri",
+    "resolve_artana_state_uri",
 ]

@@ -1,5 +1,5 @@
 """
-Flujo Skills registry for AI agents.
+Skills registry for AI agents.
 
 Skills are bounded capabilities that agents can invoke.
 Every skill must be explicitly registered with:

@@ -36,7 +36,7 @@ from src.infrastructure.extraction import (
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
-from src.infrastructure.llm.adapters.query_agent_adapter import FlujoQueryAgentAdapter
+from src.infrastructure.llm.adapters.query_agent_adapter import ArtanaQueryAgentAdapter
 from src.infrastructure.repositories import (
     SQLAlchemyDiscoverySearchJobRepository,
     SqlAlchemyExtractionQueueRepository,
@@ -284,7 +284,7 @@ def build_ingestion_scheduling_service(  # noqa: PLR0915
         post_ingestion_hook = _run_post_ingestion_pipeline
 
     # Initialize Query Agent
-    query_agent = FlujoQueryAgentAdapter()
+    query_agent = ArtanaQueryAgentAdapter()
 
     pipeline = create_ingestion_pipeline(session)
 

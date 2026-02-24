@@ -1,4 +1,4 @@
-"""Source-specific query agent configuration loaded from flujo.toml."""
+"""Source-specific query agent configuration loaded from artana.toml."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def load_query_source_policies(
     config_path: str | None = None,
 ) -> dict[str, QuerySourcePolicy]:
     """
-    Load source-specific query policies from flujo.toml.
+    Load source-specific query policies from artana.toml.
 
     The expected config shape is:
 
@@ -47,7 +47,7 @@ def load_query_source_policies(
     max_turns = 10
     max_tokens = 8192
     """
-    config = _read_flujo_toml(config_path)
+    config = _read_artana_toml(config_path)
     raw_profiles = config.get(_SOURCE_PROFILES_SECTION, {})
     if not isinstance(raw_profiles, Mapping):
         return {}
@@ -113,9 +113,9 @@ def resolve_source_policy(
     return load_query_source_policies(config_path).get(normalized)
 
 
-def _read_flujo_toml(config_path: str | None = None) -> dict[str, object]:
+def _read_artana_toml(config_path: str | None = None) -> dict[str, object]:
     """
-    Read and parse flujo.toml.
+    Read and parse artana.toml.
     """
     path = Path(config_path) if config_path else Path(DEFAULT_CONFIG_PATH)
     if not path.exists():

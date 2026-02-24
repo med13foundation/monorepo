@@ -1,59 +1,230 @@
-"""Flujo-based adapter for graph-search agent operations."""
+"""Artana-based adapter for graph-search agent operations."""
 
 from __future__ import annotations
 
-import logging
+import hashlib
 import os
 from typing import TYPE_CHECKING, Literal
 
-from flujo.domain.models import PipelineResult, StepResult
-from flujo.exceptions import FlujoError, PausedException, PipelineAbortSignal
+import httpx
+from pydantic import BaseModel
 
 from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.graph_search import GraphSearchContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.graph_search_port import GraphSearchPort
-from src.infrastructure.llm.config.governance import GovernanceConfig
-from src.infrastructure.llm.config.model_registry import get_model_registry
-from src.infrastructure.llm.pipelines.graph_search_pipelines import (
-    create_graph_search_pipeline,
+from src.infrastructure.llm.config import (
+    GovernanceConfig,
+    get_model_registry,
+    resolve_artana_state_uri,
 )
-from src.infrastructure.llm.skills.registry import build_graph_search_tools
-from src.infrastructure.llm.state.backend_manager import get_state_backend
-from src.infrastructure.llm.state.lifecycle import get_lifecycle_manager
+from src.infrastructure.llm.prompts.graph_search import GRAPH_SEARCH_SYSTEM_PROMPT
 
 if TYPE_CHECKING:
-    from flujo import Flujo
-
     from src.domain.agents.contexts.graph_search_context import GraphSearchContext
-    from src.domain.ports.graph_query_port import GraphQueryPort
-    from src.type_definitions.common import JSONObject
-
-logger = logging.getLogger(__name__)
 
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
+_OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+_ARTANA_IMPORT_ERROR: Exception | None = None
+
+try:
+    from artana.agent import SingleStepModelClient
+    from artana.kernel import ArtanaKernel
+    from artana.models import TenantContext
+    from artana.ports.model import ModelResult, ModelUsage
+    from artana.store import PostgresStore, SQLiteStore
+except ImportError as exc:  # pragma: no cover - environment-dependent import
+    _ARTANA_IMPORT_ERROR = exc
 
 
-class FlujoGraphSearchAdapter(GraphSearchPort):
-    """Adapter that executes graph-search workflows through Flujo."""
+def _normalize_openai_model_id(model_id: str) -> str:
+    if model_id.startswith("openai:"):
+        return model_id.split(":", 1)[1]
+    return model_id
+
+
+def _to_int(raw_value: object, *, default: int = 0) -> int:
+    if isinstance(raw_value, bool):
+        return default
+    if isinstance(raw_value, int):
+        return raw_value
+    if isinstance(raw_value, float):
+        return int(raw_value)
+    if isinstance(raw_value, str):
+        try:
+            return int(raw_value)
+        except ValueError:
+            return default
+    return default
+
+
+def _join_message_text(messages: object) -> str:
+    if not isinstance(messages, list):
+        return ""
+    lines: list[str] = []
+    for message in messages:
+        role = getattr(message, "role", "user")
+        content = getattr(message, "content", "")
+        if isinstance(content, list):
+            content = " ".join(str(item) for item in content)
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines).strip()
+
+
+def _extract_prompt(request: object) -> str:
+    prompt = getattr(request, "prompt", None)
+    if isinstance(prompt, str) and prompt.strip():
+        return prompt.strip()
+
+    input_payload = getattr(request, "input", None)
+    input_prompt = getattr(input_payload, "prompt", None)
+    if isinstance(input_prompt, str) and input_prompt.strip():
+        return input_prompt.strip()
+
+    messages = getattr(request, "messages", None)
+    joined_messages = _join_message_text(messages)
+    if joined_messages:
+        return joined_messages
+
+    return ""
+
+
+class _OpenAIChatModelPort:
+    """Minimal Artana model port backed by OpenAI Chat Completions."""
+
+    def __init__(self, *, timeout_seconds: float) -> None:
+        self._timeout_seconds = timeout_seconds
+        self._client: httpx.AsyncClient | None = None
+
+    @staticmethod
+    def _resolve_openai_api_key() -> str | None:
+        raw_value = os.getenv("OPENAI_API_KEY") or os.getenv("ARTANA_OPENAI_API_KEY")
+        if raw_value is None:
+            return None
+        normalized = raw_value.strip()
+        if not normalized:
+            return None
+        if normalized.lower() in _INVALID_OPENAI_KEYS:
+            return None
+        return normalized
+
+    async def _http_client(self) -> httpx.AsyncClient:
+        client = self._client
+        if client is None:
+            client = httpx.AsyncClient(timeout=self._timeout_seconds)
+            self._client = client
+        return client
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def complete(self, request: object) -> object:
+        api_key = self._resolve_openai_api_key()
+        if api_key is None:
+            msg = "OPENAI_API_KEY (or ARTANA_OPENAI_API_KEY) is not configured."
+            raise RuntimeError(msg)
+
+        output_schema = getattr(request, "output_schema", None)
+        if not isinstance(output_schema, type) or not issubclass(
+            output_schema,
+            BaseModel,
+        ):
+            msg = "Artana model request output_schema must be a Pydantic BaseModel."
+            raise TypeError(msg)
+
+        prompt = _extract_prompt(request)
+        if not prompt:
+            msg = "Artana model request is missing prompt/messages content."
+            raise ValueError(msg)
+
+        requested_model = str(getattr(request, "model", "openai:gpt-5-mini"))
+        openai_model = _normalize_openai_model_id(requested_model)
+        schema_name = output_schema.__name__.lower() or "graph_search_contract"
+        payload = {
+            "model": openai_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name,
+                    "schema": output_schema.model_json_schema(),
+                    "strict": True,
+                },
+            },
+        }
+
+        client = await self._http_client()
+        response = await client.post(
+            _OPENAI_API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        response.raise_for_status()
+        body = response.json()
+
+        choices = body.get("choices", [])
+        if not isinstance(choices, list) or not choices:
+            msg = "OpenAI response did not include choices."
+            raise ValueError(msg)
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            msg = "OpenAI response choice payload is invalid."
+            raise TypeError(msg)
+        message = first_choice.get("message", {})
+        if not isinstance(message, dict):
+            msg = "OpenAI response message payload is invalid."
+            raise TypeError(msg)
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            msg = "OpenAI response message content is not text."
+            raise TypeError(msg)
+        parsed_payload = __import__("json").loads(content)
+        output = output_schema.model_validate(parsed_payload)
+
+        usage_raw = body.get("usage", {})
+        if not isinstance(usage_raw, dict):
+            usage_raw = {}
+        usage = ModelUsage(
+            prompt_tokens=_to_int(usage_raw.get("prompt_tokens")),
+            completion_tokens=_to_int(usage_raw.get("completion_tokens")),
+            cost_usd=0.0,
+        )
+        return ModelResult(output=output, usage=usage)
+
+
+class ArtanaGraphSearchAdapter(GraphSearchPort):
+    """Adapter that executes graph-search workflows through Artana."""
 
     def __init__(
         self,
         model: str | None = None,
         *,
-        graph_query_service: GraphQueryPort | None = None,
+        graph_query_service: object | None = None,
     ) -> None:
+        if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import-time guard
+            msg = (
+                "artana-kernel is required for graph search execution. Install dependency "
+                "'artana @ git+https://github.com/aandresalvarez/artana-kernel.git@main'."
+            )
+            raise RuntimeError(msg) from _ARTANA_IMPORT_ERROR
+
         self._default_model = model
         self._graph_query_service = graph_query_service
-        self._state_backend = get_state_backend()
         self._governance = GovernanceConfig.from_environment()
         self._registry = get_model_registry()
-        self._lifecycle_manager = get_lifecycle_manager()
-        self._pipelines: dict[
-            tuple[str, str],
-            Flujo[str, GraphSearchContract, GraphSearchContext],
-        ] = {}
         self._last_run_id: str | None = None
+        timeout_seconds = self._resolve_timeout_seconds(model)
+        self._model_port = _OpenAIChatModelPort(timeout_seconds=timeout_seconds)
+        self._kernel = ArtanaKernel(
+            store=self._create_store(),
+            model_port=self._model_port,
+        )
+        self._client = SingleStepModelClient(kernel=self._kernel)
 
     async def search(
         self,
@@ -71,10 +242,6 @@ class FlujoGraphSearchAdapter(GraphSearchPort):
             )
 
         if self._graph_query_service is None:
-            logger.warning(
-                "Graph-search adapter missing graph_query_service; "
-                "falling back to deterministic path.",
-            )
             return self._fallback_contract(
                 context,
                 decision="fallback",
@@ -82,25 +249,46 @@ class FlujoGraphSearchAdapter(GraphSearchPort):
             )
 
         effective_model = self._resolve_model_id(model_id)
-        pipeline = self._get_or_create_pipeline(effective_model, context=context)
-        input_text = self._build_input_text(context)
-        initial_context = context.model_dump(mode="json")
+        run_id = self._create_run_id(
+            model_id=effective_model,
+            research_space_id=context.research_space_id,
+            question=context.question,
+        )
+        self._last_run_id = run_id
 
         try:
-            return await self._execute_pipeline(
-                pipeline,
-                input_text=input_text,
-                initial_context=initial_context,
-                fallback_context=context,
+            usage_limits = self._governance.usage_limits
+            budget_limit = (
+                usage_limits.total_cost_usd if usage_limits.total_cost_usd else 1.0
             )
-        except (PausedException, PipelineAbortSignal):
-            raise
-        except FlujoError as exc:
-            logger.warning(
-                "Graph-search pipeline failed for research_space_id=%s: %s",
-                context.research_space_id,
-                exc,
+            tenant = self._create_tenant(
+                tenant_id=context.research_space_id,
+                budget_usd_limit=max(float(budget_limit), 0.01),
             )
+            result = await self._client.step(
+                run_id=run_id,
+                tenant=tenant,
+                model=effective_model,
+                prompt=self._build_prompt(context),
+                output_schema=GraphSearchContract,
+                step_key="graph.search.v1",
+            )
+            output = result.output
+            contract = (
+                output
+                if isinstance(output, GraphSearchContract)
+                else GraphSearchContract.model_validate(output)
+            )
+            return contract.model_copy(
+                update={
+                    "research_space_id": context.research_space_id,
+                    "original_query": context.question,
+                    "total_results": len(contract.results),
+                    "executed_path": "agent",
+                    "agent_run_id": contract.agent_run_id or run_id,
+                },
+            )
+        except Exception:  # noqa: BLE001
             return self._fallback_contract(
                 context,
                 decision="fallback",
@@ -108,22 +296,12 @@ class FlujoGraphSearchAdapter(GraphSearchPort):
             )
 
     async def close(self) -> None:
-        for cache_key, pipeline in self._pipelines.items():
-            try:
-                if hasattr(pipeline, "aclose"):
-                    await pipeline.aclose()
-                self._lifecycle_manager.unregister_runner(pipeline)
-            except (RuntimeError, OSError, ConnectionError) as exc:
-                logger.warning(
-                    "Error closing graph-search pipeline for key=%s: %s",
-                    cache_key,
-                    exc,
-                )
-        self._pipelines.clear()
+        await self._model_port.aclose()
+        await self._kernel.close()
 
     @staticmethod
     def _has_openai_key() -> bool:
-        raw_value = os.getenv("OPENAI_API_KEY") or os.getenv("FLUJO_OPENAI_API_KEY")
+        raw_value = os.getenv("OPENAI_API_KEY") or os.getenv("ARTANA_OPENAI_API_KEY")
         if raw_value is None:
             return False
         normalized = raw_value.strip()
@@ -147,42 +325,47 @@ class FlujoGraphSearchAdapter(GraphSearchPort):
             ModelCapability.QUERY_GENERATION,
         ).model_id
 
-    def _get_or_create_pipeline(
-        self,
-        model_id: str,
-        *,
-        context: GraphSearchContext,
-    ) -> Flujo[str, GraphSearchContract, GraphSearchContext]:
-        cache_key = (model_id, context.research_space_id)
-        if cache_key in self._pipelines:
-            return self._pipelines[cache_key]
-
-        tools: list[object] | None = None
-        if self._graph_query_service is not None:
+    def _resolve_timeout_seconds(self, model: str | None) -> float:
+        if model:
             try:
-                tools = list(
-                    build_graph_search_tools(
-                        graph_query_service=self._graph_query_service,
-                        research_space_id=context.research_space_id,
-                    ),
-                )
-            except (LookupError, PermissionError, ValueError) as exc:
-                logger.warning(
-                    "Graph-search tools unavailable for research_space_id=%s: %s",
-                    context.research_space_id,
-                    exc,
-                )
-                tools = None
+                model_spec = self._registry.get_model(model)
+                return float(model_spec.timeout_seconds)
+            except (KeyError, ValueError):
+                pass
+        try:
+            default_spec = self._registry.get_default_model(
+                ModelCapability.QUERY_GENERATION,
+            )
+            return float(default_spec.timeout_seconds)
+        except (KeyError, ValueError):
+            return 120.0
 
-        pipeline = create_graph_search_pipeline(
-            state_backend=self._state_backend,
-            model=model_id,
-            usage_limits=self._governance.usage_limits,
-            tools=tools,
+    @staticmethod
+    def _create_store() -> object:
+        state_uri = resolve_artana_state_uri()
+        if state_uri.startswith("sqlite:///"):
+            sqlite_path = state_uri.removeprefix("sqlite:///")
+            if not sqlite_path:
+                sqlite_path = "artana_state.db"
+            return SQLiteStore(sqlite_path)
+        if state_uri.startswith("postgresql://"):
+            return PostgresStore(state_uri)
+        msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"
+        raise ValueError(msg)
+
+    @staticmethod
+    def _create_run_id(*, model_id: str, research_space_id: str, question: str) -> str:
+        payload = f"{model_id}|{research_space_id}|{question.strip()}"
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+        return f"graph_search:{digest}"
+
+    @staticmethod
+    def _create_tenant(tenant_id: str, budget_usd_limit: float) -> TenantContext:
+        return TenantContext(
+            tenant_id=tenant_id,
+            capabilities=frozenset(),
+            budget_usd_limit=budget_usd_limit,
         )
-        self._pipelines[cache_key] = pipeline
-        self._lifecycle_manager.register_runner(pipeline)
-        return pipeline
 
     @staticmethod
     def _build_input_text(context: GraphSearchContext) -> str:
@@ -195,60 +378,14 @@ class FlujoGraphSearchAdapter(GraphSearchPort):
             f"FORCE AGENT: {context.force_agent}\n"
         )
 
-    async def _execute_pipeline(
-        self,
-        pipeline: Flujo[str, GraphSearchContract, GraphSearchContext],
-        *,
-        input_text: str,
-        initial_context: JSONObject,
-        fallback_context: GraphSearchContext,
-    ) -> GraphSearchContract:
-        final_output: GraphSearchContract | None = None
-
-        async for item in pipeline.run_async(
-            input_text,
-            initial_context_data=initial_context,
-        ):
-            if isinstance(item, StepResult):
-                if isinstance(item.output, GraphSearchContract):
-                    final_output = item.output
-            elif isinstance(item, PipelineResult):
-                self._capture_run_id(item)
-                candidate = self._extract_from_pipeline_result(item)
-                if candidate is not None:
-                    final_output = candidate
-
-        if final_output is None:
-            return self._fallback_contract(
-                fallback_context,
-                decision="fallback",
-                reason="Graph-search agent returned no structured result.",
-            )
-
-        if self._last_run_id is not None and final_output.agent_run_id is None:
-            final_output.agent_run_id = self._last_run_id
-        return final_output
-
-    def _extract_from_pipeline_result(
-        self,
-        result: PipelineResult[GraphSearchContext],
-    ) -> GraphSearchContract | None:
-        step_history = getattr(result, "step_history", None)
-        if not isinstance(step_history, list):
-            return None
-        for step_result in reversed(step_history):
-            if isinstance(step_result, StepResult) and isinstance(
-                step_result.output,
-                GraphSearchContract,
-            ):
-                return step_result.output
-        return None
-
-    def _capture_run_id(self, result: PipelineResult[GraphSearchContext]) -> None:
-        context = result.final_pipeline_context
-        run_id = getattr(context, "run_id", None)
-        if isinstance(run_id, str) and run_id.strip():
-            self._last_run_id = run_id.strip()
+    def _build_prompt(self, context: GraphSearchContext) -> str:
+        return (
+            f"{GRAPH_SEARCH_SYSTEM_PROMPT}\n\n"
+            "---\n"
+            "REQUEST CONTEXT\n"
+            "---\n"
+            f"{self._build_input_text(context)}"
+        )
 
     def _fallback_contract(
         self,
@@ -272,15 +409,13 @@ class FlujoGraphSearchAdapter(GraphSearchPort):
             research_space_id=context.research_space_id,
             original_query=context.question,
             interpreted_intent=context.question,
-            query_plan_summary=(
-                "Graph-search adapter fallback. Use deterministic search result."
-            ),
+            query_plan_summary="Graph-search adapter fallback.",
             total_results=0,
             results=[],
-            executed_path="agent",
+            executed_path="agent_fallback",
             warnings=[reason],
             agent_run_id=self._last_run_id,
         )
 
 
-__all__ = ["FlujoGraphSearchAdapter"]
+__all__ = ["ArtanaGraphSearchAdapter"]

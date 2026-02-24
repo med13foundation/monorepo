@@ -71,7 +71,7 @@ class ModelSpec(BaseModel):
     space, data source).
 
     Attributes:
-        model_id: Flujo model identifier (e.g., "openai:gpt-4o-mini")
+        model_id: model identifier (e.g., "openai:gpt-5-mini")
         display_name: Human-readable name for UI
         provider: Model provider ("openai", "anthropic", etc.)
         capabilities: Set of tasks this model can perform
@@ -86,7 +86,7 @@ class ModelSpec(BaseModel):
         is_default: Whether this is a system default model
     """
 
-    model_id: str = Field(..., description="Flujo model identifier")
+    model_id: str = Field(..., description="Model identifier")
     display_name: str = Field(..., description="Human-readable name")
     provider: str = Field(..., description="Model provider")
     capabilities: frozenset[ModelCapability] = Field(
@@ -131,7 +131,7 @@ class ModelSpec(BaseModel):
         effort: Literal["low", "medium", "high"] | None = None,
     ) -> dict[str, dict[str, str]] | None:
         """
-        Get reasoning settings for Flujo model_settings parameter.
+        Get reasoning settings for runtime model_settings parameter.
 
         Returns None for non-reasoning models.
 
@@ -139,7 +139,7 @@ class ModelSpec(BaseModel):
             effort: Override the default effort level
 
         Returns:
-            Dictionary suitable for Flujo's model_settings parameter
+            Dictionary suitable for reasoning-capable model_settings payloads
         """
         if not self.is_reasoning_model:
             return None

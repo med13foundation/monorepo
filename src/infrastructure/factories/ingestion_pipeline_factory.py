@@ -85,10 +85,10 @@ def create_ingestion_pipeline(
         active_mapping_judge_agent = mapping_judge_agent
         if active_mapping_judge_agent is None:
             from src.infrastructure.llm.adapters.mapping_judge_agent_adapter import (
-                FlujoMappingJudgeAdapter,
+                ArtanaMappingJudgeAdapter,
             )
 
-            active_mapping_judge_agent = FlujoMappingJudgeAdapter()
+            active_mapping_judge_agent = ArtanaMappingJudgeAdapter()
         mappers.append(
             LLMJudgeMapper(
                 dictionary_service,

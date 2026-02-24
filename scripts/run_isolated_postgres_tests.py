@@ -95,8 +95,15 @@ def _drop_database(admin_sync_url: str, database_name: str) -> None:
 
 
 def _run_alembic_migrations(env: dict[str, str]) -> None:
-    alembic_bin = Path(sys.executable).resolve().parent / "alembic"
-    alembic_cmd = str(alembic_bin) if alembic_bin.exists() else "alembic"
+    candidate_bins = (
+        REPO_ROOT / "venv" / "bin" / "alembic",
+        Path(sys.executable).resolve().parent / "alembic",
+    )
+    alembic_cmd = "alembic"
+    for bin_path in candidate_bins:
+        if bin_path.exists():
+            alembic_cmd = str(bin_path)
+            break
     subprocess.run(  # noqa: S603
         [alembic_cmd, "upgrade", "heads"],
         check=True,

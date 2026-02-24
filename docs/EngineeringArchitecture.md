@@ -103,16 +103,15 @@ The MED13 Resource Library implements a robust **Clean Architecture** with compl
 - **Evidence-First Outputs**: Every decision includes confidence score, rationale, and evidence
 - **Governance Patterns**: Confidence-based routing for human-in-the-loop review
 - **Granular Durability**: Per-turn state persistence for auditability
-- **Clean Architecture**: Domain contracts stay in domain layer, Flujo integration in infrastructure
-- **Type Safety**: Fully typed contracts (documented `Any` exception for Flujo generics only)
-- **Reasoning Techniques**: Chain of Thought (`GranularStep`), Tree of Thoughts (`TreeSearchStep`), and native reasoning models
+- **Clean Architecture**: Domain contracts stay in domain layer, runtime integration in infrastructure
+- **Type Safety**: Fully typed contracts across adapters and services
+- **Reasoning Techniques**: Native reasoning models with configurable effort and verbosity
 
 **Current Agents:**
 - **Query Generation (PubMed)**: Generates optimized PubMed Boolean queries from research context
 
 **See Also:**
-- `docs/flujo/agent_architecture.md` - Complete implementation guide
-- `docs/flujo/reasoning.md` - Reasoning techniques (A* search, Tree of Thoughts)
+- `docs/artana-kernel/docs/agent_migration.md` - Artana migration and runtime architecture
 
 ### ✅ **Production Infrastructure - ESTABLISHED**
 - **Cloud Run Deployment**: Multi-service container orchestration

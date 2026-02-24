@@ -1,7 +1,7 @@
 """
 Evidence-First Output Schemas for AI Agents.
 
-Flujo agents must not expose internal chain-of-thought. Instead, use
+Agents must not expose internal chain-of-thought. Instead, use
 Evidence-First schemas that separate:
 - the decision
 - the confidence

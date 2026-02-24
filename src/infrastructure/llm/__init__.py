@@ -1,18 +1,4 @@
-"""
-LLM infrastructure layer for AI agents.
-
-Provides Flujo-based implementations for AI agent operations
-following contract-first, evidence-based patterns.
-
-Module Organization:
-- config/: Configuration management (flujo_config, governance, model_registry)
-- factories/: Agent factories for creating Flujo agents
-- pipelines/: Pipeline definitions with governance patterns
-- adapters/: Port adapter implementations
-- state/: State backend and lifecycle management
-- skills/: Skill registry for bounded capabilities
-- prompts/: Version-controlled system prompts
-"""
+"""LLM infrastructure layer for AI runtime adapters and configuration."""
 
 from __future__ import annotations
 
@@ -20,46 +6,22 @@ from importlib import import_module
 
 __all__ = [
     # Adapters
-    "FlujoEntityRecognitionAdapter",
-    "FlujoExtractionAdapter",
-    "FlujoGraphConnectionAdapter",
-    "FlujoGraphSearchAdapter",
-    "FlujoQueryAgentAdapter",
+    "ArtanaContentEnrichmentAdapter",
+    "ArtanaEntityRecognitionAdapter",
+    "ArtanaExtractionAdapter",
+    "ArtanaExtractionPolicyAdapter",
+    "ArtanaGraphConnectionAdapter",
+    "ArtanaGraphSearchAdapter",
+    "ArtanaMappingJudgeAdapter",
+    "ArtanaQueryAgentAdapter",
     # Config
-    "FlujoModelRegistry",
+    "ArtanaModelRegistry",
     "GovernanceConfig",
     "ModelRegistry",
     "get_model_registry",
-    "resolve_flujo_state_uri",
-    # Factories
-    "create_entity_recognition_agent_for_source",
-    "create_clinvar_entity_recognition_agent",
-    "create_pubmed_entity_recognition_agent",
-    "EntityRecognitionAgentFactory",
-    "create_extraction_agent_for_source",
-    "create_clinvar_extraction_agent",
-    "create_pubmed_extraction_agent",
-    "ExtractionAgentFactory",
-    "create_graph_connection_agent_for_source",
-    "create_clinvar_graph_connection_agent",
-    "create_pubmed_graph_connection_agent",
-    "GraphConnectionAgentFactory",
-    "create_graph_search_agent",
-    "GraphSearchAgentFactory",
-    "create_pubmed_query_agent",
-    "create_clinvar_query_agent",
-    "QueryAgentFactory",
-    # Pipelines
-    "create_clinvar_entity_recognition_pipeline",
-    "create_pubmed_entity_recognition_pipeline",
-    "create_clinvar_extraction_pipeline",
-    "create_pubmed_extraction_pipeline",
-    "create_clinvar_graph_connection_pipeline",
-    "create_pubmed_graph_connection_pipeline",
-    "create_graph_search_pipeline",
-    "create_pubmed_query_pipeline",
-    "create_clinvar_query_pipeline",
+    "resolve_artana_state_uri",
     # Skills
+    "build_content_enrichment_tools",
     "build_extraction_validation_tools",
     "build_entity_recognition_dictionary_tools",
     "build_graph_connection_tools",
@@ -67,156 +29,66 @@ __all__ = [
     "get_skill_registry",
     "register_all_skills",
     "SkillRegistry",
-    # State
-    "flujo_lifespan",
-    "FlujoLifecycleManager",
-    "get_lifecycle_manager",
-    "get_state_backend",
-    "SqlAlchemyFlujoStateRepository",
-    "StateBackendManager",
+    # State inspection
+    "SqlAlchemyAgentRunStateRepository",
 ]
 
 _EXPORT_MAP: dict[str, tuple[str, str]] = {
-    "FlujoEntityRecognitionAdapter": (
+    "ArtanaContentEnrichmentAdapter": (
+        "src.infrastructure.llm.adapters.content_enrichment_agent_adapter",
+        "ArtanaContentEnrichmentAdapter",
+    ),
+    "ArtanaEntityRecognitionAdapter": (
         "src.infrastructure.llm.adapters.entity_recognition_agent_adapter",
-        "FlujoEntityRecognitionAdapter",
+        "ArtanaEntityRecognitionAdapter",
     ),
-    "FlujoExtractionAdapter": (
+    "ArtanaExtractionAdapter": (
         "src.infrastructure.llm.adapters.extraction_agent_adapter",
-        "FlujoExtractionAdapter",
+        "ArtanaExtractionAdapter",
     ),
-    "FlujoGraphConnectionAdapter": (
+    "ArtanaExtractionPolicyAdapter": (
+        "src.infrastructure.llm.adapters.extraction_policy_agent_adapter",
+        "ArtanaExtractionPolicyAdapter",
+    ),
+    "ArtanaGraphConnectionAdapter": (
         "src.infrastructure.llm.adapters.graph_connection_agent_adapter",
-        "FlujoGraphConnectionAdapter",
+        "ArtanaGraphConnectionAdapter",
     ),
-    "FlujoGraphSearchAdapter": (
+    "ArtanaGraphSearchAdapter": (
         "src.infrastructure.llm.adapters.graph_search_agent_adapter",
-        "FlujoGraphSearchAdapter",
+        "ArtanaGraphSearchAdapter",
     ),
-    "FlujoQueryAgentAdapter": (
+    "ArtanaMappingJudgeAdapter": (
+        "src.infrastructure.llm.adapters.mapping_judge_agent_adapter",
+        "ArtanaMappingJudgeAdapter",
+    ),
+    "ArtanaQueryAgentAdapter": (
         "src.infrastructure.llm.adapters.query_agent_adapter",
-        "FlujoQueryAgentAdapter",
+        "ArtanaQueryAgentAdapter",
     ),
-    "FlujoModelRegistry": (
+    "ArtanaModelRegistry": (
         "src.infrastructure.llm.config.model_registry",
-        "FlujoModelRegistry",
+        "ArtanaModelRegistry",
     ),
     "GovernanceConfig": (
         "src.infrastructure.llm.config.governance",
         "GovernanceConfig",
     ),
-    "ModelRegistry": ("src.infrastructure.llm.config.model_registry", "ModelRegistry"),
+    "ModelRegistry": (
+        "src.infrastructure.llm.config.model_registry",
+        "ModelRegistry",
+    ),
     "get_model_registry": (
         "src.infrastructure.llm.config.model_registry",
         "get_model_registry",
     ),
-    "resolve_flujo_state_uri": (
-        "src.infrastructure.llm.config.flujo_config",
-        "resolve_flujo_state_uri",
+    "resolve_artana_state_uri": (
+        "src.infrastructure.llm.config.artana_config",
+        "resolve_artana_state_uri",
     ),
-    "create_entity_recognition_agent_for_source": (
-        "src.infrastructure.llm.factories.entity_recognition_agent_factory",
-        "create_entity_recognition_agent_for_source",
-    ),
-    "create_clinvar_entity_recognition_agent": (
-        "src.infrastructure.llm.factories.entity_recognition_agent_factory",
-        "create_clinvar_entity_recognition_agent",
-    ),
-    "create_pubmed_entity_recognition_agent": (
-        "src.infrastructure.llm.factories.entity_recognition_agent_factory",
-        "create_pubmed_entity_recognition_agent",
-    ),
-    "EntityRecognitionAgentFactory": (
-        "src.infrastructure.llm.factories.entity_recognition_agent_factory",
-        "EntityRecognitionAgentFactory",
-    ),
-    "create_extraction_agent_for_source": (
-        "src.infrastructure.llm.factories.extraction_agent_factory",
-        "create_extraction_agent_for_source",
-    ),
-    "create_clinvar_extraction_agent": (
-        "src.infrastructure.llm.factories.extraction_agent_factory",
-        "create_clinvar_extraction_agent",
-    ),
-    "create_pubmed_extraction_agent": (
-        "src.infrastructure.llm.factories.extraction_agent_factory",
-        "create_pubmed_extraction_agent",
-    ),
-    "ExtractionAgentFactory": (
-        "src.infrastructure.llm.factories.extraction_agent_factory",
-        "ExtractionAgentFactory",
-    ),
-    "create_graph_connection_agent_for_source": (
-        "src.infrastructure.llm.factories.graph_connection_agent_factory",
-        "create_graph_connection_agent_for_source",
-    ),
-    "create_clinvar_graph_connection_agent": (
-        "src.infrastructure.llm.factories.graph_connection_agent_factory",
-        "create_clinvar_graph_connection_agent",
-    ),
-    "create_pubmed_graph_connection_agent": (
-        "src.infrastructure.llm.factories.graph_connection_agent_factory",
-        "create_pubmed_graph_connection_agent",
-    ),
-    "GraphConnectionAgentFactory": (
-        "src.infrastructure.llm.factories.graph_connection_agent_factory",
-        "GraphConnectionAgentFactory",
-    ),
-    "create_graph_search_agent": (
-        "src.infrastructure.llm.factories.graph_search_agent_factory",
-        "create_graph_search_agent",
-    ),
-    "GraphSearchAgentFactory": (
-        "src.infrastructure.llm.factories.graph_search_agent_factory",
-        "GraphSearchAgentFactory",
-    ),
-    "create_pubmed_query_agent": (
-        "src.infrastructure.llm.factories.query_agent_factory",
-        "create_pubmed_query_agent",
-    ),
-    "create_clinvar_query_agent": (
-        "src.infrastructure.llm.factories.query_agent_factory",
-        "create_clinvar_query_agent",
-    ),
-    "QueryAgentFactory": (
-        "src.infrastructure.llm.factories.query_agent_factory",
-        "QueryAgentFactory",
-    ),
-    "create_clinvar_entity_recognition_pipeline": (
-        "src.infrastructure.llm.pipelines.entity_recognition_pipelines.clinvar_pipeline",
-        "create_clinvar_entity_recognition_pipeline",
-    ),
-    "create_pubmed_entity_recognition_pipeline": (
-        "src.infrastructure.llm.pipelines.entity_recognition_pipelines.pubmed_pipeline",
-        "create_pubmed_entity_recognition_pipeline",
-    ),
-    "create_clinvar_extraction_pipeline": (
-        "src.infrastructure.llm.pipelines.extraction_pipelines.clinvar_pipeline",
-        "create_clinvar_extraction_pipeline",
-    ),
-    "create_pubmed_extraction_pipeline": (
-        "src.infrastructure.llm.pipelines.extraction_pipelines.pubmed_pipeline",
-        "create_pubmed_extraction_pipeline",
-    ),
-    "create_clinvar_graph_connection_pipeline": (
-        "src.infrastructure.llm.pipelines.graph_connection_pipelines.clinvar_pipeline",
-        "create_clinvar_graph_connection_pipeline",
-    ),
-    "create_pubmed_graph_connection_pipeline": (
-        "src.infrastructure.llm.pipelines.graph_connection_pipelines.pubmed_pipeline",
-        "create_pubmed_graph_connection_pipeline",
-    ),
-    "create_graph_search_pipeline": (
-        "src.infrastructure.llm.pipelines.graph_search_pipelines.default_pipeline",
-        "create_graph_search_pipeline",
-    ),
-    "create_pubmed_query_pipeline": (
-        "src.infrastructure.llm.pipelines.query_pipelines.pubmed_pipeline",
-        "create_pubmed_query_pipeline",
-    ),
-    "create_clinvar_query_pipeline": (
-        "src.infrastructure.llm.pipelines.query_pipelines.clinvar_pipeline",
-        "create_clinvar_query_pipeline",
+    "build_content_enrichment_tools": (
+        "src.infrastructure.llm.skills.registry",
+        "build_content_enrichment_tools",
     ),
     "build_extraction_validation_tools": (
         "src.infrastructure.llm.skills.registry",
@@ -242,27 +114,13 @@ _EXPORT_MAP: dict[str, tuple[str, str]] = {
         "src.infrastructure.llm.skills.registry",
         "register_all_skills",
     ),
-    "SkillRegistry": ("src.infrastructure.llm.skills.registry", "SkillRegistry"),
-    "flujo_lifespan": ("src.infrastructure.llm.state.lifecycle", "flujo_lifespan"),
-    "FlujoLifecycleManager": (
-        "src.infrastructure.llm.state.lifecycle",
-        "FlujoLifecycleManager",
+    "SkillRegistry": (
+        "src.infrastructure.llm.skills.registry",
+        "SkillRegistry",
     ),
-    "get_lifecycle_manager": (
-        "src.infrastructure.llm.state.lifecycle",
-        "get_lifecycle_manager",
-    ),
-    "get_state_backend": (
-        "src.infrastructure.llm.state.backend_manager",
-        "get_state_backend",
-    ),
-    "SqlAlchemyFlujoStateRepository": (
-        "src.infrastructure.llm.state.flujo_state_repository",
-        "SqlAlchemyFlujoStateRepository",
-    ),
-    "StateBackendManager": (
-        "src.infrastructure.llm.state.backend_manager",
-        "StateBackendManager",
+    "SqlAlchemyAgentRunStateRepository": (
+        "src.infrastructure.llm.state.agent_run_state_repository",
+        "SqlAlchemyAgentRunStateRepository",
     ),
 }
 

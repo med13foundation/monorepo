@@ -53,7 +53,7 @@ make setup-dev
 make web-install
 
 # Run everything on Postgres (recommended)
-make dev-postgres   # Starts Postgres (if needed), runs migrations + Flujo schema init, seeds admin, starts backend + Next.js
+make dev-postgres   # Starts Postgres (if needed), runs migrations + Artana schema init, seeds admin, starts backend + Next.js
 
 # Optional background helpers
 make start-local     # Launch FastAPI in background (uses SQLite unless .postgres-active exists)
@@ -93,7 +93,7 @@ make stop-all
 ```
 
 `make dev-postgres` starts (or reuses) the Postgres container via `docker-compose.postgres.yml`, runs Alembic
-migrations, initializes the Flujo schema, seeds the default admin (`admin@med13.org` with the password you provide
+migrations, initializes the Artana schema, seeds the default admin (`admin@med13.org` with the password you provide
 via `ADMIN_PASSWORD`/`MED13_ADMIN_PASSWORD`), ensures the default research space exists, then starts FastAPI in the
 background (logs → `logs/backend.log`) before launching the Next.js dev server.
 The command also writes a `.postgres-active` flag so all other Make targets automatically source `.env.postgres`
@@ -264,7 +264,7 @@ make setup-dev          # Python environment + dependencies
 make web-install        # Next.js dependencies
 
 # Unified start/stop workflow (Postgres-backed dev stack)
-make dev-postgres       # Start Postgres (if needed) -> migrations -> Flujo schema -> seed admin -> FastAPI + Next.js
+make dev-postgres       # Start Postgres (if needed) -> migrations -> Artana schema -> seed admin -> FastAPI + Next.js
 make run-all-postgres   # Full reset: wipe Postgres -> migrations -> seed admin -> FastAPI + Next.js
 make restart-postgres   # Recreate Postgres container (rerun run-all-postgres afterward if services were stopped)
 make stop-all           # Stop FastAPI, Next.js, and Postgres containers

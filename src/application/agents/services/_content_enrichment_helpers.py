@@ -110,7 +110,7 @@ def write_temp_payload(payload: bytes, *, suffix: str) -> Path:
 
 
 def resolve_run_id(contract: ContentEnrichmentContract) -> str | None:
-    """Normalize the optional Flujo run id from the contract."""
+    """Normalize the optional agent run id from the contract."""
     run_id = contract.agent_run_id
     if run_id is None:
         return None

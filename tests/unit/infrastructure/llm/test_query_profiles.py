@@ -24,7 +24,7 @@ def test_load_query_source_policies_with_inline_limits(
     tmp_path: Path,
 ) -> None:
     """Should parse inline usage limits and model override."""
-    config = tmp_path / "flujo.toml"
+    config = tmp_path / "artana.toml"
     _write_toml(
         config,
         """
@@ -56,7 +56,7 @@ def test_load_query_source_policies_from_budget_profile(
     tmp_path: Path,
 ) -> None:
     """Should resolve usage limits from budget_profile alias."""
-    config = tmp_path / "flujo.toml"
+    config = tmp_path / "artana.toml"
     _write_toml(
         config,
         """

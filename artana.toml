@@ -1,0 +1,227 @@
+# Artana configuration for MED13 Resource Library
+# ============================================
+#
+# ARTANA_STATE_URI environment variable overrides this fallback.
+# For production, use PostgreSQL with artana schema:
+#   postgresql://user:pass@host:5432/db?options=-c%20search_path%3Dartana,public
+state_uri = "sqlite:///artana_state.db"
+
+[settings]
+# Core settings
+test_mode = false
+memory_indexing_enabled = false
+
+# Connection Pooling (critical for FastAPI + Postgres in production)
+# Adjust based on expected concurrency and database limits
+postgres_pool_min = 5
+postgres_pool_max = 20
+
+# Strict DSL mode - enforces type safety
+strict_dsl = true
+
+[architect]
+state_machine_default = false
+
+[aros]
+# Stage 2: Uses json-repair to fix markdown fences/trailing commas automatically
+coercion_tolerant_level = 2
+structured_output_default = "openai_json"
+
+# Session management
+session_ttl = "24h"
+max_retries = 3
+
+[cost]
+# Cost tracking configuration
+strict = false
+
+# Default budget limit per request (USD)
+# Set to null for no limit, or specify a value
+default_limit_usd = 1.0
+
+# =============================================================================
+# MODEL REGISTRY
+# =============================================================================
+# Central configuration for all available AI models.
+# The application loads models from this section at startup.
+#
+# Environment variable overrides for defaults:
+#   MED13_AI_QUERY_GENERATION_MODEL=openai:gpt-5-mini
+#   MED13_AI_EVIDENCE_EXTRACTION_MODEL=openai:gpt-5-mini
+#   MED13_AI_CURATION_MODEL=openai:gpt-5-mini
+#   MED13_AI_JUDGE_MODEL=openai:gpt-5-mini
+# =============================================================================
+
+[models]
+# System-wide defaults by capability
+default_query_generation = "openai:gpt-5-mini"
+default_evidence_extraction = "openai:gpt-5-mini"
+default_curation = "openai:gpt-5-mini"
+default_judge = "openai:gpt-5-mini"
+# Single source of truth policy:
+# - false: ignore runtime/per-source model_id overrides, use artana.toml defaults/profiles
+# - true: allow runtime/per-source model_id overrides
+allow_runtime_model_overrides = false
+
+# -----------------------------------------------------------------------------
+# GPT-4o Mini - Fast, cost-effective model for simple tasks
+# -----------------------------------------------------------------------------
+[models.registry."openai:gpt-4o-mini"]
+display_name = "GPT-4o Mini"
+provider = "openai"
+capabilities = ["query_generation", "judge"]
+cost_tier = "low"
+is_reasoning_model = false
+max_retries = 3
+timeout_seconds = 30.0
+is_enabled = true
+is_default = true
+
+[cost.providers.openai."gpt-4o-mini"]
+prompt_tokens_per_1k = 0.00015
+completion_tokens_per_1k = 0.0006
+
+# -----------------------------------------------------------------------------
+# GPT-5 Mini - Fast, balanced cost/performance
+# -----------------------------------------------------------------------------
+[models.registry."openai:gpt-5-mini"]
+display_name = "GPT-5 Mini"
+provider = "openai"
+capabilities = ["query_generation", "evidence_extraction", "curation", "judge"]
+cost_tier = "low"
+is_reasoning_model = true
+max_retries = 1
+timeout_seconds = 300.0
+is_enabled = true
+is_default = true
+
+[models.registry."openai:gpt-5-mini".default_reasoning_settings]
+effort = "medium"
+verbosity = "medium"
+
+[cost.providers.openai."gpt-5-mini"]
+prompt_tokens_per_1k = 0.00025
+completion_tokens_per_1k = 0.002
+
+# -----------------------------------------------------------------------------
+# GPT-5 Nano - Extremely fast, lowest cost
+# -----------------------------------------------------------------------------
+[models.registry."openai:gpt-5-nano"]
+display_name = "GPT-5 Nano"
+provider = "openai"
+capabilities = ["query_generation", "evidence_extraction", "curation", "judge"]
+cost_tier = "low"
+is_reasoning_model = false
+max_retries = 3
+timeout_seconds = 30.0
+is_enabled = true
+is_default = false
+
+[cost.providers.openai."gpt-5-nano"]
+prompt_tokens_per_1k = 0.00005
+completion_tokens_per_1k = 0.0004
+
+# -----------------------------------------------------------------------------
+# GPT-5 - Reasoning model with high capability
+# -----------------------------------------------------------------------------
+[models.registry."openai:gpt-5"]
+display_name = "GPT-5"
+provider = "openai"
+capabilities = ["query_generation", "evidence_extraction", "curation", "judge"]
+cost_tier = "high"
+is_reasoning_model = true
+max_retries = 1
+timeout_seconds = 900.0
+is_enabled = true
+is_default = false
+
+[models.registry."openai:gpt-5".default_reasoning_settings]
+effort = "medium"
+verbosity = "medium"
+
+[cost.providers.openai."gpt-5"]
+prompt_tokens_per_1k = 0.00125
+completion_tokens_per_1k = 0.01
+
+# -----------------------------------------------------------------------------
+# GPT-5.2 - Latest flagship model
+# -----------------------------------------------------------------------------
+[models.registry."openai:gpt-5.2"]
+display_name = "GPT-5.2"
+provider = "openai"
+capabilities = ["query_generation", "evidence_extraction", "curation", "judge"]
+cost_tier = "high"
+is_reasoning_model = true
+max_retries = 1
+timeout_seconds = 900.0
+is_enabled = true
+is_default = false
+
+[models.registry."openai:gpt-5.2".default_reasoning_settings]
+effort = "medium"
+verbosity = "medium"
+
+[cost.providers.openai."gpt-5.2"]
+prompt_tokens_per_1k = 0.00175
+completion_tokens_per_1k = 0.014
+
+[lockfile]
+# Ensure prompt/config consistency between dev and prod
+# Enable in production for deterministic deployments
+enabled = false
+path = ".artana.lock"
+
+[governance]
+# Governance settings can also be overridden via environment variables:
+# - ARTANA_GOVERNANCE_TOOL_ALLOWLIST: Comma-separated tool IDs
+# - ARTANA_GOVERNANCE_PII_SCRUB: Enable PII scrubbing (1/0)
+# - ARTANA_GOVERNANCE_PII_STRONG: Enable strong PII mode (1/0)
+# - ARTANA_GOVERNANCE_COST_LIMIT: Max cost in USD
+# - ARTANA_GOVERNANCE_CONFIDENCE_THRESHOLD: Min confidence for auto-approval
+
+# Default confidence threshold for auto-approval (0.0-1.0)
+confidence_threshold = 0.85
+
+# Require evidence in agent outputs for auto-approval
+require_evidence = true
+
+# Human-in-the-loop threshold (below this, escalate to human review)
+hitl_threshold = 0.5
+
+[shadow_eval]
+# Shadow Evaluation (LLM-as-Judge) for quality monitoring
+# Runs quality checks on live traffic asynchronously
+enabled = false
+sink = "database"  # Options: "database", "file", "both"
+sample_rate = 0.1  # Evaluate 10% of requests
+
+# Judge model for shadow evaluation
+judge_model = "openai:gpt-4o-mini"
+
+[budgets]
+# Usage limits for different contexts
+# These can be overridden per-request via UsageLimits
+
+[budgets.default]
+total_cost_usd = 1.0
+max_turns = 10
+max_tokens = 8192
+
+[budgets.research]
+# Higher limits for research/exploration tasks
+total_cost_usd = 5.0
+max_turns = 25
+max_tokens = 16384
+
+# Source-specific query-generation profiles
+# Profiles can set:
+# - model: explicit model override
+# - usage_limits: inline budget overrides for this source
+# - budget_profile: alias into [budgets.<name>] (for shared budgets)
+
+[source_profiles.pubmed]
+budget_profile = "research"
+
+[source_profiles.clinvar]
+model = "openai:gpt-5-mini"
+budget_profile = "research"

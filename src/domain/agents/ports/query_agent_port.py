@@ -58,8 +58,8 @@ class QueryAgentPort(ABC):
 
 @runtime_checkable
 class QueryAgentRunMetadataProvider(Protocol):
-    """Optional protocol for agents that expose their last Flujo run id."""
+    """Optional protocol for agents that expose their last orchestration run id."""
 
     def get_last_run_id(self) -> str | None:
-        """Return the most recently executed Flujo run id, if available."""
+        """Return the most recently executed run id, if available."""
         ...

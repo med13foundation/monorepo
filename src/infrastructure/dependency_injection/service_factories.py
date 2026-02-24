@@ -33,13 +33,13 @@ from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
 from src.infrastructure.llm.adapters import (
-    FlujoContentEnrichmentAdapter,
-    FlujoEntityRecognitionAdapter,
-    FlujoExtractionAdapter,
-    FlujoExtractionPolicyAdapter,
-    FlujoGraphConnectionAdapter,
-    FlujoGraphSearchAdapter,
-    FlujoQueryAgentAdapter,
+    ArtanaContentEnrichmentAdapter,
+    ArtanaEntityRecognitionAdapter,
+    ArtanaExtractionAdapter,
+    ArtanaExtractionPolicyAdapter,
+    ArtanaGraphConnectionAdapter,
+    ArtanaGraphSearchAdapter,
+    ArtanaQueryAgentAdapter,
 )
 from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.repositories import (
@@ -93,7 +93,7 @@ class ApplicationServiceFactoryMixin(
         if self._query_agent is None:
             registry = get_model_registry()
             model_spec = registry.get_default_model(ModelCapability.QUERY_GENERATION)
-            self._query_agent = FlujoQueryAgentAdapter(model=model_spec.model_id)
+            self._query_agent = ArtanaQueryAgentAdapter(model=model_spec.model_id)
         return self._query_agent
 
     @staticmethod
@@ -152,7 +152,7 @@ class ApplicationServiceFactoryMixin(
             model_spec = registry.get_default_model(
                 ModelCapability.EVIDENCE_EXTRACTION,
             )
-            self._entity_recognition_agent = FlujoEntityRecognitionAdapter(
+            self._entity_recognition_agent = ArtanaEntityRecognitionAdapter(
                 model=model_spec.model_id,
             )
         return self._entity_recognition_agent
@@ -163,7 +163,7 @@ class ApplicationServiceFactoryMixin(
             model_spec = registry.get_default_model(
                 ModelCapability.EVIDENCE_EXTRACTION,
             )
-            self._extraction_agent = FlujoExtractionAdapter(
+            self._extraction_agent = ArtanaExtractionAdapter(
                 model=model_spec.model_id,
             )
         return self._extraction_agent
@@ -179,15 +179,15 @@ class ApplicationServiceFactoryMixin(
         model_spec = registry.get_default_model(
             ModelCapability.EVIDENCE_EXTRACTION,
         )
-        entity_recognition_agent = FlujoEntityRecognitionAdapter(
+        entity_recognition_agent = ArtanaEntityRecognitionAdapter(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
         )
-        extraction_agent = FlujoExtractionAdapter(
+        extraction_agent = ArtanaExtractionAdapter(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
         )
-        extraction_policy_agent = FlujoExtractionPolicyAdapter(
+        extraction_policy_agent = ArtanaExtractionPolicyAdapter(
             model=model_spec.model_id,
         )
         extraction_service = ExtractionService(
@@ -222,11 +222,11 @@ class ApplicationServiceFactoryMixin(
         model_spec = registry.get_default_model(
             ModelCapability.EVIDENCE_EXTRACTION,
         )
-        extraction_agent = FlujoExtractionAdapter(
+        extraction_agent = ArtanaExtractionAdapter(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
         )
-        extraction_policy_agent = FlujoExtractionPolicyAdapter(
+        extraction_policy_agent = ArtanaExtractionPolicyAdapter(
             model=model_spec.model_id,
         )
         return ExtractionService(
@@ -253,7 +253,7 @@ class ApplicationServiceFactoryMixin(
         model_spec = registry.get_default_model(
             ModelCapability.EVIDENCE_EXTRACTION,
         )
-        graph_connection_agent = FlujoGraphConnectionAdapter(
+        graph_connection_agent = ArtanaGraphConnectionAdapter(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
             graph_query_service=graph_query_service,
@@ -281,7 +281,7 @@ class ApplicationServiceFactoryMixin(
         if self._is_stage_enabled("MED13_ENABLE_GRAPH_SEARCH_AGENT"):
             registry = get_model_registry()
             model_spec = registry.get_default_model(ModelCapability.QUERY_GENERATION)
-            graph_search_agent = FlujoGraphSearchAdapter(
+            graph_search_agent = ArtanaGraphSearchAdapter(
                 model=model_spec.model_id,
                 graph_query_service=graph_query_service,
             )
@@ -305,7 +305,7 @@ class ApplicationServiceFactoryMixin(
             model_spec = registry.get_default_model(
                 ModelCapability.EVIDENCE_EXTRACTION,
             )
-            content_enrichment_agent = FlujoContentEnrichmentAdapter(
+            content_enrichment_agent = ArtanaContentEnrichmentAdapter(
                 model=model_spec.model_id,
             )
         return ContentEnrichmentService(

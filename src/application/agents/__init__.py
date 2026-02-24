@@ -9,7 +9,7 @@ This layer:
 - Orchestrates multiple domain services
 - Handles cross-cutting concerns (logging, metrics)
 - Does NOT contain business logic (that's in domain)
-- Does NOT contain infrastructure details (adapters, Flujo)
+- Does NOT contain infrastructure details (adapters, runtimes)
 """
 
 from src.application.agents.services.content_enrichment_service import (

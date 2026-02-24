@@ -13,6 +13,7 @@ from src.infrastructure.repositories.kernel.kernel_relation_repository import (
     SqlAlchemyKernelRelationRepository,
 )
 from src.models.database.kernel.entities import EntityModel
+from src.models.database.kernel.provenance import ProvenanceModel
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 from src.models.database.research_space import ResearchSpaceModel, SpaceStatusEnum
 from src.models.database.user import UserModel
@@ -77,6 +78,29 @@ def _seed_space_and_entities(
     db_session.flush()
 
     return research_space_id, source_entity_id, target_entity_id
+
+
+def _seed_provenance_ids(
+    db_session: Session,
+    *,
+    research_space_id: UUID,
+    count: int,
+) -> list[UUID]:
+    provenance_ids: list[UUID] = []
+    for idx in range(count):
+        provenance_id = uuid4()
+        db_session.add(
+            ProvenanceModel(
+                id=provenance_id,
+                research_space_id=research_space_id,
+                source_type="AI_EXTRACTION",
+                source_ref=f"test://source/{idx}",
+                raw_input={"seed_index": idx},
+            ),
+        )
+        provenance_ids.append(provenance_id)
+    db_session.flush()
+    return provenance_ids
 
 
 def test_create_deduplicates_canonical_relation_and_aggregates_evidence(
@@ -238,6 +262,11 @@ def test_create_applies_stricter_threshold_for_computational_only_evidence(
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
+    provenance_ids = _seed_provenance_ids(
+        db_session,
+        research_space_id=research_space_id,
+        count=5,
+    )
     repository = SqlAlchemyKernelRelationRepository(db_session)
 
     relation = repository.create(
@@ -247,7 +276,7 @@ def test_create_applies_stricter_threshold_for_computational_only_evidence(
         target_id=str(target_entity_id),
         confidence=1.0,
         evidence_tier="COMPUTATIONAL",
-        provenance_id=str(uuid4()),
+        provenance_id=str(provenance_ids[0]),
     )
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -256,7 +285,7 @@ def test_create_applies_stricter_threshold_for_computational_only_evidence(
         target_id=str(target_entity_id),
         confidence=1.0,
         evidence_tier="COMPUTATIONAL",
-        provenance_id=str(uuid4()),
+        provenance_id=str(provenance_ids[1]),
     )
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -265,7 +294,7 @@ def test_create_applies_stricter_threshold_for_computational_only_evidence(
         target_id=str(target_entity_id),
         confidence=1.0,
         evidence_tier="COMPUTATIONAL",
-        provenance_id=str(uuid4()),
+        provenance_id=str(provenance_ids[2]),
     )
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -274,7 +303,7 @@ def test_create_applies_stricter_threshold_for_computational_only_evidence(
         target_id=str(target_entity_id),
         confidence=1.0,
         evidence_tier="COMPUTATIONAL",
-        provenance_id=str(uuid4()),
+        provenance_id=str(provenance_ids[3]),
     )
 
     assert relation.source_count == 4
@@ -287,7 +316,7 @@ def test_create_applies_stricter_threshold_for_computational_only_evidence(
         target_id=str(target_entity_id),
         confidence=1.0,
         evidence_tier="COMPUTATIONAL",
-        provenance_id=str(uuid4()),
+        provenance_id=str(provenance_ids[4]),
     )
 
     assert relation.source_count == 5
@@ -421,6 +450,11 @@ def test_create_space_policy_override_can_block_default_auto_promotion(
             },
         },
     )
+    provenance_ids = _seed_provenance_ids(
+        db_session,
+        research_space_id=research_space_id,
+        count=3,
+    )
     repository = SqlAlchemyKernelRelationRepository(db_session)
 
     relation = repository.create(
@@ -430,7 +464,7 @@ def test_create_space_policy_override_can_block_default_auto_promotion(
         target_id=str(target_entity_id),
         confidence=0.99,
         evidence_tier="LITERATURE",
-        provenance_id=str(uuid4()),
+        provenance_id=str(provenance_ids[0]),
     )
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -439,7 +473,7 @@ def test_create_space_policy_override_can_block_default_auto_promotion(
         target_id=str(target_entity_id),
         confidence=0.99,
         evidence_tier="LITERATURE",
-        provenance_id=str(uuid4()),
+        provenance_id=str(provenance_ids[1]),
     )
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -448,7 +482,7 @@ def test_create_space_policy_override_can_block_default_auto_promotion(
         target_id=str(target_entity_id),
         confidence=0.99,
         evidence_tier="LITERATURE",
-        provenance_id=str(uuid4()),
+        provenance_id=str(provenance_ids[2]),
     )
 
     assert relation.source_count == 3

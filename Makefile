@@ -118,7 +118,7 @@ define ensure_web_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-flujo-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test phi-backfill-dry-run phi-backfill-commit
+.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test phi-backfill-dry-run phi-backfill-commit
 
 PY_CHECK_PATHS := src tests scripts alembic
 PY_STRICT_CHECK_PATHS := src
@@ -217,11 +217,11 @@ else
 	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py tests/unit/architecture/test_architectural_compliance.py -v -m architecture)
 endif
 
-test-flujo-architecture: ## Run Flujo AI agent architecture compliance tests
+test-artana-architecture: ## Run Artana AI agent architecture compliance tests
 	$(call check_venv)
 	$(USE_PYTHON) -m pytest tests/unit/architecture/test_flujo_compliance.py -v -m architecture
 
-test-all-architecture: test-architecture test-flujo-architecture validate-architecture validate-dependencies ## Run all architecture tests
+test-all-architecture: test-architecture test-artana-architecture validate-architecture validate-dependencies ## Run all architecture tests
 
 validate-architecture: ## Validate architectural compliance
 	$(call check_venv)
@@ -351,7 +351,7 @@ run-all-postgres: ## Restart Postgres, run migrations, seed admin, start backend
 	@$(MAKE) -s stop-all
 	@$(MAKE) -s docker-postgres-up
 	@$(MAKE) -s postgres-migrate SUPPRESS_VENV_WARNING=1
-	@$(MAKE) -s init-flujo-schema SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s init-artana-schema SUPPRESS_VENV_WARNING=1
 	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin SUPPRESS_VENV_WARNING=1)
 	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
 	@echo "Backend running in background. Starting Next.js..."
@@ -629,21 +629,21 @@ else
 	$(call run_with_postgres_env,$(ALEMBIC_BIN) upgrade heads)
 endif
 
-init-flujo-schema: ## Initialize the flujo schema in Postgres
+init-artana-schema: ## Initialize the artana schema in Postgres
 	$(call check_venv)
-	@echo "Creating flujo schema..."
+	@echo "Creating artana schema..."
 ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) scripts/init_flujo_schema.py
+	$(USE_PYTHON) scripts/init_artana_schema.py
 else
-	$(call run_with_postgres_env,$(USE_PYTHON) scripts/init_flujo_schema.py)
+	$(call run_with_postgres_env,$(USE_PYTHON) scripts/init_artana_schema.py)
 endif
 
-setup-postgres: ## Full PostgreSQL setup including flujo schema
+setup-postgres: ## Full PostgreSQL setup including artana schema
 	@$(MAKE) -s docker-postgres-up
 	@$(MAKE) -s postgres-wait
 	@$(MAKE) -s postgres-migrate
-	@$(MAKE) -s init-flujo-schema
-	@echo "PostgreSQL setup complete with flujo schema."
+	@$(MAKE) -s init-artana-schema
+	@echo "PostgreSQL setup complete with artana schema."
 
 # Database
 db-migrate: ## Run database migrations

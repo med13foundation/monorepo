@@ -23,7 +23,7 @@ class ModelRegistryPort(ABC):
     testability.
 
     The infrastructure layer implements this port to load
-    models from configuration (flujo.toml, environment, etc.).
+    models from configuration (artana.toml, environment, etc.).
     """
 
     @abstractmethod
@@ -32,7 +32,7 @@ class ModelRegistryPort(ABC):
         Get a specific model by ID.
 
         Args:
-            model_id: The Flujo model identifier (e.g., "openai:gpt-4o-mini")
+            model_id: The model identifier (e.g., "openai:gpt-5-mini")
 
         Returns:
             The model specification
@@ -72,7 +72,7 @@ class ModelRegistryPort(ABC):
 
         Resolution order:
         1. Environment variable (MED13_AI_{CAPABILITY}_MODEL)
-        2. flujo.toml [models] defaults
+        2. artana.toml [models] defaults
         3. First enabled model with the capability
 
         Args:

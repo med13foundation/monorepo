@@ -238,7 +238,7 @@ class QueryAgentService:
 
     def get_last_run_id(self) -> str | None:
         """
-        Get the last Flujo run ID for debugging/inspection.
+        Get the last agent run ID for debugging/inspection.
 
         Returns:
             The last run ID if available, None otherwise

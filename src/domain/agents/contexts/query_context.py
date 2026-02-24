@@ -4,7 +4,7 @@ Context for query generation agent pipelines.
 Provides typed context for query generation workflows including
 research space context, source-specific metadata, and audit fields.
 
-Per Flujo production guidelines, context fields should be indexable
+Per production guidance, context fields should be indexable
 for fast filtering and include audit metadata for compliance.
 """
 

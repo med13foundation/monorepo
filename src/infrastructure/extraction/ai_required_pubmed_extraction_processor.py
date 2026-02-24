@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class AiRequiredPubMedExtractionProcessor(ExtractionProcessorPort):
-    """Skip legacy queued PubMed extraction and require Flujo AI stages."""
+    """Skip legacy queued PubMed extraction and require AI orchestration stages."""
 
     def extract_publication(
         self,
@@ -33,7 +33,7 @@ class AiRequiredPubMedExtractionProcessor(ExtractionProcessorPort):
             "queue_item_id": str(queue_item.id),
             "source_type": queue_item.source_type,
             "source_record_id": queue_item.source_record_id,
-            "reason": "legacy_pubmed_extraction_disabled_use_flujo_pipeline",
+            "reason": "legacy_pubmed_extraction_disabled_use_ai_pipeline",
             "ai_required": True,
             "has_text_payload": text_payload is not None,
         }

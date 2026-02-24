@@ -56,7 +56,7 @@ class GraphConnectionContract(BaseAgentContract):
     )
     agent_run_id: str | None = Field(
         default=None,
-        description="Flujo run identifier when available",
+        description="Orchestration run identifier when available",
     )
 
 

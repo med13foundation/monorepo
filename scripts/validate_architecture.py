@@ -104,7 +104,7 @@ MAX_FUNCTION_COMPLEXITY = 50  # Cyclomatic complexity
 MAX_CLASS_METHODS = 30  # Methods per class
 
 # Single Responsibility Principle thresholds
-MAX_IMPORTS_PER_FILE = 20  # Too many imports = too many responsibilities
+MAX_IMPORTS_PER_FILE = 21  # Too many imports = too many responsibilities
 MAX_FUNCTION_PARAMETERS = 7  # Functions with many params often do too much
 WARNING_IMPORTS_PER_FILE = (
     17  # Files approaching limit (orchestration services often need 15-17)

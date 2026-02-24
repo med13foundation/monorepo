@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from src.application.services.ports.flujo_state_port import FlujoStatePort
+    from src.application.services.ports.agent_run_state_port import AgentRunStatePort
     from src.domain.agents.ports.query_agent_port import (
         QueryAgentPort,
         QueryAgentRunMetadataProvider,
@@ -60,7 +60,7 @@ class DataSourceAiTestDependencies:
     clinvar_gateway: ClinVarGateway
     query_agent: QueryAgentPort | None
     research_space_repository: ResearchSpaceRepository | None
-    flujo_state: FlujoStatePort | None = None
+    agent_run_state: AgentRunStatePort | None = None
     run_id_provider: QueryAgentRunMetadataProvider | None = None
 
 
@@ -78,7 +78,7 @@ class DataSourceAiTestService:
         self._query_agent = dependencies.query_agent
         self._run_id_provider = dependencies.run_id_provider
         self._research_space_repository = dependencies.research_space_repository
-        self._flujo_state = dependencies.flujo_state
+        self._agent_run_state = dependencies.agent_run_state
         resolved_settings = settings or DataSourceAiTestSettings()
         self._sample_size = max(resolved_settings.sample_size, 1)
         self._ai_model_name = resolved_settings.ai_model_name
@@ -95,8 +95,8 @@ class DataSourceAiTestService:
         executed_query: str | None = None
         fetched_records = 0
         findings: list[data_source_types.DataSourceAiTestFinding] = []
-        flujo_run_id: str | None = None
-        flujo_tables: list[data_source_types.FlujoTableSummary] = []
+        agent_run_id: str | None = None
+        agent_run_tables: list[data_source_types.AgentRunTableSummary] = []
         ai_executed = False
         fetch_attempted = False
 
@@ -137,7 +137,7 @@ class DataSourceAiTestService:
                     error_message = fetch_error
 
         if ai_executed:
-            flujo_run_id, flujo_tables = self._resolve_flujo_state(checked_at)
+            agent_run_id, agent_run_tables = self._resolve_agent_run_state(checked_at)
 
         success = error_message is None
         if error_message is None:
@@ -170,8 +170,8 @@ class DataSourceAiTestService:
             sample_size=self._sample_size,
             findings=findings,
             checked_at=checked_at,
-            flujo_run_id=flujo_run_id,
-            flujo_tables=flujo_tables,
+            agent_run_id=agent_run_id,
+            agent_run_tables=agent_run_tables,
         )
 
     def _require_source(self, source_id: UUID) -> user_data_source.UserDataSource:
@@ -389,11 +389,11 @@ class DataSourceAiTestService:
     ) -> list[data_source_types.DataSourceAiTestFinding]:
         return build_clinvar_findings(records, self._sample_size)
 
-    def _resolve_flujo_state(
+    def _resolve_agent_run_state(
         self,
         checked_at: dt.datetime,
-    ) -> tuple[str | None, list[data_source_types.FlujoTableSummary]]:
-        if self._flujo_state is None:
+    ) -> tuple[str | None, list[data_source_types.AgentRunTableSummary]]:
+        if self._agent_run_state is None:
             return None, []
 
         if self._run_id_provider is None:
@@ -402,12 +402,12 @@ class DataSourceAiTestService:
         run_id = self._run_id_provider.get_last_run_id()
         if run_id is None:
             window_start = checked_at - dt.timedelta(minutes=2)
-            run_id = self._flujo_state.find_latest_run_id(since=window_start)
+            run_id = self._agent_run_state.find_latest_run_id(since=window_start)
 
         if run_id is None:
             return None, []
 
-        return run_id, self._flujo_state.get_run_table_summaries(run_id)
+        return run_id, self._agent_run_state.get_run_table_summaries(run_id)
 
 
 __all__ = [

@@ -1,114 +1,146 @@
-"""Tests for Flujo graph-search adapter fallback and tool wiring behavior."""
+"""Tests for Artana graph-search adapter behavior."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import os
+from contextlib import contextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.domain.agents.contexts.graph_search_context import GraphSearchContext
+from src.domain.agents.contracts.graph_search import GraphSearchContract
+from src.domain.agents.models import ModelCapability, ModelSpec
 from src.infrastructure.llm.adapters.graph_search_agent_adapter import (
-    FlujoGraphSearchAdapter,
+    ArtanaGraphSearchAdapter,
 )
 
+_ADAPTER_MODULE = "src.infrastructure.llm.adapters.graph_search_agent_adapter"
 
-def _build_adapter() -> FlujoGraphSearchAdapter:
+
+def _build_registry() -> MagicMock:
+    registry = MagicMock()
+    model_spec = ModelSpec(
+        model_id="openai:gpt-5-mini",
+        display_name="GPT-5 Mini",
+        provider="openai",
+        capabilities=frozenset({ModelCapability.QUERY_GENERATION}),
+        prompt_tokens_per_1k=0.00025,
+        completion_tokens_per_1k=0.002,
+        timeout_seconds=120.0,
+        is_default=True,
+    )
+    registry.get_model.return_value = model_spec
+    registry.get_default_model.return_value = model_spec
+    registry.allow_runtime_model_overrides.return_value = True
+    registry.validate_model_for_capability.return_value = True
+    return registry
+
+
+@contextmanager
+def _build_adapter(*, with_graph_service: bool = True):
+    governance = MagicMock()
+    governance.usage_limits.total_cost_usd = 1.0
+    governance.usage_limits.max_turns = 8
+    governance.usage_limits.max_tokens = 4096
+
+    output = GraphSearchContract(
+        decision="generated",
+        confidence_score=0.87,
+        rationale="Relevant entities identified.",
+        evidence=[],
+        research_space_id="space-1",
+        original_query="q",
+        interpreted_intent="q",
+        query_plan_summary="search graph",
+        total_results=0,
+        results=[],
+        executed_path="agent",
+        warnings=[],
+        agent_run_id=None,
+    )
+    client = MagicMock()
+    client.step = AsyncMock(return_value=SimpleNamespace(output=output))
+    kernel = MagicMock()
+    kernel.close = AsyncMock()
+    model_port = MagicMock()
+    model_port.aclose = AsyncMock()
+
+    graph_query_service = MagicMock() if with_graph_service else None
+
     with (
+        patch(f"{_ADAPTER_MODULE}._ARTANA_IMPORT_ERROR", None),
+        patch(f"{_ADAPTER_MODULE}.get_model_registry", return_value=_build_registry()),
         patch(
-            "src.infrastructure.llm.adapters.graph_search_agent_adapter.get_state_backend",
-            return_value=MagicMock(),
+            f"{_ADAPTER_MODULE}.GovernanceConfig.from_environment",
+            return_value=governance,
         ),
+        patch.object(ArtanaGraphSearchAdapter, "_create_store", return_value=object()),
+        patch.object(ArtanaGraphSearchAdapter, "_create_tenant", return_value=object()),
+        patch(f"{_ADAPTER_MODULE}._OpenAIChatModelPort", return_value=model_port),
+        patch(f"{_ADAPTER_MODULE}.ArtanaKernel", return_value=kernel, create=True),
         patch(
-            "src.infrastructure.llm.adapters.graph_search_agent_adapter.get_model_registry",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "src.infrastructure.llm.adapters.graph_search_agent_adapter.get_lifecycle_manager",
-            return_value=MagicMock(),
+            f"{_ADAPTER_MODULE}.SingleStepModelClient",
+            return_value=client,
+            create=True,
         ),
     ):
-        return FlujoGraphSearchAdapter()
+        yield ArtanaGraphSearchAdapter(graph_query_service=graph_query_service), client
 
 
 @pytest.mark.asyncio
 async def test_search_uses_fallback_without_openai_key() -> None:
-    adapter = _build_adapter()
-    context = GraphSearchContext(
-        question="What evidence links MED13 to cardiac phenotypes?",
-        research_space_id="space-1",
-    )
-
-    with patch.object(
-        FlujoGraphSearchAdapter,
-        "_has_openai_key",
-        return_value=False,
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        _build_adapter(with_graph_service=True) as (adapter, client),
     ):
+        context = GraphSearchContext(
+            question="What evidence links MED13 to cardiac phenotypes?",
+            research_space_id="space-1",
+        )
         contract = await adapter.search(context)
 
     assert contract.decision == "fallback"
     assert contract.total_results == 0
     assert "API key is not configured" in contract.rationale
+    client.step.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_search_uses_fallback_without_graph_tools() -> None:
-    adapter = _build_adapter()
-    context = GraphSearchContext(
-        question="Find entities related to MED13",
-        research_space_id="space-2",
-    )
-
-    with patch.object(
-        FlujoGraphSearchAdapter,
-        "_has_openai_key",
-        return_value=True,
+    with (
+        patch.dict(os.environ, {"OPENAI_API_KEY": "test-openai-key"}, clear=True),
+        _build_adapter(with_graph_service=False) as (adapter, client),
     ):
+        context = GraphSearchContext(
+            question="Find entities related to MED13",
+            research_space_id="space-2",
+        )
         contract = await adapter.search(context)
 
     assert contract.decision == "fallback"
     assert contract.results == []
     assert "tools are unavailable" in contract.rationale
+    client.step.assert_not_awaited()
 
 
-def test_get_or_create_pipeline_binds_graph_search_tools() -> None:
-    mock_pipeline = MagicMock()
-    lifecycle_manager = MagicMock()
-    graph_query_service = MagicMock()
-
+@pytest.mark.asyncio
+async def test_search_calls_artana_and_normalizes_contract() -> None:
     with (
-        patch(
-            "src.infrastructure.llm.adapters.graph_search_agent_adapter.get_state_backend",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "src.infrastructure.llm.adapters.graph_search_agent_adapter.get_model_registry",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "src.infrastructure.llm.adapters.graph_search_agent_adapter.get_lifecycle_manager",
-            return_value=lifecycle_manager,
-        ),
-        patch(
-            "src.infrastructure.llm.adapters.graph_search_agent_adapter.build_graph_search_tools",
-            return_value=[lambda variable_id: []],
-        ) as build_tools_mock,
-        patch(
-            "src.infrastructure.llm.adapters.graph_search_agent_adapter.create_graph_search_pipeline",
-            return_value=mock_pipeline,
-        ) as create_pipeline_mock,
+        patch.dict(os.environ, {"OPENAI_API_KEY": "test-openai-key"}, clear=True),
+        _build_adapter(with_graph_service=True) as (adapter, client),
     ):
-        adapter = FlujoGraphSearchAdapter(graph_query_service=graph_query_service)
         context = GraphSearchContext(
-            question="Find MED13 signals",
-            research_space_id="space-tools",
+            question="Find entities related to MED13",
+            research_space_id="space-3",
         )
-        pipeline = adapter._get_or_create_pipeline(
-            "openai:gpt-4o-mini",
-            context=context,
-        )
+        contract = await adapter.search(context)
 
-    assert pipeline is mock_pipeline
-    build_tools_mock.assert_called_once()
-    create_pipeline_mock.assert_called_once()
-    called_kwargs = create_pipeline_mock.call_args.kwargs
-    assert called_kwargs["tools"] is not None
+    assert contract.decision == "generated"
+    assert contract.research_space_id == "space-3"
+    assert contract.original_query == "Find entities related to MED13"
+    assert contract.executed_path == "agent"
+    assert contract.agent_run_id is not None
+    assert contract.agent_run_id.startswith("graph_search:")
+    client.step.assert_awaited_once()

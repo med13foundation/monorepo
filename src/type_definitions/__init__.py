@@ -31,10 +31,10 @@ from .common import (
 from .confidence import ConfidenceExtras, ConfidenceScoreOptions
 from .curation import ReviewRecordLike
 from .data_sources import (
+    AgentRunTableSummary,
     DataSourceAiTestFinding,
     DataSourceAiTestLink,
     DataSourceAiTestResult,
-    FlujoTableSummary,
     IngestionExtractionQueueMetadata,
     IngestionExtractionRunMetadata,
     IngestionIdempotencyMetadata,
@@ -117,7 +117,7 @@ __all__ = [
     "DatasetMetadataOptions",
     "DecodedTokenPayload",
     "DOIMintResult",
-    "FlujoTableSummary",
+    "AgentRunTableSummary",
     "EvidenceUpdate",
     "ExtractionFact",
     "ExtractionFactType",

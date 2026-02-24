@@ -117,8 +117,8 @@ export function DataSourceAiTestDialog({
   const executedQuery = result.executed_query
   const searchTerms = Array.isArray(result.search_terms) ? result.search_terms : []
   const findings = Array.isArray(result.findings) ? result.findings : []
-  const flujoTables = Array.isArray(result.flujo_tables) ? result.flujo_tables : []
-  const hasFlujoTables = flujoTables.length > 0
+  const agentRunTables = Array.isArray(result.agent_run_tables) ? result.agent_run_tables : []
+  const hasAgentRunTables = agentRunTables.length > 0
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -196,7 +196,7 @@ export function DataSourceAiTestDialog({
                 <div className="space-y-1">
                   <h3 className="text-sm font-semibold">Advanced</h3>
                   <p className="text-xs text-muted-foreground">
-                    Flujo tables recorded for this AI test run.
+                    Runtime state tables recorded for this AI test run.
                   </p>
                 </div>
                 <CollapsibleTrigger asChild>
@@ -211,19 +211,19 @@ export function DataSourceAiTestDialog({
                 </CollapsibleTrigger>
               </div>
               <CollapsibleContent className="space-y-3">
-                {result.flujo_run_id ? (
+                {result.agent_run_id ? (
                   <div className="rounded-md border p-3">
-                    <InfoRow label="Flujo run ID" value={result.flujo_run_id} />
+                    <InfoRow label="Agent run ID" value={result.agent_run_id} />
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    No Flujo run metadata was recorded for this test. Confirm Postgres
-                    is active and the Flujo schema exists.
+                    No runtime run metadata was recorded for this test. Confirm Postgres
+                    is active and runtime state tables are available.
                   </p>
                 )}
-                {hasFlujoTables ? (
+                {hasAgentRunTables ? (
                   <div className="space-y-3">
-                    {flujoTables.map((table) => {
+                    {agentRunTables.map((table) => {
                       const sampleRows = Array.isArray(table.sample_rows)
                         ? table.sample_rows
                         : []
@@ -266,15 +266,15 @@ export function DataSourceAiTestDialog({
                       )
                     })}
                     <p className="text-xs text-muted-foreground">
-                      Sample rows show the latest Flujo records for this run.
+                      Sample rows show the latest runtime records for this run.
                       Long fields are truncated for readability.
                     </p>
                   </div>
                 ) : (
                   <div className="text-sm text-muted-foreground">
-                    <p>Flujo table details are not available for this run.</p>
+                    <p>Runtime table details are not available for this run.</p>
                     <p className="mt-1 text-xs">
-                      If you expect data here, verify the Flujo schema is present in
+                      If you expect data here, verify runtime state tables are present in
                       Postgres and the AI test executed successfully.
                     </p>
                   </div>
