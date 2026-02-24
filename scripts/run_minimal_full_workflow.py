@@ -71,6 +71,9 @@ _LOW_CALL_EXTRACTION_REQUEST_LIMIT = 48
 _LOW_CALL_EXTRACTION_TOOL_CALL_LIMIT = 96
 _NON_BLOCKING_STAGE_ERRORS = frozenset({"agent_requested_escalation"})
 _NON_BLOCKING_STAGE_ERROR_PREFIXES = ("relation_persistence_skipped_self_loop:",)
+_REQUIRED_AI_ENV_KEY = "OPENAI_API_KEY"
+_ENV_FILE_CANDIDATES = (Path("scripts/.env"), Path(".env"))
+_QUOTED_ENV_MIN_LENGTH = 2
 
 
 @dataclass(frozen=True)
@@ -226,6 +229,49 @@ def _configure_logging(*, verbose: bool) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
+
+
+def _load_environment_overrides() -> list[str]:
+    loaded_keys: list[str] = []
+    for env_path in _ENV_FILE_CANDIDATES:
+        if not env_path.exists():
+            continue
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line.removeprefix("export ").strip()
+            if "=" not in line:
+                continue
+            key, raw_value = line.split("=", 1)
+            normalized_key = key.strip()
+            if not normalized_key:
+                continue
+            existing = os.getenv(normalized_key)
+            if isinstance(existing, str) and existing.strip():
+                continue
+            value = raw_value.strip()
+            if (
+                len(value) >= _QUOTED_ENV_MIN_LENGTH
+                and value[0] == value[-1]
+                and value[0] in {"'", '"'}
+            ):
+                value = value[1:-1]
+            os.environ[normalized_key] = value
+            loaded_keys.append(normalized_key)
+    return loaded_keys
+
+
+def _assert_required_ai_environment() -> None:
+    key_value = os.getenv(_REQUIRED_AI_ENV_KEY, "")
+    if key_value.strip():
+        return
+    msg = (
+        "OPENAI_API_KEY is required. AI path is mandatory and "
+        "metadata/abstract fallback is disabled."
+    )
+    raise RuntimeError(msg)
 
 
 def _normalize_source_type(raw_value: str | None) -> SourceTypeEnum | None:
@@ -951,6 +997,13 @@ def _write_report(
 def main() -> None:
     args = _parse_args()
     _configure_logging(verbose=args.verbose)
+    loaded_env_keys = _load_environment_overrides()
+    if loaded_env_keys:
+        logger.info(
+            "Loaded environment overrides from .env files: %s",
+            ", ".join(sorted(set(loaded_env_keys))),
+        )
+    _assert_required_ai_environment()
     normalized_pmid = _normalize_pmid(args.pmid)
     _validate_stage_limits(
         enrichment_limit=args.enrichment_limit,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 from typing import TYPE_CHECKING, Literal
 
@@ -15,6 +14,7 @@ from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.graph_search_port import GraphSearchPort
 from src.infrastructure.llm.adapters._artana_step_helpers import (
     run_single_step_with_policy,
+    stable_sha256_digest,
 )
 from src.infrastructure.llm.config import (
     GovernanceConfig,
@@ -415,7 +415,7 @@ class ArtanaGraphSearchAdapter(GraphSearchPort):
     @staticmethod
     def _create_run_id(*, model_id: str, research_space_id: str, question: str) -> str:
         payload = f"{model_id}|{research_space_id}|{question.strip()}"
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+        digest = stable_sha256_digest(payload)
         return f"graph_search:{digest}"
 
     @staticmethod

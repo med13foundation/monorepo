@@ -116,9 +116,9 @@ async def test_enrich_falls_back_when_openai_key_missing() -> None:
         )
         contract = await adapter.enrich(context)
 
-    assert contract.decision == "enriched"
-    assert contract.acquisition_method == "pass_through"
-    assert "API key is not configured" in (contract.warning or "")
+    assert contract.decision == "failed"
+    assert contract.acquisition_method == "skipped"
+    assert "missing_openai_api_key" in (contract.warning or "")
     client.step.assert_not_awaited()
 
 

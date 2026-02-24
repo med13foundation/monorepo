@@ -127,6 +127,7 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
             research_space_id=context.research_space_id,
             external_id=external_record_id,
             extraction_config_version=self._runtime_policy.extraction_config_version,
+            run_attempt_token=context.created_at.isoformat(),
         )
         self._last_run_id = run_id
         relation_governance_mode = self._resolve_relation_governance_mode(
@@ -241,17 +242,26 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
         research_space_id: str | None = None,
         external_id: str | None = None,
         extraction_config_version: str = "v1",
+        run_attempt_token: str | None = None,
         model_id: str | None = None,
         document_id: str | None = None,
     ) -> str:
         _ = model_id  # retained for backward-compatible call sites/tests
         resolved_external_id = (external_id or document_id or "").strip() or "unknown"
+        normalized_attempt = (
+            run_attempt_token.strip() if isinstance(run_attempt_token, str) else ""
+        )
+        effective_config_version = extraction_config_version
+        if normalized_attempt:
+            effective_config_version = (
+                f"{extraction_config_version}|attempt:{normalized_attempt}"
+            )
         return build_deterministic_run_id(
             prefix="extraction",
             research_space_id=research_space_id,
             source_type=source_type,
             external_id=resolved_external_id,
-            extraction_config_version=extraction_config_version,
+            extraction_config_version=effective_config_version,
         )
 
     @staticmethod

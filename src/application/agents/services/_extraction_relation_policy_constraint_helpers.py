@@ -146,8 +146,11 @@ class _ExtractionRelationPolicyConstraintHelpers:
     ) -> tuple[bool, str | None]:
         if self._dictionary is None:
             return False, None
+        creation_policy: Literal["ACTIVE", "PENDING_REVIEW"] = (
+            "ACTIVE" if relation_governance_mode == "FULL_AUTO" else "PENDING_REVIEW"
+        )
         policy_settings: ResearchSpaceSettings = {
-            "dictionary_agent_creation_policy": "PENDING_REVIEW",
+            "dictionary_agent_creation_policy": creation_policy,
         }
         triple = request.triple
         try:
@@ -201,6 +204,49 @@ class _ExtractionRelationPolicyConstraintHelpers:
             return True, None
         else:
             return True, None
+
+    def _ensure_full_auto_allowed_constraint(
+        self,
+        *,
+        source_type: str,
+        relation_type: str,
+        target_type: str,
+        source_ref: str,
+    ) -> tuple[bool, str]:
+        if self._dictionary is None:
+            return False, "dictionary_service_unavailable"
+
+        request = _PendingConstraintRequest(
+            triple=(source_type, relation_type, target_type),
+            is_allowed=True,
+            requires_evidence=True,
+        )
+        created, error = self._create_pending_constraint(
+            request=request,
+            source_ref=source_ref,
+            relation_governance_mode="FULL_AUTO",
+        )
+        if error is not None:
+            return False, error
+        if not created:
+            return False, "full_auto_constraint_create_failed"
+
+        constraints = self._dictionary.get_constraints(
+            source_type=source_type,
+            relation_type=relation_type,
+            include_inactive=True,
+        )
+        for constraint in constraints:
+            if constraint.target_type != target_type:
+                continue
+            if not constraint.is_active:
+                continue
+            if constraint.review_status != "ACTIVE":
+                continue
+            if not constraint.is_allowed:
+                return False, "active_forbidden_constraint_exists"
+            return True, "full_auto_constraint_active"
+        return False, "full_auto_constraint_not_active"
 
     def _write_constraint(
         self,

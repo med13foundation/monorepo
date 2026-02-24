@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from threading import Thread
 from typing import TYPE_CHECKING, Literal
@@ -14,6 +13,7 @@ from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
 from src.infrastructure.llm.adapters._artana_step_helpers import (
     run_single_step_with_policy,
+    stable_sha256_digest,
 )
 from src.infrastructure.llm.adapters._openai_json_schema_model_port import (
     OpenAIJSONSchemaModelPort,
@@ -198,7 +198,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
                 ",".join(sorted(candidate_ids)),
             ],
         )
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+        digest = stable_sha256_digest(payload)
         return f"mapping_judge:{digest}"
 
     @staticmethod

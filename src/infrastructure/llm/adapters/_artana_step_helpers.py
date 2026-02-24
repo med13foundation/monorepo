@@ -63,6 +63,12 @@ def build_deterministic_run_id(
     return f"{normalized_prefix}:{normalized_source_type}:{digest}"
 
 
+def stable_sha256_digest(payload: str, *, length: int = 24) -> str:
+    """Return a stable SHA-256 hex digest prefix for run identity."""
+    normalized_length = max(length, 1)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:normalized_length]
+
+
 def resolve_external_record_id(
     *,
     source_type: str,
@@ -137,4 +143,5 @@ __all__ = [
     "build_deterministic_run_id",
     "resolve_external_record_id",
     "run_single_step_with_policy",
+    "stable_sha256_digest",
 ]

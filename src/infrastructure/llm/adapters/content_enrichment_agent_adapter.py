@@ -94,9 +94,9 @@ class ArtanaContentEnrichmentAdapter(ContentEnrichmentPort):
             return self._pass_through_contract(context, warning=None)
 
         if not self._has_openai_key():
-            return self._heuristic_contract(
+            return self._ai_required_contract(
                 context,
-                warning="Content-enrichment agent API key is not configured.",
+                reason="missing_openai_api_key",
             )
 
         effective_model = self._resolve_model_id(model_id)
@@ -140,10 +140,10 @@ class ArtanaContentEnrichmentAdapter(ContentEnrichmentPort):
                     "agent_run_id": contract.agent_run_id or run_id,
                 },
             )
-        except Exception:  # noqa: BLE001
-            return self._heuristic_contract(
+        except Exception as exc:  # noqa: BLE001
+            return self._ai_required_contract(
                 context,
-                warning="Content-enrichment agent execution failed.",
+                reason=f"pipeline_execution_failed:{type(exc).__name__}",
             )
 
     async def close(self) -> None:
@@ -256,49 +256,38 @@ class ArtanaContentEnrichmentAdapter(ContentEnrichmentPort):
         source_type = context.source_type.strip().lower()
         if source_type in _STRUCTURED_SOURCE_TYPES:
             return self._pass_through_contract(context, warning=warning)
+        return self._ai_required_contract(
+            context,
+            reason=warning.strip() or "heuristic_fallback_disabled",
+        )
 
-        extracted_text = self._extract_text_from_metadata(context.existing_metadata)
-        if extracted_text is None:
-            return ContentEnrichmentContract(
-                decision="skipped",
-                confidence_score=0.4,
-                rationale="No enrichment-compatible content was available.",
-                evidence=[
-                    EvidenceItem(
-                        source_type="note",
-                        locator=f"document:{context.document_id}",
-                        excerpt="No abstract/title/full_text found in metadata payload.",
-                        relevance=0.4,
-                    ),
-                ],
-                document_id=context.document_id,
-                source_type=context.source_type,
-                acquisition_method="skipped",
-                content_format="text",
-                content_length_chars=0,
-                warning=warning or "No enrichment content available.",
-                agent_run_id=self._last_run_id,
-            )
-
+    def _ai_required_contract(
+        self,
+        context: ContentEnrichmentContext,
+        *,
+        reason: str,
+    ) -> ContentEnrichmentContract:
         return ContentEnrichmentContract(
-            decision="enriched",
-            confidence_score=0.65,
-            rationale="Heuristic enrichment used existing metadata text.",
+            decision="failed",
+            confidence_score=0.0,
+            rationale=(
+                "AI-only content enrichment with full-text acquisition is required; "
+                f"no metadata abstract/title fallback is allowed ({reason})."
+            ),
             evidence=[
                 EvidenceItem(
-                    source_type="db",
+                    source_type="note",
                     locator=f"document:{context.document_id}",
-                    excerpt="Used metadata title/abstract/full_text as enrichment payload.",
-                    relevance=0.65,
+                    excerpt=f"AI content enrichment unavailable: {reason}",
+                    relevance=1.0,
                 ),
             ],
             document_id=context.document_id,
             source_type=context.source_type,
-            acquisition_method="pass_through",
+            acquisition_method="skipped",
             content_format="text",
-            content_length_chars=len(extracted_text),
-            content_text=extracted_text,
-            warning=warning,
+            content_length_chars=0,
+            warning=f"AI content enrichment unavailable: {reason}",
             agent_run_id=self._last_run_id,
         )
 

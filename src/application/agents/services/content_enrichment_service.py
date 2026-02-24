@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
+from src.application.agents.services._content_enrichment_contract_helpers import (
+    _ContentEnrichmentContractHelpers,
+)
 from src.application.agents.services._content_enrichment_helpers import (
     PASS_THROUGH_SOURCE_TYPES,
     build_content_enrichment_context,
     build_metadata_patch,
-    extract_structured_payload,
     merge_metadata,
     resolve_run_id,
     try_parse_uuid,
@@ -26,8 +27,6 @@ from src.application.agents.services._content_enrichment_types import (
 from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.content_enrichment import ContentEnrichmentContract
 from src.domain.entities.source_document import EnrichmentStatus, SourceDocument
-from src.type_definitions.common import JSONObject  # noqa: TC001
-from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -48,7 +47,10 @@ class ContentEnrichmentServiceDependencies:
     storage_coordinator: StorageOperationCoordinator | None = None
 
 
-class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
+class ContentEnrichmentService(
+    _ContentEnrichmentStorageHelpers,
+    _ContentEnrichmentContractHelpers,
+):
     def __init__(
         self,
         dependencies: ContentEnrichmentServiceDependencies,
@@ -139,7 +141,7 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
         if self._agent is not None:
             await self._agent.close()
 
-    async def _process_document(
+    async def _process_document(  # noqa: PLR0911
         self,
         *,
         document: SourceDocument,
@@ -181,6 +183,47 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
 
         run_id = resolve_run_id(contract)
         run_uuid = try_parse_uuid(run_id)
+
+        full_text_validation_failure = self._validate_required_full_text_contract(
+            document=document,
+            contract=contract,
+        )
+        if full_text_validation_failure is not None:
+            non_blocking_skip = self._should_treat_full_text_validation_as_skip(
+                failure_reason=full_text_validation_failure,
+                contract=contract,
+            )
+            persisted_status = (
+                EnrichmentStatus.SKIPPED
+                if non_blocking_skip
+                else EnrichmentStatus.FAILED
+            )
+            outcome_status: Literal["skipped", "failed"] = (
+                "skipped" if non_blocking_skip else "failed"
+            )
+            self._persist_document_with_status(
+                document=document,
+                status=persisted_status,
+                run_uuid=run_uuid,
+                acquisition_method=contract.acquisition_method,
+                metadata_patch=build_metadata_patch(
+                    contract=contract,
+                    run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
+                    reason=full_text_validation_failure,
+                    content_storage_key=None,
+                    content_hash=None,
+                ),
+            )
+            return ContentEnrichmentDocumentOutcome(
+                document_id=document.id,
+                status=outcome_status,
+                execution_mode=execution_mode,
+                reason=full_text_validation_failure,
+                acquisition_method=contract.acquisition_method,
+                run_id=run_id,
+                errors=() if non_blocking_skip else (full_text_validation_failure,),
+            )
 
         if contract.decision == "skipped":
             self._persist_document_with_status(
@@ -309,52 +352,6 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
             errors=(),
         )
 
-    @staticmethod
-    def _build_extraction_input_patch(
-        *,
-        metadata: JSONObject,
-        contract: ContentEnrichmentContract,
-    ) -> JSONObject:
-        full_text_methods = frozenset({"pmc_oa", "europe_pmc", "publisher_pdf"})
-        full_text_fetched = contract.acquisition_method in full_text_methods
-        fallback_reason = (
-            None
-            if full_text_fetched
-            else (
-                contract.warning
-                if contract.warning and contract.warning.strip()
-                else "open_access_full_text_not_available"
-            )
-        )
-
-        content_text = contract.content_text
-        if content_text is None:
-            return {}
-        normalized_text = content_text.strip()
-        if not normalized_text:
-            return {}
-
-        raw_record_value = metadata.get("raw_record")
-        raw_record: JSONObject
-        if isinstance(raw_record_value, dict):
-            raw_record = {
-                str(key): to_json_value(value)
-                for key, value in raw_record_value.items()
-            }
-        else:
-            raw_record = {}
-
-        raw_record["full_text"] = normalized_text
-        raw_record["full_text_source"] = contract.acquisition_method
-        raw_record["full_text_length_chars"] = len(normalized_text)
-        raw_record["full_text_fetch_attempted"] = full_text_fetched or bool(
-            contract.warning,
-        )
-        raw_record["full_text_fetch_acquired"] = full_text_fetched
-        raw_record["full_text_fallback_reason"] = fallback_reason
-
-        return {"raw_record": raw_record}
-
     async def _build_contract(
         self,
         *,
@@ -400,35 +397,6 @@ class ContentEnrichmentService(_ContentEnrichmentStorageHelpers):
         if self._agent is None:
             return "deterministic"
         return "ai"
-
-    @staticmethod
-    def _build_pass_through_contract(
-        *,
-        document: SourceDocument,
-    ) -> ContentEnrichmentContract:
-        payload = extract_structured_payload(document.metadata)
-        serialized = json.dumps(payload, default=str)
-        return ContentEnrichmentContract(
-            decision="enriched",
-            confidence_score=0.98,
-            rationale="Structured source type uses deterministic pass-through enrichment.",
-            evidence=[
-                EvidenceItem(
-                    source_type="db",
-                    locator=f"document:{document.id}",
-                    excerpt="Structured payload copied to enriched document content.",
-                    relevance=0.98,
-                ),
-            ],
-            document_id=str(document.id),
-            source_type=document.source_type.value,
-            acquisition_method="pass_through",
-            content_format="structured_json",
-            content_storage_key=document.raw_storage_key,
-            content_length_chars=len(serialized),
-            content_payload=payload,
-            agent_run_id=None,
-        )
 
 
 __all__ = [
