@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from threading import Lock
 from typing import TYPE_CHECKING
 
 from src.domain.value_objects.relation_types import normalize_relation_type
@@ -24,6 +25,9 @@ if TYPE_CHECKING:
 else:
     type JSONObject = dict[str, object]
     type JSONValue = object
+
+
+_VALIDATE_TRIPLE_WRITE_LOCK = Lock()
 
 
 def _resolve_relation_governance_mode(
@@ -115,7 +119,7 @@ def make_validate_triple_tool(
         research_space_settings,
     )
 
-    def validate_triple(
+    def validate_triple(  # noqa: PLR0911
         source_type: str,
         relation_type: str,
         target_type: str,
@@ -164,65 +168,101 @@ def make_validate_triple_tool(
                 "target_type": normalized_target_type,
                 "reason": "relation_not_allowed_by_dictionary_constraint",
             }
+        try:
+            with _VALIDATE_TRIPLE_WRITE_LOCK:
+                allowed_after_lock = dictionary_service.is_relation_allowed(
+                    source_type=normalized_source_type,
+                    relation_type=normalized_relation_type,
+                    target_type=normalized_target_type,
+                )
+                if allowed_after_lock:
+                    locked_requires_evidence = dictionary_service.requires_evidence(
+                        source_type=normalized_source_type,
+                        relation_type=normalized_relation_type,
+                        target_type=normalized_target_type,
+                    )
+                    return {
+                        "allowed": True,
+                        "requires_evidence": locked_requires_evidence,
+                        "source_type": normalized_source_type,
+                        "relation_type": normalized_relation_type,
+                        "target_type": normalized_target_type,
+                        "relation_governance_mode": relation_governance_mode,
+                        "dictionary_allowed": True,
+                        "dictionary_requires_evidence": locked_requires_evidence,
+                        "reason": "allowed_after_concurrent_dictionary_update",
+                    }
 
-        mapped_relation_type = resolve_relation_mapping_candidate(
-            dictionary_service=dictionary_service,
-            source_type=normalized_source_type,
-            relation_type=normalized_relation_type,
-            target_type=normalized_target_type,
-        )
-        if mapped_relation_type is not None:
-            mapped_requires_evidence = dictionary_service.requires_evidence(
-                source_type=normalized_source_type,
-                relation_type=mapped_relation_type,
-                target_type=normalized_target_type,
-            )
-            return {
-                "allowed": True,
-                "requires_evidence": mapped_requires_evidence,
-                "source_type": normalized_source_type,
-                "relation_type": mapped_relation_type,
-                "target_type": normalized_target_type,
-                "relation_governance_mode": relation_governance_mode,
-                "dictionary_allowed": False,
-                "dictionary_requires_evidence": requires_evidence,
-                "reason": "mapped_to_existing_relation_type",
-            }
+                mapped_relation_type = resolve_relation_mapping_candidate(
+                    dictionary_service=dictionary_service,
+                    source_type=normalized_source_type,
+                    relation_type=normalized_relation_type,
+                    target_type=normalized_target_type,
+                )
+                if mapped_relation_type is not None:
+                    mapped_requires_evidence = dictionary_service.requires_evidence(
+                        source_type=normalized_source_type,
+                        relation_type=mapped_relation_type,
+                        target_type=normalized_target_type,
+                    )
+                    return {
+                        "allowed": True,
+                        "requires_evidence": mapped_requires_evidence,
+                        "source_type": normalized_source_type,
+                        "relation_type": mapped_relation_type,
+                        "target_type": normalized_target_type,
+                        "relation_governance_mode": relation_governance_mode,
+                        "dictionary_allowed": False,
+                        "dictionary_requires_evidence": requires_evidence,
+                        "reason": "mapped_to_existing_relation_type",
+                    }
 
-        created, creation_reason = ensure_full_auto_relation_dictionary_entry(
-            dictionary_service=dictionary_service,
-            source_type=normalized_source_type,
-            relation_type=normalized_relation_type,
-            target_type=normalized_target_type,
-        )
-        if created:
-            final_requires_evidence = dictionary_service.requires_evidence(
-                source_type=normalized_source_type,
-                relation_type=normalized_relation_type,
-                target_type=normalized_target_type,
-            )
+                created, creation_reason = ensure_full_auto_relation_dictionary_entry(
+                    dictionary_service=dictionary_service,
+                    source_type=normalized_source_type,
+                    relation_type=normalized_relation_type,
+                    target_type=normalized_target_type,
+                )
+                if created:
+                    final_requires_evidence = dictionary_service.requires_evidence(
+                        source_type=normalized_source_type,
+                        relation_type=normalized_relation_type,
+                        target_type=normalized_target_type,
+                    )
+                    return {
+                        "allowed": True,
+                        "requires_evidence": final_requires_evidence,
+                        "source_type": normalized_source_type,
+                        "relation_type": normalized_relation_type,
+                        "target_type": normalized_target_type,
+                        "relation_governance_mode": relation_governance_mode,
+                        "dictionary_allowed": False,
+                        "dictionary_requires_evidence": requires_evidence,
+                        "reason": creation_reason,
+                    }
+                return {
+                    "allowed": False,
+                    "requires_evidence": requires_evidence,
+                    "source_type": normalized_source_type,
+                    "relation_type": normalized_relation_type,
+                    "target_type": normalized_target_type,
+                    "relation_governance_mode": relation_governance_mode,
+                    "dictionary_allowed": False,
+                    "dictionary_requires_evidence": requires_evidence,
+                    "reason": creation_reason,
+                }
+        except Exception as exc:  # noqa: BLE001
             return {
-                "allowed": True,
-                "requires_evidence": final_requires_evidence,
+                "allowed": False,
+                "requires_evidence": requires_evidence,
                 "source_type": normalized_source_type,
                 "relation_type": normalized_relation_type,
                 "target_type": normalized_target_type,
                 "relation_governance_mode": relation_governance_mode,
                 "dictionary_allowed": False,
                 "dictionary_requires_evidence": requires_evidence,
-                "reason": creation_reason,
+                "reason": f"dictionary_update_error:{type(exc).__name__}",
             }
-        return {
-            "allowed": False,
-            "requires_evidence": requires_evidence,
-            "source_type": normalized_source_type,
-            "relation_type": normalized_relation_type,
-            "target_type": normalized_target_type,
-            "relation_governance_mode": relation_governance_mode,
-            "dictionary_allowed": False,
-            "dictionary_requires_evidence": requires_evidence,
-            "reason": creation_reason,
-        }
 
     return validate_triple
 

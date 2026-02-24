@@ -2380,6 +2380,11 @@ def _relation_rejections_are_explicit(analysis: JSONObject) -> bool:
         return all(
             isinstance(reason, str) and reason.strip() for reason in rejected_reasons
         )
+    extraction_errors = analysis.get("extraction_stage_errors")
+    if isinstance(extraction_errors, list) and extraction_errors:
+        return all(
+            isinstance(error, str) and error.strip() for error in extraction_errors
+        )
     return False
 
 

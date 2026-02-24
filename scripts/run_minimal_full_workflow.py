@@ -70,6 +70,7 @@ _LOW_CALL_ENTITY_RECOGNITION_TOOL_CALL_LIMIT = 96
 _LOW_CALL_EXTRACTION_REQUEST_LIMIT = 48
 _LOW_CALL_EXTRACTION_TOOL_CALL_LIMIT = 96
 _NON_BLOCKING_STAGE_ERRORS = frozenset({"agent_requested_escalation"})
+_NON_BLOCKING_STAGE_ERROR_PREFIXES = ("relation_persistence_skipped_self_loop:",)
 
 
 @dataclass(frozen=True)
@@ -641,7 +642,31 @@ def _append_action(
     )
 
 
+def _is_non_blocking_stage_error(error: str) -> bool:
+    normalized_error = error.strip().lower()
+    if normalized_error in _NON_BLOCKING_STAGE_ERRORS:
+        return True
+    return any(
+        normalized_error.startswith(prefix)
+        for prefix in _NON_BLOCKING_STAGE_ERROR_PREFIXES
+    )
+
+
+def _split_stage_errors(
+    errors: tuple[str, ...],
+) -> tuple[list[str], list[str]]:
+    blocking_errors: list[str] = []
+    non_blocking_warnings: list[str] = []
+    for error in errors:
+        if _is_non_blocking_stage_error(error):
+            non_blocking_warnings.append(error)
+        else:
+            blocking_errors.append(error)
+    return blocking_errors, non_blocking_warnings
+
+
 def _pipeline_summary_to_json(summary: PipelineRunSummary) -> JSONObject:
+    blocking_errors, non_blocking_warnings = _split_stage_errors(summary.errors)
     return {
         "run_id": summary.run_id,
         "source_id": str(summary.source_id),
@@ -668,7 +693,8 @@ def _pipeline_summary_to_json(summary: PipelineRunSummary) -> JSONObject:
         "graph_processed": summary.graph_processed,
         "graph_persisted_relations": summary.graph_persisted_relations,
         "executed_query": summary.executed_query,
-        "errors": list(summary.errors),
+        "errors": blocking_errors,
+        "warnings": non_blocking_warnings,
         "metadata": dict(summary.metadata) if summary.metadata is not None else None,
     }
 
@@ -896,11 +922,7 @@ def _build_result_checks(
     *,
     require_graph_success: bool,
 ) -> JSONObject:
-    blocking_stage_errors = [
-        error
-        for error in summary.errors
-        if error.strip().lower() not in _NON_BLOCKING_STAGE_ERRORS
-    ]
+    blocking_stage_errors, _ = _split_stage_errors(summary.errors)
     checks: JSONObject = {
         "overall_run_status_completed": summary.status == "completed",
         "ingestion_stage_completed": summary.ingestion_status == "completed",

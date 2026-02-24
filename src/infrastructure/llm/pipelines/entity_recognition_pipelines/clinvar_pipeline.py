@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from flujo import Flujo, Pipeline
+from flujo import Flujo, Pipeline, Step
 from flujo.domain.agent_result import FlujoAgentResult
 from flujo.domain.dsl import ConditionalStep, GranularStep, HumanInTheLoopStep
 from flujo.domain.models import UsageLimits as FlujoUsageLimits
@@ -13,6 +13,7 @@ from flujo.domain.models import UsageLimits as FlujoUsageLimits
 from src.domain.agents.contexts.entity_recognition_context import (
     EntityRecognitionContext,
 )
+from src.domain.agents.contracts import EntityRecognitionContract
 from src.infrastructure.llm.config.governance import GovernanceConfig, UsageLimits
 from src.infrastructure.llm.factories.entity_recognition_agent_factory import (
     create_entity_recognition_agent_for_source,
@@ -24,8 +25,6 @@ from src.infrastructure.llm.prompts.entity_recognition import (
 
 if TYPE_CHECKING:
     from flujo.state.backends.base import StateBackend
-
-    from src.domain.agents.contracts.entity_recognition import EntityRecognitionContract
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +94,35 @@ def _check_requires_dictionary_policy_step(
     return "run_policy" if created_proposal_count > 0 else "skip_policy"
 
 
+async def _normalize_discovery_output(output: object) -> dict[str, object]:
+    resolved_output = _unwrap_agent_output(output)
+    if isinstance(resolved_output, dict):
+        return {str(key): value for key, value in resolved_output.items()}
+    dump_callable = getattr(resolved_output, "model_dump", None)
+    if callable(dump_callable):
+        dumped_output = dump_callable(mode="json")
+        if isinstance(dumped_output, dict):
+            return {str(key): value for key, value in dumped_output.items()}
+    return {}
+
+
+async def _prepare_dictionary_policy_input(output: object) -> dict[str, object]:
+    return await _normalize_discovery_output(output)
+
+
+async def _normalize_policy_output(output: object) -> object:
+    return _unwrap_agent_output(output)
+
+
+async def _rehydrate_entity_recognition_contract(output: object) -> object:
+    resolved_output = _unwrap_agent_output(output)
+    if isinstance(resolved_output, EntityRecognitionContract):
+        return resolved_output
+    if isinstance(resolved_output, dict):
+        return EntityRecognitionContract.model_validate(resolved_output)
+    return resolved_output
+
+
 def create_clinvar_entity_recognition_pipeline(  # noqa: PLR0913
     state_backend: StateBackend,
     *,
@@ -124,12 +152,18 @@ def create_clinvar_entity_recognition_pipeline(  # noqa: PLR0913
         tools=policy_toolset,
     )
 
-    steps: list[GranularStep | ConditionalStep[EntityRecognitionContext]] = [
+    steps: list[
+        Step[object, object] | GranularStep | ConditionalStep[EntityRecognitionContext]
+    ] = [
         GranularStep(
             name="discover_clinvar_entities",
             agent=discovery_agent,
             enforce_idempotency=True,
             history_max_tokens=8192,
+        ),
+        Step.from_callable(
+            _normalize_discovery_output,
+            name="normalize_clinvar_discovery_output",
         ),
         ConditionalStep(
             name="entity_recognition_dictionary_policy_gate",
@@ -137,15 +171,28 @@ def create_clinvar_entity_recognition_pipeline(  # noqa: PLR0913
             branches={
                 "run_policy": Pipeline(
                     steps=[
-                        GranularStep(
+                        Step.from_callable(
+                            _prepare_dictionary_policy_input,
+                            name="prepare_clinvar_dictionary_policy_input",
+                        ),
+                        Step(
                             name="apply_clinvar_dictionary_policy",
                             agent=policy_agent,
-                            enforce_idempotency=True,
-                            history_max_tokens=8192,
+                        ),
+                        Step.from_callable(
+                            _normalize_policy_output,
+                            name="normalize_clinvar_dictionary_policy_output",
                         ),
                     ],
                 ),
-                "skip_policy": Pipeline(steps=[]),
+                "skip_policy": Pipeline(
+                    steps=[
+                        Step.from_callable(
+                            _rehydrate_entity_recognition_contract,
+                            name="restore_clinvar_entity_recognition_contract",
+                        ),
+                    ],
+                ),
             },
         ),
     ]

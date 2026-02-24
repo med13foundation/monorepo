@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from flujo.domain.agent_result import FlujoAgentResult
 from flujo.domain.models import PipelineResult, StepResult
@@ -15,6 +18,7 @@ from src.domain.agents.contracts import EvidenceItem, ExtractionContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
 from src.infrastructure.llm.config import GovernanceConfig, get_model_registry
+from src.infrastructure.llm.config.governance import UsageLimits
 from src.infrastructure.llm.pipelines.extraction_pipelines import (
     create_clinvar_extraction_pipeline,
     create_pubmed_extraction_pipeline,
@@ -31,7 +35,7 @@ if TYPE_CHECKING:
 
     from src.domain.agents.contexts.extraction_context import ExtractionContext
     from src.domain.ports.dictionary_port import DictionaryPort
-    from src.type_definitions.common import JSONObject, ResearchSpaceSettings
+    from src.type_definitions.common import JSONObject, JSONValue, ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +50,23 @@ _PIPELINE_EXCEPTIONS = (
     OSError,
     ConnectionError,
 )
+_TEMPORAL_FIELD_NAMES = frozenset(
+    {
+        "created_at",
+        "updated_at",
+        "started_at",
+        "completed_at",
+        "processed_at",
+        "published_at",
+        "observed_at",
+        "fetched_at",
+    },
+)
+_MAX_CONTEXT_ENTITY_CANDIDATES = 12
+_MAX_CONTEXT_OBSERVATION_CANDIDATES = 12
+_DEFAULT_EXTRACTION_USAGE_MAX_TOKENS = 65536
+_ENV_EXTRACTION_USAGE_MAX_TOKENS = "MED13_EXTRACTION_USAGE_MAX_TOKENS"
+_ESCAPED_NULL_SEQUENCE_PATTERN = re.compile(r"\\+(?:u0000|x00)", re.IGNORECASE)
 
 if TYPE_CHECKING:
     ExtractionPipelineFactory = Callable[
@@ -74,6 +95,9 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         self._dictionary_service = dictionary_service
         self._state_backend = get_state_backend()
         self._governance = GovernanceConfig.from_environment()
+        self._pipeline_usage_limits = self._resolve_pipeline_usage_limits(
+            self._governance.usage_limits,
+        )
         self._registry = get_model_registry()
         self._lifecycle_manager = get_lifecycle_manager()
         self._pipelines: dict[
@@ -110,7 +134,9 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             relation_governance_mode=relation_governance_mode,
         )
         input_text = self._build_input_text(context)
-        initial_context = context.model_dump(mode="json")
+        initial_context = self._normalize_temporal_context(
+            context.model_dump(mode="json"),
+        )
 
         try:
             return await self._execute_pipeline(
@@ -123,10 +149,25 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             raise
         except _PIPELINE_EXCEPTIONS as exc:
             logger.warning(
-                "Extraction pipeline failed for document=%s: %s",
+                "Extraction pipeline failed for document=%s source_type=%s model=%s: %s",
                 context.document_id,
+                source_type,
+                effective_model,
                 exc,
+                exc_info=True,
             )
+            if self._is_datetime_offset_mismatch_error(exc):
+                logger.warning(
+                    "Detected timezone mismatch in extraction pipeline; "
+                    "resetting pipeline cache for source=%s model=%s",
+                    source_type,
+                    effective_model,
+                )
+                self._drop_cached_pipelines(
+                    source_type=source_type,
+                    model_id=effective_model,
+                )
+                initial_context = self._normalize_temporal_context(initial_context)
             retry_output = await self._retry_without_tools(
                 source_type=source_type,
                 model_id=effective_model,
@@ -231,7 +272,7 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             state_backend=self._state_backend,
             model=model_id,
             use_governance=self._use_governance,
-            usage_limits=self._governance.usage_limits,
+            usage_limits=self._pipeline_usage_limits,
             tools=tools if bind_tools else None,
         )
         self._pipelines[cache_key] = pipeline
@@ -268,11 +309,40 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             raise
         except _PIPELINE_EXCEPTIONS as exc:
             logger.warning(
-                "Extraction no-tools retry failed for document=%s: %s",
+                "Extraction no-tools retry failed for document=%s source_type=%s model=%s: %s",
                 context.document_id,
+                source_type,
+                model_id,
                 exc,
+                exc_info=True,
             )
             return None
+
+    def _drop_cached_pipelines(
+        self,
+        *,
+        source_type: str,
+        model_id: str,
+    ) -> None:
+        keys_to_remove = [
+            key
+            for key in self._pipelines
+            if key[0] == source_type and key[1] == model_id
+        ]
+        for key in keys_to_remove:
+            pipeline = self._pipelines.pop(key, None)
+            if pipeline is None:
+                continue
+            try:
+                self._lifecycle_manager.unregister_runner(pipeline)
+            except Exception as exc:  # noqa: BLE001 - defensive cache cleanup
+                logger.debug(
+                    "Failed to unregister cached extraction runner for key=%s: %s",
+                    key,
+                    exc,
+                    exc_info=True,
+                )
+                continue
 
     @staticmethod
     def _resolve_relation_governance_mode(
@@ -283,26 +353,84 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             return "FULL_AUTO"
         return "HUMAN_IN_LOOP"
 
-    @staticmethod
-    def _build_retry_initial_context(initial_context: JSONObject) -> JSONObject:
-        return {
+    @classmethod
+    def _build_retry_initial_context(cls, initial_context: JSONObject) -> JSONObject:
+        retry_context = {
             str(key): to_json_value(value)
             for key, value in initial_context.items()
             if key != "run_id"
         }
+        return cls._normalize_temporal_context(retry_context)
+
+    @classmethod
+    def _resolve_pipeline_usage_limits(cls, base_limits: UsageLimits) -> UsageLimits:
+        env_override = cls._read_positive_int_from_env(
+            _ENV_EXTRACTION_USAGE_MAX_TOKENS,
+        )
+        base_max_tokens = (
+            base_limits.max_tokens
+            if isinstance(base_limits.max_tokens, int) and base_limits.max_tokens > 0
+            else None
+        )
+        minimum_tokens = (
+            env_override
+            if env_override is not None
+            else _DEFAULT_EXTRACTION_USAGE_MAX_TOKENS
+        )
+        resolved_max_tokens = minimum_tokens
+        if base_max_tokens is not None and base_max_tokens > resolved_max_tokens:
+            resolved_max_tokens = base_max_tokens
+        return UsageLimits(
+            total_cost_usd=base_limits.total_cost_usd,
+            max_turns=base_limits.max_turns,
+            max_tokens=resolved_max_tokens,
+        )
 
     @staticmethod
-    def _build_input_text(context: ExtractionContext) -> str:
-        serialized_raw_record = json.dumps(context.raw_record, default=str)
+    def _read_positive_int_from_env(name: str) -> int | None:
+        raw_value = os.getenv(name)
+        if raw_value is None:
+            return None
+        normalized = raw_value.strip()
+        if not normalized:
+            return None
+        if not normalized.isdigit():
+            return None
+        parsed = int(normalized)
+        return parsed if parsed > 0 else None
+
+    def _build_input_text(self, context: ExtractionContext) -> str:
+        entity_candidates = sorted(
+            context.recognized_entities,
+            key=lambda candidate: candidate.confidence,
+            reverse=True,
+        )[:_MAX_CONTEXT_ENTITY_CANDIDATES]
+        observation_candidates = sorted(
+            context.recognized_observations,
+            key=lambda candidate: candidate.confidence,
+            reverse=True,
+        )[:_MAX_CONTEXT_OBSERVATION_CANDIDATES]
+        compact_raw_record = self._sanitize_json_value(
+            self._build_compact_raw_record(context),
+        )
+        entity_payloads = [
+            self._sanitize_json_value(entity.model_dump(mode="json"))
+            for entity in entity_candidates
+        ]
+        observation_payloads = [
+            self._sanitize_json_value(observation.model_dump(mode="json"))
+            for observation in observation_candidates
+        ]
+        serialized_raw_record = json.dumps(
+            compact_raw_record,
+            default=str,
+        )
         serialized_entities = json.dumps(
-            [entity.model_dump(mode="json") for entity in context.recognized_entities],
+            entity_payloads,
             default=str,
         )
         serialized_observations = json.dumps(
-            [
-                observation.model_dump(mode="json")
-                for observation in context.recognized_observations
-            ],
+            observation_payloads,
             default=str,
         )
         return (
@@ -315,6 +443,147 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
             f"RECOGNIZED OBSERVATIONS:\n{serialized_observations}"
         )
 
+    @classmethod
+    def _sanitize_json_value(cls, value: object) -> JSONValue:
+        if isinstance(value, dict):
+            return {
+                str(key): cls._sanitize_json_value(item) for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [cls._sanitize_json_value(item) for item in value]
+        if isinstance(value, str):
+            return to_json_value(cls._sanitize_text_value(value))
+        return to_json_value(value)
+
+    @staticmethod
+    def _sanitize_text_value(value: str) -> str:
+        without_raw_null = value.replace("\x00", "")
+        return _ESCAPED_NULL_SEQUENCE_PATTERN.sub("", without_raw_null)
+
+    @staticmethod
+    def _build_compact_raw_record(context: ExtractionContext) -> JSONObject:
+        raw_record = context.raw_record
+        source_type = context.source_type.strip().lower()
+        if source_type == "pubmed":
+            is_chunk_scope = raw_record.get("full_text_chunk_index") is not None
+            allowed_fields: tuple[str, ...] = (
+                (
+                    "pubmed_id",
+                    "title",
+                    "doi",
+                    "source",
+                    "full_text",
+                    "full_text_source",
+                    "full_text_chunk_index",
+                    "full_text_chunk_total",
+                    "full_text_chunk_start_char",
+                    "full_text_chunk_end_char",
+                )
+                if is_chunk_scope
+                else (
+                    "pubmed_id",
+                    "title",
+                    "abstract",
+                    "full_text",
+                    "keywords",
+                    "journal",
+                    "publication_date",
+                    "publication_types",
+                    "doi",
+                    "source",
+                    "full_text_source",
+                    "full_text_chunk_index",
+                    "full_text_chunk_total",
+                    "full_text_chunk_start_char",
+                    "full_text_chunk_end_char",
+                )
+            )
+            compact: JSONObject = {}
+            for field in allowed_fields:
+                value = raw_record.get(field)
+                if value is None:
+                    continue
+                compact[field] = to_json_value(value)
+            if "full_text" not in compact and isinstance(raw_record.get("text"), str):
+                compact["text"] = raw_record["text"]
+            return compact
+        if source_type == "clinvar":
+            clinvar_fields: tuple[str, ...] = (
+                "variation_id",
+                "gene_symbol",
+                "variant_name",
+                "clinical_significance",
+                "condition_name",
+                "review_status",
+                "submission_count",
+                "source",
+            )
+            compact = {}
+            for field in clinvar_fields:
+                value = raw_record.get(field)
+                if value is None:
+                    continue
+                compact[field] = to_json_value(value)
+            return compact
+        return {str(key): to_json_value(value) for key, value in raw_record.items()}
+
+    @classmethod
+    def _normalize_temporal_context(cls, payload: JSONObject) -> JSONObject:
+        return {
+            str(key): cls._normalize_temporal_value(key=str(key), value=value)
+            for key, value in payload.items()
+        }
+
+    @classmethod
+    def _normalize_temporal_value(cls, *, key: str, value: object) -> JSONValue:
+        if isinstance(value, dict):
+            return {
+                str(child_key): cls._normalize_temporal_value(
+                    key=str(child_key),
+                    value=child_value,
+                )
+                for child_key, child_value in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                cls._normalize_temporal_value(key=key, value=item) for item in value
+            ]
+        if isinstance(value, str):
+            sanitized = cls._sanitize_text_value(value)
+            if key in _TEMPORAL_FIELD_NAMES:
+                coerced = cls._coerce_utc_iso_datetime(sanitized)
+                return coerced if coerced is not None else sanitized
+            return to_json_value(sanitized)
+        if isinstance(value, datetime):
+            coerced = cls._coerce_utc_iso_datetime(value)
+            return coerced if coerced is not None else value.isoformat()
+        return to_json_value(value)
+
+    @staticmethod
+    def _coerce_utc_iso_datetime(raw_value: str | datetime) -> str | None:
+        parsed: datetime
+        if isinstance(raw_value, datetime):
+            parsed = raw_value
+        else:
+            normalized = raw_value.strip()
+            if not normalized:
+                return None
+            if normalized.endswith("Z"):
+                normalized = f"{normalized[:-1]}+00:00"
+            try:
+                parsed = datetime.fromisoformat(normalized)
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        else:
+            parsed = parsed.astimezone(UTC)
+        return parsed.isoformat()
+
+    @staticmethod
+    def _is_datetime_offset_mismatch_error(exc: Exception) -> bool:
+        return "offset-naive and offset-aware datetimes" in str(exc)
+
     async def _execute_pipeline(
         self,
         pipeline: Flujo[str, ExtractionContract, ExtractionContext],
@@ -324,9 +593,11 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
         fallback_context: ExtractionContext,
     ) -> ExtractionContract:
         final_output: ExtractionContract | None = None
+        run_id = self._build_run_id(fallback_context.document_id)
 
         async for item in pipeline.run_async(
             input_text,
+            run_id=run_id,
             initial_context_data=initial_context,
         ):
             if isinstance(item, StepResult):
@@ -344,7 +615,32 @@ class FlujoExtractionAdapter(ExtractionAgentPort):
                 fallback_context,
                 reason="pipeline_returned_no_contract",
             )
-        return final_output
+        return self._ensure_pipeline_payloads(
+            contract=final_output,
+            fallback_context=fallback_context,
+        )
+
+    def _ensure_pipeline_payloads(
+        self,
+        *,
+        contract: ExtractionContract,
+        fallback_context: ExtractionContext,
+    ) -> ExtractionContract:
+        if contract.pipeline_payloads:
+            return contract
+        compact_payload = self._build_compact_raw_record(fallback_context)
+        if not compact_payload:
+            return contract
+        return contract.model_copy(
+            update={
+                "pipeline_payloads": [compact_payload],
+            },
+        )
+
+    @staticmethod
+    def _build_run_id(document_id: str) -> str:
+        compact_document_id = document_id.replace("-", "")[:12]
+        return f"extract_{compact_document_id}_{uuid4().hex}"
 
     def _ai_required_contract(
         self,

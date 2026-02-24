@@ -15,6 +15,7 @@ from src.domain.agents.contracts import EntityRecognitionContract, EvidenceItem
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.entity_recognition_port import EntityRecognitionPort
 from src.infrastructure.llm.config import GovernanceConfig, get_model_registry
+from src.infrastructure.llm.config.governance import UsageLimits
 from src.infrastructure.llm.pipelines.entity_recognition_pipelines import (
     create_clinvar_entity_recognition_pipeline,
     create_pubmed_entity_recognition_pipeline,
@@ -39,6 +40,10 @@ logger = logging.getLogger(__name__)
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
 _DEFAULT_DICTIONARY_POLICY_KEY = "DEFAULT"
+_DEFAULT_ENTITY_RECOGNITION_USAGE_MAX_TOKENS = 65536
+_ENV_ENTITY_RECOGNITION_USAGE_MAX_TOKENS = "MED13_ENTITY_RECOGNITION_USAGE_MAX_TOKENS"
+_MAX_ENTITY_RECOGNITION_RAW_JSON_CHARS = 20000
+_MAX_ENTITY_RECOGNITION_TEXT_CHARS = 4000
 _PIPELINE_EXCEPTIONS = (
     FlujoError,
     RuntimeError,
@@ -79,6 +84,9 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         self._agent_created_by = normalized_created_by or "agent:entity_recognition"
         self._state_backend = get_state_backend()
         self._governance = GovernanceConfig.from_environment()
+        self._pipeline_usage_limits = self._resolve_pipeline_usage_limits(
+            self._governance.usage_limits,
+        )
         self._registry = get_model_registry()
         self._lifecycle_manager = get_lifecycle_manager()
         self._pipelines: dict[
@@ -114,7 +122,11 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             bind_tools=True,
         )
         input_text = self._build_input_text(context)
-        initial_context = context.model_dump(mode="json")
+        initial_context = {
+            str(key): to_json_value(value)
+            for key, value in context.model_dump(mode="json").items()
+            if key != "run_id"
+        }
 
         try:
             return await self._execute_pipeline(
@@ -242,7 +254,7 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             state_backend=self._state_backend,
             model=model_id,
             use_governance=self._use_governance,
-            usage_limits=self._governance.usage_limits,
+            usage_limits=self._pipeline_usage_limits,
             discovery_tools=discovery_tools if bind_tools else None,
             policy_tools=policy_tools if bind_tools else None,
         )
@@ -303,9 +315,14 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
         normalized = raw_policy.strip().upper()
         return normalized or _DEFAULT_DICTIONARY_POLICY_KEY
 
-    @staticmethod
-    def _build_input_text(context: EntityRecognitionContext) -> str:
-        serialized_payload = json.dumps(context.raw_record, default=str)
+    @classmethod
+    def _build_input_text(cls, context: EntityRecognitionContext) -> str:
+        compact_raw_record = cls._build_compact_raw_record(context)
+        serialized_payload = json.dumps(compact_raw_record, default=str)
+        if len(serialized_payload) > _MAX_ENTITY_RECOGNITION_RAW_JSON_CHARS:
+            serialized_payload = serialized_payload[
+                :_MAX_ENTITY_RECOGNITION_RAW_JSON_CHARS
+            ]
         return (
             f"SOURCE TYPE: {context.source_type}\n"
             f"DOCUMENT ID: {context.document_id}\n"
@@ -313,6 +330,94 @@ class FlujoEntityRecognitionAdapter(EntityRecognitionPort):
             f"SHADOW MODE: {context.shadow_mode}\n\n"
             f"RAW RECORD JSON:\n{serialized_payload}"
         )
+
+    @classmethod
+    def _build_compact_raw_record(cls, context: EntityRecognitionContext) -> JSONObject:
+        raw_record = context.raw_record
+        source_type = context.source_type.strip().lower()
+        if source_type == "pubmed":
+            compact: JSONObject = {}
+            allowed_fields: tuple[str, ...] = (
+                "pubmed_id",
+                "title",
+                "doi",
+                "source",
+                "full_text_source",
+                "full_text_chunk_index",
+                "full_text_chunk_total",
+                "full_text_chunk_start_char",
+                "full_text_chunk_end_char",
+                "publication_date",
+                "publication_types",
+                "journal",
+                "keywords",
+            )
+            for field in allowed_fields:
+                value = raw_record.get(field)
+                if value is None:
+                    continue
+                compact[field] = to_json_value(value)
+            full_text = raw_record.get("full_text")
+            if isinstance(full_text, str) and full_text.strip():
+                compact["full_text"] = full_text[:_MAX_ENTITY_RECOGNITION_TEXT_CHARS]
+            else:
+                abstract = raw_record.get("abstract")
+                if isinstance(abstract, str) and abstract.strip():
+                    compact["abstract"] = abstract[:_MAX_ENTITY_RECOGNITION_TEXT_CHARS]
+            return compact
+        if source_type == "clinvar":
+            compact = {}
+            for field in (
+                "variation_id",
+                "gene_symbol",
+                "variant_name",
+                "clinical_significance",
+                "condition_name",
+                "review_status",
+                "submission_count",
+                "source",
+            ):
+                value = raw_record.get(field)
+                if value is None:
+                    continue
+                compact[field] = to_json_value(value)
+            return compact
+        return {str(key): to_json_value(value) for key, value in raw_record.items()}
+
+    @classmethod
+    def _resolve_pipeline_usage_limits(cls, base_limits: UsageLimits) -> UsageLimits:
+        env_override = cls._read_positive_int_from_env(
+            _ENV_ENTITY_RECOGNITION_USAGE_MAX_TOKENS,
+        )
+        base_max_tokens = (
+            base_limits.max_tokens
+            if isinstance(base_limits.max_tokens, int) and base_limits.max_tokens > 0
+            else None
+        )
+        minimum_tokens = (
+            env_override
+            if env_override is not None
+            else _DEFAULT_ENTITY_RECOGNITION_USAGE_MAX_TOKENS
+        )
+        resolved_max_tokens = minimum_tokens
+        if base_max_tokens is not None and base_max_tokens > resolved_max_tokens:
+            resolved_max_tokens = base_max_tokens
+        return UsageLimits(
+            total_cost_usd=base_limits.total_cost_usd,
+            max_turns=base_limits.max_turns,
+            max_tokens=resolved_max_tokens,
+        )
+
+    @staticmethod
+    def _read_positive_int_from_env(name: str) -> int | None:
+        raw_value = os.getenv(name)
+        if raw_value is None:
+            return None
+        normalized = raw_value.strip()
+        if not normalized or not normalized.isdigit():
+            return None
+        parsed = int(normalized)
+        return parsed if parsed > 0 else None
 
     async def _execute_pipeline(
         self,

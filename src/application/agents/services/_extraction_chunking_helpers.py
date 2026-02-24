@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -25,9 +26,10 @@ else:
 
 _CHUNKABLE_SOURCE_TYPES = frozenset({"pubmed"})
 _MIN_FULL_TEXT_CHARS_FOR_CHUNKING = 6000
-_FULL_TEXT_CHUNK_SIZE_CHARS = 8000
-_FULL_TEXT_CHUNK_OVERLAP_CHARS = 600
-_MAX_FULL_TEXT_CHUNKS = 6
+_FULL_TEXT_CHUNK_SIZE_CHARS = 4000
+_FULL_TEXT_CHUNK_OVERLAP_CHARS = 300
+_MAX_FULL_TEXT_CHUNKS = 10
+_ENV_TEST_MAX_FULL_TEXT_CHUNKS = "MED13_TEST_MAX_FULL_TEXT_CHUNKS"
 
 
 @dataclass(frozen=True)
@@ -63,8 +65,21 @@ def should_use_full_text_chunking(context: ExtractionContext) -> bool:
     full_text = context.raw_record.get("full_text")
     if not isinstance(full_text, str):
         return False
-    normalized = full_text.strip()
+    normalized = full_text.replace("\x00", " ").strip()
     return len(normalized) >= _MIN_FULL_TEXT_CHARS_FOR_CHUNKING
+
+
+def _resolve_max_full_text_chunks() -> int:
+    raw_value = os.getenv(_ENV_TEST_MAX_FULL_TEXT_CHUNKS)
+    if raw_value is None:
+        return _MAX_FULL_TEXT_CHUNKS
+    normalized = raw_value.strip()
+    if not normalized.isdigit():
+        return _MAX_FULL_TEXT_CHUNKS
+    parsed = int(normalized)
+    if parsed <= 0:
+        return _MAX_FULL_TEXT_CHUNKS
+    return min(parsed, _MAX_FULL_TEXT_CHUNKS)
 
 
 def build_full_text_chunks(context: ExtractionContext) -> tuple[FullTextChunk, ...]:
@@ -72,15 +87,16 @@ def build_full_text_chunks(context: ExtractionContext) -> tuple[FullTextChunk, .
     full_text = context.raw_record.get("full_text")
     if not isinstance(full_text, str):
         return ()
-    normalized = full_text.strip()
+    normalized = full_text.replace("\x00", " ").strip()
     if len(normalized) < _MIN_FULL_TEXT_CHARS_FOR_CHUNKING:
         return ()
 
     chunks: list[FullTextChunk] = []
     cursor = 0
     total_length = len(normalized)
+    max_chunks = _resolve_max_full_text_chunks()
 
-    while cursor < total_length and len(chunks) < _MAX_FULL_TEXT_CHUNKS:
+    while cursor < total_length and len(chunks) < max_chunks:
         end = min(cursor + _FULL_TEXT_CHUNK_SIZE_CHARS, total_length)
         if end < total_length:
             candidate_break = normalized.rfind(" ", cursor, end)

@@ -26,6 +26,7 @@ from src.application.agents.services._extraction_service_support import (
 )
 from src.application.agents.services.governance_service import GovernanceService
 from src.domain.agents.contexts.extraction_context import ExtractionContext
+from src.domain.agents.contracts import RejectedFact
 from src.domain.value_objects.relation_types import normalize_relation_type
 from src.type_definitions.ingestion import RawRecord
 from src.type_definitions.json_utils import to_json_value
@@ -341,6 +342,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             )
 
         chunk_contracts: list[ExtractionContract] = []
+        failed_chunk_payloads: list[JSONObject] = []
         for chunk in chunks:
             chunk_context = build_chunk_context(base_context=context, chunk=chunk)
             try:
@@ -358,40 +360,176 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 TimeoutError,
             ) as exc:
                 logger.warning(
-                    "Chunked extraction failed for document_id=%s chunk=%d/%d: %s",
+                    (
+                        "Chunked extraction failed for document_id=%s chunk=%d/%d "
+                        "model_id=%s: %s"
+                    ),
                     context.document_id,
                     chunk.index + 1,
                     chunk.total,
+                    model_id or "default",
                     exc,
+                    exc_info=True,
                 )
-                fallback_contract = await self._agent.extract(
-                    context,
-                    model_id=model_id,
+                failed_chunk_payloads.append(
+                    {
+                        "chunk_index": chunk.index,
+                        "chunk_total": chunk.total,
+                        "start_char": chunk.start_char,
+                        "end_char": chunk.end_char,
+                        "reason": f"chunk_execution_error:{type(exc).__name__}",
+                        "error_class": type(exc).__name__,
+                        "error_message": str(exc)[:500],
+                    },
                 )
-                return (
-                    fallback_contract,
-                    ChunkedExtractionSummary(
-                        mode="chunked_fallback_single",
-                        chunk_count=len(chunks),
-                        successful_chunks=len(chunk_contracts),
-                        failed_chunks=1,
+                continue
+            if self._is_chunk_level_failure(chunk_contract):
+                failure_reason = self._chunk_failure_reason(chunk_contract)
+                failure_details = self._chunk_failure_details(chunk_contract)
+                logger.warning(
+                    (
+                        "Chunked extraction returned escalation for document_id=%s "
+                        "chunk=%d/%d reason=%s model_id=%s"
                     ),
+                    context.document_id,
+                    chunk.index + 1,
+                    chunk.total,
+                    failure_reason,
+                    model_id or "default",
                 )
+                failed_chunk_payloads.append(
+                    {
+                        "chunk_index": chunk.index,
+                        "chunk_total": chunk.total,
+                        "start_char": chunk.start_char,
+                        "end_char": chunk.end_char,
+                        "reason": failure_reason,
+                        "failure_details": to_json_value(failure_details),
+                    },
+                )
+                continue
             chunk_contracts.append(chunk_contract)
+
+        if not chunk_contracts:
+            fallback_contract = await self._agent.extract(context, model_id=model_id)
+            if failed_chunk_payloads:
+                self._append_chunk_failure_rejections(
+                    contract=fallback_contract,
+                    failure_payloads=failed_chunk_payloads,
+                )
+            return (
+                fallback_contract,
+                ChunkedExtractionSummary(
+                    mode="chunked_fallback_single",
+                    chunk_count=len(chunks),
+                    successful_chunks=0,
+                    failed_chunks=len(failed_chunk_payloads),
+                ),
+            )
 
         merged_contract = merge_chunk_contracts(
             base_context=context,
             contracts=tuple(chunk_contracts),
         )
+        if failed_chunk_payloads:
+            self._append_chunk_failure_rejections(
+                contract=merged_contract,
+                failure_payloads=failed_chunk_payloads,
+            )
         return (
             merged_contract,
             ChunkedExtractionSummary(
                 mode="chunked",
                 chunk_count=len(chunks),
                 successful_chunks=len(chunk_contracts),
-                failed_chunks=0,
+                failed_chunks=len(failed_chunk_payloads),
             ),
         )
+
+    @staticmethod
+    def _is_chunk_level_failure(contract: ExtractionContract) -> bool:
+        if contract.decision != "escalate":
+            return False
+        if (
+            contract.observations
+            or contract.relations
+            or contract.rejected_facts
+            or contract.pipeline_payloads
+        ):
+            return False
+        rationale = contract.rationale.strip().lower()
+        if "pipeline_execution_failed" in rationale:
+            return True
+        return any(
+            "ai extraction unavailable" in evidence.excerpt.strip().lower()
+            for evidence in contract.evidence
+        )
+
+    @staticmethod
+    def _chunk_failure_reason(contract: ExtractionContract) -> str:
+        rationale = contract.rationale.strip()
+        marker = "pipeline_execution_failed:"
+        if marker in rationale:
+            suffix = rationale.split(marker, maxsplit=1)[1].strip()
+            if suffix:
+                return f"chunk_pipeline_failed:{suffix[:120]}"
+        open_paren = rationale.rfind("(")
+        close_paren = rationale.rfind(")")
+        if open_paren != -1 and close_paren > open_paren:
+            fallback_suffix = rationale[open_paren + 1 : close_paren].strip()
+            if fallback_suffix:
+                return f"chunk_pipeline_failed:{fallback_suffix[:120]}"
+        for evidence in contract.evidence:
+            excerpt = evidence.excerpt.strip()
+            lowered = excerpt.lower()
+            prefix = "ai extraction unavailable:"
+            if lowered.startswith(prefix):
+                detail = excerpt[len(prefix) :].strip()
+                if detail:
+                    return f"chunk_pipeline_failed:{detail[:120]}"
+                return "chunk_pipeline_failed:ai_unavailable"
+            if "ai extraction unavailable" in lowered:
+                return "chunk_pipeline_failed:ai_unavailable"
+        return "chunk_pipeline_failed:unknown"
+
+    @staticmethod
+    def _chunk_failure_details(contract: ExtractionContract) -> dict[str, object]:
+        evidence_excerpt: str | None = None
+        if contract.evidence:
+            excerpt = contract.evidence[0].excerpt.strip()
+            if excerpt:
+                evidence_excerpt = excerpt[:500]
+        details: dict[str, object] = {
+            "decision": contract.decision,
+            "confidence_score": contract.confidence_score,
+            "agent_run_id": contract.agent_run_id,
+            "rationale": contract.rationale[:1000],
+            "evidence_excerpt": evidence_excerpt,
+        }
+        return details
+
+    @staticmethod
+    def _append_chunk_failure_rejections(
+        *,
+        contract: ExtractionContract,
+        failure_payloads: list[JSONObject],
+    ) -> None:
+        for payload in failure_payloads:
+            reason = payload.get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                normalized_reason = "chunk_pipeline_failed:unknown"
+            else:
+                normalized_reason = reason.strip()[:255]
+            normalized_payload: JSONObject = {
+                str(key): to_json_value(value) for key, value in payload.items()
+            }
+            contract.rejected_facts.append(
+                RejectedFact(
+                    fact_type="relation",
+                    reason=normalized_reason,
+                    payload=normalized_payload,
+                ),
+            )
 
     def _submit_review_item(
         self,

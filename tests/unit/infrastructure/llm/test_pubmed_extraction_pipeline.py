@@ -19,7 +19,7 @@ def test_pubmed_extraction_prompt_is_pubmed_specific() -> None:
     assert "ClinVar records" not in prompt
 
 
-def test_create_pubmed_extraction_pipeline_has_pubmed_step_name() -> None:
+def test_create_pubmed_extraction_pipeline_has_pubmed_stage_steps() -> None:
     with patch(
         "src.infrastructure.llm.factories.extraction_agent_factory.make_agent_async",
         return_value=MagicMock(name="agent"),
@@ -28,4 +28,6 @@ def test_create_pubmed_extraction_pipeline_has_pubmed_step_name() -> None:
 
     assert pipeline.pipeline is not None
     step_names = [step.name for step in pipeline.pipeline.steps]
-    assert "extract_pubmed_facts" in step_names
+    assert "discover_pubmed_extraction_candidates" in step_names
+    assert "prepare_pubmed_extraction_synthesis_input" in step_names
+    assert "synthesize_pubmed_extraction_contract" in step_names

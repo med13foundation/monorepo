@@ -68,6 +68,41 @@ class _EntityRecognitionMetadataHelpers:
     def _build_extraction_metadata(
         extraction_outcome: ExtractionDocumentOutcome,
     ) -> JSONObject:
+        rejected_relation_reasons = list(extraction_outcome.rejected_relation_reasons)
+        rejected_relation_details = list(extraction_outcome.rejected_relation_details)
+        if (
+            not rejected_relation_reasons
+            and extraction_outcome.relations_extracted == 0
+        ):
+            if extraction_outcome.errors:
+                for error in extraction_outcome.errors:
+                    normalized_error = error.strip()
+                    if not normalized_error:
+                        continue
+                    reason = f"extraction_error:{normalized_error}"[:255]
+                    if reason not in rejected_relation_reasons:
+                        rejected_relation_reasons.append(reason)
+                    rejected_relation_details.append(
+                        {
+                            "reason": reason,
+                            "payload": {"error": normalized_error},
+                        },
+                    )
+            else:
+                fallback_reason = (
+                    f"extraction_no_relations:{extraction_outcome.reason}"
+                )[:255]
+                rejected_relation_reasons.append(fallback_reason)
+                rejected_relation_details.append(
+                    {
+                        "reason": fallback_reason,
+                        "payload": {
+                            "status": extraction_outcome.status,
+                            "reason": extraction_outcome.reason,
+                            "wrote_to_kernel": extraction_outcome.wrote_to_kernel,
+                        },
+                    },
+                )
         return {
             "extraction_stage_status": extraction_outcome.status,
             "extraction_stage_reason": extraction_outcome.reason,
@@ -82,12 +117,8 @@ class _EntityRecognitionMetadataHelpers:
                 extraction_outcome.relations_extracted
             ),
             "extraction_stage_rejected_facts": extraction_outcome.rejected_facts,
-            "extraction_stage_rejected_relation_reasons": list(
-                extraction_outcome.rejected_relation_reasons,
-            ),
-            "extraction_stage_rejected_relation_details": list(
-                extraction_outcome.rejected_relation_details,
-            ),
+            "extraction_stage_rejected_relation_reasons": rejected_relation_reasons,
+            "extraction_stage_rejected_relation_details": rejected_relation_details,
             "extraction_stage_ingestion_entities_created": (
                 extraction_outcome.ingestion_entities_created
             ),

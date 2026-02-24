@@ -138,6 +138,7 @@ class _ExtractionRelationPersistenceHelpers(
                     else None
                 ),
             ),
+            relation_governance_mode=relation_governance_mode,
         )
         persist_result = self._persist_relation_candidates(
             document=document,

@@ -7,13 +7,15 @@ against the canonical ``relations`` + ``relation_evidence`` tables.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
 from src.domain.entities.kernel.relations import KernelRelation
 from src.domain.repositories.kernel.relation_repository import KernelRelationRepository
+from src.models.database.kernel.provenance import ProvenanceModel
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 
 from ._kernel_relation_auto_promotion_mixin import _KernelRelationAutoPromotionMixin
@@ -29,6 +31,8 @@ from ._kernel_relation_repository_shared import (
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 
 class SqlAlchemyKernelRelationRepository(
@@ -65,6 +69,7 @@ class SqlAlchemyKernelRelationRepository(
         source_document_id: str | None = None,
         agent_run_id: str | None = None,
     ) -> KernelRelation:
+        provenance_uuid = self._resolve_existing_provenance_uuid(provenance_id)
         canonical_stmt = select(RelationModel).where(
             RelationModel.research_space_id == _as_uuid(research_space_id),
             RelationModel.source_id == _as_uuid(source_id),
@@ -84,15 +89,12 @@ class SqlAlchemyKernelRelationRepository(
                 source_count=0,
                 highest_evidence_tier=None,
                 curation_status=curation_status,
-                provenance_id=(
-                    _as_uuid(provenance_id) if provenance_id is not None else None
-                ),
+                provenance_id=provenance_uuid,
             )
             self._session.add(relation)
             self._session.flush()
         normalized_confidence = _clamp_confidence(confidence)
         normalized_tier = _normalize_evidence_tier(evidence_tier)
-        provenance_uuid = _as_uuid(provenance_id) if provenance_id is not None else None
         source_document_uuid = _try_as_uuid(source_document_id)
         agent_run_uuid = _try_as_uuid(agent_run_id)
 
@@ -144,6 +146,24 @@ class SqlAlchemyKernelRelationRepository(
         )
         self._session.flush()
         return KernelRelation.model_validate(relation)
+
+    def _resolve_existing_provenance_uuid(
+        self,
+        provenance_id: str | None,
+    ) -> UUID | None:
+        if provenance_id is None:
+            return None
+        candidate = _as_uuid(provenance_id)
+        exists = self._session.scalar(
+            select(ProvenanceModel.id).where(ProvenanceModel.id == candidate).limit(1),
+        )
+        if exists is None:
+            logger.warning(
+                "Ignoring unknown relation provenance_id",
+                extra={"provenance_id": provenance_id},
+            )
+            return None
+        return candidate
 
 
 __all__ = ["SqlAlchemyKernelRelationRepository"]
