@@ -180,8 +180,7 @@ med13-resource-library/
 ├── tests/                      # Backend test suite
 ├── docs/                       # Documentation
 ├── .github/workflows/          # CI/CD pipelines
-├── requirements.txt            # Python production dependencies
-├── requirements-dev.txt        # Python development dependencies
+├── pyproject.toml              # Python dependencies and tool configuration
 ├── Makefile                   # Development automation
 ├── Procfile                   # Cloud Run configuration
 └── pytest.ini                 # Test configuration

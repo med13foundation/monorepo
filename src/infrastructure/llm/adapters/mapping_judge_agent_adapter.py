@@ -12,6 +12,9 @@ from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.mapping_judge import MappingJudgeContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
+from src.infrastructure.llm.adapters._artana_step_helpers import (
+    run_single_step_with_policy,
+)
 from src.infrastructure.llm.adapters._openai_json_schema_model_port import (
     OpenAIJSONSchemaModelPort,
     has_configured_openai_api_key,
@@ -19,6 +22,7 @@ from src.infrastructure.llm.adapters._openai_json_schema_model_port import (
 from src.infrastructure.llm.config import (
     GovernanceConfig,
     get_model_registry,
+    load_runtime_policy,
     resolve_artana_state_uri,
 )
 from src.infrastructure.llm.prompts.mapping_judge import MAPPING_JUDGE_SYSTEM_PROMPT
@@ -55,6 +59,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
 
         self._default_model = model
         self._governance = GovernanceConfig.from_environment()
+        self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
         self._last_run_id: str | None = None
         timeout_seconds = self._resolve_timeout_seconds(model)
@@ -247,13 +252,15 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
             budget_usd_limit=max(float(budget_limit), 0.01),
         )
 
-        result = await self._client.step(
+        result = await run_single_step_with_policy(
+            self._client,
             run_id=run_id,
             tenant=tenant,
             model=model_id,
             prompt=input_text,
             output_schema=MappingJudgeContract,
             step_key="mapping.judge.v1",
+            replay_policy=self._runtime_policy.replay_policy,
         )
         output = result.output
         contract = (

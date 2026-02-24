@@ -41,6 +41,7 @@ from . import (  # noqa: E402,F401
     kernel_relations_routes,
     knowledge_extraction_routes,
     membership_routes,
+    ontology_routes,
     pipeline_orchestration_routes,
     space_routes,
 )

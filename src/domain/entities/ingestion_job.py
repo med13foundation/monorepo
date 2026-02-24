@@ -7,6 +7,7 @@ providing monitoring, error handling, and provenance tracking.
 
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -176,6 +177,15 @@ class IngestionJob(BaseModel):
     source_config_snapshot: JSONObject = Field(
         default_factory=dict,
         description="Source configuration at job time",
+    )
+    dictionary_version_used: int = Field(
+        default=0,
+        ge=0,
+        description="Dictionary changelog/version snapshot used during this run",
+    )
+    replay_policy: Literal["strict", "allow_prompt_drift", "fork_on_drift"] = Field(
+        default="strict",
+        description="Replay policy used for AI orchestration steps in this run",
     )
 
     def _clone_with_updates(self, updates: UpdatePayload) -> "IngestionJob":

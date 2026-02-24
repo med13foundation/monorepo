@@ -300,12 +300,6 @@ class _ExtractionRelationPersistenceHelpers(
                         "validation_reason": "self-loop relations are not allowed",
                     },
                 )
-                errors.append(
-                    (
-                        "relation_persistence_skipped_self_loop:"
-                        f"{normalized_relation_type}:{source_entity_id}"
-                    ),
-                )
                 self_loop_count += 1
                 continue
 

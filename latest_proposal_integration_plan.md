@@ -1,6 +1,6 @@
 # Migration / Integration Plan: MED13 Resource Library -> Universal Study Graph Kernel
 
-This plan migrates the current MED13 Resource Library from hardcoded, domain-specific entities into a **metadata-driven kernel** (dictionary + entities + observations + relations) while keeping infrastructure (auth, DI, storage, Flujo, CI/CD, Next.js) intact.
+This plan migrates the current MED13 Resource Library from hardcoded, domain-specific entities into a **metadata-driven kernel** (dictionary + entities + observations + relations) while keeping infrastructure (auth, DI, storage, Artana, CI/CD, Next.js) intact.
 
 It also includes an explicit phase to unify terminology and naming to **`research_space`** everywhere (instead of `study`) to reduce confusion and avoid a permanent dual-language codebase.
 

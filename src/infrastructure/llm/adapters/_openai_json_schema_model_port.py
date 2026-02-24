@@ -80,6 +80,57 @@ def _extract_prompt(request: object) -> str:
     return ""
 
 
+def _normalize_openai_json_schema_node(node: object) -> object:
+    if isinstance(node, dict):
+        normalized = {
+            str(key): _normalize_openai_json_schema_node(value)
+            for key, value in node.items()
+        }
+        properties_payload = normalized.get("properties")
+        raw_type = normalized.get("type")
+        is_object_type = raw_type == "object" or (
+            isinstance(raw_type, list) and "object" in raw_type
+        )
+        has_properties = isinstance(properties_payload, dict)
+        additional_properties_payload = normalized.get("additionalProperties")
+        is_map_object = (
+            is_object_type
+            and not has_properties
+            and isinstance(additional_properties_payload, dict)
+        )
+        if is_map_object:
+            normalized["properties"] = {}
+            normalized["required"] = []
+            normalized["additionalProperties"] = False
+            return normalized
+        if (
+            has_properties
+            or is_object_type
+            and "additionalProperties" not in normalized
+        ):
+            normalized["additionalProperties"] = False
+        if isinstance(properties_payload, dict):
+            normalized["required"] = [str(key) for key in properties_payload]
+        elif "required" in normalized:
+            normalized.pop("required", None)
+        return normalized
+    if isinstance(node, list):
+        return [_normalize_openai_json_schema_node(item) for item in node]
+    return node
+
+
+def ensure_openai_strict_json_schema(schema: object) -> dict[str, object]:
+    """Normalize JSON Schema for OpenAI strict structured-output requirements."""
+    if not isinstance(schema, dict):
+        msg = "Expected JSON schema dictionary."
+        raise TypeError(msg)
+    normalized = _normalize_openai_json_schema_node(schema)
+    if not isinstance(normalized, dict):
+        msg = "Normalized JSON schema must remain a dictionary."
+        raise TypeError(msg)
+    return {str(key): value for key, value in normalized.items()}
+
+
 class OpenAIJSONSchemaModelPort:
     """Minimal Artana model port backed by OpenAI Chat Completions."""
 
@@ -140,7 +191,9 @@ class OpenAIJSONSchemaModelPort:
                 "type": "json_schema",
                 "json_schema": {
                     "name": schema_name,
-                    "schema": output_schema.model_json_schema(),
+                    "schema": ensure_openai_strict_json_schema(
+                        output_schema.model_json_schema(),
+                    ),
                     "strict": True,
                 },
             },
@@ -193,6 +246,7 @@ class OpenAIJSONSchemaModelPort:
 
 __all__ = [
     "OpenAIJSONSchemaModelPort",
+    "ensure_openai_strict_json_schema",
     "has_configured_openai_api_key",
     "resolve_configured_openai_api_key",
 ]

@@ -13,9 +13,13 @@ from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.graph_search import GraphSearchContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.graph_search_port import GraphSearchPort
+from src.infrastructure.llm.adapters._artana_step_helpers import (
+    run_single_step_with_policy,
+)
 from src.infrastructure.llm.config import (
     GovernanceConfig,
     get_model_registry,
+    load_runtime_policy,
     resolve_artana_state_uri,
 )
 from src.infrastructure.llm.prompts.graph_search import GRAPH_SEARCH_SYSTEM_PROMPT
@@ -149,7 +153,9 @@ class _OpenAIChatModelPort:
                 "type": "json_schema",
                 "json_schema": {
                     "name": schema_name,
-                    "schema": output_schema.model_json_schema(),
+                    "schema": _ensure_openai_strict_json_schema(
+                        output_schema.model_json_schema(),
+                    ),
                     "strict": True,
                 },
             },
@@ -197,6 +203,56 @@ class _OpenAIChatModelPort:
         return ModelResult(output=output, usage=usage)
 
 
+def _normalize_openai_json_schema_node(node: object) -> object:
+    if isinstance(node, dict):
+        normalized = {
+            str(key): _normalize_openai_json_schema_node(value)
+            for key, value in node.items()
+        }
+        properties_payload = normalized.get("properties")
+        raw_type = normalized.get("type")
+        is_object_type = raw_type == "object" or (
+            isinstance(raw_type, list) and "object" in raw_type
+        )
+        has_properties = isinstance(properties_payload, dict)
+        additional_properties_payload = normalized.get("additionalProperties")
+        is_map_object = (
+            is_object_type
+            and not has_properties
+            and isinstance(additional_properties_payload, dict)
+        )
+        if is_map_object:
+            normalized["properties"] = {}
+            normalized["required"] = []
+            normalized["additionalProperties"] = False
+            return normalized
+        if (
+            has_properties
+            or is_object_type
+            and "additionalProperties" not in normalized
+        ):
+            normalized["additionalProperties"] = False
+        if isinstance(properties_payload, dict):
+            normalized["required"] = [str(key) for key in properties_payload]
+        elif "required" in normalized:
+            normalized.pop("required", None)
+        return normalized
+    if isinstance(node, list):
+        return [_normalize_openai_json_schema_node(item) for item in node]
+    return node
+
+
+def _ensure_openai_strict_json_schema(schema: object) -> dict[str, object]:
+    if not isinstance(schema, dict):
+        msg = "Expected JSON schema dictionary."
+        raise TypeError(msg)
+    normalized = _normalize_openai_json_schema_node(schema)
+    if not isinstance(normalized, dict):
+        msg = "Normalized JSON schema must remain a dictionary."
+        raise TypeError(msg)
+    return {str(key): value for key, value in normalized.items()}
+
+
 class ArtanaGraphSearchAdapter(GraphSearchPort):
     """Adapter that executes graph-search workflows through Artana."""
 
@@ -216,6 +272,7 @@ class ArtanaGraphSearchAdapter(GraphSearchPort):
         self._default_model = model
         self._graph_query_service = graph_query_service
         self._governance = GovernanceConfig.from_environment()
+        self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
         self._last_run_id: str | None = None
         timeout_seconds = self._resolve_timeout_seconds(model)
@@ -265,13 +322,15 @@ class ArtanaGraphSearchAdapter(GraphSearchPort):
                 tenant_id=context.research_space_id,
                 budget_usd_limit=max(float(budget_limit), 0.01),
             )
-            result = await self._client.step(
+            result = await run_single_step_with_policy(
+                self._client,
                 run_id=run_id,
                 tenant=tenant,
                 model=effective_model,
                 prompt=self._build_prompt(context),
                 output_schema=GraphSearchContract,
                 step_key="graph.search.v1",
+                replay_policy=self._runtime_policy.replay_policy,
             )
             output = result.output
             contract = (

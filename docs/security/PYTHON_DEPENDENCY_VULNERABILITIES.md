@@ -18,7 +18,7 @@ records how we mitigate or resolve them.
 - **Status:** Open (no fixed version listed in pip-audit output)
 - **Impact:** Denial-of-service risk when parsing deeply nested
   `google.protobuf.Any` via `google.protobuf.json_format.ParseDict()`.
-- **Current Version:** `protobuf 6.33.2` (minimum pinned in `requirements.txt`)
+- **Current Version:** `protobuf 6.33.2` (minimum pinned in `pyproject.toml`)
 - **Current Usage:** No direct usage of `google.protobuf` APIs in the codebase
   (checked via repository search).
 - **Mitigation:** Avoid parsing untrusted protobuf `Any` payloads via

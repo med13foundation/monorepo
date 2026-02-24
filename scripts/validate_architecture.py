@@ -44,11 +44,7 @@ ALLOWED_ANY_USAGE = {
     "src/type_definitions/json_utils.py",  # Explicit override in pyproject.toml
     "src/application/packaging/licenses/manager.py",  # License compatibility checking
     "src/application/packaging/licenses/manifest.py",  # YAML parsing
-    # Flujo library interop - documented exceptions for Flujo's generic type system
-    "src/infrastructure/llm/pipelines/base_pipeline.py",
-    "src/infrastructure/llm/pipelines/query_pipelines/pubmed_pipeline.py",
-    "src/infrastructure/llm/pipelines/query_pipelines/clinvar_pipeline.py",
-    "src/infrastructure/llm/state/lifecycle.py",
+    # Artana runtime interop - documented exceptions for generic type surfaces
     "src/infrastructure/llm/adapters/query_agent_adapter.py",
     "src/infrastructure/llm/adapters/query_agent_adapter_helpers.py",
 }

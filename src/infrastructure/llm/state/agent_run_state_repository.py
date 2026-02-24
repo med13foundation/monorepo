@@ -29,7 +29,7 @@ _RUN_TABLE_QUERIES = {
         """
         SELECT COUNT(*) AS row_count,
                MAX(created_at) AS latest_created_at
-        FROM flujo.runs
+        FROM artana.runs
         WHERE run_id = :run_id
         """,
     ),
@@ -37,7 +37,7 @@ _RUN_TABLE_QUERIES = {
         """
         SELECT COUNT(*) AS row_count,
                MAX(created_at) AS latest_created_at
-        FROM flujo.workflow_state
+        FROM artana.workflow_state
         WHERE run_id = :run_id
         """,
     ),
@@ -45,7 +45,7 @@ _RUN_TABLE_QUERIES = {
         """
         SELECT COUNT(*) AS row_count,
                MAX(created_at) AS latest_created_at
-        FROM flujo.steps
+        FROM artana.steps
         WHERE run_id = :run_id
         """,
     ),
@@ -53,7 +53,7 @@ _RUN_TABLE_QUERIES = {
         """
         SELECT COUNT(*) AS row_count,
                MAX(created_at) AS latest_created_at
-        FROM flujo.spans
+        FROM artana.spans
         WHERE run_id = :run_id
         """,
     ),
@@ -61,7 +61,7 @@ _RUN_TABLE_QUERIES = {
         """
         SELECT COUNT(*) AS row_count,
                MAX(created_at) AS latest_created_at
-        FROM flujo.traces
+        FROM artana.traces
         WHERE run_id = :run_id
         """,
     ),
@@ -69,7 +69,7 @@ _RUN_TABLE_QUERIES = {
         """
         SELECT COUNT(*) AS row_count,
                MAX(created_at) AS latest_created_at
-        FROM flujo.evaluations
+        FROM artana.evaluations
         WHERE run_id = :run_id
         """,
     ),
@@ -79,7 +79,7 @@ _RUN_TABLE_SAMPLE_QUERIES = {
     "runs": text(
         """
         SELECT *
-        FROM flujo.runs
+        FROM artana.runs
         WHERE run_id = :run_id
         ORDER BY created_at DESC
         LIMIT :limit
@@ -88,7 +88,7 @@ _RUN_TABLE_SAMPLE_QUERIES = {
     "workflow_state": text(
         """
         SELECT *
-        FROM flujo.workflow_state
+        FROM artana.workflow_state
         WHERE run_id = :run_id
         ORDER BY created_at DESC
         LIMIT :limit
@@ -97,7 +97,7 @@ _RUN_TABLE_SAMPLE_QUERIES = {
     "steps": text(
         """
         SELECT *
-        FROM flujo.steps
+        FROM artana.steps
         WHERE run_id = :run_id
         ORDER BY created_at DESC
         LIMIT :limit
@@ -106,7 +106,7 @@ _RUN_TABLE_SAMPLE_QUERIES = {
     "spans": text(
         """
         SELECT *
-        FROM flujo.spans
+        FROM artana.spans
         WHERE run_id = :run_id
         ORDER BY created_at DESC
         LIMIT :limit
@@ -115,7 +115,7 @@ _RUN_TABLE_SAMPLE_QUERIES = {
     "traces": text(
         """
         SELECT *
-        FROM flujo.traces
+        FROM artana.traces
         WHERE run_id = :run_id
         ORDER BY created_at DESC
         LIMIT :limit
@@ -124,7 +124,7 @@ _RUN_TABLE_SAMPLE_QUERIES = {
     "evaluations": text(
         """
         SELECT *
-        FROM flujo.evaluations
+        FROM artana.evaluations
         WHERE run_id = :run_id
         ORDER BY created_at DESC
         LIMIT :limit
@@ -145,7 +145,7 @@ class SqlAlchemyAgentRunStateRepository(AgentRunStatePort):
                 text(
                     """
                     SELECT run_id
-                    FROM flujo.runs
+                    FROM artana.runs
                     WHERE created_at >= :since
                     ORDER BY created_at DESC
                     LIMIT 1

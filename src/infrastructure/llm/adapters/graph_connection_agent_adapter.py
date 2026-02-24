@@ -10,6 +10,9 @@ from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.graph_connection import GraphConnectionContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
+from src.infrastructure.llm.adapters._artana_step_helpers import (
+    run_single_step_with_policy,
+)
 from src.infrastructure.llm.adapters._openai_json_schema_model_port import (
     OpenAIJSONSchemaModelPort,
     has_configured_openai_api_key,
@@ -17,6 +20,7 @@ from src.infrastructure.llm.adapters._openai_json_schema_model_port import (
 from src.infrastructure.llm.config import (
     GovernanceConfig,
     get_model_registry,
+    load_runtime_policy,
     resolve_artana_state_uri,
 )
 from src.infrastructure.llm.prompts.graph_connection.clinvar import (
@@ -73,6 +77,7 @@ class ArtanaGraphConnectionAdapter(GraphConnectionPort):
         self._graph_query_service = graph_query_service
         self._relation_repository = relation_repository
         self._governance = GovernanceConfig.from_environment()
+        self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
         self._last_run_id: str | None = None
         timeout_seconds = self._resolve_timeout_seconds(model)
@@ -125,13 +130,15 @@ class ArtanaGraphConnectionAdapter(GraphConnectionPort):
                 tenant_id=context.research_space_id,
                 budget_usd_limit=max(float(budget_limit), 0.01),
             )
-            result = await self._client.step(
+            result = await run_single_step_with_policy(
+                self._client,
                 run_id=run_id,
                 tenant=tenant,
                 model=effective_model,
                 prompt=self._build_prompt(source_type=source_type, context=context),
                 output_schema=GraphConnectionContract,
                 step_key=f"graph.connection.{source_type}.v1",
+                replay_policy=self._runtime_policy.replay_policy,
             )
             output = result.output
             contract = (

@@ -9,12 +9,12 @@ Runtime: Artana Kernel + deterministic application persistence
 
 Decision lock:
 
-- Flujo is fully removed (no backward compatibility layer).
+- Legacy runtime is fully removed (no backward compatibility layer).
 - Runtime configuration source is `artana.toml` only.
 - Artana dependency source:
   - `artana @ git+https://github.com/aandresalvarez/artana-kernel.git@main`
 - Production replay mode is `strict` globally.
-- Paper search/query AI is also migrated to Artana (no Flujo query pipeline retained).
+- Paper search/query AI is also migrated to Artana (no legacy query pipeline retained).
 
 ---
 
@@ -65,7 +65,7 @@ Scope:
 
 Requirements:
 
-- No Flujo runtime calls in query generation path.
+- No legacy runtime calls in query generation path.
 - Deterministic `step_key` convention for search stages.
 - Search AI outputs recorded under same audit/replay model as extraction.
 
@@ -449,8 +449,8 @@ Do not:
 
 ## Phase 1 (Foundational, must be internally complete)
 
-- Introduce `artana.toml` and remove Flujo config/runtime references.
-- Replace Flujo dependency with Artana dependency source in project config.
+- Introduce `artana.toml` and remove legacy config/runtime references.
+- Replace legacy runtime dependency with Artana dependency source in project config.
 - Migrate paper search/query-generation AI path to Artana.
 - Artana paper ingestion workflow (extract/review/normalize).
 - Ontology `validate_relation` API (pure read path).

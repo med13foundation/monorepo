@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 
 from src.domain.agents.contracts.query_generation import QueryGenerationContract
@@ -10,6 +9,10 @@ from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.query_agent_port import (
     QueryAgentPort,
     QueryAgentRunMetadataProvider,
+)
+from src.infrastructure.llm.adapters._artana_step_helpers import (
+    build_deterministic_run_id,
+    run_single_step_with_policy,
 )
 from src.infrastructure.llm.adapters._openai_json_schema_model_port import (
     OpenAIJSONSchemaModelPort,
@@ -21,6 +24,7 @@ from src.infrastructure.llm.config import (
     UsageLimits,
     get_model_registry,
     load_query_source_policies,
+    load_runtime_policy,
     resolve_artana_state_uri,
 )
 from src.infrastructure.llm.prompts.query import (
@@ -83,6 +87,7 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
         self._use_granular = use_granular
         self._governance = GovernanceConfig.from_environment()
         self._query_source_policies = load_query_source_policies()
+        self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
         self._last_run_id: str | None = None
         timeout_seconds = self._resolve_timeout_seconds(model)
@@ -186,12 +191,19 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
     def _create_run_id(
         *,
         source_type: str,
-        model_id: str,
         request_fingerprint: str,
+        extraction_config_version: str,
+        research_space_id: str | None = None,
+        model_id: str | None = None,
     ) -> str:
-        payload = f"{source_type}|{model_id}|{request_fingerprint}"
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-        return f"query:{source_type}:{digest}"
+        _ = model_id  # retained for backward-compatible call sites/tests
+        return build_deterministic_run_id(
+            prefix="query",
+            research_space_id=research_space_id,
+            source_type=source_type,
+            external_id=request_fingerprint,
+            extraction_config_version=extraction_config_version,
+        )
 
     @staticmethod
     def _create_tenant(tenant_id: str, budget_usd_limit: float) -> object:
@@ -318,8 +330,8 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
         )
         run_id = self._create_run_id(
             source_type=source_key,
-            model_id=effective_model_id,
             request_fingerprint=request_fingerprint,
+            extraction_config_version=self._runtime_policy.extraction_config_version,
         )
         self._last_run_id = run_id
         usage_limits = self._resolve_usage_limits(source_key)
@@ -332,13 +344,15 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
         )
 
         try:
-            result = await self._client.step(
+            result = await run_single_step_with_policy(
+                self._client,
                 run_id=run_id,
                 tenant=tenant,
                 model=effective_model_id,
                 prompt=combined_prompt,
                 output_schema=QueryGenerationContract,
                 step_key=f"query.generate.{source_key}.v1",
+                replay_policy=self._runtime_policy.replay_policy,
             )
             output = result.output
             contract = (

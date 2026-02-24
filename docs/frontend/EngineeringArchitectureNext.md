@@ -127,7 +127,7 @@ The frontend interacts with AI agents through the same Server-Side Orchestration
 ┌─────────────────────────────────────────────────────────────┐
 │              Backend (FastAPI)                              │
 │  • QueryAgentService orchestrates agent                     │
-│  • FlujoQueryAgentAdapter executes pipeline                 │
+│  • ArtanaQueryAgentAdapter executes pipeline                 │
 │  • Returns typed QueryGenerationContract                    │
 └─────────────────────────────────────────────────────────────┘
 ```

@@ -30,7 +30,7 @@ ADMIN_PASSWORD_EFFECTIVE := $(strip $(or $(ADMIN_PASSWORD),$(MED13_ADMIN_PASSWOR
 
 # pip-audit exceptions:
 # - CVE-2025-69872: diskcache has no upstream fix yet.
-# - CVE-2026-25580: flujo 0.6.4 currently requires pydantic-ai<1.26.0.
+# - CVE-2026-25580: tracked dependency advisory under evaluation.
 PIP_AUDIT_IGNORE_VULNS := CVE-2025-69872 CVE-2026-25580
 PIP_AUDIT_IGNORE_FLAGS := $(foreach vuln,$(PIP_AUDIT_IGNORE_VULNS),--ignore-vuln $(vuln))
 
@@ -155,13 +155,12 @@ deactivate: ## Show command to deactivate virtual environment
 install: ## Install production dependencies
 	$(call check_venv)
 	$(USE_PIP) install --upgrade "pip>=26.0"
-	$(USE_PIP) install -r requirements.txt
+	$(USE_PIP) install -e .
 
 install-dev: ## Install development dependencies
 	$(call check_venv)
 	$(USE_PIP) install --upgrade "pip>=26.0"
-	$(USE_PIP) install -r requirements.txt
-	$(USE_PIP) install -r requirements-dev.txt
+	$(USE_PIP) install -e ".[dev]"
 
 # Development setup
 setup-dev: install-dev ## Set up development environment
@@ -219,7 +218,7 @@ endif
 
 test-artana-architecture: ## Run Artana AI agent architecture compliance tests
 	$(call check_venv)
-	$(USE_PYTHON) -m pytest tests/unit/architecture/test_flujo_compliance.py -v -m architecture
+	$(USE_PYTHON) -m pytest tests/unit/architecture/test_architectural_compliance.py -v -m architecture
 
 test-all-architecture: test-architecture test-artana-architecture validate-architecture validate-dependencies ## Run all architecture tests
 

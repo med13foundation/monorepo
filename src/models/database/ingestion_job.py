@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, ForeignKey, String
+from sqlalchemy import JSON, ForeignKey, Integer, String
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -120,6 +120,18 @@ class IngestionJobModel(Base):
         JSON,
         nullable=False,
         default=dict,
+    )
+    dictionary_version_used: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    replay_policy: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="strict",
+        server_default="strict",
     )
 
     # Relationships

@@ -11,7 +11,7 @@ or any other domain.  Only the Dictionary content differs.
 
 It covers both the **implemented** source ingestion infrastructure (currently
 deployed for PubMed and ClinVar as the first domain connectors) and the
-**implemented** Flujo-agent-driven extraction pipeline stages from raw
+**implemented** Artana-agent-driven extraction pipeline stages from raw
 upstream data toward the kernel knowledge graph.  The staged components are
 implemented end-to-end for the currently supported connectors; remaining
 flow deltas are tracked in "Known Gaps vs Flow Example".
@@ -39,8 +39,8 @@ flow deltas are tracked in "Known Gaps vs Flow Example".
 17. [Version 2 Status](#version-2-status)
 18. [Post-V2 Hardening Status](#post-v2-hardening-status)
 19. [The Knowledge Graph (Implemented)](#the-knowledge-graph-implemented)
-20. [Graph Connection Generation — Flujo Agent (Implemented)](#graph-connection-generation--flujo-agent-implemented)
-21. [Graph Search — Flujo Agent (Implemented)](#graph-search--flujo-agent-implemented)
+20. [Graph Connection Generation — Artana Agent (Implemented)](#graph-connection-generation--artana-agent-implemented)
+21. [Graph Search — Artana Agent (Implemented)](#graph-search--artana-agent-implemented)
 22. [PHI Isolation & Security](#phi-isolation--security)
 23. [Multi-Tenancy — Research Spaces](#multi-tenancy--research-spaces)
 24. [Autonomous Dictionary Evolution Plan](#autonomous-dictionary-evolution-plan)
@@ -112,7 +112,7 @@ flowchart TB
     BLOB[(Storage Backend)]
   end
 
-  subgraph TIER2["Tier 2 — Content Enrichment (Implemented · Flujo Agent)"]
+  subgraph TIER2["Tier 2 — Content Enrichment (Implemented · Artana Agent)"]
     direction LR
     CEA[Content Enrichment Agent] -->|strategy per record| PMC[PMC OA API]
     CEA --> EPMC[Europe PMC]
@@ -120,7 +120,7 @@ flowchart TB
     CEA --> PASS[Pass-Through — structured API data]
   end
 
-  subgraph TIER3["Tier 3 — Knowledge Extraction (Implemented · Flujo Pipeline)"]
+  subgraph TIER3["Tier 3 — Knowledge Extraction (Implemented · Artana Pipeline)"]
     direction LR
     ERA[Entity Recognition Agent]
     EXA[Extraction Agent]
@@ -145,7 +145,7 @@ flowchart TB
     PERSIST --> PROV[(provenance)]
   end
 
-  subgraph GRAPH_LAYER["Graph Layer (Implemented · Flujo Agents)"]
+  subgraph GRAPH_LAYER["Graph Layer (Implemented · Artana Agents)"]
     direction LR
     GCA[Graph Connection Agent] -->|cross-document\nrelation discovery| GRAPH_RESULTS[Proposed Relations]
     GSA[Graph Search Agent] -->|natural language\nresearch queries| RESULTS[Structured Results\n+ Evidence]
@@ -448,15 +448,15 @@ narrative or structured content** (paper body text, supplementary tables,
 complete API payloads) that a Knowledge Extraction agent needs to build the
 graph.
 
-### Solution — Content Enrichment Agent (Flujo)
+### Solution — Content Enrichment Agent (Artana)
 
-A **Flujo agent** that runs asynchronously after Tier 1 completes.  For each
+A **Artana agent** that runs asynchronously after Tier 1 completes.  For each
 document record in the Document Store with `enrichment_status = PENDING`, the
 agent decides *how* to acquire full content and executes the acquisition.
 
 ```mermaid
 flowchart TB
-  subgraph CEA["Content Enrichment Agent (Flujo GranularStep)"]
+  subgraph CEA["Content Enrichment Agent (Artana GranularStep)"]
     direction TB
     READ[Read document metadata] --> DECIDE{Acquisition strategy}
     DECIDE -->|PMC ID present + OA| PMCOA[Fetch from PMC OA API]
@@ -471,7 +471,7 @@ flowchart TB
   end
 ```
 
-#### Why a Flujo agent
+#### Why a Artana agent
 
 Content acquisition is a **judgment call per record**, not a deterministic rule:
 
@@ -484,7 +484,7 @@ Content acquisition is a **judgment call per record**, not a deterministic rule:
 These decisions require contextual reasoning and benefit from confidence scoring
 and evidence-first outputs (via `BaseAgentContract`).
 
-#### Flujo primitives
+#### Artana primitives
 
 | Concern | Primitive | Rationale |
 |---|---|---|
@@ -535,18 +535,18 @@ This works for structured identifiers in a known domain but cannot:
 - Bootstrap Dictionary content for a **brand new domain** where no entries
   exist yet (e.g. a sports analytics source or a CS benchmarking dataset).
 
-These are **reasoning tasks** — exactly what Flujo agents with contracts and
+These are **reasoning tasks** — exactly what Artana agents with contracts and
 evidence-first outputs are designed for.
 
-### Solution — Flujo Knowledge Extraction Pipeline
+### Solution — Artana Knowledge Extraction Pipeline
 
-A Flujo pipeline with two agents and a deterministic governance gate that reads
+A Artana pipeline with two agents and a deterministic governance gate that reads
 enriched documents from the Document Store and produces typed `RawRecord`
 objects for the kernel ingestion pipeline.
 
 ```mermaid
 flowchart TB
-  subgraph KE["Knowledge Extraction Pipeline (Flujo)"]
+  subgraph KE["Knowledge Extraction Pipeline (Artana)"]
     direction TB
 
     DOC_IN[Document from Document Store] --> ERA
@@ -595,7 +595,7 @@ and map them to the Master Dictionary.  When a mention does not match any
 existing definition, the agent **creates the new Dictionary entry autonomously**
 following a standardised schema, then immediately uses it for mapping.
 
-**Flujo primitive:** `GranularStep` (ReAct pattern) — the agent reads text
+**Artana primitive:** `GranularStep` (ReAct pattern) — the agent reads text
 sections, proposes search terms, evaluates results, and either maps to an
 existing definition or creates a new one.
 
@@ -799,7 +799,7 @@ to correct the agent's decisions after the fact.
 **Purpose:** Extract structured observations (typed values) and relations
 (triples) from the document, using the resolved entity and variable mappings.
 
-**Flujo primitive:** `GranularStep` — multi-turn extraction with tool calls
+**Artana primitive:** `GranularStep` — multi-turn extraction with tool calls
 to validate each extracted fact before emitting it.
 
 **Tools available (provided by Intelligence Service Layers):**
@@ -881,12 +881,12 @@ block) is recorded via `GovernanceService.record_provenance(...)` in the
 The implemented pipeline **replaces** the current `RuleBasedPubMedExtractionProcessor`
 as the primary extraction path.  The rule-based extractor can remain as a
 **fast-path pre-filter** (zero-cost regex pass to catch obvious identifiers
-before invoking the LLM pipeline), but the Flujo agents become the authoritative
+before invoking the LLM pipeline), but the Artana agents become the authoritative
 extraction mechanism.
 
 The existing `ExtractionRunnerService` orchestration (queue claiming, batch
 processing, status tracking, storage coordination) is **preserved** and extended
-to dispatch to either the rule-based processor or the Flujo extraction pipeline
+to dispatch to either the rule-based processor or the Artana extraction pipeline
 based on configuration.
 
 Current extraction infrastructure to **keep and extend:**
@@ -896,7 +896,7 @@ Current extraction infrastructure to **keep and extend:**
 - `PublicationExtractionModel` / `publication_extractions` table — extraction
   result storage.
 - `ExtractionRunnerService` — orchestration, batching, status tracking.
-- `ExtractionProcessorPort` — port interface; Flujo pipeline implements this.
+- `ExtractionProcessorPort` — port interface; Artana pipeline implements this.
 - `StorageOperationCoordinator` — text payload persistence.
 
 Current extraction infrastructure to **replace:**
@@ -931,9 +931,9 @@ A `source_documents` table that tracks document lifecycle:
 | `content_length_chars` | INT | Character count of enriched content |
 | `enrichment_status` | ENUM | `PENDING`, `ENRICHED`, `SKIPPED`, `FAILED` |
 | `enrichment_method` | TEXT | `pmc_oa`, `europe_pmc`, `publisher_pdf`, `pass_through` |
-| `enrichment_agent_run_id` | UUID | Flujo run ID for provenance |
+| `enrichment_agent_run_id` | UUID | Artana run ID for provenance |
 | `extraction_status` | ENUM | `PENDING`, `IN_PROGRESS`, `EXTRACTED`, `FAILED` |
-| `extraction_agent_run_id` | UUID | Flujo run ID for provenance |
+| `extraction_agent_run_id` | UUID | Artana run ID for provenance |
 | `metadata` | JSONB | Source-specific metadata (authors, dates, etc.) |
 | `created_at` | TIMESTAMPTZ | |
 | `updated_at` | TIMESTAMPTZ | |
@@ -1024,7 +1024,7 @@ feature flag `MED13_ENABLE_LLM_JUDGE_MAPPER`.
 
 1. `ExactMapper` — deterministic synonym match via **Semantic Layer** (implemented)
 2. `VectorMapper` — pgvector similarity search via **Semantic Layer** (implemented)
-3. `LLMJudgeMapper` — Flujo mapping-judge fallback for ambiguous cases (implemented, feature-flagged)
+3. `LLMJudgeMapper` — Artana mapping-judge fallback for ambiguous cases (implemented, feature-flagged)
 
 All three mappers delegate to the same centralized Semantic Layer for search —
 they differ only in which search strategy they use (exact, vector, LLM).  This
@@ -1554,7 +1554,7 @@ accumulates over time as more sources confirm the same connection.
 | `evidence_tier` | `STRING(32)` NOT NULL | `COMPUTATIONAL`, `LITERATURE`, `EXPERIMENTAL`, `CLINICAL`, `EXPERT_CURATED` |
 | `provenance_id` | `UUID` FK → `provenance` | Full audit trail for this evidence |
 | `source_document_id` | `UUID` nullable | Document that produced this evidence |
-| `agent_run_id` | `UUID` nullable | Flujo run that created this evidence |
+| `agent_run_id` | `UUID` nullable | Artana run that created this evidence |
 | `created_at` | `TIMESTAMPTZ` | When this evidence was added |
 
 **Indexes:** `(relation_id)`, `(provenance_id)`, `(evidence_tier)`.
@@ -1627,7 +1627,7 @@ the source, extraction method, AI model, mapping confidence, and the raw input.
 | `research_space_id` | `UUID` FK → `research_spaces` | |
 | `source_type` | `STRING(64)` | `FILE_UPLOAD`, `API_FETCH`, `AI_EXTRACTION`, `MANUAL` |
 | `source_ref` | `STRING(1024)` nullable | File path, URL, PMID, or document ID |
-| `extraction_run_id` | `UUID` nullable | Link to ingestion job or Flujo run |
+| `extraction_run_id` | `UUID` nullable | Link to ingestion job or Artana run |
 | `mapping_method` | `STRING(64)` nullable | `exact_match`, `vector_search`, `llm_judge` |
 | `mapping_confidence` | `FLOAT` nullable | Confidence of the mapping (0.0–1.0) |
 | `agent_model` | `STRING(128)` nullable | AI model used (e.g. `gpt-5`, `rule-based`) |
@@ -1638,7 +1638,7 @@ the source, extraction method, AI model, mapping confidence, and the raw input.
 
 ---
 
-## Graph Connection Generation — Flujo Agent (Implemented)
+## Graph Connection Generation — Artana Agent (Implemented)
 
 ### Problem
 
@@ -1663,15 +1663,15 @@ states outright:
 These cross-document, evidence-aggregated connections require a dedicated
 **Graph Connection Agent**.
 
-### Solution — Graph Connection Agent (Flujo)
+### Solution — Graph Connection Agent (Artana)
 
-A Flujo agent that operates **on the graph itself**, not on raw documents.  It
+A Artana agent that operates **on the graph itself**, not on raw documents.  It
 reads existing entities, observations, and relations and proposes **new
 relations** backed by aggregated evidence.
 
 ```mermaid
 flowchart TB
-  subgraph GCA["Graph Connection Agent (Flujo GranularStep)"]
+  subgraph GCA["Graph Connection Agent (Artana GranularStep)"]
     direction TB
     SEED[Select seed entity or entity pair] --> QUERY["Graph neighbourhood query\n(entities, relations, observations)"]
     QUERY --> SEARCH["Semantic Layer:\nUnified Dictionary search\nfor related variables and entity types"]
@@ -1684,7 +1684,7 @@ flowchart TB
   end
 ```
 
-#### Why a Flujo agent (same strategy as Tier 3)
+#### Why a Artana agent (same strategy as Tier 3)
 
 Graph connection generation follows the same pattern as knowledge extraction:
 
@@ -1701,7 +1701,7 @@ Graph connection generation follows the same pattern as knowledge extraction:
   `GovernanceService.evaluate()`: >= 0.90 auto-approve, 0.70–0.89 forward +
   review, < 0.70 block.
 
-#### Flujo primitives
+#### Artana primitives
 
 | Concern | Primitive | Rationale |
 |---|---|---|
@@ -1804,7 +1804,7 @@ extractions:
 
 ---
 
-## Graph Search — Flujo Agent (Implemented)
+## Graph Search — Artana Agent (Implemented)
 
 ### Problem
 
@@ -1825,15 +1825,15 @@ and relations:
 - **Any domain:** "Find entities similar to this one" — requires semantic
   similarity across observations, not just exact type matching.
 
-### Solution — Graph Search Agent (Flujo)
+### Solution — Graph Search Agent (Artana)
 
-A Flujo agent that translates **natural language research questions** into
+A Artana agent that translates **natural language research questions** into
 structured graph queries, executes them, and returns results with evidence
 and confidence.
 
 ```mermaid
 flowchart TB
-  subgraph GSA["Graph Search Agent (Flujo GranularStep)"]
+  subgraph GSA["Graph Search Agent (Artana GranularStep)"]
     direction TB
     NLQ[Natural language research question] --> PARSE["Interface Layer:\nparse intent\n- target entity types\n- filter variables\n- traversal depth"]
     PARSE --> DICT_SEARCH["Semantic Layer:\nUnified Dictionary search\nfor mentioned variables and entities"]
@@ -1844,7 +1844,7 @@ flowchart TB
   end
 ```
 
-#### Why a Flujo agent (same strategy)
+#### Why a Artana agent (same strategy)
 
 - **Natural language understanding** — mapping researcher questions to graph
   traversals is a reasoning task, not a keyword match.  The **Interface Layer**
@@ -1859,7 +1859,7 @@ flowchart TB
 - **Iterative refinement** — the `GranularStep` ReAct pattern lets the agent
   query the graph, evaluate results, refine filters, and query again.
 
-#### Flujo primitives
+#### Artana primitives
 
 | Concern | Primitive | Rationale |
 |---|---|---|
@@ -2038,7 +2038,7 @@ CREATE POLICY rls_entity_identifiers_access ON entity_identifiers
 
 ### Security agent interaction
 
-Flujo agents **never see PHI**.  Their tools operate on entity IDs and
+Artana agents **never see PHI**.  Their tools operate on entity IDs and
 Dictionary variables, not on identifier values.  The `dictionary_search` and
 `graph_query_*` tools filter by `research_space_id` and exclude
 `entity_identifiers` with `sensitivity = 'PHI'` from any agent-accessible
@@ -2081,7 +2081,7 @@ A user can be a member of multiple research spaces.  Each space has independent:
 
 ### Agent scoping
 
-All Flujo agent tools are scoped to a `research_space_id`:
+All Artana agent tools are scoped to a `research_space_id`:
 
 - `dictionary_search` returns global Dictionary entries (shared across spaces).
 - `graph_query_*` tools always filter by the agent's `research_space_id`.
@@ -2150,7 +2150,7 @@ whether it has been reviewed.
 
 | New column | Type | Purpose |
 |---|---|---|
-| `created_by` | `STRING(128)` NOT NULL | `"seed"`, `"manual:{user_id}"`, or `"agent:{flujo_run_id}"` |
+| `created_by` | `STRING(128)` NOT NULL | `"seed"`, `"manual:{user_id}"`, or `"agent:{agent_run_id}"` |
 | `source_ref` | `STRING(1024)` NULL | Document ID, run ID, or external reference that triggered creation |
 | `review_status` | `STRING(32)` NOT NULL DEFAULT `'ACTIVE'` | `ACTIVE`, `PENDING_REVIEW`, `REVOKED` |
 | `reviewed_by` | `STRING(128)` NULL | User who reviewed (NULL for auto-active entries) |
@@ -2720,7 +2720,7 @@ Alerting implementation note:
 2. Keep orchestration, job lifecycle, queueing, and kernel pipeline shared.
 3. Keep domain free of framework-specific details; move I/O to infrastructure.
 4. Preserve strict typing; avoid `Any` outside constrained infrastructure exceptions.
-5. **AI is a Mapper, not a generator.** Flujo agents map source content to
+5. **AI is a Mapper, not a generator.** Artana agents map source content to
    Dictionary definitions across **all dimensions** — variables, entity types,
    relation types, and constraints.  When no definition exists in any dimension,
    agents create new entries following the standardised schema — but they never
@@ -2744,7 +2744,7 @@ Alerting implementation note:
     extraction fact, and governance outcome is recorded with agent run IDs
     and linked to the kernel `provenance` table.
 11. **One agent strategy.** All reasoning tasks — extraction, connection
-    generation, and search — use the same Flujo agent pattern: evidence-first
+    generation, and search — use the same Artana agent pattern: evidence-first
     contracts, unified Dictionary search, confidence-based governance, and
     `GranularStep` / `TreeSearchStep` primitives.  No ad-hoc ML pipelines.
 12. **Defense in depth for security.** PHI isolation via `entity_identifiers`,

@@ -4,7 +4,7 @@
 
 ## Purpose and scope
 
-The MED13 Resource Library is a biomedical data platform for curated evidence, ingestion, and curation workflows. The current direction is a pivot away from hardcoded domain-specific entities (genes/variants/phenotypes/evidence tables) into a **metadata-driven kernel** (dictionary + entities + observations + relations), while preserving infrastructure (auth, DI, storage, Flujo, CI/CD) and the Next.js admin interface.
+The MED13 Resource Library is a biomedical data platform for curated evidence, ingestion, and curation workflows. The current direction is a pivot away from hardcoded domain-specific entities (genes/variants/phenotypes/evidence tables) into a **metadata-driven kernel** (dictionary + entities + observations + relations), while preserving infrastructure (auth, DI, storage, Artana, CI/CD) and the Next.js admin interface.
 
 This document summarizes the project based on repository documentation and highlights decision points, planned next steps, and recommendations to guide direction and resourcing.
 
@@ -69,7 +69,7 @@ This document summarizes the project based on repository documentation and highl
   - `/research-spaces/{space_id}/graph/export`
 - Authentication, authorization, rate limiting, and baseline audit logging are implemented.
 - Legacy entity-specific endpoints (`/genes`, `/variants`, `/phenotypes`, `/evidence`) are being retired in favor of kernel endpoints.
-- Flujo-based PubMed **query generation** remains implemented; PubMed ingestion writes extracted facts into the kernel (entities/observations/relations) with provenance.
+- Artana-based PubMed **query generation** remains implemented; PubMed ingestion writes extracted facts into the kernel (entities/observations/relations) with provenance.
 
 ### Frontend
 

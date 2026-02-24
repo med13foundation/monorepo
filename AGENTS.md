@@ -9,8 +9,8 @@ This document provides essential context and instructions for AI agents building
 **MED13 Resource Library** is a domain-agnostic data platform that ingests, enriches, extracts, and graphs structured knowledge from external sources. The same pipeline, agents, Dictionary, and kernel graph serve biomedical research (MED13, ClinVar, PubMed), sports analytics, CS benchmarking, or any other domain — only the Dictionary content differs. It implements Clean Architecture with:
 
 - **Domain**: Domain-agnostic business logic driven by a universal Dictionary schema engine, plus MED13/biomedical validation as the first domain
-- **Architecture**: FastAPI backend with a Next.js admin interface, Flujo-based AI agents, and a kernel knowledge graph (entities, observations, relations, provenance)
-- **Tech Stack**: Python 3.12+, TypeScript, PostgreSQL (with pgvector, RLS, PHI encryption), Clean Architecture patterns, Flujo for AI agent orchestration
+- **Architecture**: FastAPI backend with a Next.js admin interface, Artana-based AI agents, and a kernel knowledge graph (entities, observations, relations, provenance)
+- **Tech Stack**: Python 3.12+, TypeScript, PostgreSQL (with pgvector, RLS, PHI encryption), Clean Architecture patterns, Artana for AI agent orchestration
 - **Purpose**: Provide researchers and administrators with reliable, type-safe, evidence-backed data management across any domain
 
 **Key Characteristics:**
@@ -58,7 +58,7 @@ This document provides essential context and instructions for AI agents building
 
 ### AI Agent Development Guidelines
 
-When working with AI agents (Flujo-based):
+When working with AI agents (Artana-based):
 
 #### Agent Architecture Pattern
 ```
@@ -98,7 +98,7 @@ src/application/agents/services/             # Application layer - orchestration
 ├── content_enrichment_service.py
 └── mapping_judge_service.py
 
-src/infrastructure/llm/                      # Infrastructure - Flujo implementation
+src/infrastructure/llm/                      # Infrastructure - Artana/OpenAI implementation
 ├── adapters/                                # Port implementations (1 per agent)
 ├── factories/                               # Agent creation (1 per agent)
 ├── pipelines/                               # Pipeline definitions by agent & source type
@@ -191,10 +191,10 @@ All agent-driven and security components are opt-in via environment variables:
 - Agent endpoints are gated by feature flags in the DI layer
 - This ensures safe, incremental rollout without affecting existing functionality
 
-#### Type Safety Exception for Flujo
-The Flujo library uses `Any` types in some internal generics. This is a **documented exception** - the files are listed in `scripts/validate_architecture.py` `ALLOWED_ANY_USAGE`. Keep `Any` confined to infrastructure layer only. Domain contracts must be fully typed.
+#### Type Safety Exception for External AI Runtime Adapters
+External runtime adapters can require tightly-scoped `Any` escape hatches. This is a **documented exception** - the files are listed in `scripts/validate_architecture.py` `ALLOWED_ANY_USAGE`. Keep `Any` confined to infrastructure layer only. Domain contracts must be fully typed.
 
-**See:** `docs/flujo/agent_architecture.md` for complete guide
+**See:** `docs/artana-kernel/docs/agent_migration.md` for migration/runtime guidance.
 
 ### Testing Requirements
 - **Unit tests**: Required for all domain logic and services
@@ -242,9 +242,9 @@ make setup-dev          # Create Python 3.12 venv + install dependencies
 source venv/bin/activate # Activate virtual environment
 ```
 
-### Flujo State Backend
-- `FLUJO_STATE_URI` overrides `flujo.toml` `state_uri`; use `search_path=flujo,public` for schema isolation.
-- Run `make init-flujo-schema` (or `make setup-postgres`) to create the `flujo` schema before first use.
+### Artana State Backend
+- `ARTANA_STATE_URI` can explicitly set the state store URI. If unset, state URI is derived from `DATABASE_URL` with `search_path=artana,public`.
+- Run `make init-artana-schema` (or `make setup-postgres`) to create the `artana` schema before first use.
 
 ### Development Servers
 ```bash
@@ -319,7 +319,7 @@ The MED13 Resource Library implements a **Clean Architecture** with clear separa
 │  ┌─────────────────────────────────────────────────────────┐ │
 │  │           External Concerns & Adapters                  │ │
 │  │  • SQLAlchemy Repositories • API Clients                │ │
-│  │  • Flujo Agent Infrastructure (7 agents)                │ │
+│  │  • Artana Agent Infrastructure (7 agents)               │ │
 │  │  • PHI Encryption Service • Key Provider                │ │
 │  │  • Kernel Ingestion Pipeline (Map→Normalize→Resolve→    │ │
 │  │    Validate→Persist)                                    │ │
@@ -400,7 +400,7 @@ med13-resource-library/
 │   │   ├── dependency_injection/      # DI wiring (service factories)
 │   │   │   ├── dependencies.py
 │   │   │   └── kernel_service_factories.py
-│   │   └── llm/                       # Flujo-based AI agent infrastructure
+│   │   └── llm/                       # Artana-based AI agent infrastructure
 │   │       ├── adapters/              # 7 port implementations
 │   │       ├── factories/             # 7 agent factories
 │   │       ├── pipelines/             # Pipeline definitions by agent & source type
@@ -436,7 +436,7 @@ med13-resource-library/
 ├── docs/                               # Documentation
 │   ├── latest_plan_path/
 │   │   └── datasources_architecture.md # Master architectural roadmap
-│   └── flujo/                          # AI agent documentation
+│   └── artana-kernel/docs/             # AI agent documentation
 ├── tests/                              # Backend tests
 │   ├── unit/                           # Unit tests
 │   ├── integration/                    # Integration tests (API, DB)
@@ -789,7 +789,7 @@ See the **Monorepo Structure & Organization** section above for the complete dir
 
 - `src/domain/` — Business logic, entities, repository interfaces, agent contracts/contexts/ports
 - `src/application/` — Use case services (15+ including 7 agent services)
-- `src/infrastructure/` — SQLAlchemy repos, Flujo agents, ingestion pipeline, security, DI
+- `src/infrastructure/` — SQLAlchemy repos, Artana agents, ingestion pipeline, security, DI
 - `src/routes/` — FastAPI endpoints (research spaces, admin, data discovery)
 - `src/models/database/` — SQLAlchemy ORM models (kernel, dictionary, data sources)
 - `src/web/` — Next.js admin interface
@@ -868,7 +868,7 @@ make all                    # Complete quality gate
 - **Review Workflow**: `ACTIVE` → `PENDING_REVIEW` → `REVOKED` status lifecycle
 - **Ingestion Pipeline**: `Map → Normalize → Resolve → Validate → Persist` with `HybridMapper` (Exact + Vector + LLMJudge)
 
-### AI Agent System (Flujo) — 7 Agents Production Ready
+### AI Agent System (Artana) — 7 Agents Production Ready
 - **Query Generation**: PubMed Boolean query generation from research context
 - **Entity Recognition**: Identify biomedical entities in source records (ClinVar + PubMed)
 - **Extraction**: Extract structured knowledge from documents (ClinVar + PubMed)
@@ -877,7 +877,7 @@ make all                    # Complete quality gate
 - **Content Enrichment**: Full-text content acquisition from source documents
 - **Mapping Judge**: LLM-based resolution for ambiguous dictionary mappings
 - **Pattern**: Contract-first, evidence-based, source-type dispatched, feature-flagged
-- **Type Safety**: Fully typed domain layer (documented exception for Flujo generics in infrastructure)
+- **Type Safety**: Fully typed domain layer (documented exception for external runtime adapters in infrastructure)
 
 ### Security Hardening — Implemented
 - **Row-Level Security**: PostgreSQL RLS policies on all kernel tables, context injection via `set_config()`
@@ -911,12 +911,12 @@ make all                    # Complete quality gate
 - `data_sources_plan.md`: Complete Data Sources module specification
 - `docs/goal.md`: Project mission and success criteria
 
-**AI Agents (Flujo):**
+**AI Agents (Artana):**
 
-- `docs/flujo/agent_architecture.md`: **Complete agent implementation guide** - patterns, examples, adding new agents
-- `docs/flujo/reasoning.md`: Reasoning techniques (TreeSearchStep, GranularStep, A* search)
-- `docs/flujo/contract_oriented_ai.md`: Contract-first AI development patterns
-- `docs/flujo/prod_guide.md`: Production deployment and configuration
+- `docs/artana-kernel/docs/agent_migration.md`: Runtime architecture and migration decisions
+- `docs/artana-kernel/docs/kernel_contracts.md`: Contract-first AI patterns and schemas
+- `docs/artana-kernel/docs/deep_traceability.md`: Traceability, debugging, and observability workflow
+- `docs/artana-kernel/docs/Chapter5.md`: Advanced runtime and orchestration patterns
 
 **Domain & UI:**
 
@@ -930,7 +930,7 @@ Refer to `docs/latest_plan_path/datasources_architecture.md` (Known Gaps section
 - Governance Layer agent (approval routing, human-in-the-loop)
 - Admin CRUD routes for Dictionary entity/relation types and value sets
 - Next.js UI panels for kernel graph, dictionary management, and agent results
-- Production observability (flujo lens, structured logging, metrics)
+- Production observability (structured logging, metrics, trace exports)
 - E2E integration tests across the full ingestion → graph → search pipeline
 
 **Type Management Quick Reference:**
@@ -977,29 +977,29 @@ Refer to `docs/latest_plan_path/datasources_architecture.md` (Known Gaps section
 - **Documentation**: Clear docs prevent medical misinterpretation
 - **Security**: Healthcare data demands fortress-level security practices
 
-### AI Agent (Flujo) Development Guidelines
+### AI Agent (Artana) Development Guidelines
 - **Contract-First**: Always define domain contracts extending `BaseAgentContract` before implementation
 - **Evidence-Based**: All agent outputs must include `confidence_score`, `rationale`, and `evidence`
 - **Clean Architecture**: Domain contracts/ports in `src/domain/agents/`, implementations in `src/infrastructure/llm/`
 - **Source-Type Dispatch**: Use `_PIPELINE_FACTORIES` and `_FALLBACK_FIELDS` dicts in adapters for multi-domain support
 - **Feature Flags**: Gate agent endpoints via environment variables for safe incremental rollout
 - **Governance Patterns**: Use confidence-based routing and human-in-the-loop escalation
-- **Lifecycle Management**: Register pipelines with `FlujoLifecycleManager` for proper cleanup
-- **State Backend**: Configure PostgreSQL backend with flujo schema for production
+- **Lifecycle Management**: Ensure adapters close clients/stores cleanly (`aclose`/`close`) after runs
+- **State Backend**: Configure PostgreSQL backend with the `artana` schema for production
 - **Factory Pattern**: Use factories for consistent agent configuration and model selection
-- **Documented `Any` Exception**: Flujo generics require `Any` - keep confined to infrastructure, never in domain
+- **Documented `Any` Exception**: External runtime adapters may require narrowly-scoped `Any`; keep confined to infrastructure, never in domain
 
 ### AI Agent Reasoning Techniques
-Flujo provides structured reasoning primitives - choose based on problem complexity:
+Artana supports multiple execution styles - choose based on problem complexity:
 
-| Reasoning Type | Flujo Primitive | When to Use |
+| Reasoning Type | Artana Pattern | When to Use |
 |----------------|-----------------|-------------|
-| **Simple** | Standard `Step` | Direct query generation, simple tasks |
-| **Chain of Thought** | `GranularStep` | Multi-turn reasoning, tool use, ReAct patterns |
-| **Tree of Thoughts** | `TreeSearchStep` | Branching exploration, complex planning, backtracking |
-| **Native Reasoning** | `Step` + reasoning model | Deep analysis with models like `openai:o1` |
+| **Simple** | `SingleStepModelClient.step` | Direct query generation, bounded tasks |
+| **Multi-Stage** | Deterministic app pipeline + per-stage model calls | Extraction + validation + persistence flows |
+| **Branching / Search** | Harness workflows (`supervisor`, `incremental`) | Complex exploration and offline evaluation |
+| **Native Reasoning** | Reasoning-capable model (`gpt-5-mini`, `gpt-5`) | Deep analysis with stronger reasoning models |
 
-**See:** `docs/flujo/reasoning.md` for TreeSearchStep examples
+**See:** `docs/artana-kernel/docs/Chapter5.md` for runtime orchestration patterns
 
 ---
 

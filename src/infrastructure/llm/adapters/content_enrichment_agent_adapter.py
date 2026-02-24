@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from typing import TYPE_CHECKING
 
@@ -10,6 +9,10 @@ from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.content_enrichment import ContentEnrichmentContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.content_enrichment_port import ContentEnrichmentPort
+from src.infrastructure.llm.adapters._artana_step_helpers import (
+    build_deterministic_run_id,
+    run_single_step_with_policy,
+)
 from src.infrastructure.llm.adapters._openai_json_schema_model_port import (
     OpenAIJSONSchemaModelPort,
     has_configured_openai_api_key,
@@ -17,6 +20,7 @@ from src.infrastructure.llm.adapters._openai_json_schema_model_port import (
 from src.infrastructure.llm.config import (
     GovernanceConfig,
     get_model_registry,
+    load_runtime_policy,
     resolve_artana_state_uri,
 )
 from src.infrastructure.llm.prompts.content_enrichment import (
@@ -64,6 +68,7 @@ class ArtanaContentEnrichmentAdapter(ContentEnrichmentPort):
 
         self._default_model = model
         self._governance = GovernanceConfig.from_environment()
+        self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
         self._last_run_id: str | None = None
         timeout_seconds = self._resolve_timeout_seconds(model)
@@ -97,8 +102,9 @@ class ArtanaContentEnrichmentAdapter(ContentEnrichmentPort):
         effective_model = self._resolve_model_id(model_id)
         run_id = self._create_run_id(
             source_type=source_type,
-            model_id=effective_model,
-            document_id=context.document_id,
+            research_space_id=context.research_space_id,
+            external_id=context.external_record_id,
+            extraction_config_version=self._runtime_policy.extraction_config_version,
         )
         self._last_run_id = run_id
 
@@ -111,13 +117,15 @@ class ArtanaContentEnrichmentAdapter(ContentEnrichmentPort):
                 tenant_id=context.research_space_id or "content_enrichment",
                 budget_usd_limit=max(float(budget_limit), 0.01),
             )
-            result = await self._client.step(
+            result = await run_single_step_with_policy(
+                self._client,
                 run_id=run_id,
                 tenant=tenant,
                 model=effective_model,
                 prompt=self._build_prompt(context),
                 output_schema=ContentEnrichmentContract,
                 step_key="content.enrichment.v1",
+                replay_policy=self._runtime_policy.replay_policy,
             )
             output = result.output
             contract = (
@@ -191,10 +199,24 @@ class ArtanaContentEnrichmentAdapter(ContentEnrichmentPort):
         raise ValueError(msg)
 
     @staticmethod
-    def _create_run_id(*, source_type: str, model_id: str, document_id: str) -> str:
-        payload = f"{source_type}|{model_id}|{document_id}"
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-        return f"content_enrichment:{digest}"
+    def _create_run_id(  # noqa: PLR0913
+        *,
+        source_type: str,
+        research_space_id: str | None = None,
+        external_id: str | None = None,
+        extraction_config_version: str = "v1",
+        model_id: str | None = None,
+        document_id: str | None = None,
+    ) -> str:
+        _ = model_id  # retained for backward-compatible call sites/tests
+        resolved_external_id = (external_id or document_id or "").strip() or "unknown"
+        return build_deterministic_run_id(
+            prefix="content_enrichment",
+            research_space_id=research_space_id,
+            source_type=source_type,
+            external_id=resolved_external_id,
+            extraction_config_version=extraction_config_version,
+        )
 
     @staticmethod
     def _create_tenant(tenant_id: str, budget_usd_limit: float) -> TenantContext:

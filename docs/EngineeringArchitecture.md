@@ -72,7 +72,7 @@ The MED13 Resource Library implements a robust **Clean Architecture** with compl
 - **Presets System**: User and Space-scoped search configurations for reproducible research
 - **Automation**: Background jobs for PDF downloading and ingestion linkage
 
-### ✅ **AI Agent System (Flujo) - PRODUCTION READY**
+### ✅ **AI Agent System (Artana) - PRODUCTION READY**
 **Contract-First, Evidence-Based AI Architecture:**
 
 ```
@@ -92,7 +92,7 @@ The MED13 Resource Library implements a robust **Clean Architecture** with compl
                                  │
 ┌─────────────────────────────────────────────────────────────┐
 │        Infrastructure Layer (src/infrastructure/llm/)       │
-│  • Adapters: FlujoQueryAgentAdapter                         │
+│  • Adapters: ArtanaQueryAgentAdapter                         │
 │  • Factories: Agent creation with consistent configuration  │
 │  • Pipelines: Governance patterns, confidence routing       │
 │  • State: PostgreSQL backend, lifecycle management          │
@@ -205,7 +205,7 @@ Pattern for Each New Agent:
 3. Define port interface in domain layer
 4. Create system prompt and factory
 5. Build pipeline with governance patterns
-6. Implement adapter using Flujo
+6. Implement adapter using Artana
 7. Create application service for orchestration
 
 Benefits:
@@ -318,7 +318,7 @@ Benefits:
 # DomainEventBus + SourceCreated/Updated/StatusChanged events power audit trails
 ```
 
-#### **AI Agent Infrastructure (Flujo)**
+#### **AI Agent Infrastructure (Artana)**
 ```python
 # src/domain/agents/ - Contracts, contexts, ports (domain interfaces)
 # src/application/agents/ - Use case orchestration services

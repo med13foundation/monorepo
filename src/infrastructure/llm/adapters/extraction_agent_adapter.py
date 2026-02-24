@@ -8,6 +8,11 @@ from typing import TYPE_CHECKING
 from src.domain.agents.contracts import EvidenceItem, ExtractionContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
+from src.infrastructure.llm.adapters._artana_step_helpers import (
+    build_deterministic_run_id,
+    resolve_external_record_id,
+    run_single_step_with_policy,
+)
 from src.infrastructure.llm.adapters._extraction_adapter_payloads import (
     DEFAULT_EXTRACTION_USAGE_MAX_TOKENS,
     ENV_EXTRACTION_USAGE_MAX_TOKENS,
@@ -29,6 +34,7 @@ from src.infrastructure.llm.config import (
     GovernanceConfig,
     UsageLimits,
     get_model_registry,
+    load_runtime_policy,
     resolve_artana_state_uri,
 )
 
@@ -79,6 +85,7 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
         self._pipeline_usage_limits = self._resolve_pipeline_usage_limits(
             self._governance.usage_limits,
         )
+        self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
         self._last_run_id: str | None = None
         timeout_seconds = self._resolve_timeout_seconds(model)
@@ -110,10 +117,16 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
             )
 
         effective_model = self._resolve_model_id(model_id)
+        external_record_id = resolve_external_record_id(
+            source_type=source_type,
+            raw_record=context.raw_record,
+            fallback_document_id=context.document_id,
+        )
         run_id = self._create_run_id(
             source_type=source_type,
-            model_id=effective_model,
-            document_id=context.document_id,
+            research_space_id=context.research_space_id,
+            external_id=external_record_id,
+            extraction_config_version=self._runtime_policy.extraction_config_version,
         )
         self._last_run_id = run_id
         relation_governance_mode = self._resolve_relation_governance_mode(
@@ -129,7 +142,8 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
                 tenant_id=context.research_space_id or "extraction",
                 budget_usd_limit=max(float(budget_limit), 0.01),
             )
-            result = await self._client.step(
+            result = await run_single_step_with_policy(
+                self._client,
                 run_id=run_id,
                 tenant=tenant,
                 model=effective_model,
@@ -140,6 +154,7 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
                 ),
                 output_schema=ExtractionContract,
                 step_key=f"extraction.{source_type}.v1",
+                replay_policy=self._runtime_policy.replay_policy,
             )
             output = result.output
             contract = (
@@ -220,12 +235,24 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
         ).model_id
 
     @staticmethod
-    def _create_run_id(*, source_type: str, model_id: str, document_id: str) -> str:
-        import hashlib
-
-        payload = f"{source_type}|{model_id}|{document_id}"
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-        return f"extraction:{source_type}:{digest}"
+    def _create_run_id(  # noqa: PLR0913
+        *,
+        source_type: str,
+        research_space_id: str | None = None,
+        external_id: str | None = None,
+        extraction_config_version: str = "v1",
+        model_id: str | None = None,
+        document_id: str | None = None,
+    ) -> str:
+        _ = model_id  # retained for backward-compatible call sites/tests
+        resolved_external_id = (external_id or document_id or "").strip() or "unknown"
+        return build_deterministic_run_id(
+            prefix="extraction",
+            research_space_id=research_space_id,
+            source_type=source_type,
+            external_id=resolved_external_id,
+            extraction_config_version=extraction_config_version,
+        )
 
     @staticmethod
     def _create_tenant(tenant_id: str, budget_usd_limit: float) -> TenantContext:

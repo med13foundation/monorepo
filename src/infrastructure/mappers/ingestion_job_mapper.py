@@ -22,6 +22,7 @@ from src.models.database.ingestion_job import (
 from src.type_definitions.data_sources import normalize_ingestion_job_metadata
 
 if TYPE_CHECKING:
+    from src.infrastructure.llm.config.runtime_policy import ReplayPolicy
     from src.type_definitions.common import JSONObject
 else:
     JSONObject = dict[str, object]  # Runtime type stub
@@ -47,6 +48,17 @@ def _to_iso_seconds(value: datetime | None) -> str | None:
     if normalized.tzinfo is None:
         normalized = normalized.replace(tzinfo=UTC)
     return normalized.astimezone(UTC).isoformat(timespec="seconds")
+
+
+def _normalize_replay_policy(value: str) -> ReplayPolicy:
+    normalized = value.strip().lower()
+    if normalized == "strict":
+        return "strict"
+    if normalized == "allow_prompt_drift":
+        return "allow_prompt_drift"
+    if normalized == "fork_on_drift":
+        return "fork_on_drift"
+    return "strict"
 
 
 class IngestionJobMapper:
@@ -79,6 +91,8 @@ class IngestionJobMapper:
             provenance=Provenance.model_validate(model.provenance),
             metadata=metadata_payload,
             source_config_snapshot=snapshot_payload,
+            dictionary_version_used=int(model.dictionary_version_used),
+            replay_policy=_normalize_replay_policy(str(model.replay_policy)),
         )
 
     @staticmethod
@@ -98,6 +112,8 @@ class IngestionJobMapper:
             "provenance": job.provenance.model_dump(mode="json"),
             "job_metadata": normalize_ingestion_job_metadata(job.metadata),
             "source_config_snapshot": dict(job.source_config_snapshot),
+            "dictionary_version_used": int(job.dictionary_version_used),
+            "replay_policy": job.replay_policy,
         }
 
     @staticmethod

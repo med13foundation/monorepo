@@ -23,12 +23,9 @@ SKIP_PATHS: set[Path] = {
 }
 SKIP_PARTS: set[str] = {"node_modules", ".next"}
 
-# Flujo integration files with documented Any usage (Flujo library lacks type stubs)
-# See docs/flujo/agent_architecture.md "Type Safety Notes" section
-FLUJO_ALLOWED_ANY: set[Path] = {
-    Path("src/infrastructure/llm/pipelines/base_pipeline.py"),
-    Path("src/infrastructure/llm/pipelines/query_pipelines/pubmed_pipeline.py"),
-    Path("src/infrastructure/llm/state/lifecycle.py"),
+# Artana integration files with documented Any usage
+# See docs/artana-kernel/docs/agent_migration.md
+ARTANA_ALLOWED_ANY: set[Path] = {
     Path("src/infrastructure/llm/adapters/query_agent_adapter.py"),
 }
 
@@ -47,8 +44,8 @@ def is_skipped(path: Path) -> bool:
         return True
     if path in SKIP_PATHS:
         return True
-    # Allow documented Any usage in Flujo integration files
-    return path in FLUJO_ALLOWED_ANY
+    # Allow documented Any usage in Artana integration files
+    return path in ARTANA_ALLOWED_ANY
 
 
 def detect_any_tokens(path: Path, lines: list[str]) -> list[str]:

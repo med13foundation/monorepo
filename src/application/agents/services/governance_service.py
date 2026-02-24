@@ -22,13 +22,13 @@ class GovernancePolicy:
     @classmethod
     def from_environment(cls) -> GovernancePolicy:
         """Build governance policy from environment variables."""
-        threshold_raw = os.getenv("FLUJO_GOVERNANCE_CONFIDENCE_THRESHOLD", "0.85")
+        threshold_raw = os.getenv("ARTANA_GOVERNANCE_CONFIDENCE_THRESHOLD", "0.85")
         try:
             threshold = float(threshold_raw)
         except ValueError:
             threshold = 0.85
         normalized_threshold = max(0.0, min(threshold, 1.0))
-        require_evidence = os.getenv("FLUJO_GOVERNANCE_REQUIRE_EVIDENCE", "1") == "1"
+        require_evidence = os.getenv("ARTANA_GOVERNANCE_REQUIRE_EVIDENCE", "1") == "1"
         return cls(
             confidence_threshold=normalized_threshold,
             require_evidence=require_evidence,

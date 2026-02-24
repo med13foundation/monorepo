@@ -85,7 +85,7 @@ Calls `create_variable(...)`:
 
 Calls `create_synonym("VAR_DILATED_CARDIOMYOPATHY", "DCM", "ai_mapped")`.
 
-Entry is **immediately active**. Logged with `created_by = "agent:flujo_run_001"`.
+Entry is **immediately active**. Logged with `created_by = "agent:agent_run_001"`.
 
 **Phase 3 — Identify relation types needed:**
 
@@ -499,7 +499,7 @@ create_entity_type(
 )
 ```
 
-All immediately active.  Logged with `created_by = "agent:flujo_run_sports_001"`.
+All immediately active.  Logged with `created_by = "agent:agent_run_sports_001"`.
 
 **Phase 2 — Relation types:**
 
