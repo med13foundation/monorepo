@@ -17,13 +17,14 @@ import { AiModelSelector } from './AiModelSelector'
 
 interface AiManagedConfigFieldsProps {
   form: UseFormReturn<AiConfigFormValues>
+  isPubMedSource: boolean
 }
 
 interface PubMedConfigFieldsProps {
   form: UseFormReturn<AiConfigFormValues>
 }
 
-export function AiManagedConfigFields({ form }: AiManagedConfigFieldsProps) {
+export function AiManagedConfigFields({ form, isPubMedSource }: AiManagedConfigFieldsProps) {
   return (
     <>
       <FormField
@@ -64,16 +65,24 @@ export function AiManagedConfigFields({ form }: AiManagedConfigFieldsProps) {
         name="agent_prompt"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Agent instructions</FormLabel>
+            <FormLabel>
+              {isPubMedSource ? 'Query description (optional)' : 'Agent instructions (optional)'}
+            </FormLabel>
             <FormControl>
               <Textarea
-                placeholder="e.g. Focus on clinical case studies and mechanistic pathways."
+                placeholder={
+                  isPubMedSource
+                    ? 'e.g. Focus on MED13 mechanisms in plants, prioritize open-access full-text papers.'
+                    : 'e.g. Focus on clinical case studies and mechanistic pathways.'
+                }
                 className="min-h-[100px]"
                 {...field}
               />
             </FormControl>
             <FormDescription>
-              Custom instructions to steer the agent behavior.
+              {isPubMedSource
+                ? 'Describe the research intent in plain text. The AI will build/refine the executable query.'
+                : 'Custom instructions to steer the agent behavior.'}
             </FormDescription>
             <FormMessage />
           </FormItem>
@@ -86,26 +95,6 @@ export function AiManagedConfigFields({ form }: AiManagedConfigFieldsProps) {
 export function PubMedConfigFields({ form }: PubMedConfigFieldsProps) {
   return (
     <>
-      <FormField
-        control={form.control}
-        name="query"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>PubMed query</FormLabel>
-            <FormControl>
-              <Textarea
-                {...field}
-                className="min-h-[90px] font-mono text-xs"
-                placeholder='e.g. "MED13"[Title/Abstract] AND "mediator complex"[Title/Abstract]'
-              />
-            </FormControl>
-            <FormDescription>
-              The exact query used for ingestion. AI can refine this when AI-managed mode is enabled.
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
       <FormField
         control={form.control}
         name="max_results"

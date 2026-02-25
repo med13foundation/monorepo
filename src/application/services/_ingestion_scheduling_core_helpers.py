@@ -72,11 +72,17 @@ class _IngestionSchedulingCoreHelpers(
     async def _run_ingestion_for_source(
         self: IngestionSchedulingService,
         source: user_data_source.UserDataSource,
+        *,
+        skip_post_ingestion_hook: bool = False,
+        force_recover_lock: bool = False,
     ) -> IngestionRunSummary:
         self._recover_stale_running_jobs(source_id=source.id)
         self._assert_extraction_contract(source)
         service = self._get_ingestion_service(source)
-        lock_token = self._acquire_source_lock(source.id)
+        lock_token = self._acquire_source_lock(
+            source.id,
+            force_recover_lock=force_recover_lock,
+        )
         lock_heartbeat_task = self._start_source_lock_heartbeat(
             source_id=source.id,
             lock_token=lock_token,
@@ -105,7 +111,11 @@ class _IngestionSchedulingCoreHelpers(
                     source_id=source.id,
                     summary=summary,
                 )
-                await self._run_post_ingestion_hook(source=source, summary=summary)
+                if not skip_post_ingestion_hook:
+                    await self._run_post_ingestion_hook(
+                        source=source,
+                        summary=summary,
+                    )
                 sync_state_after = self._persist_sync_state_on_success(
                     sync_state=sync_state_before,
                     ingestion_job_id=running.id,
@@ -331,6 +341,8 @@ class _IngestionSchedulingCoreHelpers(
     def _acquire_source_lock(
         self: IngestionSchedulingService,
         source_id: UUID,
+        *,
+        force_recover_lock: bool = False,
     ) -> str | None:
         repository = self._source_lock_repository
         if repository is None:
@@ -347,6 +359,32 @@ class _IngestionSchedulingCoreHelpers(
             heartbeat_at=now,
             acquired_by=self._source_lock_owner,
         )
+        if (
+            lock is None
+            and force_recover_lock
+            and not self._source_has_running_job(source_id)
+        ):
+            stale_lock = repository.get_by_source(source_id)
+            if stale_lock is not None and repository.delete_by_source(source_id):
+                logger.warning(
+                    "Force-recovered source ingestion lock before retry",
+                    extra={
+                        "source_id": str(source_id),
+                        "stale_lock_expires_at": stale_lock.lease_expires_at.isoformat(
+                            timespec="seconds",
+                        ),
+                        "stale_lock_heartbeat_at": stale_lock.last_heartbeat_at.isoformat(
+                            timespec="seconds",
+                        ),
+                    },
+                )
+                lock = repository.try_acquire(
+                    source_id=source_id,
+                    lock_token=lock_token,
+                    lease_expires_at=lease_expires_at,
+                    heartbeat_at=now,
+                    acquired_by=self._source_lock_owner,
+                )
         if lock is None:
             msg = f"Ingestion already running for source {source_id}"
             raise ValueError(msg)

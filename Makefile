@@ -25,6 +25,8 @@ NEXT_DEV_ENV := NEXTAUTH_SECRET=med13-resource-library-nextauth-secret-key-for-d
 BACKEND_DEV_ENV := MED13_DEV_JWT_SECRET=med13-resource-library-backend-jwt-secret-for-development-2026-01
 NEXTAUTH_URL ?= http://localhost:3000
 NEXT_BUILD_ENV := NEXTAUTH_URL=$(NEXTAUTH_URL)
+WEB_WAIT_TIMEOUT_SECONDS ?= 120
+WEB_WAIT_INTERVAL_SECONDS ?= 2
 
 ADMIN_PASSWORD_EFFECTIVE := $(strip $(or $(ADMIN_PASSWORD),$(MED13_ADMIN_PASSWORD)))
 
@@ -118,7 +120,7 @@ define ensure_web_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test phi-backfill-dry-run phi-backfill-commit
+.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait phi-backfill-dry-run phi-backfill-commit
 
 PY_CHECK_PATHS := src tests scripts alembic
 PY_STRICT_CHECK_PATHS := src
@@ -463,10 +465,46 @@ endif
 	@i=0; while [ ! -f "$(WEB_PID_FILE)" ] && [ $$i -lt 10 ]; do sleep 0.5; i=$$((i+1)); done
 	@if [ -f "$(WEB_PID_FILE)" ]; then \
 		PID=$$(cat "$(WEB_PID_FILE)"); \
+		sleep 2; \
+		if ! kill -0 $$PID 2>/dev/null; then \
+			echo "Next.js process $$PID exited shortly after launch. Recent logs:"; \
+			tail -n 80 "$(WEB_LOG)" || true; \
+			rm -f "$(WEB_PID_FILE)"; \
+			exit 1; \
+		fi; \
 		echo "Next.js started in background (PID $$PID). Logs: $(WEB_LOG)"; \
 	else \
 		echo "Next.js launch command executed but PID file was not created. Check $(WEB_LOG) for details."; \
+		tail -n 80 "$(WEB_LOG)" || true; \
+		exit 1; \
 	fi
+	@$(MAKE) -s web-wait
+
+web-wait: ## Wait until Next.js is reachable on http://localhost:3000
+	@attempts=0; \
+	max_attempts=$$(( $(WEB_WAIT_TIMEOUT_SECONDS) / $(WEB_WAIT_INTERVAL_SECONDS) )); \
+	if [ $$max_attempts -lt 1 ]; then max_attempts=1; fi; \
+	while true; do \
+		if curl -sS --max-time 3 http://localhost:3000/ >/dev/null 2>&1; then \
+			echo "Next.js is reachable at http://localhost:3000"; \
+			exit 0; \
+		fi; \
+		if [ -f "$(WEB_PID_FILE)" ]; then \
+			PID=$$(cat "$(WEB_PID_FILE)"); \
+			if ! kill -0 $$PID 2>/dev/null; then \
+				echo "Next.js process $$PID is not running. Recent logs:"; \
+				tail -n 80 "$(WEB_LOG)" || true; \
+				exit 1; \
+			fi; \
+		fi; \
+		attempts=$$((attempts+1)); \
+		if [ $$attempts -ge $$max_attempts ]; then \
+			echo "Timed out waiting for Next.js readiness after $(WEB_WAIT_TIMEOUT_SECONDS)s. Recent logs:"; \
+			tail -n 80 "$(WEB_LOG)" || true; \
+			exit 1; \
+		fi; \
+		sleep $(WEB_WAIT_INTERVAL_SECONDS); \
+	done
 
 test-postgres: ## Run pytest with Postgres env vars loaded
 	$(call run_with_postgres_env,$(USE_PYTHON) -m pytest)
@@ -517,6 +555,18 @@ stop-web: ## Stop the Next.js admin interface
 			kill -9 $$REMAINING >/dev/null 2>&1 || true; \
 		fi; \
 		echo "Port 3000 cleared."; \
+		handled=1; \
+	fi; \
+	NEXT_DEV_PIDS=$$(pgrep -f "src/web.*next dev" 2>/dev/null || true); \
+	if [ -n "$$NEXT_DEV_PIDS" ]; then \
+		echo "Terminating lingering Next.js dev processes: $$NEXT_DEV_PIDS"; \
+		kill $$NEXT_DEV_PIDS >/dev/null 2>&1 || true; \
+		sleep 1; \
+		REMAINING_NEXT=$$(pgrep -f "src/web.*next dev" 2>/dev/null || true); \
+		if [ -n "$$REMAINING_NEXT" ]; then \
+			echo "Force killing stubborn Next.js dev processes: $$REMAINING_NEXT"; \
+			kill -9 $$REMAINING_NEXT >/dev/null 2>&1 || true; \
+		fi; \
 		handled=1; \
 	fi; \
 	if [ $$handled -eq 0 ]; then \

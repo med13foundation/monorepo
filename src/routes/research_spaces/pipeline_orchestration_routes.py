@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
@@ -15,6 +16,7 @@ from src.application.services.pipeline_orchestration_service import (
     PipelineOrchestrationService,
 )
 from src.database.session import get_session
+from src.domain.entities.ingestion_job import IngestionStatus
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces.content_enrichment_routes import (
     get_content_enrichment_service,
@@ -36,6 +38,7 @@ from src.routes.research_spaces.knowledge_extraction_routes import (
 
 from .router import (
     HTTP_400_BAD_REQUEST,
+    HTTP_404_NOT_FOUND,
     HTTP_500_INTERNAL_SERVER_ERROR,
     research_spaces_router,
 )
@@ -60,12 +63,15 @@ if TYPE_CHECKING:
     from src.domain.entities.user import User
 
 
+logger = logging.getLogger(__name__)
+
+
 class PipelineRunRequest(BaseModel):
     """Request payload for unified source pipeline execution."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=False)
 
-    source_id: UUID
+    source_id: str = Field(..., min_length=1, max_length=128)
     run_id: str | None = Field(default=None, min_length=1, max_length=128)
     resume_from_stage: (
         Literal["ingestion", "enrichment", "extraction", "graph"] | None
@@ -75,6 +81,7 @@ class PipelineRunRequest(BaseModel):
     source_type: str | None = Field(default=None, min_length=1, max_length=64)
     model_id: str | None = Field(default=None, min_length=1, max_length=128)
     shadow_mode: bool | None = None
+    force_recover_lock: bool = False
     graph_seed_entity_ids: list[str] | None = Field(default=None, max_length=200)
     graph_max_depth: int = Field(default=2, ge=1, le=4)
     graph_relation_types: list[str] | None = None
@@ -112,6 +119,17 @@ class PipelineRunResponse(BaseModel):
     executed_query: str | None = None
     errors: list[str]
     metadata: dict[str, object] | None = None
+
+
+class PipelineRunCancelResponse(BaseModel):
+    """Serialized cancellation outcome for one pipeline run."""
+
+    model_config = ConfigDict(strict=True)
+
+    run_id: str
+    source_id: UUID
+    status: str
+    cancelled: bool
 
 
 def get_pipeline_orchestration_service(
@@ -171,8 +189,33 @@ async def run_unified_pipeline(
     )
 
     try:
+        source_id = UUID(request.source_id)
+    except ValueError as exc:
+        logger.exception(
+            "Invalid pipeline run source_id",
+            extra={
+                "path": f"/research-spaces/{space_id}/pipeline/run",
+                "source_id": request.source_id,
+                "source_id_type": type(request.source_id).__name__,
+            },
+        )
+        raise HTTPException(
+            status_code=HTTP_400_BAD_REQUEST,
+            detail="source_id must be a valid UUID",
+        ) from exc
+
+    logger.info(
+        "Pipeline run request accepted",
+        extra={
+            "space_id": str(space_id),
+            "source_id": str(source_id),
+            "run_id": request.run_id,
+        },
+    )
+
+    try:
         summary = await orchestration_service.run_for_source(
-            source_id=request.source_id,
+            source_id=source_id,
             research_space_id=space_id,
             run_id=request.run_id,
             resume_from_stage=request.resume_from_stage,
@@ -181,6 +224,7 @@ async def run_unified_pipeline(
             source_type=request.source_type,
             model_id=request.model_id,
             shadow_mode=request.shadow_mode,
+            force_recover_lock=request.force_recover_lock,
             graph_seed_entity_ids=request.graph_seed_entity_ids,
             graph_max_depth=request.graph_max_depth,
             graph_relation_types=request.graph_relation_types,
@@ -224,4 +268,59 @@ async def run_unified_pipeline(
         executed_query=summary.executed_query,
         errors=list(summary.errors),
         metadata=dict(summary.metadata) if summary.metadata is not None else None,
+    )
+
+
+@research_spaces_router.post(
+    "/{space_id}/sources/{source_id}/pipeline-runs/{run_id}/cancel",
+    response_model=PipelineRunCancelResponse,
+    summary="Cancel an in-flight unified pipeline run",
+)
+def cancel_unified_pipeline_run(
+    space_id: UUID,
+    source_id: UUID,
+    run_id: str,
+    current_user: User = Depends(get_current_active_user),
+    membership_service: MembershipManagementService = Depends(get_membership_service),
+    orchestration_service: PipelineOrchestrationService = Depends(
+        get_pipeline_orchestration_service,
+    ),
+    session: Session = Depends(get_session),
+) -> PipelineRunCancelResponse:
+    """Cancel a running unified pipeline run for one source."""
+    require_researcher_role(
+        space_id,
+        current_user.id,
+        membership_service,
+        session,
+        current_user.role,
+    )
+
+    try:
+        cancelled_job = orchestration_service.cancel_run(
+            source_id=source_id,
+            run_id=run_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Pipeline run cancellation failed: {exc!s}",
+        ) from exc
+
+    if cancelled_job is None:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail="Pipeline run not found for source",
+        )
+
+    return PipelineRunCancelResponse(
+        run_id=run_id,
+        source_id=source_id,
+        status=cancelled_job.status.value,
+        cancelled=cancelled_job.status == IngestionStatus.CANCELLED,
     )

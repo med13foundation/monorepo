@@ -157,12 +157,14 @@ class KernelRelationService:
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
+        limit: int | None = None,
     ) -> list[KernelRelation]:
         """Graph traversal around an entity."""
         return self._relations.find_neighborhood(
             entity_id,
             depth=depth,
             relation_types=relation_types,
+            limit=limit,
         )
 
     def get_neighborhood_in_space(
@@ -172,6 +174,7 @@ class KernelRelationService:
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
+        limit: int | None = None,
     ) -> list[KernelRelation]:
         """
         Graph traversal around an entity, restricted to a research space.
@@ -190,6 +193,7 @@ class KernelRelationService:
             entity_id,
             depth=depth,
             relation_types=relation_types,
+            limit=limit,
         )
         return [
             rel

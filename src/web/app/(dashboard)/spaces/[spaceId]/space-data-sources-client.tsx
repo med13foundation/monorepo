@@ -40,8 +40,9 @@ export default function SpaceDataSourcesClient({
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">Onboarding</Badge>
               <span className="text-sm">
-                Configure PubMed query, OA-only mode, schedule, and AI settings. Then use
-                <strong> Run full pipeline now</strong> and open the workflow monitor.
+                Configure sources, run the pipeline, and monitor outcomes from this screen.
+                Open each source&apos;s <strong>Pipeline workspace</strong> for Setup, Run Monitor,
+                Review, and Graph tabs.
               </span>
             </div>
           </CardContent>

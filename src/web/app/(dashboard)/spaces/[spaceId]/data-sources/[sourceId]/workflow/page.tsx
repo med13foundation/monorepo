@@ -6,6 +6,7 @@ import { authOptions } from '@/lib/auth'
 import type { SourcePipelineRunsResponse, SourceWorkflowMonitorResponse } from '@/types/kernel'
 
 import { SourceWorkflowMonitorView } from './source-workflow-monitor-view'
+import type { WorkflowTabKey } from './source-workflow-monitor-tab-sections'
 
 interface SourceWorkflowMonitorPageProps {
   params: Promise<{
@@ -22,6 +23,13 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : undefined
 }
 
+function parseTab(value: string | undefined): WorkflowTabKey {
+  if (value === 'run' || value === 'review' || value === 'graph') {
+    return value
+  }
+  return 'setup'
+}
+
 export default async function SourceWorkflowMonitorPage({
   params,
   searchParams,
@@ -29,6 +37,7 @@ export default async function SourceWorkflowMonitorPage({
   const { spaceId, sourceId } = await params
   const resolvedSearchParams = searchParams ? await searchParams : undefined
   const selectedRunId = firstParam(resolvedSearchParams?.run_id)
+  const initialTab = parseTab(firstParam(resolvedSearchParams?.tab))
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 
@@ -68,6 +77,7 @@ export default async function SourceWorkflowMonitorPage({
       monitor={monitor}
       monitorError={monitorError}
       pipelineRuns={pipelineRuns}
+      initialTab={initialTab}
     />
   )
 }

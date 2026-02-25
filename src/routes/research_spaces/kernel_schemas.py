@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -317,3 +318,44 @@ class KernelGraphExportResponse(BaseModel):
 
     nodes: list[KernelEntityResponse]
     edges: list[KernelRelationResponse]
+
+
+class KernelGraphSubgraphRequest(BaseModel):
+    """Request payload for bounded subgraph retrieval."""
+
+    # Incoming JSON provides UUIDs as strings.
+    model_config = ConfigDict(strict=False)
+
+    mode: Literal["starter", "seeded"]
+    seed_entity_ids: list[UUID] = Field(default_factory=list)
+    depth: int = Field(default=2, ge=1, le=4)
+    top_k: int = Field(default=25, ge=1, le=100)
+    relation_types: list[str] | None = None
+    curation_statuses: list[str] | None = None
+    max_nodes: int = Field(default=180, ge=20, le=500)
+    max_edges: int = Field(default=260, ge=20, le=1000)
+
+
+class KernelGraphSubgraphMeta(BaseModel):
+    """Metadata describing bounded-subgraph execution and truncation."""
+
+    model_config = ConfigDict(strict=True)
+
+    mode: Literal["starter", "seeded"]
+    seed_entity_ids: list[UUID]
+    requested_depth: int
+    requested_top_k: int
+    pre_cap_node_count: int
+    pre_cap_edge_count: int
+    truncated_nodes: bool
+    truncated_edges: bool
+
+
+class KernelGraphSubgraphResponse(BaseModel):
+    """Bounded subgraph response for interactive graph rendering."""
+
+    model_config = ConfigDict(strict=True)
+
+    nodes: list[KernelEntityResponse]
+    edges: list[KernelRelationResponse]
+    meta: KernelGraphSubgraphMeta

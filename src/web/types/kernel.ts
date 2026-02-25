@@ -95,9 +95,12 @@ export interface KernelRelationResponse {
   relation_type: string
   target_id: string
 
-  confidence: number
-  evidence_summary: string | null
-  evidence_tier: string | null
+  confidence?: number
+  evidence_summary?: string | null
+  evidence_tier?: string | null
+  aggregate_confidence?: number
+  source_count?: number
+  highest_evidence_tier?: string | null
   curation_status: string
 
   provenance_id: string | null
@@ -141,10 +144,41 @@ export interface KernelGraphExportResponse {
   edges: KernelRelationResponse[]
 }
 
+export type KernelGraphSubgraphMode = 'starter' | 'seeded'
+
+export interface KernelGraphSubgraphRequest {
+  mode: KernelGraphSubgraphMode
+  seed_entity_ids: string[]
+  depth?: number
+  top_k?: number
+  relation_types?: string[] | null
+  curation_statuses?: string[] | null
+  max_nodes?: number
+  max_edges?: number
+}
+
+export interface KernelGraphSubgraphMeta {
+  mode: KernelGraphSubgraphMode
+  seed_entity_ids: string[]
+  requested_depth: number
+  requested_top_k: number
+  pre_cap_node_count: number
+  pre_cap_edge_count: number
+  truncated_nodes: boolean
+  truncated_edges: boolean
+}
+
+export interface KernelGraphSubgraphResponse {
+  nodes: KernelEntityResponse[]
+  edges: KernelRelationResponse[]
+  meta: KernelGraphSubgraphMeta
+}
+
 export interface PipelineRunRequest {
   source_id: string
   run_id?: string | null
   resume_from_stage?: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
+  force_recover_lock?: boolean
   enrichment_limit?: number
   extraction_limit?: number
   source_type?: string | null
@@ -183,6 +217,13 @@ export interface PipelineRunResponse {
   executed_query: string | null
   errors: string[]
   metadata: JSONObject | null
+}
+
+export interface PipelineRunCancelResponse {
+  run_id: string
+  source_id: string
+  status: string
+  cancelled: boolean
 }
 
 export interface SourcePipelineRunsResponse {

@@ -68,6 +68,61 @@ def _auth_headers(user: UserModel) -> dict[str, str]:
     }
 
 
+def _create_kernel_entity_for_space(
+    *,
+    test_client: TestClient,
+    space_id: UUID,
+    headers: dict[str, str],
+    entity_type: str,
+    display_label: str,
+    identifier_namespace: str,
+    identifier_value: str,
+) -> UUID:
+    response = test_client.post(
+        f"/research-spaces/{space_id}/entities",
+        headers=headers,
+        json={
+            "entity_type": entity_type,
+            "display_label": display_label,
+            "metadata": {},
+            "identifiers": {
+                identifier_namespace: identifier_value,
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    return UUID(response.json()["entity"]["id"])
+
+
+def _create_kernel_relation_for_space(
+    *,
+    test_client: TestClient,
+    space_id: UUID,
+    headers: dict[str, str],
+    source_id: UUID,
+    target_id: UUID,
+    relation_type: str = "ASSOCIATED_WITH",
+    confidence: float = 0.8,
+    evidence_summary: str = "Test evidence",
+    evidence_tier: str = "LITERATURE",
+) -> UUID:
+    response = test_client.post(
+        f"/research-spaces/{space_id}/relations",
+        headers=headers,
+        json={
+            "source_id": str(source_id),
+            "relation_type": relation_type,
+            "target_id": str(target_id),
+            "confidence": confidence,
+            "evidence_summary": evidence_summary,
+            "evidence_tier": evidence_tier,
+            "provenance_id": None,
+        },
+    )
+    assert response.status_code == 201, response.text
+    return UUID(response.json()["id"])
+
+
 @pytest.fixture(scope="function")
 def test_client(test_engine):
     db_engine = session_module.engine if _using_postgres() else test_engine
@@ -107,6 +162,25 @@ def researcher_user(db_session) -> UserModel:
             email=f"researcher-{suffix}@example.com",
             username=f"researcher-{suffix}",
             full_name="Researcher User",
+            hashed_password="hashed_password",
+            role=UserRole.RESEARCHER.value,
+            status="active",
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        session.expunge(user)
+    return user
+
+
+@pytest.fixture
+def outsider_user(db_session) -> UserModel:
+    suffix = uuid4().hex
+    with _session_for_api(db_session) as session:
+        user = UserModel(
+            email=f"outsider-{suffix}@example.com",
+            username=f"outsider-{suffix}",
+            full_name="Outsider User",
             hashed_password="hashed_password",
             role=UserRole.RESEARCHER.value,
             status="active",
@@ -286,6 +360,280 @@ def test_kernel_entity_observation_relation_flow(
     )
     assert curate.status_code == 200, curate.text
     assert curate.json()["curation_status"] == "APPROVED"
+
+
+def test_graph_subgraph_starter_mode_returns_bounded_sorted_edges(
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    seed_gene = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    phenotype_a = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiac phenotype A",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    phenotype_b = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiac phenotype B",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    phenotype_c = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiac phenotype C",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    phenotype_d = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiac phenotype D",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    relation_approved = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=seed_gene,
+        target_id=phenotype_a,
+    )
+    relation_under_review = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=seed_gene,
+        target_id=phenotype_b,
+    )
+    _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=seed_gene,
+        target_id=phenotype_c,
+    )
+    relation_rejected = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=seed_gene,
+        target_id=phenotype_d,
+    )
+
+    set_under_review = test_client.put(
+        f"/research-spaces/{space.id}/relations/{relation_under_review}",
+        headers=headers,
+        json={"curation_status": "UNDER_REVIEW"},
+    )
+    assert set_under_review.status_code == 200, set_under_review.text
+    set_rejected = test_client.put(
+        f"/research-spaces/{space.id}/relations/{relation_rejected}",
+        headers=headers,
+        json={"curation_status": "REJECTED"},
+    )
+    assert set_rejected.status_code == 200, set_rejected.text
+    set_approved = test_client.put(
+        f"/research-spaces/{space.id}/relations/{relation_approved}",
+        headers=headers,
+        json={"curation_status": "APPROVED"},
+    )
+    assert set_approved.status_code == 200, set_approved.text
+
+    response = test_client.post(
+        f"/research-spaces/{space.id}/graph/subgraph",
+        headers=headers,
+        json={
+            "mode": "starter",
+            "seed_entity_ids": [],
+            "depth": 2,
+            "top_k": 25,
+            "max_nodes": 20,
+            "max_edges": 20,
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload["meta"]["mode"] == "starter"
+    assert payload["meta"]["pre_cap_edge_count"] >= 4
+    assert payload["meta"]["truncated_edges"] is False
+    assert len(payload["edges"]) == 4
+
+    returned_statuses = [edge["curation_status"] for edge in payload["edges"]]
+    assert returned_statuses == ["APPROVED", "UNDER_REVIEW", "DRAFT", "REJECTED"]
+
+
+def test_graph_subgraph_seeded_mode_honors_filters_and_bounds(
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    seed_gene = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    phenotype_1 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype one",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    phenotype_2 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype two",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    phenotype_3 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype three",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    approved_relation = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=seed_gene,
+        target_id=phenotype_1,
+        relation_type="ASSOCIATED_WITH",
+    )
+    _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=seed_gene,
+        target_id=phenotype_2,
+        relation_type="ASSOCIATED_WITH",
+    )
+    _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=seed_gene,
+        target_id=phenotype_3,
+        relation_type="ASSOCIATED_WITH",
+    )
+
+    promote = test_client.put(
+        f"/research-spaces/{space.id}/relations/{approved_relation}",
+        headers=headers,
+        json={"curation_status": "APPROVED"},
+    )
+    assert promote.status_code == 200, promote.text
+
+    response = test_client.post(
+        f"/research-spaces/{space.id}/graph/subgraph",
+        headers=headers,
+        json={
+            "mode": "seeded",
+            "seed_entity_ids": [str(seed_gene)],
+            "depth": 2,
+            "top_k": 2,
+            "relation_types": ["ASSOCIATED_WITH"],
+            "curation_statuses": ["APPROVED"],
+            "max_nodes": 25,
+            "max_edges": 20,
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload["meta"]["mode"] == "seeded"
+    assert payload["meta"]["seed_entity_ids"] == [str(seed_gene)]
+    assert payload["meta"]["requested_top_k"] == 2
+    assert payload["meta"]["requested_depth"] == 2
+    assert len(payload["edges"]) <= 2
+    assert len(payload["edges"]) >= 1
+    assert all(edge["relation_type"] == "ASSOCIATED_WITH" for edge in payload["edges"])
+    assert all(edge["curation_status"] == "APPROVED" for edge in payload["edges"])
+
+
+def test_graph_subgraph_validation_and_membership_guards(
+    test_client,
+    db_session,
+    researcher_user,
+    outsider_user,
+    space,
+):
+    owner_headers = _auth_headers(researcher_user)
+    outsider_headers = _auth_headers(outsider_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    response_unauthenticated = test_client.post(
+        f"/research-spaces/{space.id}/graph/subgraph",
+        json={"mode": "starter", "seed_entity_ids": []},
+    )
+    assert response_unauthenticated.status_code == 401
+
+    response_forbidden = test_client.post(
+        f"/research-spaces/{space.id}/graph/subgraph",
+        headers=outsider_headers,
+        json={"mode": "starter", "seed_entity_ids": []},
+    )
+    assert response_forbidden.status_code == 403
+
+    response_invalid = test_client.post(
+        f"/research-spaces/{space.id}/graph/subgraph",
+        headers=owner_headers,
+        json={"mode": "seeded", "seed_entity_ids": []},
+    )
+    assert response_invalid.status_code == 400
+    assert "seed_entity_ids is required" in str(response_invalid.json()["detail"])
 
 
 def test_admin_dictionary_review_lifecycle(test_client, admin_user):

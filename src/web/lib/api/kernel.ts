@@ -6,6 +6,8 @@ import type {
   KernelEntityUpdateRequest,
   KernelEntityUpsertResponse,
   KernelGraphExportResponse,
+  KernelGraphSubgraphRequest,
+  KernelGraphSubgraphResponse,
   GraphSearchRequest,
   GraphSearchResponse,
   KernelObservationCreateRequest,
@@ -18,6 +20,7 @@ import type {
   KernelRelationListResponse,
   KernelRelationResponse,
   PipelineRunRequest,
+  PipelineRunCancelResponse,
   PipelineRunResponse,
   SourcePipelineRunsResponse,
   SourceWorkflowMonitorResponse,
@@ -249,6 +252,21 @@ export async function searchKernelGraph(
   )
 }
 
+export async function fetchKernelSubgraph(
+  spaceId: string,
+  payload: KernelGraphSubgraphRequest,
+  token?: string,
+): Promise<KernelGraphSubgraphResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchKernelSubgraph')
+  }
+  return apiPost<KernelGraphSubgraphResponse>(
+    `/research-spaces/${spaceId}/graph/subgraph`,
+    payload,
+    { token },
+  )
+}
+
 export async function fetchKernelNeighborhood(
   spaceId: string,
   entityId: string,
@@ -349,6 +367,25 @@ export async function runSpaceSourcePipeline(
   return apiPost<PipelineRunResponse>(
     `/research-spaces/${spaceId}/pipeline/run`,
     payload,
+    {
+      token,
+      timeout: 0,
+    },
+  )
+}
+
+export async function cancelSpaceSourcePipelineRun(
+  spaceId: string,
+  sourceId: string,
+  runId: string,
+  token?: string,
+): Promise<PipelineRunCancelResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for cancelSpaceSourcePipelineRun')
+  }
+  return apiPost<PipelineRunCancelResponse>(
+    `/research-spaces/${spaceId}/sources/${sourceId}/pipeline-runs/${runId}/cancel`,
+    {},
     { token },
   )
 }

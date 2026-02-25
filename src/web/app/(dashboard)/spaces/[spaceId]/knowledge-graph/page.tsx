@@ -2,8 +2,6 @@ import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import KnowledgeGraphClient from '../knowledge-graph-client'
-import { fetchKernelGraphExport, searchKernelGraph } from '@/lib/api/kernel'
-import type { GraphSearchResponse, KernelGraphExportResponse } from '@/types/kernel'
 
 interface KnowledgeGraphPageProps {
   params: Promise<{
@@ -45,53 +43,14 @@ export default async function KnowledgeGraphPage({
     redirect('/auth/login?error=SessionExpired')
   }
 
-  let graph: KernelGraphExportResponse | null = null
-  let graphError: string | null = null
-  let graphSearch: GraphSearchResponse | null = null
-  let graphSearchError: string | null = null
-
   const question = parseSearchParam(resolvedSearchParams.q)?.trim() ?? ''
   const topK = parsePositiveInt(parseSearchParam(resolvedSearchParams.top_k), 25)
   const maxDepth = parsePositiveInt(parseSearchParam(resolvedSearchParams.max_depth), 2)
   const forceAgent = parseSearchParam(resolvedSearchParams.force_agent) === '1'
 
-  try {
-    graph = await fetchKernelGraphExport(spaceId, token)
-  } catch (error) {
-    graphError =
-      error instanceof Error ? error.message : 'Unable to load knowledge graph for this space.'
-    console.error('[KnowledgeGraphPage] Failed to fetch graph export', error)
-  }
-
-  if (question.length > 0) {
-    try {
-      graphSearch = await searchKernelGraph(
-        spaceId,
-        {
-          question,
-          top_k: topK,
-          max_depth: maxDepth,
-          include_evidence_chains: true,
-          force_agent: forceAgent,
-        },
-        token,
-      )
-    } catch (error) {
-      graphSearchError =
-        error instanceof Error
-          ? error.message
-          : 'Unable to execute graph search for this space.'
-      console.error('[KnowledgeGraphPage] Failed to execute graph search', error)
-    }
-  }
-
   return (
     <KnowledgeGraphClient
       spaceId={spaceId}
-      graph={graph}
-      graphError={graphError}
-      graphSearch={graphSearch}
-      graphSearchError={graphSearchError}
       initialQuestion={question}
       initialTopK={topK}
       initialMaxDepth={maxDepth}

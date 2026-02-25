@@ -33,6 +33,42 @@ function toNumber(value: unknown): number {
   return 0
 }
 
+const PIPELINE_STAGE_ORDER = [
+  'ingestion',
+  'enrichment',
+  'extraction',
+  'graph',
+] as const
+
+type PipelineStage = (typeof PIPELINE_STAGE_ORDER)[number]
+
+function asObject(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function extractLastFailedStage(monitor: { last_run: unknown }): PipelineStage | null {
+  const lastRun = asObject(monitor.last_run)
+  const runStatus = typeof lastRun.status === 'string' ? lastRun.status : null
+  if (runStatus !== 'failed') {
+    return null
+  }
+  const stageStatuses = asObject(lastRun.stage_statuses)
+  for (const stage of PIPELINE_STAGE_ORDER) {
+    if (stageStatuses[stage] === 'failed') {
+      return stage
+    }
+  }
+  const stageErrors = asObject(lastRun.stage_errors)
+  for (const stage of PIPELINE_STAGE_ORDER) {
+    if (typeof stageErrors[stage] === 'string' && stageErrors[stage].trim().length > 0) {
+      return stage
+    }
+  }
+  return 'ingestion'
+}
+
 export default async function SpaceDataSourcesPage({
   params,
   searchParams,
@@ -83,6 +119,7 @@ export default async function SpaceDataSourcesPage({
                 typeof counters.last_pipeline_status === 'string'
                   ? counters.last_pipeline_status
                   : null,
+              last_failed_stage: extractLastFailedStage(monitor),
               pending_paper_count: toNumber(counters.pending_paper_count),
               pending_relation_review_count: toNumber(counters.pending_relation_review_count),
               graph_edges_delta_last_run: toNumber(counters.graph_edges_delta_last_run),

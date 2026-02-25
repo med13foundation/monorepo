@@ -50,6 +50,7 @@ class _PipelineOrchestrationExecutionHelpers(
         source_type: str | None = None,
         model_id: str | None = None,
         shadow_mode: bool | None = None,
+        force_recover_lock: bool = False,
         graph_seed_entity_ids: list[str] | None = None,
         graph_max_depth: int = 2,
         graph_relation_types: list[str] | None = None,
@@ -96,12 +97,17 @@ class _PipelineOrchestrationExecutionHelpers(
         graph_requested = len(active_graph_seed_entity_ids)
         graph_processed = 0
         graph_persisted_relations = 0
+        run_cancelled = False
         active_ingestion_job_id: UUID | None = None
         pipeline_run_job = self._start_or_resume_pipeline_run(
             source_id=source_id,
             research_space_id=research_space_id,
             run_id=normalized_run_id,
             resume_from_stage=normalized_resume_stage,
+        )
+        run_cancelled = self._is_pipeline_run_cancelled(
+            source_id=source_id,
+            run_id=normalized_run_id,
         )
 
         should_run_ingestion = self._should_run_stage(
@@ -121,9 +127,22 @@ class _PipelineOrchestrationExecutionHelpers(
             resume_from_stage=normalized_resume_stage,
         )
 
-        if should_run_ingestion:
+        if should_run_ingestion and not run_cancelled:
             try:
-                ingestion_summary = await self._ingestion.trigger_ingestion(source_id)
+                try:
+                    ingestion_summary = await self._ingestion.trigger_ingestion(
+                        source_id,
+                        skip_post_ingestion_hook=True,
+                        force_recover_lock=force_recover_lock,
+                    )
+                except TypeError as exc:
+                    if "skip_post_ingestion_hook" not in str(
+                        exc,
+                    ) and "force_recover_lock" not in str(exc):
+                        raise
+                    ingestion_summary = await self._ingestion.trigger_ingestion(
+                        source_id,
+                    )
                 ingestion_status = "completed"
                 fetched_records = ingestion_summary.fetched_records
                 parsed_publications = ingestion_summary.parsed_publications
@@ -156,7 +175,8 @@ class _PipelineOrchestrationExecutionHelpers(
                 )
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                 ingestion_status = "failed"
-                errors.append(f"ingestion:{exc!s}")
+                error_message = str(exc).strip() or exc.__class__.__name__
+                errors.append(f"ingestion:{error_message}")
             pipeline_run_job = self._persist_pipeline_stage_checkpoint(
                 run_job=pipeline_run_job,
                 source_id=source_id,
@@ -170,6 +190,10 @@ class _PipelineOrchestrationExecutionHelpers(
                     errors[-1] if ingestion_status == "failed" and errors else None
                 ),
             )
+            run_cancelled = self._is_pipeline_run_cancelled(
+                source_id=source_id,
+                run_id=normalized_run_id,
+            )
 
         normalized_source_type = (
             source_type.strip() if isinstance(source_type, str) else None
@@ -178,7 +202,7 @@ class _PipelineOrchestrationExecutionHelpers(
         can_run_enrichment = ingestion_status == "completed" or (
             normalized_resume_stage in {"enrichment", "extraction", "graph"}
         )
-        if should_run_enrichment and can_run_enrichment:
+        if should_run_enrichment and can_run_enrichment and not run_cancelled:
             try:
                 try:
                     enrichment_summary = (
@@ -239,11 +263,15 @@ class _PipelineOrchestrationExecutionHelpers(
                     errors[-1] if enrichment_status == "failed" and errors else None
                 ),
             )
+            run_cancelled = self._is_pipeline_run_cancelled(
+                source_id=source_id,
+                run_id=normalized_run_id,
+            )
 
         can_run_extraction = enrichment_status == "completed" or (
             normalized_resume_stage in {"extraction", "graph"}
         )
-        if should_run_extraction and can_run_extraction:
+        if should_run_extraction and can_run_extraction and not run_cancelled:
             try:
                 try:
                     extraction_summary = (
@@ -303,8 +331,16 @@ class _PipelineOrchestrationExecutionHelpers(
                     errors[-1] if extraction_status == "failed" and errors else None
                 ),
             )
+            run_cancelled = self._is_pipeline_run_cancelled(
+                source_id=source_id,
+                run_id=normalized_run_id,
+            )
 
-        if not explicit_graph_seed_entity_ids and not derived_graph_seed_entity_ids:
+        if (
+            not run_cancelled
+            and not explicit_graph_seed_entity_ids
+            and not derived_graph_seed_entity_ids
+        ):
             inferred_graph_seed_entity_ids = (
                 await self._infer_seed_entity_ids_with_context(
                     source_id=source_id,
@@ -341,12 +377,20 @@ class _PipelineOrchestrationExecutionHelpers(
             and can_run_graph
             and graph_requested > 0
             and self._graph is not None
+            and not run_cancelled
         ):
             normalized_source = (
                 normalized_source_type if normalized_source_type else "clinvar"
             )
             graph_status = "completed"
             for seed_entity_id in active_graph_seed_entity_ids:
+                if self._is_pipeline_run_cancelled(
+                    source_id=source_id,
+                    run_id=normalized_run_id,
+                ):
+                    run_cancelled = True
+                    graph_status = "skipped"
+                    break
                 fallback_relations = extraction_graph_fallback_relations.get(
                     seed_entity_id,
                     (),
@@ -399,20 +443,23 @@ class _PipelineOrchestrationExecutionHelpers(
                 stage_error=errors[-1] if graph_status == "failed" and errors else None,
             )
 
+        if run_cancelled and "pipeline:cancelled" not in errors:
+            errors.append("pipeline:cancelled")
+
         completed_at = datetime.now(UTC)
-        run_status: Literal["completed", "failed"] = (
-            "failed"
-            if any(
-                stage == "failed"
-                for stage in (
-                    ingestion_status,
-                    enrichment_status,
-                    extraction_status,
-                    graph_status,
-                )
+        run_status: Literal["completed", "failed", "cancelled"] = "completed"
+        if run_cancelled:
+            run_status = "cancelled"
+        elif any(
+            stage == "failed"
+            for stage in (
+                ingestion_status,
+                enrichment_status,
+                extraction_status,
+                graph_status,
             )
-            else "completed"
-        )
+        ):
+            run_status = "failed"
         pipeline_run_job = self._finalize_pipeline_run_checkpoint(
             run_job=pipeline_run_job,
             source_id=source_id,

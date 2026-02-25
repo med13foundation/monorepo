@@ -18,6 +18,8 @@ from src.application.services._pipeline_orchestration_execution_helpers import (
 )
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from src.application.agents.services.content_enrichment_service import (
         ContentEnrichmentService,
     )
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
     from src.application.services.ingestion_scheduling_service import (
         IngestionSchedulingService,
     )
+    from src.domain.entities.ingestion_job import IngestionJob
     from src.domain.repositories.ingestion_job_repository import IngestionJobRepository
     from src.domain.repositories.research_space_repository import (
         ResearchSpaceRepository,
@@ -66,6 +69,20 @@ class PipelineOrchestrationService(
         self._graph_search = dependencies.graph_search_service
         self._research_spaces = dependencies.research_space_repository
         self._pipeline_runs = dependencies.pipeline_run_repository
+
+    def cancel_run(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str,
+    ) -> IngestionJob | None:
+        normalized_run_id = run_id.strip()
+        if not normalized_run_id:
+            return None
+        return self._cancel_pipeline_run(
+            source_id=source_id,
+            run_id=normalized_run_id,
+        )
 
 
 __all__ = [

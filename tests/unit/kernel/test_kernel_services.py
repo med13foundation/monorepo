@@ -321,3 +321,72 @@ def test_create_relation_constraint_violation(
             relation_type="BAD_RELATION",
             target_id="tgt-1",
         )
+
+
+def test_get_neighborhood_passes_limit_to_repository(
+    mock_relation_repo,
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelRelationService(
+        mock_relation_repo,
+        mock_entity_repo,
+        mock_dictionary_repo,
+    )
+    mock_relation_repo.find_neighborhood.return_value = []
+
+    _ = service.get_neighborhood(
+        "seed-1",
+        depth=2,
+        relation_types=["ASSOCIATED_WITH"],
+        limit=15,
+    )
+
+    mock_relation_repo.find_neighborhood.assert_called_once_with(
+        "seed-1",
+        depth=2,
+        relation_types=["ASSOCIATED_WITH"],
+        limit=15,
+    )
+
+
+def test_get_neighborhood_in_space_filters_cross_space_relations(
+    mock_relation_repo,
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelRelationService(
+        mock_relation_repo,
+        mock_entity_repo,
+        mock_dictionary_repo,
+    )
+
+    mock_entity_repo.get_by_id.return_value = EntityModel(
+        id="seed-1",
+        research_space_id="space-1",
+        entity_type="GENE",
+    )
+    relation_same_space = Mock()
+    relation_same_space.research_space_id = "space-1"
+    relation_cross_space = Mock()
+    relation_cross_space.research_space_id = "space-2"
+    mock_relation_repo.find_neighborhood.return_value = [
+        relation_same_space,
+        relation_cross_space,
+    ]
+
+    relations = service.get_neighborhood_in_space(
+        "space-1",
+        "seed-1",
+        depth=1,
+        relation_types=None,
+        limit=5,
+    )
+
+    mock_relation_repo.find_neighborhood.assert_called_once_with(
+        "seed-1",
+        depth=1,
+        relation_types=None,
+        limit=5,
+    )
+    assert relations == [relation_same_space]

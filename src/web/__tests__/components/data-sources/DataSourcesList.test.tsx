@@ -29,6 +29,8 @@ jest.mock('@/app/actions/data-sources', () => ({
 }))
 
 jest.mock('@/app/actions/kernel-ingest', () => ({
+  cancelSpaceSourcePipelineRunAction: jest.fn(),
+  fetchSourceWorkflowCardStatusAction: jest.fn(),
   runSpaceSourcePipelineAction: jest.fn(),
 }))
 
@@ -180,7 +182,8 @@ describe('DiscoverSourcesDialog - onSourceAdded prop', () => {
 })
 
 describe('DataSourcesList - AI Controls', () => {
-  it('shows schedule and AI buttons for any connector with query_agent_source_type', () => {
+  it('shows a consolidated Configure menu for any connector with query_agent_source_type', async () => {
+    const user = userEvent.setup()
     const connectorSource: DataSource = {
       id: 'source-future-connector',
       name: 'Future Connector Source',
@@ -228,12 +231,18 @@ describe('DataSourcesList - AI Controls', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: /configure schedule/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /configure ai/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /test ai/i })).toBeInTheDocument()
+    const configureButton = screen.getByRole('button', { name: /^configure$/i })
+    expect(configureButton).toBeInTheDocument()
+
+    await user.click(configureButton)
+
+    expect(screen.getByRole('menuitem', { name: /configure schedule/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /configure ai/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /test ai/i })).toBeInTheDocument()
   })
 
-  it('shows schedule and AI buttons for ClinVar AI-managed sources', () => {
+  it('shows a consolidated Configure menu for ClinVar AI-managed sources', async () => {
+    const user = userEvent.setup()
     const clinvarSource: DataSource = {
       id: 'source-clinvar',
       name: 'ClinVar Pathogenicity Benchmark',
@@ -281,12 +290,18 @@ describe('DataSourcesList - AI Controls', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: /configure schedule/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /configure ai/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /test ai/i })).toBeInTheDocument()
+    const configureButton = screen.getByRole('button', { name: /^configure$/i })
+    expect(configureButton).toBeInTheDocument()
+
+    await user.click(configureButton)
+
+    expect(screen.getByRole('menuitem', { name: /configure schedule/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /configure ai/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /test ai/i })).toBeInTheDocument()
   })
 
-  it('shows schedule and AI buttons for ClinVar discovery sources without agent config', () => {
+  it('shows a consolidated Configure menu for ClinVar discovery sources without agent config', async () => {
+    const user = userEvent.setup()
     const clinvarSource: DataSource = {
       id: 'source-clinvar-discovery',
       name: 'ClinVar (from Data Discovery)',
@@ -331,9 +346,14 @@ describe('DataSourcesList - AI Controls', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: /configure schedule/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /configure ai/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /test ai/i })).toBeInTheDocument()
+    const configureButton = screen.getByRole('button', { name: /^configure$/i })
+    expect(configureButton).toBeInTheDocument()
+
+    await user.click(configureButton)
+
+    expect(screen.getByRole('menuitem', { name: /configure schedule/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /configure ai/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /test ai/i })).toBeInTheDocument()
   })
 
   it('keeps AI buttons hidden for plain API sources without agent metadata', () => {
@@ -346,8 +366,9 @@ describe('DataSourcesList - AI Controls', () => {
       />,
     )
 
-    expect(screen.queryByRole('button', { name: /configure schedule/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /configure ai/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /test ai/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^configure$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /configure schedule/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /configure ai/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /test ai/i })).not.toBeInTheDocument()
   })
 })

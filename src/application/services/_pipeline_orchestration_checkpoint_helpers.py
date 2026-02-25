@@ -46,6 +46,20 @@ class _PipelineCheckpointSelf(Protocol):
         run_id: str,
     ) -> IngestionJob | None: ...
 
+    def _cancel_pipeline_run(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str,
+    ) -> IngestionJob | None: ...
+
+    def _is_pipeline_run_cancelled(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str,
+    ) -> bool: ...
+
     def _build_pipeline_metadata(  # noqa: PLR0913
         self,
         *,
@@ -53,7 +67,7 @@ class _PipelineCheckpointSelf(Protocol):
         run_id: str,
         research_space_id: UUID,
         resume_from_stage: PipelineStageName | None,
-        overall_status: Literal["running", "completed", "failed"],
+        overall_status: Literal["running", "completed", "failed", "cancelled"],
         stage_updates: dict[PipelineStageName, tuple[PipelineStageStatus, str | None]],
     ) -> JSONObject: ...
 
@@ -135,7 +149,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         resume_from_stage: PipelineStageName | None,
         stage: PipelineStageName,
         stage_status: PipelineStageStatus,
-        overall_status: Literal["running", "completed", "failed"],
+        overall_status: Literal["running", "completed", "failed", "cancelled"],
         stage_error: str | None = None,
     ) -> IngestionJob | None:
         repository = self._pipeline_runs
@@ -171,7 +185,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         research_space_id: UUID,
         run_id: str,
         resume_from_stage: PipelineStageName | None,
-        run_status: Literal["completed", "failed"],
+        run_status: Literal["completed", "failed", "cancelled"],
         errors: tuple[str, ...],
         created_publications: int,
         updated_publications: int,
@@ -218,6 +232,9 @@ class _PipelineOrchestrationCheckpointHelpers:
 
         if run_status == "completed":
             return repository.save(working.complete_successfully(metrics))
+        if run_status == "cancelled":
+            cancelled = working.cancel()
+            return repository.save(cancelled.model_copy(update={"metrics": metrics}))
 
         failed = working.fail(
             IngestionError(
@@ -228,6 +245,56 @@ class _PipelineOrchestrationCheckpointHelpers:
             ),
         )
         return repository.save(failed.model_copy(update={"metrics": metrics}))
+
+    def _cancel_pipeline_run(
+        self: _PipelineCheckpointSelf,
+        *,
+        source_id: UUID,
+        run_id: str,
+    ) -> IngestionJob | None:
+        repository = self._pipeline_runs
+        if repository is None:
+            return None
+        existing = self._find_pipeline_run_job(source_id=source_id, run_id=run_id)
+        if existing is None:
+            return None
+        if existing.status in {
+            IngestionStatus.COMPLETED,
+            IngestionStatus.FAILED,
+            IngestionStatus.CANCELLED,
+            IngestionStatus.PARTIAL,
+        }:
+            return existing
+        cancelled = repository.cancel_job(existing.id)
+        if cancelled is None:
+            return None
+        updated_metadata = self._coerce_json_object(cancelled.metadata)
+        pipeline_raw = updated_metadata.get("pipeline_run")
+        pipeline_payload = (
+            self._coerce_json_object(pipeline_raw)
+            if isinstance(pipeline_raw, dict)
+            else {}
+        )
+        pipeline_payload["run_id"] = run_id
+        pipeline_payload["status"] = "cancelled"
+        pipeline_payload["updated_at"] = datetime.now(UTC).isoformat(
+            timespec="seconds",
+        )
+        updated_metadata["pipeline_run"] = pipeline_payload
+        return repository.save(
+            cancelled.model_copy(update={"metadata": updated_metadata}),
+        )
+
+    def _is_pipeline_run_cancelled(
+        self: _PipelineCheckpointSelf,
+        *,
+        source_id: UUID,
+        run_id: str,
+    ) -> bool:
+        existing = self._find_pipeline_run_job(source_id=source_id, run_id=run_id)
+        if existing is None:
+            return False
+        return existing.status == IngestionStatus.CANCELLED
 
     def _find_pipeline_run_job(
         self: _PipelineCheckpointSelf,
@@ -255,7 +322,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         run_id: str,
         research_space_id: UUID,
         resume_from_stage: PipelineStageName | None,
-        overall_status: Literal["running", "completed", "failed"],
+        overall_status: Literal["running", "completed", "failed", "cancelled"],
         stage_updates: dict[PipelineStageName, tuple[PipelineStageStatus, str | None]],
     ) -> JSONObject:
         metadata = self._coerce_json_object(existing_metadata)

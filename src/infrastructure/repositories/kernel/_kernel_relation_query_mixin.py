@@ -83,6 +83,7 @@ class _KernelRelationQueryMixin:
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
+        limit: int | None = None,
     ) -> list[KernelRelation]:
         """
         Multi-hop neighborhood traversal.
@@ -128,6 +129,9 @@ class _KernelRelationQueryMixin:
             if rel_id not in seen:
                 seen.add(rel_id)
                 unique.append(rel)
+        unique.sort(key=lambda rel: rel.updated_at, reverse=True)
+        if limit is not None:
+            unique = unique[: max(limit, 1)]
         return [KernelRelation.model_validate(model) for model in unique]
 
     def find_by_research_space(

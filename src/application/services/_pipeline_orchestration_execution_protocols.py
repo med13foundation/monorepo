@@ -71,13 +71,20 @@ class _PipelineExecutionSelf(Protocol):
         research_space_id: UUID,
         run_id: str,
         resume_from_stage: PipelineStageName | None,
-        run_status: Literal["completed", "failed"],
+        run_status: Literal["completed", "failed", "cancelled"],
         errors: tuple[str, ...],
         created_publications: int,
         updated_publications: int,
         extraction_extracted: int,
         graph_persisted_relations: int,
     ) -> IngestionJob | None: ...
+
+    def _is_pipeline_run_cancelled(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str,
+    ) -> bool: ...
 
     @staticmethod
     def _resolve_run_id(raw_run_id: str | None) -> str: ...

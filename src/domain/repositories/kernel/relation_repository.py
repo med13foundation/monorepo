@@ -79,12 +79,14 @@ class KernelRelationRepository(ABC):
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
+        limit: int | None = None,
     ) -> list[KernelRelation]:
         """
         Multi-hop graph traversal around an entity.
 
         Returns all relations within ``depth`` hops, optionally
-        filtered by relation type.
+        filtered by relation type. When ``limit`` is provided, results
+        are deterministically truncated after sorting by recency.
         """
 
     @abstractmethod

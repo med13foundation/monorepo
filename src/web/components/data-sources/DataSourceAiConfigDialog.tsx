@@ -19,13 +19,7 @@ import {
 import { Button } from '@/components/ui/button'
 import {
   Form,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormControl,
-  FormDescription,
 } from '@/components/ui/form'
-import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import {
@@ -38,12 +32,10 @@ import {
 } from './sourceAgentConfig'
 
 const aiConfigSchema = z.object({
-  is_ai_managed: z.boolean().default(false),
   use_research_space_context: z.boolean().default(true),
   agent_prompt: z.string().default(''),
   model_id: z.string().nullable().default(null),
-  query: z.string().default(''),
-  max_results: z.number().int().min(1).max(10000).default(100),
+  max_results: z.number().int().min(1).max(10000).default(5),
   open_access_only: z.boolean().default(true),
 })
 
@@ -76,50 +68,43 @@ export function DataSourceAiConfigDialog({
   const isPubMedSource = source?.source_type === 'pubmed'
   const queryAgentSourceType = sourceAgentConfigSnapshot?.queryAgentSourceType ?? null
   const supportsAiConfiguration = sourceAgentConfigSnapshot?.supportsAiControls ?? false
-  const defaultIsAiManaged =
-    agentConfig.is_ai_managed === true ||
-    sourceAgentConfigSnapshot?.isClinvarCatalogSource === true
+  const sourceQuery =
+    typeof metadata.query === 'string'
+      ? metadata.query
+      : typeof config.query === 'string'
+        ? config.query
+        : ''
   const defaultAgentPrompt =
     typeof agentConfig.agent_prompt === 'string'
       ? agentConfig.agent_prompt
       : sourceAgentConfigSnapshot?.isClinvarCatalogSource
         ? DEFAULT_CLINVAR_AGENT_PROMPT
-        : ''
+        : sourceQuery
   const defaultUseContext =
     typeof agentConfig.use_research_space_context === 'boolean'
       ? agentConfig.use_research_space_context
       : true
   const defaultModelIdFromConfig =
     typeof agentConfig.model_id === 'string' ? agentConfig.model_id : null
-  const defaultQuery =
-    typeof metadata.query === 'string'
-      ? metadata.query
-      : typeof config.query === 'string'
-        ? config.query
-        : ''
   const defaultMaxResults =
     typeof metadata.max_results === 'number' && Number.isFinite(metadata.max_results)
       ? Math.max(1, Math.min(10000, Math.floor(metadata.max_results)))
-      : 100
+      : 5
   const defaultOpenAccessOnly = metadata.open_access_only !== false
 
   const defaultValues = useMemo<AiConfigFormValues>(
     () => ({
-      is_ai_managed: defaultIsAiManaged,
       use_research_space_context: defaultUseContext,
       agent_prompt: defaultAgentPrompt,
       model_id: defaultModelIdFromConfig,
-      query: defaultQuery,
       max_results: defaultMaxResults,
       open_access_only: defaultOpenAccessOnly,
     }),
     [
       defaultAgentPrompt,
-      defaultIsAiManaged,
       defaultMaxResults,
       defaultModelIdFromConfig,
       defaultOpenAccessOnly,
-      defaultQuery,
       defaultUseContext,
     ],
   )
@@ -140,7 +125,7 @@ export function DataSourceAiConfigDialog({
   const onSubmit = async (values: AiConfigFormValues) => {
     const updatedAgentConfig: Record<string, unknown> = {
       ...agentConfig,
-      is_ai_managed: values.is_ai_managed,
+      is_ai_managed: true,
       agent_prompt: values.agent_prompt,
       use_research_space_context: values.use_research_space_context,
       model_id: values.model_id,
@@ -153,10 +138,10 @@ export function DataSourceAiConfigDialog({
       agent_config: updatedAgentConfig,
     }
     if (isPubMedSource) {
-      const normalizedQuery = values.query.trim()
-      if (normalizedQuery.length > 0) {
-        updatedMetadata.query = normalizedQuery
-      }
+      const normalizedQuery = values.agent_prompt.trim()
+      const fallbackQuery = sourceQuery.trim() || source.name.trim() || 'pubmed'
+      updatedMetadata.query =
+        normalizedQuery.length > 0 ? normalizedQuery : fallbackQuery
       updatedMetadata.max_results = Math.max(1, Math.min(10000, values.max_results))
       updatedMetadata.open_access_only = true
     }
@@ -190,40 +175,19 @@ export function DataSourceAiConfigDialog({
     }
   }
 
-  const isAiManaged = form.watch('is_ai_managed')
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle>Configure AI agent</DialogTitle>
           <DialogDescription>
-            Control how the AI agent builds ingestion queries for this source.
+            Control how the AI agent builds ingestion queries for this source. AI-managed
+            queries are always enabled.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
-            <FormField
-              control={form.control}
-              name="is_ai_managed"
-              render={({ field }) => (
-                <FormItem className="flex items-center justify-between rounded-md border p-3">
-                  <div className="space-y-0.5">
-                    <FormLabel>AI-managed queries</FormLabel>
-                    <FormDescription>
-                      Let the agent generate optimized search queries automatically.
-                    </FormDescription>
-                  </div>
-                  <FormControl>
-                    <Switch checked={field.value} onCheckedChange={field.onChange} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-
-            {isAiManaged && (
-              <AiManagedConfigFields form={form} />
-            )}
+            <AiManagedConfigFields form={form} isPubMedSource={isPubMedSource} />
 
             {isPubMedSource && <PubMedConfigFields form={form} />}
 

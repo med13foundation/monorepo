@@ -30,7 +30,7 @@ class PipelineRunSummary:
     research_space_id: UUID
     started_at: datetime
     completed_at: datetime
-    status: Literal["completed", "failed"]
+    status: Literal["completed", "failed", "cancelled"]
     resume_from_stage: PipelineStageName | None
     ingestion_status: PipelineStageStatus
     enrichment_status: PipelineStageStatus

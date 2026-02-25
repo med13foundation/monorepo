@@ -114,13 +114,22 @@ class IngestionSchedulingService(
         self._source_record_ledger_repository = (
             resolved_options.source_record_ledger_repository
         )
-        self._scheduler_stale_running_timeout_seconds = max(
+        resolved_ingestion_hard_timeout_seconds = max(
+            resolved_options.ingestion_job_hard_timeout_seconds,
+            1,
+        )
+        resolved_scheduler_stale_timeout_seconds = max(
             resolved_options.scheduler_stale_running_timeout_seconds,
             1,
         )
-        self._ingestion_job_hard_timeout_seconds = max(
-            resolved_options.ingestion_job_hard_timeout_seconds,
-            1,
+        # Stale-running recovery must never preempt an in-flight job before the
+        # configured hard timeout window.
+        self._ingestion_job_hard_timeout_seconds = (
+            resolved_ingestion_hard_timeout_seconds
+        )
+        self._scheduler_stale_running_timeout_seconds = max(
+            resolved_scheduler_stale_timeout_seconds,
+            resolved_ingestion_hard_timeout_seconds,
         )
         self._source_lock_repository = resolved_options.source_lock_repository
         resolved_lease_ttl_seconds = (
@@ -204,6 +213,9 @@ class IngestionSchedulingService(
     async def trigger_ingestion(
         self,
         source_id: UUID,
+        *,
+        skip_post_ingestion_hook: bool = False,
+        force_recover_lock: bool = False,
     ) -> IngestionRunSummary:
         """Manually trigger ingestion for a source outside scheduler cadence."""
         source = self._get_source(source_id)
@@ -213,4 +225,8 @@ class IngestionSchedulingService(
         if not source.ingestion_schedule.requires_scheduler:
             msg = "Source must have an enabled non-manual ingestion schedule"
             raise ValueError(msg)
-        return await self._run_ingestion_for_source(source)
+        return await self._run_ingestion_for_source(
+            source,
+            skip_post_ingestion_hook=skip_post_ingestion_hook,
+            force_recover_lock=force_recover_lock,
+        )
