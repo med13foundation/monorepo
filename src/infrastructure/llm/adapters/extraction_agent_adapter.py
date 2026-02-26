@@ -53,7 +53,7 @@ try:
     from artana.agent import SingleStepModelClient
     from artana.kernel import ArtanaKernel
     from artana.models import TenantContext
-    from artana.store import PostgresStore, SQLiteStore
+    from artana.store import PostgresStore
 except ImportError as exc:  # pragma: no cover - environment-dependent import
     _ARTANA_IMPORT_ERROR = exc
 
@@ -209,11 +209,6 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
     @staticmethod
     def _create_store() -> object:
         state_uri = resolve_artana_state_uri()
-        if state_uri.startswith("sqlite:///"):
-            sqlite_path = state_uri.removeprefix("sqlite:///")
-            if not sqlite_path:
-                sqlite_path = "artana_state.db"
-            return SQLiteStore(sqlite_path)
         if state_uri.startswith("postgresql://"):
             return PostgresStore(state_uri)
         msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"

@@ -1,7 +1,7 @@
 """Custom SQLAlchemy type for pgvector-compatible embeddings.
 
-Uses the native `VECTOR(n)` type on PostgreSQL and JSON arrays on other dialects
-for local tooling (e.g. SQLite migration tests).
+Uses the native `VECTOR(n)` type on PostgreSQL and JSON arrays on non-Postgres
+dialects for local tooling and test harnesses.
 """
 
 from __future__ import annotations

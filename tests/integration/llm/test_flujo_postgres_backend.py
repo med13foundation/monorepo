@@ -49,8 +49,9 @@ class TestArtanaPostgresIntegration:
             )
             assert result.fetchone() is not None
 
-    def test_state_uri_targets_artana_schema(self) -> None:
+    def test_state_uri_targets_artana_schema(self, postgres_engine) -> None:
         """Resolved state URI should include the artana search_path."""
+        del postgres_engine
         state_uri = resolve_artana_state_uri()
         options = _get_query_param(state_uri, "options")
         assert options is not None

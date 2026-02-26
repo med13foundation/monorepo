@@ -30,9 +30,12 @@ def resolve_artana_state_uri() -> str:
         return explicit_uri
 
     base_url = resolve_sync_database_url()
-
-    if base_url.startswith("sqlite"):
-        return "sqlite:///artana_state.db"
+    if not base_url.startswith("postgresql"):
+        msg = (
+            "Artana state backend requires a PostgreSQL DATABASE_URL/ARTANA_STATE_URI. "
+            f"Resolved URL: {base_url}"
+        )
+        raise RuntimeError(msg)
 
     normalized_url = _normalize_postgres_dsn(base_url)
     return _add_artana_schema(normalized_url)

@@ -88,5 +88,3 @@ class PublicationModel(Base):
     # Full text access
     full_text_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     open_access: Mapped[bool] = mapped_column(default=False, nullable=False)
-
-    __table_args__ = {"sqlite_autoincrement": True}  # noqa: RUF012

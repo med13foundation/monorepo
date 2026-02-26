@@ -34,11 +34,11 @@ class DataDiscoverySessionModel(Base):
     __tablename__ = "data_discovery_sessions"
 
     # Primary key
-    # Use String for SQLite compatibility (stores UUIDs as strings, handles legacy integers)
+    # Use String to store UUID-like identifiers and handle legacy numeric IDs.
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
     # Ownership and context
-    # Use String for SQLite compatibility (stores UUIDs as strings, handles legacy integers)
+    # Use String to store UUID-like identifiers and handle legacy numeric IDs.
     owner_id: Mapped[str] = mapped_column(
         String(36),
         nullable=False,
@@ -195,11 +195,11 @@ class QueryTestResultModel(Base):
     __tablename__ = "query_test_results"
 
     # Primary key
-    # Use String for SQLite compatibility (stores UUIDs as strings)
+    # Use String to store UUID-like identifiers.
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
     # Relationships
-    # Use String for SQLite compatibility (stores UUIDs as strings)
+    # Use String to store UUID-like identifiers.
     session_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("data_discovery_sessions.id"),

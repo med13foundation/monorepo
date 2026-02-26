@@ -26,10 +26,6 @@ def init_artana_schema() -> None:
     """Create the artana schema if it doesn't exist."""
     db_url = resolve_sync_database_url()
 
-    if db_url.startswith("sqlite"):
-        print("SQLite detected - no schema creation needed for Artana.")
-        return
-
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:

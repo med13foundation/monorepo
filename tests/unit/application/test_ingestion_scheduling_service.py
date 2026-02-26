@@ -851,8 +851,8 @@ def _build_ingestion_options(
     return IngestionSchedulingOptions(
         storage_operation_repository=storage_operation_repository,
         pubmed_discovery_service=pubmed_discovery_service,
-        extraction_queue_service=cast(ExtractionQueueService, queue_service),
-        extraction_runner_service=cast(ExtractionRunnerService, runner_service),
+        extraction_queue_service=cast("ExtractionQueueService", queue_service),
+        extraction_runner_service=cast("ExtractionRunnerService", runner_service),
         source_sync_state_repository=source_sync_state_repository,
         source_record_ledger_repository=source_record_ledger_repository,
         source_lock_repository=source_lock_repository,

@@ -181,8 +181,8 @@ def _build_service(
         job_repository=job_repository,
         ingestion_services={SourceType.PUBMED: ingestion_callable},
         options=IngestionSchedulingOptions(
-            extraction_queue_service=cast(ExtractionQueueService, queue_service),
-            extraction_runner_service=cast(ExtractionRunnerService, runner_service),
+            extraction_queue_service=cast("ExtractionQueueService", queue_service),
+            extraction_runner_service=cast("ExtractionRunnerService", runner_service),
             source_lock_repository=source_lock_repository,
             scheduler_stale_running_timeout_seconds=(
                 scheduler_stale_running_timeout_seconds

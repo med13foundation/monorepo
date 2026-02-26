@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
 
 import src.models.database  # noqa: F401
-from src.database.sqlite_utils import build_sqlite_connect_args, configure_sqlite_engine
 from src.database.url_resolver import (
     resolve_async_database_url,
     to_async_database_url,
@@ -27,6 +26,7 @@ from src.database.url_resolver import (
 from src.models.database.audit import AuditLog  # noqa: F401
 from src.models.database.base import Base
 from src.models.database.user import UserModel  # noqa: F401
+from tests.sqlite_utils import build_sqlite_connect_args, configure_sqlite_engine
 
 # The original `from src.models.database.base import Base` was here, but it's moved up.
 
@@ -39,10 +39,11 @@ db_suffix_parts = [part for part in (worker_id, str(process_id)) if part]
 db_filename = f"test_med13_{'_'.join(db_suffix_parts)}.db"
 TEST_DB_PATH = Path.cwd() / db_filename
 TEST_DATABASE_URL = f"sqlite:///{TEST_DB_PATH}"
+TEST_ASYNC_DATABASE_URL = f"sqlite+aiosqlite:///{TEST_DB_PATH}"
 
 # Set core env vars early so imports (e.g., SessionLocal) bind to the test DB.
 os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
-os.environ.setdefault("ASYNC_DATABASE_URL", to_async_database_url(TEST_DATABASE_URL))
+os.environ.setdefault("ASYNC_DATABASE_URL", TEST_ASYNC_DATABASE_URL)
 os.environ.setdefault("TESTING", "true")
 os.environ.setdefault(
     "MED13_DEV_JWT_SECRET",
@@ -97,7 +98,7 @@ def _apply_test_environment(existing_db_url: str) -> None:
     use_postgres = existing_db_url.startswith("postgresql")
     if not use_postgres:
         os.environ["DATABASE_URL"] = TEST_DATABASE_URL
-        os.environ["ASYNC_DATABASE_URL"] = to_async_database_url(TEST_DATABASE_URL)
+        os.environ["ASYNC_DATABASE_URL"] = TEST_ASYNC_DATABASE_URL
     elif not os.environ.get("ASYNC_DATABASE_URL"):
         os.environ["ASYNC_DATABASE_URL"] = to_async_database_url(existing_db_url)
 

@@ -3,7 +3,7 @@ Database package.
 
 Avoid importing `src.database.session` at package import time to prevent
 side-effectful engine creation when importing submodules like
-`src.database.sqlite_utils` during tests.
+database URL helpers during tests.
 """
 
 from __future__ import annotations

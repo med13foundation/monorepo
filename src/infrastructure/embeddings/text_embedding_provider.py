@@ -17,8 +17,8 @@ from src.domain.ports import TextEmbeddingPort
 from src.infrastructure.embeddings._deterministic_embedding import (
     deterministic_text_embedding,
 )
+from src.infrastructure.embeddings._embedding_cache import EmbeddingCache
 from src.infrastructure.embeddings._provider_config import env_bool, env_float, env_int
-from src.infrastructure.embeddings._sqlite_cache import SqliteEmbeddingCache
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class HybridTextEmbeddingProvider(TextEmbeddingPort):
             minimum=1,
         )
         self._request_semaphore = self._resolve_semaphore(max_concurrency)
-        self._cache = SqliteEmbeddingCache.from_environment(dimensions=dimensions)
+        self._cache = EmbeddingCache.from_environment(dimensions=dimensions)
 
     @classmethod
     def _resolve_semaphore(cls, max_concurrency: int) -> threading.BoundedSemaphore:

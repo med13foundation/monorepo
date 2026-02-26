@@ -23,8 +23,6 @@ from src.application import services as app_services
 from src.infrastructure import observability, storage
 from src.infrastructure.dependency_injection.db_utils import (
     SessionLocal,
-    build_sqlite_connect_args,
-    configure_sqlite_engine,
     resolve_async_database_url,
 )
 from src.infrastructure.repositories import (
@@ -95,19 +93,11 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
             "echo": False,  # Set to True for debugging
             "pool_pre_ping": True,
         }
-        if resolved_db_url.startswith("sqlite"):
-            engine_kwargs["connect_args"] = build_sqlite_connect_args(
-                include_thread_check=False,
-            )
-            engine_kwargs["poolclass"] = sa.pool.NullPool
 
         self.engine = create_async_engine(
             resolved_db_url,
             **engine_kwargs,
         )
-
-        if resolved_db_url.startswith("sqlite"):
-            configure_sqlite_engine(self.engine.sync_engine)
 
         # Create async session factory
         self.async_session_factory = async_sessionmaker(

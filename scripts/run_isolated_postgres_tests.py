@@ -47,11 +47,10 @@ def _quote_ident(identifier: str) -> str:
 
 
 def _require_postgres_sync_url(url: str) -> None:
-    if url.startswith("sqlite"):
-        msg = "DATABASE_URL is SQLite; this script is only for Postgres mode."
-        raise SystemExit(msg)
     if not url.startswith("postgresql"):
-        msg = "DATABASE_URL is not Postgres; this script is only for Postgres mode."
+        msg = (
+            "DATABASE_URL must be PostgreSQL; this script only supports Postgres mode."
+        )
         raise SystemExit(msg)
 
 

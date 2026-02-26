@@ -6,6 +6,8 @@ import os
 from unittest.mock import patch
 from urllib.parse import parse_qsl, urlsplit
 
+import pytest
+
 from src.infrastructure.llm.config.artana_config import (
     _add_artana_schema,
     _normalize_postgres_dsn,
@@ -29,11 +31,17 @@ class TestResolveArtanaUri:
         with patch.dict(os.environ, {"ARTANA_STATE_URI": "postgresql://custom"}):
             assert resolve_artana_state_uri() == "postgresql://custom"
 
-    def test_sqlite_returns_file_based(self) -> None:
-        """SQLite DATABASE_URL should return SQLite Artana state."""
-        with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///test.db"}, clear=True):
-            result = resolve_artana_state_uri()
-            assert result == "sqlite:///artana_state.db"
+    def test_sqlite_database_url_is_rejected(self) -> None:
+        """SQLite DATABASE_URL should be rejected by Postgres-only config."""
+        with (
+            patch.dict(
+                os.environ,
+                {"DATABASE_URL": "sqlite:///test.db", "TESTING": "true"},
+                clear=True,
+            ),
+            pytest.raises(RuntimeError, match="requires a PostgreSQL"),
+        ):
+            resolve_artana_state_uri()
 
     def test_postgres_adds_schema(self) -> None:
         """PostgreSQL should have artana schema added."""

@@ -2,8 +2,6 @@
 
 A comprehensive biomedical data platform for MED13 genetic variants, phenotypes, and evidence. Features a **dual-service architecture** with a FastAPI backend and a Next.js admin interface (Dash UI sunset). Built for Google Cloud Run deployment with enterprise-grade quality assurance.
 
-**🚀 Currently in Phase 1: Next.js Admin Migration** - Transforming to a modern, scalable platform
-
 ## 📋 Overview
 
 A **two-service architecture** biomedical data platform featuring Clean Architecture principles, type safety, and a modern Next.js interface. The Dash curation client has been retired in favor of the unified Next.js experience.
@@ -31,129 +29,108 @@ MED13 Resource Library
 - The current graph implementation path is Postgres-backed with NetworkX traversal. TypeDB is an optional future migration.
 - Start with `docs/README.md` for the canonical documentation order and status.
 
-## 🚀 Quick Start
+## 🚀 How To Work (Local, Dev, Prod)
 
-### Prerequisites
-- **Python 3.12+** (FastAPI backend)
-- **Node.js 18+** (Next.js admin interface)
-- **Git** (version control)
-- **Google Cloud SDK** (for deployment)
+This project has three working environments:
 
-### Development Setup
+- **Local**: your laptop with Dockerized Postgres + Redis.
+- **Dev**: shared cloud staging environment on Google Cloud Run.
+- **Prod**: production Google Cloud Run services.
 
+### 1) Local (daily development)
+
+Use Local for coding, debugging, and running tests quickly.
+
+**Prerequisites**
+- Python 3.12+
+- Node.js 18+
+- Docker Desktop (or Docker Engine + Compose)
+
+**One-time setup**
 ```bash
-# Clone the repository
 git clone <repository-url>
 cd med13-resource-library
-
-# Set up Python environment
 make setup-dev
-
-# Install Next.js dependencies
 make web-install
-
-# Run everything on Postgres (recommended)
-make dev-postgres   # Starts Postgres (if needed), runs migrations + Artana schema init, seeds admin, starts backend + Next.js
-
-# Optional background helpers
-make start-local     # Launch FastAPI in background (uses SQLite unless .postgres-active exists)
-make backend-status  # Check if the background backend is running
-make start-web       # Launch Next.js admin in background (logs/web.log)
-make stop-web        # Stop background Next.js (use stop-all to tear everything down)
-make stop-local      # Stop the FastAPI backend (foreground or background)
-
-# Note: background helpers are meant for interactive shells. Some non-interactive
-# runners terminate background processes when the command ends. Use `make run-local`
-# or `make run-web` in the foreground if the background process exits immediately.
-
-# Access the services
-# - API Documentation: http://localhost:8080/docs
-# - Admin Dashboard: http://localhost:3000/dashboard
+cp .env.postgres.example .env.postgres
 ```
 
-### Optional: Run Postgres Locally
-
-SQLite remains the default for quick prototyping, but you can run the backend
-and tests against a Dockerized Postgres instance for closer-to-prod behavior.
-See `docs/local_postgres.md` for details. Key commands:
-
+Set a local admin password in `.env.postgres`:
 ```bash
-# One-shot command: start services with Postgres (no data wipe)
+MED13_ADMIN_PASSWORD=<your-strong-local-password>
+```
+
+**Start local stack**
+```bash
 make dev-postgres
-
-# Full reset: destroy data volume, recreate Postgres, run migrations, seed admin, start backend + Next.js
-make run-all-postgres
-
-# Restart workflow after changing migrations or seeds (data wipe)
-make restart-postgres   # Destroys & recreates the Postgres container (data wiped; rerun run-all-postgres afterward)
-make run-all-postgres   # Rebuild stack with fresh data
-
-# Tear everything down (FastAPI, Next.js, Postgres containers)
-make stop-all
 ```
 
-`make dev-postgres` starts (or reuses) the Postgres container via `docker-compose.postgres.yml`, runs Alembic
-migrations, initializes the Artana schema, seeds the default admin (`admin@med13.org` with the password you provide
-via `ADMIN_PASSWORD`/`MED13_ADMIN_PASSWORD`), ensures the default research space exists, then starts FastAPI in the
-background (logs → `logs/backend.log`) before launching the Next.js dev server.
-The command also writes a `.postgres-active` flag so all other Make targets automatically source `.env.postgres`
-and re-run migrations before touching the database. For a clean reset, use `make run-all-postgres`, which destroys
-the Postgres data volume first.
+This starts/reuses Docker Postgres + Redis, runs migrations, initializes Artana schema, seeds admin, then starts backend + Next.js.
 
-💡 **Tip:** add `MED13_ADMIN_PASSWORD=<your strong local password>` to `.env.postgres` (gitignored) so that
-`make dev-postgres`, `make run-web-postgres`, and other Postgres-aware targets can seed/reset the admin user
-without additional CLI flags. For SQLite workflows, pass the password inline:
-`ADMIN_PASSWORD='changeme!' make db-seed-admin`.
+**Local URLs**
+- API docs: http://localhost:8080/docs
+- Admin UI: http://localhost:3000/dashboard
 
-For rate limiting, the same compose file now brings up a `med13-redis` container. The default `.env.postgres`
-configuration sets `MED13_RATE_LIMIT_REDIS_URL=redis://localhost:${MED13_REDIS_PORT}/0`, enabling the distributed
-token bucket middleware automatically whenever Postgres mode is active.
-
-Running the full test suite against Postgres is as simple as:
-
+**Stop / reset local**
 ```bash
-# One-shot Postgres-backed test cycle
-MED13_ADMIN_PASSWORD="StrongLocalPass1!" make run-all-postgres \
-  && MED13_ALLOW_MISSING_API_KEYS=1 MED13_ADMIN_PASSWORD="StrongLocalPass1!" make test \
-  && make postgres-disable
+make stop-all           # stop backend + web + Docker services
+make run-all-postgres   # full reset (wipes Postgres volume, then rebuilds)
 ```
 
-This starts the containers, seeds the admin account with your supplied password, runs `pytest` against Postgres/Redis,
-then removes the `.postgres-active` flag so future commands default back to SQLite.
-Use the advanced helpers below if you need finer control over the Postgres container:
-
+**Run tests locally**
 ```bash
-make docker-postgres-up        # Creates .env.postgres if missing, then starts the DB
-make docker-postgres-status    # Inspect container health
-make docker-postgres-logs      # Tail Postgres output (Ctrl+C to stop)
-make docker-postgres-down      # Stop the container (data persists)
-make docker-postgres-destroy   # Stop + wipe data volume (fresh start)
-make run-local-postgres        # Start FastAPI with DATABASE_URL/ASYNC_DATABASE_URL loaded
-make run-web-postgres          # Seed admin + start Next.js with Postgres env
-make test-postgres             # Run pytest suite using Postgres
-make postgres-cmd CMD="..."    # Run any command with Postgres env (e.g., migrations)
-make postgres-disable          # Keep container up but revert commands to SQLite
+make test
+make web-test-all
 ```
 
-When Postgres mode is active (`.postgres-active` exists), `make run-local`, `make run-web`, `make test`, and `make start-local`
-automatically source `.env.postgres` **and run `alembic upgrade head`** before starting. Tear the container down (or run
-`make postgres-disable`) to switch back to SQLite defaults.
+### 2) Dev (shared staging in GCP)
 
-### Environment Status Check
+Use Dev to validate integration before production.
 
+**Before deploy**
 ```bash
-make check-env
+make all
 ```
 
-### Security-Sensitive Environment Variables
+**Deploy to staging**
+```bash
+make deploy-staging
+```
 
-Set the following variables (preferably via Secret Manager) before running in staging or production:
+**Check runtime health**
+```bash
+make cloud-logs
+```
 
-- `ADMIN_API_KEY`, `WRITE_API_KEY`, `READ_API_KEY` – required for API-key clients; the backend will not start without them unless `MED13_ALLOW_MISSING_API_KEYS=1` (development only).
-- `MED13_ADMIN_PASSWORD` or `ADMIN_PASSWORD` (Make targets) – required when seeding or resetting the default admin account (for Postgres flows, place `MED13_ADMIN_PASSWORD` in `.env.postgres`).
-- `MED13_RATE_LIMIT_REDIS_URL` – optional Redis URL to enable cross-instance rate limiting.
-- `MED13_ENV` – set to `production`/`staging` to enforce secure database credentials.
-- `DATABASE_URL` / `ASYNC_DATABASE_URL` – Postgres connection strings automatically receive `sslmode=require` in `staging`/`production`. Only set `MED13_ALLOW_INSECURE_DEFAULTS=1` when you explicitly need to bypass TLS enforcement for local debugging.
+### 3) Prod (live environment)
+
+Use Prod only after staging is healthy.
+
+**Pre-checks**
+- Latest code merged to the release branch.
+- `make all` passed.
+- Staging deploy and smoke checks passed.
+- Required secrets exist in GCP Secret Manager.
+
+**Deploy to production**
+```bash
+make deploy-prod
+```
+
+**Post-deploy checks**
+- Open API health/docs URL and key admin pages.
+- Verify Cloud Run logs for errors.
+
+### Security-sensitive environment variables
+
+Set these in staging/prod (prefer Secret Manager):
+
+- `ADMIN_API_KEY`, `WRITE_API_KEY`, `READ_API_KEY`
+- `MED13_RATE_LIMIT_REDIS_URL`
+- `MED13_ENV=staging` or `MED13_ENV=production`
+- `DATABASE_URL` and `ASYNC_DATABASE_URL` (Postgres with TLS)
+
+For local only, `MED13_ALLOW_MISSING_API_KEYS=1` may be used during development.
 
 ## 📁 Project Structure
 
@@ -230,7 +207,7 @@ make db-migrate        # Run database migrations
 make db-create         # Create new migration
 make db-reset          # Reset database (WARNING!)
 make db-seed           # Seed with test data
-make backup-db         # Backup SQLite database
+make backup-db         # Backup Postgres database via pg_dump
 make restore-db        # Restore from backup
 
 # Security
@@ -247,59 +224,17 @@ make cloud-secrets-list # List GCP secrets
 make docs-serve        # Serve docs locally
 ```
 
-### Smart Environment Detection
-
-The Makefile automatically detects your environment:
-
-- **Local Development**: Uses Python venv + Node.js for full-stack development
-- **CI/CD**: Uses system Python/Node.js for GitHub Actions compatibility
-- **Cloud Run**: Multi-service containerized production deployment
-
-### Multi-Service Development Workflow
-
-```bash
-# Initial setup
-make setup-dev          # Python environment + dependencies
-make web-install        # Next.js dependencies
-
-# Unified start/stop workflow (Postgres-backed dev stack)
-make dev-postgres       # Start Postgres (if needed) -> migrations -> Artana schema -> seed admin -> FastAPI + Next.js
-make run-all-postgres   # Full reset: wipe Postgres -> migrations -> seed admin -> FastAPI + Next.js
-make restart-postgres   # Recreate Postgres container (rerun run-all-postgres afterward if services were stopped)
-make stop-all           # Stop FastAPI, Next.js, and Postgres containers
-
-# Individual quality checks
-make format            # Python auto-format
-make web-build         # Next.js build check
-make lint              # Python linting
-make web-lint          # Next.js linting
-make type-check        # Python types
-make web-type-check    # Next.js types
-make test              # Python tests
-make web-test          # Next.js tests
-
-# Development servers (run in separate terminals)
-make run-local         # FastAPI backend (auto-migrates if Postgres active)
-make run-web           # Next.js admin UI (seeds admin if needed)
-
-# Production builds
-make web-build         # Build Next.js for production
-
-# Deploy when ready
-make deploy-staging    # Test deployment (all services)
-make deploy-prod       # Production deployment (all services)
-```
-
 ## 🗄️ Database
 
 ### Local Development
-- **Database**: SQLite (`med13.db`)
+- **Database**: Dockerized PostgreSQL (`pgvector/pg16`)
+- **Cache/Rate Limit**: Dockerized Redis (`redis:7-alpine`)
 - **ORM**: SQLAlchemy 2.0 with Alembic migrations
-- **Setup**: Automatic file creation, zero configuration
+- **Setup**: `make dev-postgres`
 
 ### Production
-- **Database**: SQLite (included in Cloud Run deployment)
-- **Backup**: Manual file-based backups
+- **Database**: PostgreSQL
+- **Backup**: `pg_dump`/managed backups
 - **Migration**: Alembic schema versioning
 
 ### Data Sources
@@ -365,42 +300,26 @@ make all
 
 ## 🚀 Deployment
 
-### Multi-Service Architecture
-- **FastAPI Backend**: `med13-api` - Core business logic and APIs
-- **Next.js Admin**: `med13-admin` - Administrative interface (replaces Dash workflows)
+Deployments target Google Cloud Run with two services:
 
-### Automated CI/CD
-- **GitHub Actions**: Multi-service pipeline with parallel builds
-- **Staging**: Automatic deployment of all services on merged PRs
-- **Production**: Independent service deployment on releases
-- **Quality Gates**: Python + Next.js quality checks required
-- **Security**: Automated dependency scanning for both ecosystems
+- `med13-api` (FastAPI backend)
+- `med13-admin` (Next.js admin)
 
-### Cloud Run Services
-- **med13-api**: FastAPI backend with admin endpoints
-- **med13-api-staging**: Staging backend service
-- **med13-admin**: Next.js admin interface
-- **med13-admin-staging**: Staging admin service
-
-### Deployment Commands
-
+### Dev (staging) deployment
 ```bash
-# Deploy individual services to staging
-make deploy-staging    # Deploys all services to staging
-
-# Deploy individual services to production
-make deploy-prod       # Deploys all services to production
-
-# Or deploy specific services (future enhancement)
-# make deploy-api-prod
-# make deploy-admin-prod
-# make deploy-curation-prod
+make all
+make deploy-staging
+make cloud-logs
 ```
 
-### Service URLs (Production)
-- **API**: https://med13-api-[hash]-uc.a.run.app
-- **Admin**: https://med13-admin-[hash]-uc.a.run.app
-- **Curation**: https://med13-curation-[hash]-uc.a.run.app
+### Prod deployment
+```bash
+make all
+make deploy-prod
+make cloud-logs
+```
+
+Note: always deploy to staging first, run smoke checks, then deploy to production.
 
 ## 🔒 Security & Quality
 
@@ -502,10 +421,9 @@ This project uses data from multiple biomedical sources. Refer to `docs/goal.md`
 
 ---
 
-**🚀 Phase 1: Next.js Admin Migration - Building Enterprise-Grade Multi-Service Architecture** 🏥✨
+## 🧱 Template Catalog
 
-*FastAPI Backend • Next.js Admin • Clean Architecture • Type Safety • Cloud-Native*
-### 🧱 Template Catalog API
+### API
 
 Manage reusable data source templates directly from the admin interface:
 
@@ -519,7 +437,7 @@ DELETE /admin/templates/{id}       # Delete a template
 
 All endpoints return strongly typed payloads backed by the shared `TemplateResponse` model, with matching helpers in `src/web/lib/api/templates.ts` and `src/web/hooks/use-templates.ts`.
 
-### 🖥️ Template Catalog UI
+### UI
 
 The Next.js admin dashboard now includes a dedicated `/templates` workspace featuring:
 

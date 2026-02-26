@@ -47,7 +47,7 @@ class StubMappingJudgeAgent(MappingJudgePort):
 def _create_session() -> Session:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-    return cast(Session, session_factory())
+    return cast("Session", session_factory())
 
 
 def test_factory_skips_llm_judge_mapper_when_feature_flag_off(

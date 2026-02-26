@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
-from sqlalchemy.orm import Session
-
 from src.database.session import set_session_rls_context
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 class _DialectStub:
@@ -34,7 +35,7 @@ def test_set_session_rls_context_noops_for_non_postgres() -> None:
     session = _RecordingSession("sqlite")
 
     set_session_rls_context(
-        cast(Session, session),
+        cast("Session", session),
         current_user_id=uuid4(),
         has_phi_access=True,
         is_admin=True,
@@ -49,7 +50,7 @@ def test_set_session_rls_context_writes_expected_postgres_settings() -> None:
     user_id = uuid4()
 
     set_session_rls_context(
-        cast(Session, session),
+        cast("Session", session),
         current_user_id=user_id,
         has_phi_access=True,
         is_admin=False,

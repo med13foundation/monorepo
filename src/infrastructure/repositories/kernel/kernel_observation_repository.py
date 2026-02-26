@@ -91,7 +91,7 @@ class SqlAlchemyKernelObservationRepository(KernelObservationRepository):
         models = []
         for obs_data in observations:
             obs_data.setdefault("id", uuid4())
-            # Coerce UUID-like fields for SQLite compatibility.
+            # Coerce UUID-like fields for robust string/UUID payload handling.
             for key in ("research_space_id", "subject_id", "provenance_id"):
                 value = obs_data.get(key)
                 if value is None:

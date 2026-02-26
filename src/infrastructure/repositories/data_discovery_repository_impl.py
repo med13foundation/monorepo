@@ -9,7 +9,6 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from src.database.sqlite_utils import retry_on_sqlite_lock
 from src.domain.entities.data_discovery_session import (
     DataDiscoverySession,
     QueryTestResult,
@@ -37,7 +36,6 @@ from src.infrastructure.mappers.data_discovery_mapper import (
     source_catalog_to_model,
 )
 from src.infrastructure.repositories.data_discovery_repository_utils import (
-    dialect_name_for_session,
     expand_identifier,
     owner_identifier_candidates,
 )
@@ -56,24 +54,21 @@ class SQLAlchemyDataDiscoverySessionRepository(DataDiscoverySessionRepository):
 
     def __init__(self, session: Session):
         self._session = session
-        dialect_name = dialect_name_for_session(session)
-        self._allow_legacy_identifiers = dialect_name == "sqlite"
-        self._allow_legacy_owner_formats = dialect_name == "sqlite"
+        # Keep legacy identifier matching enabled to support pre-normalized rows
+        # (compact UUID strings and historical numeric owner identifiers).
+        self._allow_legacy_identifiers = True
+        self._allow_legacy_owner_formats = True
 
     def save(self, session: DataDiscoverySession) -> DataDiscoverySession:
         model = session_to_model(session)
         self._session.merge(model)
-
-        def _commit() -> None:
-            self._session.commit()
-
-        retry_on_sqlite_lock(_commit)
+        self._session.commit()
         return session
 
     def find_by_id(self, session_id: UUID) -> DataDiscoverySession | None:
         for candidate in expand_identifier(
             session_id,
-            allow_legacy_formats=self._allow_legacy_owner_formats,
+            allow_legacy_formats=self._allow_legacy_identifiers,
         ):
             model = self._session.get(DataDiscoverySessionModel, candidate)
             if model:
@@ -87,7 +82,7 @@ class SQLAlchemyDataDiscoverySessionRepository(DataDiscoverySessionRepository):
     ) -> DataDiscoverySession | None:
         session_candidates = expand_identifier(
             session_id,
-            allow_legacy_formats=self._allow_legacy_owner_formats,
+            allow_legacy_formats=self._allow_legacy_identifiers,
         )
         owner_candidates = owner_identifier_candidates(
             owner_id,
@@ -134,7 +129,7 @@ class SQLAlchemyDataDiscoverySessionRepository(DataDiscoverySessionRepository):
         # Convert UUID to string for database query (database stores UUIDs as strings)
         space_ids = expand_identifier(
             space_id,
-            allow_legacy_formats=self._allow_legacy_owner_formats,
+            allow_legacy_formats=self._allow_legacy_identifiers,
         )
         query = self._session.query(DataDiscoverySessionModel).filter(
             DataDiscoverySessionModel.research_space_id.in_(space_ids),
@@ -150,16 +145,12 @@ class SQLAlchemyDataDiscoverySessionRepository(DataDiscoverySessionRepository):
     def delete(self, session_id: UUID) -> bool:
         for candidate in expand_identifier(
             session_id,
-            allow_legacy_formats=self._allow_legacy_owner_formats,
+            allow_legacy_formats=self._allow_legacy_identifiers,
         ):
             model = self._session.get(DataDiscoverySessionModel, candidate)
             if model:
                 self._session.delete(model)
-
-                def _commit() -> None:
-                    self._session.commit()
-
-                retry_on_sqlite_lock(_commit)
+                self._session.commit()
                 return True
         return False
 
@@ -256,11 +247,7 @@ class SQLAlchemySourceCatalogRepository(SourceCatalogRepository):
         else:
             current_successes = int(model.success_rate * (total_uses - 1))
             model.success_rate = current_successes / total_uses
-
-        def _commit() -> None:
-            self._session.commit()
-
-        retry_on_sqlite_lock(_commit)
+        self._session.commit()
         return True
 
 
@@ -269,17 +256,12 @@ class SQLAlchemyQueryTestResultRepository(QueryTestResultRepository):
 
     def __init__(self, session: Session):
         self._session = session
-        dialect_name = dialect_name_for_session(session)
-        self._allow_legacy_identifiers = dialect_name == "sqlite"
+        self._allow_legacy_identifiers = True
 
     def save(self, result: QueryTestResult) -> QueryTestResult:
         model = query_result_to_model(result)
         self._session.merge(model)
-
-        def _commit() -> None:
-            self._session.commit()
-
-        retry_on_sqlite_lock(_commit)
+        self._session.commit()
         return result
 
     def find_by_session(self, session_id: UUID) -> list[QueryTestResult]:
@@ -327,11 +309,7 @@ class SQLAlchemyQueryTestResultRepository(QueryTestResultRepository):
             )
             .delete(synchronize_session=False)
         )
-
-        def _commit() -> None:
-            self._session.commit()
-
-        retry_on_sqlite_lock(_commit)
+        self._session.commit()
         return deleted_count
 
 
@@ -340,26 +318,18 @@ class SQLAlchemyDiscoveryPresetRepository(DiscoveryPresetRepository):
 
     def __init__(self, session: Session):
         self._session = session
-        self._allow_legacy_identifiers = dialect_name_for_session(session) == "sqlite"
+        self._allow_legacy_identifiers = True
 
     def create(self, preset: DiscoveryPreset) -> DiscoveryPreset:
         model = preset_to_model(preset)
         self._session.merge(model)
-
-        def _commit() -> None:
-            self._session.commit()
-
-        retry_on_sqlite_lock(_commit)
+        self._session.commit()
         return preset
 
     def update(self, preset: DiscoveryPreset) -> DiscoveryPreset:
         model = preset_to_model(preset)
         self._session.merge(model)
-
-        def _commit() -> None:
-            self._session.commit()
-
-        retry_on_sqlite_lock(_commit)
+        self._session.commit()
         return preset
 
     def delete(self, preset_id: UUID, owner_id: UUID) -> bool:
@@ -374,11 +344,7 @@ class SQLAlchemyDiscoveryPresetRepository(DiscoveryPresetRepository):
             if model is None:
                 continue
             self._session.delete(model)
-
-            def _commit() -> None:
-                self._session.commit()
-
-            retry_on_sqlite_lock(_commit)
+            self._session.commit()
             return True
         return False
 
@@ -440,7 +406,7 @@ class SQLAlchemyDiscoverySearchJobRepository(DiscoverySearchJobRepository):
 
     def __init__(self, session: Session):
         self._session = session
-        self._allow_legacy_identifiers = dialect_name_for_session(session) == "sqlite"
+        self._allow_legacy_identifiers = True
 
     def create(self, job: DiscoverySearchJob) -> DiscoverySearchJob:
         model = search_job_to_model(job)

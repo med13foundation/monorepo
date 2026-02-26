@@ -14,7 +14,6 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy import insert as sa_insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from src.domain.entities.kernel.entities import KernelEntity, KernelEntityIdentifier
 from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
@@ -241,9 +240,6 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
                 return self._to_domain_identifier(existing_row)
 
         # Upsert — skip if already exists.
-        #
-        # Use dialect-appropriate INSERT .. ON CONFLICT to keep the kernel
-        # repositories usable in SQLite-backed tests as well as Postgres.
         bind = self._session.get_bind()
         dialect_name = getattr(bind.dialect, "name", "")
         values = {
@@ -255,20 +251,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             "blind_index_version": blind_index_version,
             "sensitivity": normalized_sensitivity,
         }
-        if dialect_name == "sqlite":
-            index_elements = (
-                ["entity_id", "namespace", "identifier_blind_index"]
-                if uses_phi_encryption
-                else ["entity_id", "namespace", "identifier_value"]
-            )
-            self._session.execute(
-                sqlite_insert(EntityIdentifierModel)
-                .values(**values)
-                .on_conflict_do_nothing(
-                    index_elements=index_elements,
-                ),
-            )
-        elif dialect_name == "postgresql":
+        if dialect_name == "postgresql":
             index_elements = (
                 ["entity_id", "namespace", "identifier_blind_index"]
                 if uses_phi_encryption
