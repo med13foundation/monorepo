@@ -487,3 +487,62 @@ def test_create_space_policy_override_can_block_default_auto_promotion(
 
     assert relation.source_count == 3
     assert relation.curation_status == "DRAFT"
+
+
+def test_find_by_research_space_filters_by_node_ids(
+    db_session: Session,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+    )
+    other_source_id = uuid4()
+    other_target_id = uuid4()
+    db_session.add_all(
+        [
+            EntityModel(
+                id=other_source_id,
+                research_space_id=research_space_id,
+                entity_type="GENE",
+                display_label="CNOT1",
+                metadata_payload={},
+            ),
+            EntityModel(
+                id=other_target_id,
+                research_space_id=research_space_id,
+                entity_type="PHENOTYPE",
+                display_label="Seizures",
+                metadata_payload={},
+            ),
+        ],
+    )
+    db_session.flush()
+
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+    expected_relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.95,
+        evidence_tier="LITERATURE",
+    )
+    repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(other_source_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(other_target_id),
+        confidence=0.93,
+        evidence_tier="LITERATURE",
+    )
+
+    by_source = repository.find_by_research_space(
+        str(research_space_id),
+        node_ids=[str(source_entity_id)],
+    )
+    by_target = repository.find_by_research_space(
+        str(research_space_id),
+        node_ids=[str(target_entity_id)],
+    )
+
+    assert [str(relation.id) for relation in by_source] == [str(expected_relation.id)]
+    assert [str(relation.id) for relation in by_target] == [str(expected_relation.id)]

@@ -23,6 +23,7 @@ import type {
   PipelineRunCancelResponse,
   PipelineRunResponse,
   SourcePipelineRunsResponse,
+  SourceWorkflowEventsResponse,
   SourceWorkflowMonitorResponse,
   SpaceRunActiveSourcesResponse,
   SpaceSourceIngestionRunResponse,
@@ -31,6 +32,7 @@ import type {
 export interface KernelEntityListParams {
   type?: string
   q?: string
+  ids?: string[]
   offset?: number
   limit?: number
 }
@@ -49,6 +51,7 @@ export async function fetchKernelEntities(
     params: {
       ...(params.type ? { type: params.type } : {}),
       ...(params.q ? { q: params.q } : {}),
+      ...(params.ids && params.ids.length > 0 ? { ids: params.ids.join(',') } : {}),
       offset: params.offset ?? 0,
       limit: params.limit ?? 50,
     },
@@ -174,6 +177,8 @@ export async function fetchKernelObservation(
 export interface KernelRelationListParams {
   relation_type?: string
   curation_status?: string
+  node_query?: string
+  node_ids?: string[]
   offset?: number
   limit?: number
 }
@@ -192,6 +197,10 @@ export async function fetchKernelRelations(
     params: {
       ...(params.relation_type ? { relation_type: params.relation_type } : {}),
       ...(params.curation_status ? { curation_status: params.curation_status } : {}),
+      ...(params.node_query ? { node_query: params.node_query } : {}),
+      ...(params.node_ids && params.node_ids.length > 0
+        ? { node_ids: params.node_ids.join(',') }
+        : {}),
       offset: params.offset ?? 0,
       limit: params.limit ?? 50,
     },
@@ -440,6 +449,35 @@ export async function fetchSourceWorkflowMonitor(
   }
   return apiGet<SourceWorkflowMonitorResponse>(
     `/research-spaces/${spaceId}/sources/${sourceId}/workflow-monitor`,
+    options,
+  )
+}
+
+export interface SourceWorkflowEventsParams {
+  run_id?: string
+  limit?: number
+  since?: string
+}
+
+export async function fetchSourceWorkflowEvents(
+  spaceId: string,
+  sourceId: string,
+  params: SourceWorkflowEventsParams = {},
+  token?: string,
+): Promise<SourceWorkflowEventsResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchSourceWorkflowEvents')
+  }
+  const options: ApiRequestOptions<SourceWorkflowEventsResponse> = {
+    token,
+    params: {
+      ...(params.run_id ? { run_id: params.run_id } : {}),
+      ...(params.since ? { since: params.since } : {}),
+      limit: params.limit ?? 200,
+    },
+  }
+  return apiGet<SourceWorkflowEventsResponse>(
+    `/research-spaces/${spaceId}/sources/${sourceId}/workflow-events`,
     options,
   )
 }

@@ -6,9 +6,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, func, or_, select
+from sqlalchemy.orm import aliased
 
 from src.domain.entities.kernel.relations import KernelRelation
+from src.models.database.kernel.entities import EntityModel
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 
 from ._kernel_relation_repository_shared import _as_uuid
@@ -134,12 +136,14 @@ class _KernelRelationQueryMixin:
             unique = unique[: max(limit, 1)]
         return [KernelRelation.model_validate(model) for model in unique]
 
-    def find_by_research_space(
+    def find_by_research_space(  # noqa: C901, PLR0913 - query builder needs discrete optional filters
         self: SqlAlchemyKernelRelationRepository,
         research_space_id: str,
         *,
         relation_type: str | None = None,
         curation_status: str | None = None,
+        node_query: str | None = None,
+        node_ids: list[str] | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:
@@ -150,6 +154,45 @@ class _KernelRelationQueryMixin:
             stmt = stmt.where(RelationModel.relation_type == relation_type)
         if curation_status is not None:
             stmt = stmt.where(RelationModel.curation_status == curation_status)
+        if node_ids:
+            node_uuid_ids: list[UUID] = []
+            for node_id in node_ids:
+                trimmed = node_id.strip()
+                if not trimmed:
+                    continue
+                try:
+                    node_uuid_ids.append(_as_uuid(trimmed))
+                except ValueError:
+                    continue
+            if not node_uuid_ids:
+                return []
+            stmt = stmt.where(
+                or_(
+                    RelationModel.source_id.in_(node_uuid_ids),
+                    RelationModel.target_id.in_(node_uuid_ids),
+                ),
+            )
+        if node_query is not None and node_query.strip():
+            source_entity = aliased(EntityModel)
+            target_entity = aliased(EntityModel)
+            search_term = f"%{node_query.strip()}%"
+            stmt = stmt.join(
+                source_entity,
+                source_entity.id == RelationModel.source_id,
+            ).join(
+                target_entity,
+                target_entity.id == RelationModel.target_id,
+            )
+            stmt = stmt.where(
+                or_(
+                    RelationModel.source_id.cast(String).ilike(search_term),
+                    RelationModel.target_id.cast(String).ilike(search_term),
+                    source_entity.display_label.ilike(search_term),
+                    target_entity.display_label.ilike(search_term),
+                    source_entity.entity_type.ilike(search_term),
+                    target_entity.entity_type.ilike(search_term),
+                ),
+            )
         stmt = stmt.order_by(RelationModel.created_at.desc())
         if limit is not None:
             stmt = stmt.limit(limit)

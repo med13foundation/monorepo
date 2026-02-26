@@ -26,7 +26,7 @@ const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "4.25rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
-const getInitialSidebarOpen = (defaultOpen: boolean): boolean => {
+const getSidebarOpenFromCookie = (defaultOpen: boolean): boolean => {
   if (typeof document === "undefined") {
     return defaultOpen
   }
@@ -92,16 +92,22 @@ const SidebarProvider = React.forwardRef<
     ref
   ) => {
     const isMobile = useIsMobile()
-    const initialOpen = React.useRef<boolean>(getInitialSidebarOpen(defaultOpen))
     const [openMobile, setOpenMobile] = React.useState(false)
     const [openMobileRight, setOpenMobileRight] = React.useState(false)
 
     // Left Sidebar State
-    const [_open, _setOpen] = React.useState(initialOpen.current)
+    const [_open, _setOpen] = React.useState(defaultOpen)
     const open = openProp ?? _open
 
     // Right Sidebar State
     const [openRight, setOpenRight] = React.useState(defaultOpenRight)
+
+    React.useEffect(() => {
+      if (openProp !== undefined) {
+        return
+      }
+      _setOpen(getSidebarOpenFromCookie(defaultOpen))
+    }, [defaultOpen, openProp])
 
     const setOpen = React.useCallback(
       (value: boolean | ((value: boolean) => boolean)) => {

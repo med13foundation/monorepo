@@ -15,5 +15,5 @@ export default async function SpaceIngestPage({ params }: SpaceIngestPageProps) 
     redirect('/auth/login?error=SessionExpired')
   }
 
-  redirect(`/spaces/${spaceId}/data-sources?onboarding=0`)
+  redirect(`/spaces/${spaceId}/data-sources`)
 }

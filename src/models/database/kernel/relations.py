@@ -129,6 +129,7 @@ class RelationModel(Base):
         Index("idx_relations_source", "source_id"),
         Index("idx_relations_target", "target_id"),
         Index("idx_relations_space_type", "research_space_id", "relation_type"),
+        Index("idx_relations_space_created_at", "research_space_id", "created_at"),
         Index("idx_relations_curation", "curation_status"),
         Index("idx_relations_provenance", "provenance_id"),
         Index("idx_relations_aggregate_confidence", "aggregate_confidence"),

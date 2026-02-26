@@ -12,6 +12,8 @@ export interface GraphHoverEvent {
 export interface GraphInteractionHandlers {
   onNodeClick?: (nodeId: string) => void
   onHoverChange?: (event: GraphHoverEvent | null) => void
+  /** Called on any tap on the canvas (background, node, or edge). Use e.g. to collapse overlays. */
+  onCanvasTap?: () => void
 }
 
 export interface GraphViewAdapter {

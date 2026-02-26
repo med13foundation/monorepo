@@ -40,6 +40,8 @@ export default function SpaceMembersClient({
         dataSources={null}
         curationStats={null}
         curationQueue={null}
+        relationTypeDistribution={[]}
+        nodeDistribution={[]}
         access={access}
         defaultTab="members"
       />

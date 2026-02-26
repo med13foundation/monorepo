@@ -144,6 +144,7 @@ class ObservationModel(Base):
         ),
         Index("idx_obs_subject", "subject_id"),
         Index("idx_obs_space_variable", "research_space_id", "variable_id"),
+        Index("idx_obs_space_created_at", "research_space_id", "created_at"),
         Index("idx_obs_subject_time", "subject_id", "observed_at"),
         Index("idx_obs_provenance", "provenance_id"),
         {"comment": "Typed observations (EAV with dictionary validation)"},

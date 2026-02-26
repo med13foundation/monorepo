@@ -201,12 +201,14 @@ class KernelRelationService:
             if str(rel.research_space_id) == str(research_space_id)
         ]
 
-    def list_by_research_space(
+    def list_by_research_space(  # noqa: PLR0913 - mirrors repository query filters
         self,
         research_space_id: str,
         *,
         relation_type: str | None = None,
         curation_status: str | None = None,
+        node_query: str | None = None,
+        node_ids: list[str] | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:
@@ -215,6 +217,8 @@ class KernelRelationService:
             research_space_id,
             relation_type=relation_type,
             curation_status=curation_status,
+            node_query=node_query,
+            node_ids=node_ids,
             limit=limit,
             offset=offset,
         )

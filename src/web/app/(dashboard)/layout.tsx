@@ -1,13 +1,17 @@
 import { redirect } from 'next/navigation'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
+import { RouteProgressBar } from '@/components/navigation/RouteProgressBar'
 import { SidebarWrapper } from '@/components/navigation/sidebar/SidebarWrapper'
 import { getServerSession } from 'next-auth'
 import axios from 'axios'
 import { authOptions } from '@/lib/auth'
 import { SpaceContextProvider } from '@/components/space-context-provider'
+import { SessionProvider } from '@/components/session-provider'
 import { fetchMyMembership, fetchResearchSpaces } from '@/lib/api/research-spaces'
 import type { ResearchSpaceMembership } from '@/types/research-space'
+
+export const dynamic = 'force-dynamic'
 
 type DashboardLayoutProps = {
   children: React.ReactNode
@@ -56,6 +60,10 @@ function extractAxiosErrorMessage(error: unknown): string {
 
 export default async function DashboardLayout({ children, params }: DashboardLayoutProps) {
   const resolvedParams = params ? await params : undefined
+  const spaceIdFromParams =
+    typeof resolvedParams?.spaceId === 'string' && isValidUuid(resolvedParams.spaceId)
+      ? resolvedParams.spaceId
+      : null
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
   const expiresAt = session?.user?.expires_at
@@ -67,22 +75,31 @@ export default async function DashboardLayout({ children, params }: DashboardLay
 
   let initialSpaces: Awaited<ReturnType<typeof fetchResearchSpaces>>['spaces'] = []
   let initialTotal = 0
-  let initialSpaceId: string | null = null
+  let initialSpaceId: string | null = spaceIdFromParams
   let currentMembership: ResearchSpaceMembership | null = null
 
   if (token) {
-    try {
-      const response = await fetchResearchSpaces(undefined, token)
-      initialSpaces = response.spaces
-      initialTotal = response.total
-      const spaceIdFromParams =
-        typeof resolvedParams?.spaceId === 'string' && isValidUuid(resolvedParams.spaceId)
-          ? resolvedParams.spaceId
-          : null
-      initialSpaceId = spaceIdFromParams ?? initialSpaces[0]?.id ?? null
+    const [spacesResult, membershipResult] = await Promise.allSettled([
+      fetchResearchSpaces(undefined, token),
+      spaceIdFromParams ? fetchMyMembership(spaceIdFromParams, token) : Promise.resolve(null),
+    ])
 
-      if (spaceIdFromParams) {
-        currentMembership = await fetchMyMembership(spaceIdFromParams, token)
+    try {
+      if (spacesResult.status === 'fulfilled') {
+        initialSpaces = spacesResult.value.spaces
+        initialTotal = spacesResult.value.total
+        initialSpaceId = initialSpaceId ?? initialSpaces[0]?.id ?? null
+      } else {
+        throw spacesResult.reason
+      }
+
+      if (membershipResult.status === 'fulfilled') {
+        currentMembership = membershipResult.value
+      } else if (
+        axios.isAxiosError(membershipResult.reason) &&
+        membershipResult.reason.response?.status === 401
+      ) {
+        throw membershipResult.reason
       }
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
@@ -99,17 +116,20 @@ export default async function DashboardLayout({ children, params }: DashboardLay
 
   return (
     <ErrorBoundary>
-      <ProtectedRoute>
-        <SpaceContextProvider
-          initialSpaces={initialSpaces}
-          initialSpaceId={initialSpaceId}
-          initialTotal={initialTotal}
-        >
-          <SidebarWrapper currentMembership={currentMembership}>
-            {children}
-          </SidebarWrapper>
-        </SpaceContextProvider>
-      </ProtectedRoute>
+      <SessionProvider session={session}>
+        <ProtectedRoute>
+          <SpaceContextProvider
+            initialSpaces={initialSpaces}
+            initialSpaceId={initialSpaceId}
+            initialTotal={initialTotal}
+          >
+            <RouteProgressBar />
+            <SidebarWrapper currentMembership={currentMembership}>
+              {children}
+            </SidebarWrapper>
+          </SpaceContextProvider>
+        </ProtectedRoute>
+      </SessionProvider>
     </ErrorBoundary>
   )
 }

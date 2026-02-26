@@ -8,6 +8,7 @@ const redirectMock = jest.fn()
 
 jest.mock('next/navigation', () => ({
   redirect: (...args: unknown[]) => redirectMock(...args),
+  usePathname: () => '/dashboard',
 }))
 
 jest.mock('@/components/ErrorBoundary', () => ({

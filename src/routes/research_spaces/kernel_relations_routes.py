@@ -67,6 +67,15 @@ def _normalize_filter_values(values: list[str] | None) -> set[str] | None:
     return normalized or None
 
 
+def _parse_node_ids_param(node_ids: list[str] | None) -> list[str]:
+    if node_ids is None:
+        return []
+    normalized: list[str] = []
+    for raw in node_ids:
+        normalized.extend(part.strip() for part in raw.split(",") if part.strip())
+    return normalized
+
+
 def _status_priority(status: str) -> int:
     return _CURATION_STATUS_PRIORITY.get(status.strip().upper(), 0)
 
@@ -203,6 +212,11 @@ def list_kernel_relations(
     *,
     relation_type: str | None = Query(None),
     curation_status: str | None = Query(None),
+    node_query: str | None = Query(None),
+    node_ids: list[str] | None = Query(
+        None,
+        description="Comma-separated entity IDs to match relation source or target.",
+    ),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_active_user),
@@ -222,6 +236,8 @@ def list_kernel_relations(
         str(space_id),
         relation_type=relation_type,
         curation_status=curation_status,
+        node_query=node_query,
+        node_ids=_parse_node_ids_param(node_ids),
         limit=limit,
         offset=offset,
     )

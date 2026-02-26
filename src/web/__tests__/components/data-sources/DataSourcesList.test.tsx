@@ -231,14 +231,16 @@ describe('DataSourcesList - AI Controls', () => {
       />,
     )
 
-    const configureButton = screen.getByRole('button', { name: /^configure$/i })
+    const configureButton = screen.getByRole('button', {
+      name: /configure future connector source/i,
+    })
     expect(configureButton).toBeInTheDocument()
 
     await user.click(configureButton)
 
-    expect(screen.getByRole('menuitem', { name: /configure schedule/i })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /configure ai/i })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /test ai/i })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^schedule$/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /ai config/i })).toBeInTheDocument()
   })
 
   it('shows a consolidated Configure menu for ClinVar AI-managed sources', async () => {
@@ -290,14 +292,16 @@ describe('DataSourcesList - AI Controls', () => {
       />,
     )
 
-    const configureButton = screen.getByRole('button', { name: /^configure$/i })
+    const configureButton = screen.getByRole('button', {
+      name: /configure clinvar pathogenicity benchmark/i,
+    })
     expect(configureButton).toBeInTheDocument()
 
     await user.click(configureButton)
 
-    expect(screen.getByRole('menuitem', { name: /configure schedule/i })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /configure ai/i })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /test ai/i })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^schedule$/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /ai config/i })).toBeInTheDocument()
   })
 
   it('shows a consolidated Configure menu for ClinVar discovery sources without agent config', async () => {
@@ -346,14 +350,16 @@ describe('DataSourcesList - AI Controls', () => {
       />,
     )
 
-    const configureButton = screen.getByRole('button', { name: /^configure$/i })
+    const configureButton = screen.getByRole('button', {
+      name: /configure clinvar \(from data discovery\)/i,
+    })
     expect(configureButton).toBeInTheDocument()
 
     await user.click(configureButton)
 
-    expect(screen.getByRole('menuitem', { name: /configure schedule/i })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /configure ai/i })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /test ai/i })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^schedule$/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /ai config/i })).toBeInTheDocument()
   })
 
   it('keeps AI buttons hidden for plain API sources without agent metadata', () => {

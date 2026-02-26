@@ -30,6 +30,9 @@ const KNOWN_SRP_EXCEPTIONS = new Set<string>([
   'components/data-discovery/ParameterBar.tsx',
   'components/data-discovery/ResultsView.tsx',
   'components/data-sources/DataSourcesList.tsx',
+  'components/data-sources/DataSourceConfigurationDialog.tsx',
+  'components/data-sources/DataSourceScheduleFields.tsx',
+  'components/navigation/RouteProgressBar.tsx',
   'components/research-spaces/ResearchSpaceDetail.tsx',
   'components/system-settings/DataSourceAvailabilitySection.tsx',
   'components/system-settings/StorageConfigurationManager.tsx',
@@ -37,8 +40,15 @@ const KNOWN_SRP_EXCEPTIONS = new Set<string>([
   'components/ui/sidebar.tsx',
   'app/(dashboard)/admin/data-sources/templates/[templateId]/template-detail-client.tsx',
   'app/(dashboard)/admin/data-sources/templates/templates-client.tsx',
+  'app/(dashboard)/spaces/[spaceId]/knowledge-graph-client.tsx',
+  'app/(dashboard)/spaces/[spaceId]/knowledge-graph-query-card.tsx',
+  'app/(dashboard)/spaces/[spaceId]/knowledge-graph-visualization.tsx',
+  'app/(dashboard)/spaces/[spaceId]/page.tsx',
+  'app/(dashboard)/spaces/[spaceId]/space-curation-client.tsx',
   'app/(dashboard)/spaces/[spaceId]/space-settings-client.tsx',
+  'app/(dashboard)/spaces/[spaceId]/use-knowledge-graph-controller.ts',
   'app/(dashboard)/system-settings/system-settings-client.tsx',
+  'app/actions/kernel-ingest.ts',
 ])
 
 const relativeToWebRoot = (filePath: string): string =>

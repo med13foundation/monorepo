@@ -18,22 +18,16 @@ from src.application.services.pipeline_orchestration_service import (
 from src.database.session import get_session
 from src.domain.entities.ingestion_job import IngestionStatus
 from src.routes.auth import get_current_active_user
-from src.routes.research_spaces.content_enrichment_routes import (
-    get_content_enrichment_service,
+from src.routes.research_spaces import (
+    content_enrichment_routes,
+    graph_connection_routes,
+    kernel_graph_search_routes,
+    knowledge_extraction_routes,
 )
 from src.routes.research_spaces.dependencies import (
     get_ingestion_scheduling_service_for_space,
     get_membership_service,
     require_researcher_role,
-)
-from src.routes.research_spaces.graph_connection_routes import (
-    get_graph_connection_service,
-)
-from src.routes.research_spaces.kernel_graph_search_routes import (
-    get_graph_search_service,
-)
-from src.routes.research_spaces.knowledge_extraction_routes import (
-    get_entity_recognition_service,
 )
 
 from .router import (
@@ -137,15 +131,17 @@ def get_pipeline_orchestration_service(
         get_ingestion_scheduling_service_for_space,
     ),
     content_enrichment_service: ContentEnrichmentService = Depends(
-        get_content_enrichment_service,
+        content_enrichment_routes.get_content_enrichment_service,
     ),
     entity_recognition_service: EntityRecognitionService = Depends(
-        get_entity_recognition_service,
+        knowledge_extraction_routes.get_entity_recognition_service,
     ),
     graph_connection_service: GraphConnectionService = Depends(
-        get_graph_connection_service,
+        graph_connection_routes.get_graph_connection_service,
     ),
-    graph_search_service: GraphSearchService = Depends(get_graph_search_service),
+    graph_search_service: GraphSearchService = Depends(
+        kernel_graph_search_routes.get_graph_search_service,
+    ),
     session: Session = Depends(get_session),
 ) -> PipelineOrchestrationService:
     """Dependency provider for unified pipeline orchestration."""

@@ -1220,6 +1220,7 @@ async def test_run_due_jobs_marks_stale_running_jobs_failed() -> None:
         ingestion_services={},
         options=_build_ingestion_options(
             scheduler_stale_running_timeout_seconds=300,
+            ingestion_job_hard_timeout_seconds=300,
         ),
     )
 

@@ -14,7 +14,7 @@ from uuid import uuid4
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_HEAD_REVISION = "020_ingestion_job_runtime_fields"
+EXPECTED_HEAD_REVISION = "021_add_page_load_perf_indexes"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"

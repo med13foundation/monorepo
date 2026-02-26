@@ -151,6 +151,7 @@ class SourceWorkflowMonitorPipelineMixin:
             "executed_query": executed_query,
             "stage_statuses": stage_statuses,
             "stage_errors": stage_errors,
+            "stage_checkpoints": checkpoints,
             "stage_counters": stage_counters,
         }
 

@@ -23,7 +23,7 @@ const DEFAULT_NODE_STYLE: NodeVisualStyle = {
 
 const DEFAULT_EDGE_STYLE: EdgeVisualStyle = {
   color: '#64748b',
-  opacity: 0.58,
+  opacity: 0.42,
   lineStyle: 'solid',
 }
 
@@ -166,26 +166,32 @@ export function edgeColorForRelationType(relationType: string): string {
 
 export function edgeWidthForConfidence(confidence: number): number {
   if (confidence >= 0.95) {
-    return 5
+    return 4.6
   }
   if (confidence >= 0.85) {
-    return 4.4
+    return 4
   }
   if (confidence >= 0.7) {
-    return 3.5
+    return 3.3
   }
   if (confidence >= 0.5) {
-    return 2.9
+    return 2.6
   }
-  return 2.3
+  return 2
 }
 
 export function edgeOpacityForConfidence(confidence: number): number {
-  return Math.max(0.35, Math.min(0.95, 0.4 + confidence * 0.55))
+  return Math.max(0.26, Math.min(0.82, 0.28 + confidence * 0.54))
 }
 
 export function edgeStrengthScore(confidence: number, sourceCount: number): number {
   const boundedConfidence = Math.max(0, Math.min(1, confidence))
   const evidenceBoost = Math.min(0.22, Math.log10(Math.max(1, sourceCount) + 1) * 0.16)
   return boundedConfidence + evidenceBoost
+}
+
+export function edgeWidthForStrength(confidence: number, sourceCount: number): number {
+  const base = edgeWidthForConfidence(confidence)
+  const evidenceLift = Math.min(1.1, Math.log10(Math.max(1, sourceCount) + 1) * 0.9)
+  return Number((base + evidenceLift).toFixed(2))
 }

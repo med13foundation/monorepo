@@ -8,6 +8,7 @@ import {
 } from '@/app/actions/data-sources'
 import {
   cancelSpaceSourcePipelineRunAction,
+  fetchSourceWorkflowEventsAction,
   fetchSourceWorkflowCardStatusAction,
   runSpaceSourcePipelineAction,
 } from '@/app/actions/kernel-ingest'
@@ -74,6 +75,107 @@ export interface SourceWorkflowCardStatus {
   graph_edges_total: number
 }
 
+interface WorkflowSignal {
+  pipelineStatus: string | null
+  pendingPapers: number
+  pendingReview: number
+  newEdges: number
+}
+
+interface WorkflowEventSignal {
+  event_id: string
+  occurred_at: string | null
+  category: string | null
+  stage: string | null
+  status: string | null
+  message: string
+}
+
+function buildWorkflowSignal(status: SourceWorkflowCardStatus): WorkflowSignal {
+  return {
+    pipelineStatus: status.last_pipeline_status,
+    pendingPapers: status.pending_paper_count,
+    pendingReview: status.pending_relation_review_count,
+    newEdges: status.graph_edges_delta_last_run,
+  }
+}
+
+function describePipelineStage(status: SourceWorkflowCardStatus | undefined): string {
+  if (!status) return 'Connecting to monitor'
+  if (status.last_pipeline_status === 'failed') {
+    return 'Pipeline failed'
+  }
+  if (status.pending_paper_count > 0) {
+    return 'Document ingestion and extraction'
+  }
+  if (status.pending_relation_review_count > 0) {
+    return 'Relation review queue'
+  }
+  if (status.graph_edges_delta_last_run > 0) {
+    return 'Graph persistence'
+  }
+  if (status.last_pipeline_status === 'running') {
+    return 'Finalizing run'
+  }
+  if (status.last_pipeline_status === 'completed') {
+    return 'Completed'
+  }
+  return 'Waiting for pipeline signal'
+}
+
+function describeWorkflowChange(
+  previousSignal: WorkflowSignal | undefined,
+  nextSignal: WorkflowSignal,
+): string | null {
+  if (!previousSignal) {
+    return 'Connected to monitor.'
+  }
+  const updates: string[] = []
+  if (previousSignal.pipelineStatus !== nextSignal.pipelineStatus) {
+    updates.push(
+      `status ${previousSignal.pipelineStatus ?? 'unknown'} -> ${nextSignal.pipelineStatus ?? 'unknown'}`,
+    )
+  }
+  if (previousSignal.pendingPapers !== nextSignal.pendingPapers) {
+    updates.push(
+      `papers ${previousSignal.pendingPapers} -> ${nextSignal.pendingPapers}`,
+    )
+  }
+  if (previousSignal.pendingReview !== nextSignal.pendingReview) {
+    updates.push(
+      `review ${previousSignal.pendingReview} -> ${nextSignal.pendingReview}`,
+    )
+  }
+  if (previousSignal.newEdges !== nextSignal.newEdges) {
+    updates.push(
+      `edges ${previousSignal.newEdges} -> ${nextSignal.newEdges}`,
+    )
+  }
+  if (updates.length === 0) {
+    return null
+  }
+  return updates.join(' | ')
+}
+
+function formatElapsedSeconds(nowMs: number, timestampMs: number | undefined, fallback: string): string {
+  if (typeof timestampMs !== 'number') {
+    return fallback
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((nowMs - timestampMs) / 1000))
+  return `${elapsedSeconds}s ago`
+}
+
+function toTimestampMs(value: string | null | undefined): number | undefined {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return undefined
+  }
+  const timestamp = Date.parse(value)
+  if (Number.isNaN(timestamp)) {
+    return undefined
+  }
+  return timestamp
+}
+
 export function DataSourcesList({
   spaceId,
   dataSources,
@@ -96,13 +198,24 @@ export function DataSourcesList({
   const [liveWorkflowStatusBySource, setLiveWorkflowStatusBySource] = useState<
     Record<string, SourceWorkflowCardStatus>
   >(workflowStatusBySource ?? {})
+  const [liveWorkflowEventsBySource, setLiveWorkflowEventsBySource] = useState<
+    Record<string, WorkflowEventSignal[]>
+  >({})
   const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(new Set())
   const initialExpandDoneRef = useRef(false)
   const runGenerationBySourceRef = useRef<Record<string, number>>({})
   const detachedRunGenerationBySourceRef = useRef<Record<string, number>>({})
   const activeRunIdBySourceRef = useRef<Record<string, string>>({})
+  const lastWorkflowSignalBySourceRef = useRef<Record<string, WorkflowSignal>>({})
+  const lastWorkflowRefreshAtBySourceRef = useRef<Record<string, number>>({})
+  const lastWorkflowChangeAtBySourceRef = useRef<Record<string, number>>({})
+  const lastWorkflowChangeSummaryBySourceRef = useRef<Record<string, string>>({})
+  const [liveStatusNowMs, setLiveStatusNowMs] = useState<number>(() => Date.now())
 
-  const resolvedDataSources = dataSources?.items ?? []
+  const resolvedDataSources = useMemo(
+    () => dataSources?.items ?? [],
+    [dataSources],
+  )
 
   useEffect(() => {
     if (initialExpandDoneRef.current || resolvedDataSources.length === 0) return
@@ -135,6 +248,18 @@ export function DataSourcesList({
   }, [liveWorkflowStatusBySource, resolvedDataSources, runningPipelineSourceId])
 
   useEffect(() => {
+    if (pollingSourceIds.length === 0 && runningPipelineSourceId === null) {
+      return
+    }
+    const intervalId = window.setInterval(() => {
+      setLiveStatusNowMs(Date.now())
+    }, 1000)
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [pollingSourceIds.length, runningPipelineSourceId])
+
+  useEffect(() => {
     if (pollingSourceIds.length === 0) return
     let isMounted = true
     let isPolling = false
@@ -143,18 +268,50 @@ export function DataSourcesList({
       isPolling = true
       try {
         const results = await Promise.all(
-          pollingSourceIds.map(async (sourceId) => ({
-            sourceId,
-            result: await fetchSourceWorkflowCardStatusAction(spaceId, sourceId),
-          })),
+          pollingSourceIds.map(async (sourceId) => {
+            const [statusResult, eventsResult] = await Promise.all([
+              fetchSourceWorkflowCardStatusAction(spaceId, sourceId),
+              fetchSourceWorkflowEventsAction(spaceId, sourceId, {
+                limit: 6,
+              }),
+            ])
+            return {
+              sourceId,
+              statusResult,
+              eventsResult,
+            }
+          }),
         )
         if (!isMounted) return
 
+        const polledAtMs = Date.now()
         setLiveWorkflowStatusBySource((previous) => {
           const next = { ...previous }
           for (const item of results) {
-            if (item.result.success) {
-              next[item.sourceId] = item.result.data
+            if (item.statusResult.success) {
+              const signal = buildWorkflowSignal(item.statusResult.data)
+              const previousSignal = lastWorkflowSignalBySourceRef.current[item.sourceId]
+              const changeSummary = describeWorkflowChange(previousSignal, signal)
+              lastWorkflowRefreshAtBySourceRef.current[item.sourceId] = polledAtMs
+              if (changeSummary !== null) {
+                lastWorkflowChangeAtBySourceRef.current[item.sourceId] = polledAtMs
+                lastWorkflowChangeSummaryBySourceRef.current[item.sourceId] = changeSummary
+              } else if (!(item.sourceId in lastWorkflowChangeAtBySourceRef.current)) {
+                lastWorkflowChangeAtBySourceRef.current[item.sourceId] = polledAtMs
+                lastWorkflowChangeSummaryBySourceRef.current[item.sourceId] =
+                  'Awaiting first progress signal.'
+              }
+              lastWorkflowSignalBySourceRef.current[item.sourceId] = signal
+              next[item.sourceId] = item.statusResult.data
+            }
+          }
+          return next
+        })
+        setLiveWorkflowEventsBySource((previous) => {
+          const next = { ...previous }
+          for (const item of results) {
+            if (item.eventsResult.success) {
+              next[item.sourceId] = item.eventsResult.data.events
             }
           }
           return next
@@ -162,8 +319,8 @@ export function DataSourcesList({
 
         const hasBackendRunning = results.some(
           (item) =>
-            item.result.success &&
-            item.result.data.last_pipeline_status === 'running',
+            item.statusResult.success &&
+            item.statusResult.data.last_pipeline_status === 'running',
         )
         if (!hasBackendRunning && runningPipelineSourceId !== null) {
           setRunningPipelineSourceId(null)
@@ -409,21 +566,41 @@ export function DataSourcesList({
           return
         }
       }
+      const runStartMs = Date.now()
+      lastWorkflowRefreshAtBySourceRef.current[source.id] = runStartMs
+      lastWorkflowChangeAtBySourceRef.current[source.id] = runStartMs
+      lastWorkflowChangeSummaryBySourceRef.current[source.id] =
+        'Run started. Waiting for first backend update.'
+      setLiveWorkflowEventsBySource((previous) => ({
+        ...previous,
+        [source.id]: [
+          {
+            event_id: `run-start:${runId}`,
+            occurred_at: new Date(runStartMs).toISOString(),
+            category: 'run',
+            stage: 'ingestion',
+            status: 'running',
+            message: 'Run started. Waiting for backend events.',
+          },
+        ],
+      }))
       setRunningPipelineSourceId(source.id)
       setLiveWorkflowStatusBySource((previous) => {
         const current = previous[source.id]
+        const nextStatus: SourceWorkflowCardStatus = {
+          last_pipeline_status: 'running',
+          last_failed_stage: null,
+          pending_paper_count: current?.pending_paper_count ?? 0,
+          pending_relation_review_count:
+            current?.pending_relation_review_count ?? 0,
+          graph_edges_delta_last_run:
+            current?.graph_edges_delta_last_run ?? 0,
+          graph_edges_total: current?.graph_edges_total ?? 0,
+        }
+        lastWorkflowSignalBySourceRef.current[source.id] = buildWorkflowSignal(nextStatus)
         return {
           ...previous,
-          [source.id]: {
-            last_pipeline_status: 'running',
-            last_failed_stage: null,
-            pending_paper_count: current?.pending_paper_count ?? 0,
-            pending_relation_review_count:
-              current?.pending_relation_review_count ?? 0,
-            graph_edges_delta_last_run:
-              current?.graph_edges_delta_last_run ?? 0,
-            graph_edges_total: current?.graph_edges_total ?? 0,
-          },
+          [source.id]: nextStatus,
         }
       })
       const agentConfig = readSourceAgentConfig(source)
@@ -552,6 +729,22 @@ export function DataSourcesList({
                 tooltip: 'Edges added in the latest pipeline run.',
               },
             ]
+            const liveStageLabel = describePipelineStage(workflowStatus)
+            const lastSignalLabel = formatElapsedSeconds(
+              liveStatusNowMs,
+              lastWorkflowChangeAtBySourceRef.current[source.id],
+              'waiting',
+            )
+            const lastPollLabel = formatElapsedSeconds(
+              liveStatusNowMs,
+              lastWorkflowRefreshAtBySourceRef.current[source.id],
+              'connecting',
+            )
+            const lastSignalSummary =
+              lastWorkflowChangeSummaryBySourceRef.current[source.id] ??
+              'Awaiting first progress signal.'
+            const workflowEventSignals = liveWorkflowEventsBySource[source.id] ?? []
+            const recentWorkflowEventSignals = workflowEventSignals.slice(0, 3)
             const lastRunMetric = formatRelativeTime(lastExecutionAt)
             const isActive = source.status === 'active'
             const isArchived = source.status === 'archived'
@@ -594,7 +787,7 @@ export function DataSourcesList({
                                 type="button"
                                 size="icon"
                                 variant="ghost"
-                                className="h-7 w-7 shrink-0 text-muted-foreground"
+                                className="size-7 shrink-0 text-muted-foreground"
                                 aria-label={isExpanded ? `Collapse ${source.name}` : `Expand ${source.name}`}
                                 title={isExpanded ? 'Collapse details' : 'Expand details'}
                                 disabled={isRunning}
@@ -667,7 +860,7 @@ export function DataSourcesList({
                               type="button"
                               size="icon"
                               variant="default"
-                              className="h-7 w-7 rounded-r-none"
+                              className="size-7 rounded-r-none"
                               aria-label={`Run pipeline for ${source.name}`}
                               title="Run pipeline"
                               onClick={() => handleRunFullPipeline(source, false)}
@@ -681,7 +874,7 @@ export function DataSourcesList({
                                   type="button"
                                   size="icon"
                                   variant="default"
-                                  className="h-7 w-7 rounded-l-none border-l border-primary-foreground/20"
+                                  className="size-7 rounded-l-none border-l border-primary-foreground/20"
                                   aria-label={`Run options for ${source.name}`}
                                   title="More run options: full pipeline or quick test"
                                   disabled={runningPipelineSourceId === source.id}
@@ -714,7 +907,7 @@ export function DataSourcesList({
                                 type="button"
                                 size="icon"
                                 variant="outline"
-                              className="h-7 w-7"
+                              className="size-7"
                               aria-label={`Configure ${source.name}`}
                               title="Configure source"
                               disabled={isRunning}
@@ -809,15 +1002,43 @@ export function DataSourcesList({
                 {isExpanded && (
                   <CardContent className="space-y-4">
                     {isRunning && (
-                      <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
-                        <Loader2 className="size-4 animate-spin text-primary" />
-                        <span>Live run in progress. Processing pipeline stages.</span>
+                      <div className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="size-4 animate-spin text-primary" />
+                          <span>Live run in progress. Processing pipeline stages.</span>
+                        </div>
+                        <p className="mt-1 pl-6 text-xs text-muted-foreground">
+                          Stage: {liveStageLabel} · Last signal: {lastSignalLabel} · Last poll: {lastPollLabel}
+                          {' · '}
+                          {lastSignalSummary}
+                        </p>
+                        <div className="mt-1 space-y-1 pl-6 text-xs text-muted-foreground">
+                          {recentWorkflowEventSignals.length === 0 ? (
+                            <p>Recent backend events: waiting for first event.</p>
+                          ) : (
+                            recentWorkflowEventSignals.map((eventSignal) => {
+                              const eventAge = formatElapsedSeconds(
+                                liveStatusNowMs,
+                                toTimestampMs(eventSignal.occurred_at),
+                                'unknown',
+                              )
+                              const eventScope = eventSignal.stage ?? eventSignal.category ?? 'event'
+                              const eventStatus = eventSignal.status ? `/${eventSignal.status}` : ''
+                              return (
+                                <p key={eventSignal.event_id}>
+                                  {eventAge} · {eventScope}
+                                  {eventStatus} · {eventSignal.message}
+                                </p>
+                              )
+                            })
+                          )}
+                        </div>
                       </div>
                     )}
                     <div className="grid gap-6 xl:grid-cols-12 xl:items-start xl:divide-x xl:divide-border">
                     <div className="grid w-full grid-cols-[120px_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm xl:col-span-4 xl:pr-6 2xl:col-span-3">
                       <div className="text-muted-foreground/80">Type</div>
-                      <div className="font-semibold text-foreground capitalize">{source.source_type}</div>
+                      <div className="font-semibold capitalize text-foreground">{source.source_type}</div>
 
                       <div className="text-muted-foreground/80">{isPubMedSource ? 'Access' : 'Status'}</div>
                       <div className="font-semibold text-foreground">

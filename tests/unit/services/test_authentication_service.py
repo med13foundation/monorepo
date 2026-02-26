@@ -110,6 +110,11 @@ class TestAuthenticationService:
             refresh_expires_at=refresh_expires_at,
             status=SessionStatus.ACTIVE,
         )
+        object.__setattr__(
+            session,
+            "last_activity",
+            datetime.now(UTC) - timedelta(minutes=10),
+        )
 
         # Mock session repository
         mock_session_repository.get_by_access_token.return_value = session
@@ -158,6 +163,11 @@ class TestAuthenticationService:
             expires_at=expires_at,
             refresh_expires_at=refresh_expires_at,
             status=SessionStatus.ACTIVE,
+        )
+        object.__setattr__(
+            session,
+            "last_activity",
+            datetime.now(UTC) - timedelta(minutes=10),
         )
         # Simulate database load: replace with naive datetimes
         object.__setattr__(session, "expires_at", expires_at.replace(tzinfo=None))
@@ -269,6 +279,11 @@ class TestAuthenticationService:
             refresh_expires_at=refresh_expires_at,
             status=SessionStatus.ACTIVE,
         )
+        object.__setattr__(
+            session,
+            "last_activity",
+            datetime.now(UTC) - timedelta(minutes=10),
+        )
         # Simulate database load: replace refresh_expires_at with naive datetime
         object.__setattr__(
             session,
@@ -286,6 +301,48 @@ class TestAuthenticationService:
         assert result == sample_user
         assert session.is_active() is True
         mock_session_repository.update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_validate_token_debounces_session_activity_writes(
+        self,
+        auth_service,
+        mock_user_repository,
+        mock_session_repository,
+        mock_jwt_provider,
+        sample_user,
+    ):
+        """Skip DB writes when session activity is still within debounce window."""
+        token = "valid_jwt_token"
+        user_id = sample_user.id
+
+        mock_jwt_provider.decode_token.return_value = {
+            "sub": str(user_id),
+            "type": "access",
+            "role": "researcher",
+        }
+        mock_user_repository.get_by_id.return_value = sample_user
+
+        session = UserSession(
+            user_id=user_id,
+            session_token=token,
+            refresh_token="refresh_token",
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+            refresh_expires_at=datetime.now(UTC) + timedelta(days=7),
+            status=SessionStatus.ACTIVE,
+        )
+        object.__setattr__(
+            session,
+            "last_activity",
+            datetime.now(UTC) - timedelta(seconds=10),
+        )
+
+        mock_session_repository.get_by_access_token.return_value = session
+        mock_session_repository.update = AsyncMock()
+
+        result = await auth_service.validate_token(token)
+
+        assert result == sample_user
+        mock_session_repository.update.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_validate_token_invalid_token_type(

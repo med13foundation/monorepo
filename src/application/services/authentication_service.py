@@ -59,6 +59,15 @@ class AuthenticationService:
     SLIDING_EXPIRATION_ENABLED = (
         os.getenv("MED13_SLIDING_SESSION_EXPIRATION", "true").lower() == "true"
     )  # Default: enabled
+    SESSION_ACTIVITY_WRITE_INTERVAL_SECONDS = max(
+        int(
+            os.getenv(
+                "MED13_SESSION_ACTIVITY_WRITE_INTERVAL_SECONDS",
+                "300",
+            ),
+        ),
+        0,
+    )  # Default: 5 minutes
 
     def __init__(
         self,
@@ -283,6 +292,13 @@ class AuthenticationService:
                     days=self.REFRESH_TOKEN_EXPIRY_DAYS,
                 )
 
+    @staticmethod
+    def _coerce_utc(value: datetime) -> datetime:
+        """Normalize datetime values for safe comparisons."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
+
     async def _update_session_activity(self, session: UserSession) -> None:
         """
         Update session activity and extend if needed.
@@ -311,14 +327,44 @@ class AuthenticationService:
             )
 
             if is_active_result:
-                # Update activity timestamp
-                session.update_activity()
-
-                # Extend session if needed (sliding expiration)
+                previous_expires_at = self._coerce_utc(session.expires_at)
+                previous_refresh_expires_at = self._coerce_utc(
+                    session.refresh_expires_at,
+                )
                 self._extend_session_if_needed(session)
+                expires_at_changed = (
+                    self._coerce_utc(session.expires_at) != previous_expires_at
+                )
+                refresh_expires_at_changed = (
+                    self._coerce_utc(session.refresh_expires_at)
+                    != previous_refresh_expires_at
+                )
+                expiration_changed = expires_at_changed or refresh_expires_at_changed
 
-                await self.session_repository.update(session)
-                logger.debug("[validate_token] Session activity updated")
+                write_interval = timedelta(
+                    seconds=self.SESSION_ACTIVITY_WRITE_INTERVAL_SECONDS,
+                )
+                should_persist_activity = (
+                    expiration_changed
+                    or write_interval == timedelta(seconds=0)
+                    or session.time_since_activity() >= write_interval
+                )
+
+                if should_persist_activity:
+                    session.update_activity()
+                    await self.session_repository.update(session)
+                    logger.debug(
+                        "[validate_token] Session activity updated "
+                        "(expiration_changed=%s, write_interval_seconds=%d)",
+                        expiration_changed,
+                        self.SESSION_ACTIVITY_WRITE_INTERVAL_SECONDS,
+                    )
+                else:
+                    logger.debug(
+                        "[validate_token] Skipped session activity write "
+                        "(write_interval_seconds=%d)",
+                        self.SESSION_ACTIVITY_WRITE_INTERVAL_SECONDS,
+                    )
         except Exception:
             logger.exception("[validate_token] Error checking session.is_active()")
             raise

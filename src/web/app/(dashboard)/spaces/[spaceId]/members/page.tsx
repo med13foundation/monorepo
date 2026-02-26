@@ -27,25 +27,32 @@ export default async function SpaceMembersPage({ params }: SpaceMembersPageProps
   let membersError: string | null = null
   let currentMembership: ResearchSpaceMembership | null = null
 
-  try {
-    space = await fetchResearchSpace(spaceId, token)
-  } catch (error) {
-    console.error('[SpaceMembersPage] Failed to fetch research space', error)
+  const [spaceResult, membersResult, membershipResult] = await Promise.allSettled([
+    fetchResearchSpace(spaceId, token),
+    fetchSpaceMembers(spaceId, undefined, token),
+    fetchMyMembership(spaceId, token),
+  ])
+
+  if (spaceResult.status === 'fulfilled') {
+    space = spaceResult.value
+  } else {
+    console.error('[SpaceMembersPage] Failed to fetch research space', spaceResult.reason)
   }
 
-  try {
-    const membershipResponse = await fetchSpaceMembers(spaceId, undefined, token)
-    memberships = membershipResponse.memberships
-  } catch (error) {
+  if (membersResult.status === 'fulfilled') {
+    memberships = membersResult.value.memberships
+  } else {
     membersError =
-      error instanceof Error ? error.message : 'Unable to load members for this space.'
-    console.error('[SpaceMembersPage] Failed to fetch members', error)
+      membersResult.reason instanceof Error
+        ? membersResult.reason.message
+        : 'Unable to load members for this space.'
+    console.error('[SpaceMembersPage] Failed to fetch members', membersResult.reason)
   }
 
-  try {
-    currentMembership = await fetchMyMembership(spaceId, token)
-  } catch (error) {
-    console.error('[SpaceMembersPage] Failed to fetch membership', error)
+  if (membershipResult.status === 'fulfilled') {
+    currentMembership = membershipResult.value
+  } else {
+    console.error('[SpaceMembersPage] Failed to fetch membership', membershipResult.reason)
   }
 
   const isPlatformAdmin = session.user.role === UserRole.ADMIN

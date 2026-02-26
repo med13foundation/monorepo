@@ -90,12 +90,14 @@ class KernelRelationRepository(ABC):
         """
 
     @abstractmethod
-    def find_by_research_space(
+    def find_by_research_space(  # noqa: PLR0913 - query surface needs independent filters
         self,
         research_space_id: str,
         *,
         relation_type: str | None = None,
         curation_status: str | None = None,
+        node_query: str | None = None,
+        node_ids: list[str] | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:

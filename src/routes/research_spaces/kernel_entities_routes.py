@@ -39,6 +39,29 @@ from .router import (
 )
 
 
+def _parse_entity_ids_param(entity_ids: list[str] | None) -> list[str]:
+    if entity_ids is None:
+        return []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in entity_ids:
+        for token in raw.split(","):
+            trimmed = token.strip()
+            if not trimmed:
+                continue
+            try:
+                normalized_id = str(UUID(trimmed))
+            except ValueError:
+                continue
+            if normalized_id in seen:
+                continue
+            seen.add(normalized_id)
+            normalized.append(normalized_id)
+
+    return normalized
+
+
 @research_spaces_router.get(
     "/{space_id}/entities",
     response_model=KernelEntityListResponse,
@@ -54,6 +77,10 @@ def list_kernel_entities(
         description="Filter by entity type, e.g. GENE, VARIANT",
     ),
     q: str | None = Query(None, description="Search query on display label"),
+    ids: list[str] | None = Query(
+        None,
+        description="Comma-separated entity IDs to fetch directly.",
+    ),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_active_user),
@@ -69,7 +96,19 @@ def list_kernel_entities(
         current_user.role,
     )
 
-    if q:
+    entity_ids = _parse_entity_ids_param(ids)
+
+    if entity_ids:
+        paged_ids = entity_ids[offset : offset + limit]
+        entities = []
+        for entity_id in paged_ids:
+            entity = service.get_entity(entity_id)
+            if entity is None:
+                continue
+            if str(entity.research_space_id) != str(space_id):
+                continue
+            entities.append(entity)
+    elif q:
         # Repository search doesn't support offset directly; fetch offset+limit and slice.
         batch = service.search(
             str(space_id),

@@ -146,16 +146,13 @@ export interface KnowledgeGraphController {
   availableCurationStatuses: string[]
   relationTypeFilter: Set<string>
   curationStatusFilter: Set<string>
-  showRelationTable: boolean
-  showEntityTable: boolean
-  setShowRelationTable: (open: boolean) => void
-  setShowEntityTable: (open: boolean) => void
   onNodeClick: (nodeId: string) => void
   onHoverNodeChange: (nodeId: string | null) => void
   clearSelection: () => void
   runSearch: (syncUrl?: boolean) => Promise<void>
   resetToStarter: () => void
   resetFilters: () => void
+  enableAllRelationTypes: () => void
   toggleRelationType: (relationType: string, checked: boolean) => void
   toggleCurationStatus: (status: string, checked: boolean) => void
 }
@@ -194,9 +191,6 @@ export function useKnowledgeGraphController({
   const [curationStatusFilter, setCurationStatusFilter] = useState<Set<string>>(
     new Set(DEFAULT_VISIBLE_CURATION_STATUSES),
   )
-
-  const [showRelationTable, setShowRelationTable] = useState(false)
-  const [showEntityTable, setShowEntityTable] = useState(false)
 
   const topK = useMemo(
     () => parseBoundedInt(topKInput, initialTopK, MIN_TOP_K, MAX_TOP_K),
@@ -537,9 +531,23 @@ export function useKnowledgeGraphController({
     setHoveredNodeId(null)
   }, [])
 
+  const onHoverNodeChange = useCallback(
+    (nodeId: string | null): void => {
+      if (selectedNodeId) {
+        return
+      }
+      setHoveredNodeId(nodeId)
+    },
+    [selectedNodeId],
+  )
+
   const resetFilters = useCallback((): void => {
     setRelationTypeFilter(new Set())
     setCurationStatusFilter(new Set(DEFAULT_VISIBLE_CURATION_STATUSES))
+  }, [])
+
+  const enableAllRelationTypes = useCallback((): void => {
+    setRelationTypeFilter(new Set())
   }, [])
 
   const toggleRelationType = useCallback((relationType: string, checked: boolean): void => {
@@ -608,16 +616,13 @@ export function useKnowledgeGraphController({
     availableCurationStatuses,
     relationTypeFilter,
     curationStatusFilter,
-    showRelationTable,
-    showEntityTable,
-    setShowRelationTable,
-    setShowEntityTable,
     onNodeClick,
-    onHoverNodeChange: setHoveredNodeId,
+    onHoverNodeChange,
     clearSelection,
     runSearch,
     resetToStarter,
     resetFilters,
+    enableAllRelationTypes,
     toggleRelationType,
     toggleCurationStatus,
   }

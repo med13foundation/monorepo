@@ -6,16 +6,15 @@ import {
   FolderKanban,
   CloudDownload,
   ListChecks,
-  Network,
   BookOpen,
   BarChart3,
-  Upload,
   Users,
   Settings,
   Plus,
   ArrowLeft,
   type LucideIcon,
 } from "lucide-react"
+import { KnowledgeGraphIcon } from "@/components/icons/KnowledgeGraphIcon"
 import type {
   NavItem,
   NavGroup,
@@ -115,8 +114,6 @@ export function buildSpaceNavItems(
 ): NavGroup[] {
   const isSpaceAdmin =
     userSpaceRole === MembershipRole.OWNER || userSpaceRole === MembershipRole.ADMIN
-  const canIngest =
-    userSpaceRole !== undefined && userSpaceRole !== MembershipRole.VIEWER
 
   const mainGroup: NavGroup = {
     label: "Space",
@@ -146,7 +143,7 @@ export function buildSpaceNavItems(
         id: "knowledge-graph",
         title: "Knowledge Graph",
         url: `/spaces/${spaceId}/knowledge-graph`,
-        icon: Network,
+        icon: KnowledgeGraphIcon,
         isActive: pathname.startsWith(`/spaces/${spaceId}/knowledge-graph`),
       },
       {
@@ -157,16 +154,6 @@ export function buildSpaceNavItems(
         isActive: pathname.startsWith(`/spaces/${spaceId}/observations`),
       },
     ],
-  }
-
-  if (canIngest) {
-    mainGroup.items.push({
-      id: "ingest",
-      title: "Ingest",
-      url: `/spaces/${spaceId}/ingest`,
-      icon: Upload,
-      isActive: pathname.startsWith(`/spaces/${spaceId}/ingest`),
-    })
   }
 
   const groups: NavGroup[] = [mainGroup]

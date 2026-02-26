@@ -8,6 +8,8 @@ import { fetchSpaceDiscoveryState } from '@/app/actions/space-discovery'
 import { fetchSourceWorkflowMonitor } from '@/lib/api/kernel'
 import type { SourceWorkflowCardStatus } from '@/components/data-sources/DataSourcesList'
 
+export const dynamic = 'force-dynamic'
+
 interface SpaceDataSourcesPageProps {
   params: Promise<{
     spaceId: string
@@ -75,6 +77,30 @@ export default async function SpaceDataSourcesPage({
 }: SpaceDataSourcesPageProps) {
   const { spaceId } = await params
   const resolvedSearchParams = searchParams ? await searchParams : undefined
+  const onboardingParam = firstParam(resolvedSearchParams?.onboarding)
+  if (onboardingParam === '0') {
+    const cleanedParams = new URLSearchParams()
+    if (resolvedSearchParams) {
+      for (const [key, rawValue] of Object.entries(resolvedSearchParams)) {
+        if (key === 'onboarding' || rawValue === undefined) {
+          continue
+        }
+        if (typeof rawValue === 'string') {
+          cleanedParams.append(key, rawValue)
+        } else {
+          for (const value of rawValue) {
+            cleanedParams.append(key, value)
+          }
+        }
+      }
+    }
+    const cleanedQuery = cleanedParams.toString()
+    redirect(
+      cleanedQuery.length > 0
+        ? `/spaces/${spaceId}/data-sources?${cleanedQuery}`
+        : `/spaces/${spaceId}/data-sources`,
+    )
+  }
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 
@@ -85,20 +111,34 @@ export default async function SpaceDataSourcesPage({
   let dataSources: DataSourceListResponse | null = null
   let dataSourcesError: string | null = null
 
-  try {
-    dataSources = await fetchDataSourcesBySpace(spaceId, {}, token)
-  } catch (error) {
+  const [dataSourcesResult, discoveryResult] = await Promise.allSettled([
+    fetchDataSourcesBySpace(spaceId, {}, token),
+    fetchSpaceDiscoveryState(spaceId),
+  ])
+
+  if (dataSourcesResult.status === 'fulfilled') {
+    dataSources = dataSourcesResult.value
+  } else {
     dataSourcesError =
-      error instanceof Error ? error.message : 'Unable to load data sources for this space.'
-    console.error('[SpaceDataSourcesPage] Failed to fetch data sources', error)
+      dataSourcesResult.reason instanceof Error
+        ? dataSourcesResult.reason.message
+        : 'Unable to load data sources for this space.'
+    console.error('[SpaceDataSourcesPage] Failed to fetch data sources', dataSourcesResult.reason)
   }
 
-  const discoveryResult = await fetchSpaceDiscoveryState(spaceId)
-  const discoveryState = discoveryResult.success ? discoveryResult.data.orchestratedState : null
-  const discoveryCatalog = discoveryResult.success ? discoveryResult.data.catalog : []
-  const discoveryError = discoveryResult.success ? null : discoveryResult.error
+  const resolvedDiscoveryResult =
+    discoveryResult.status === 'fulfilled'
+      ? discoveryResult.value
+      : ({ success: false, error: 'Unable to load discovery state for this space.' } as const)
+  const discoveryState = resolvedDiscoveryResult.success
+    ? resolvedDiscoveryResult.data.orchestratedState
+    : null
+  const discoveryCatalog = resolvedDiscoveryResult.success
+    ? resolvedDiscoveryResult.data.catalog
+    : []
+  const discoveryError = resolvedDiscoveryResult.success ? null : resolvedDiscoveryResult.error
   const workflowMonitorEnabled = process.env.SPACE_WORKFLOW_MONITOR_ENABLED !== 'false'
-  const onboarding = firstParam(resolvedSearchParams?.onboarding) === '1'
+  const onboarding = onboardingParam === '1'
   let workflowStatusBySource: Record<string, SourceWorkflowCardStatus> = {}
 
   if (workflowMonitorEnabled && dataSources?.items && dataSources.items.length > 0) {
@@ -108,7 +148,7 @@ export default async function SpaceDataSourcesPage({
           const monitor = await fetchSourceWorkflowMonitor(
             spaceId,
             source.id,
-            { limit: 5, include_graph: true },
+            { limit: 5, include_graph: false },
             token,
           )
           const counters = monitor.operational_counters ?? {}
@@ -131,9 +171,13 @@ export default async function SpaceDataSourcesPage({
         }
       }),
     )
-    workflowStatusBySource = Object.fromEntries(
-      entries.filter((entry): entry is readonly [string, SourceWorkflowCardStatus] => entry !== null),
-    )
+    const workflowEntries: Array<[string, SourceWorkflowCardStatus]> = []
+    for (const entry of entries) {
+      if (entry !== null) {
+        workflowEntries.push([entry[0], entry[1]])
+      }
+    }
+    workflowStatusBySource = Object.fromEntries(workflowEntries)
   }
 
   return (

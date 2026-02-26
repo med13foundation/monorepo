@@ -1,5 +1,6 @@
 import cytoscape, {
   type Core,
+  type EdgeSingular,
   type ElementDefinition,
   type EventObjectEdge,
   type EventObjectNode,
@@ -7,8 +8,9 @@ import cytoscape, {
 } from 'cytoscape'
 import type { GraphEdge, GraphModel } from '@/lib/graph/model'
 import {
+  edgeOpacityForConfidence,
   edgeColorForRelationType,
-  edgeStrengthScore,
+  edgeWidthForStrength,
   edgeVisualForStatus,
   nodeVisualForEntityType,
 } from '@/lib/graph/style'
@@ -24,6 +26,8 @@ const CY_EDGE_HIGHLIGHT_CLASS = 'kg-highlight'
 const CY_EDGE_DIM_CLASS = 'kg-dim'
 const CY_EDGE_FOCUS_LABEL_CLASS = 'kg-edge-label-focus'
 const CY_EDGE_HOVER_LABEL_CLASS = 'kg-edge-label-hover'
+const CY_NODE_HOVER_CLASS = 'kg-node-hover'
+const CY_EDGE_HOVER_CLASS = 'kg-edge-hover'
 
 function normalizeToken(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
@@ -35,6 +39,10 @@ function nodeSizeForDegree(degree: number, maxDegree: number): number {
   }
   const ratio = Math.max(0, Math.min(1, degree / maxDegree))
   return Math.round(24 + Math.sqrt(ratio) * 42)
+}
+
+function sizeForFocus(baseSize: number): number {
+  return Math.round(baseSize * 1.12)
 }
 
 function nodeShapeClass(shape: string): string {
@@ -49,21 +57,28 @@ function edgeLineStyleClass(lineStyle: string): string {
   return `kg-edge-style-${lineStyle}`
 }
 
-function edgeStrengthClass(confidence: number, sourceCount: number): string {
-  const score = edgeStrengthScore(confidence, sourceCount)
-  if (score >= 0.9) {
-    return 'kg-edge-strength-high'
-  }
-  if (score >= 0.72) {
-    return 'kg-edge-strength-medium'
-  }
-  return 'kg-edge-strength-low'
-}
-
 function buildLayoutOptions(model: GraphModel): LayoutOptions {
+  const nodeCount = model.nodes.length
+  const edgeCount = model.edges.length
   const elementCount = model.nodes.length + model.edges.length
   const shouldAnimate = elementCount <= 120
-  if (model.edges.length === 0) {
+  const uniqueDegrees = new Set<number>(
+    model.nodes.map((node) => model.incidentEdges[node.id]?.length ?? 0),
+  )
+  const hasDegreeVariance = uniqueDegrees.size > 1
+
+  const circleLayout = {
+    name: 'circle',
+    fit: true,
+    padding: 52,
+    avoidOverlap: true,
+    nodeDimensionsIncludeLabels: true,
+    spacingFactor: 1.25,
+    animate: shouldAnimate,
+    animationDuration: 240,
+  } as LayoutOptions
+
+  if (edgeCount === 0) {
     return {
       name: 'grid',
       fit: true,
@@ -71,6 +86,28 @@ function buildLayoutOptions(model: GraphModel): LayoutOptions {
       avoidOverlap: true,
       animate: shouldAnimate,
       animationDuration: 220,
+    } as LayoutOptions
+  }
+  if (nodeCount <= 3 || !hasDegreeVariance) {
+    return circleLayout
+  }
+  if (nodeCount <= 14 && edgeCount <= 24) {
+    return {
+      name: 'concentric',
+      fit: true,
+      avoidOverlap: true,
+      minNodeSpacing: 48,
+      padding: 56,
+      animate: shouldAnimate,
+      animationDuration: 260,
+      concentric: (node: { data: (key: string) => unknown }) => {
+        const degree = node.data('degree')
+        return typeof degree === 'number' ? degree : 1
+      },
+      levelWidth: () => 1,
+      startAngle: (3 * Math.PI) / 2,
+      sweep: Math.PI * 2,
+      clockwise: true,
     } as LayoutOptions
   }
   return {
@@ -100,6 +137,7 @@ function buildElements(model: GraphModel): ElementDefinition[] {
   const nodeElements: ElementDefinition[] = model.nodes.map((node) => {
     const visual = nodeVisualForEntityType(node.entityType)
     const degree = degreeByNodeId[node.id] ?? 0
+    const size = nodeSizeForDegree(degree, maxDegree)
 
     return {
       classes: nodeShapeClass(visual.shape),
@@ -107,22 +145,28 @@ function buildElements(model: GraphModel): ElementDefinition[] {
         id: node.id,
         label: node.label,
         entityType: node.entityType,
-        color: visual.fillColor,
+        colorTop: visual.fillColor,
         borderColor: visual.borderColor,
-        size: nodeSizeForDegree(degree, maxDegree),
+        size,
+        sizeSelected: sizeForFocus(size),
         degree,
       },
+      grabbable: true,
     }
   })
 
   const edgeElements: ElementDefinition[] = model.edges.map((edge) => {
     const statusVisual = edgeVisualForStatus(edge.curationStatus)
+    const opacityForStatus = Math.max(0.12, statusVisual.opacity / 0.9)
+    const edgeOpacity = Number(
+      (edgeOpacityForConfidence(edge.confidence) * opacityForStatus).toFixed(2),
+    )
+    const edgeWidth = edgeWidthForStrength(edge.confidence, edge.sourceCount)
 
     return {
       classes: [
         edgeStatusClass(edge.curationStatus),
         edgeLineStyleClass(statusVisual.lineStyle),
-        edgeStrengthClass(edge.confidence, edge.sourceCount),
       ].join(' '),
       data: {
         id: edge.id,
@@ -132,6 +176,8 @@ function buildElements(model: GraphModel): ElementDefinition[] {
         curationStatus: edge.curationStatus,
         confidence: edge.confidence,
         color: edgeColorForRelationType(edge.relationType),
+        opacity: edgeOpacity,
+        width: edgeWidth,
       },
     }
   })
@@ -186,14 +232,13 @@ function applyClassHighlight(
     .removeClass(CY_EDGE_DIM_CLASS)
     .removeClass(CY_EDGE_FOCUS_LABEL_CLASS)
 
-  const hasNodeHighlights = highlightedNodeIds.size > 0
-  const hasEdgeHighlights = highlightedEdgeIds.size > 0
+  const nodeHighlights = cy.nodes().filter((node) => highlightedNodeIds.has(node.id()))
+  const edgeHighlights = cy.edges().filter((edge) => highlightedEdgeIds.has(edge.id()))
+  const hasNodeHighlights = nodeHighlights.length > 0
+  const hasEdgeHighlights = edgeHighlights.length > 0
   if (!hasNodeHighlights && !hasEdgeHighlights) {
     return
   }
-
-  const nodeHighlights = cy.nodes().filter((node) => highlightedNodeIds.has(node.id()))
-  const edgeHighlights = cy.edges().filter((edge) => highlightedEdgeIds.has(edge.id()))
 
   nodeHighlights.addClass(CY_NODE_HIGHLIGHT_CLASS)
   edgeHighlights.addClass(CY_EDGE_HIGHLIGHT_CLASS)
@@ -206,6 +251,11 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
   private cy: Core | null = null
   private readonly handlers: GraphInteractionHandlers
   private graph: GraphModel | null = null
+  private highlightSignature = ''
+  private hoveredNodeId: string | null = null
+  private hoveredEdgeId: string | null = null
+  private suppressHoverUntil = 0
+  private fallbackFitTimers: number[] = []
 
   public constructor(handlers: GraphInteractionHandlers) {
     this.handlers = handlers
@@ -219,31 +269,33 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
     this.cy = cytoscape({
       container,
       elements: [],
+      autoungrabify: false,
+      boxSelectionEnabled: false,
       style: [
         {
           selector: 'node',
           style: {
-            'background-color': 'data(color)',
-            'background-opacity': 0.96,
+            'background-color': 'data(colorTop)',
+            'background-opacity': 0.98,
             label: 'data(label)',
             color: '#0f172a',
-            'font-size': '10px',
+            'font-size': '11px',
             'font-weight': 700,
             'text-wrap': 'wrap',
             'text-max-width': '125px',
             'text-valign': 'bottom',
             'text-halign': 'center',
-            'text-margin-y': 6,
+            'text-margin-y': 7,
             width: 'data(size)',
             height: 'data(size)',
             'border-color': 'data(borderColor)',
-            'border-width': 2.4,
+            'border-width': 2.6,
             'text-background-color': '#f8fafc',
-            'text-background-opacity': 0.92,
+            'text-background-opacity': 0.84,
             'text-background-padding': '2.5px',
-            'text-border-color': '#ffffff',
-            'text-border-opacity': 0.8,
-            'text-border-width': 0.4,
+            'text-outline-color': '#f8fafc',
+            'text-outline-opacity': 1,
+            'text-outline-width': 1.3,
             'overlay-opacity': 0,
           },
         },
@@ -282,12 +334,15 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
           style: {
             'curve-style': 'bezier',
             'line-color': 'data(color)',
-            width: 2.6,
-            opacity: 0.58,
+            width: 'data(width)',
+            opacity: (edge: EdgeSingular) => {
+              const value = edge.data('opacity')
+              return typeof value === 'number' ? value : 0.9
+            },
             'line-style': 'solid',
             'target-arrow-color': 'data(color)',
             'target-arrow-shape': 'triangle',
-            'arrow-scale': 0.95,
+            'arrow-scale': 0.9,
             label: '',
             color: '#1f2937',
             'font-size': '9px',
@@ -313,66 +368,39 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
           },
         },
         {
-          selector: 'edge.kg-edge-strength-high',
-          style: {
-            width: 5.2,
-          },
-        },
-        {
-          selector: 'edge.kg-edge-strength-medium',
-          style: {
-            width: 3.8,
-          },
-        },
-        {
-          selector: 'edge.kg-edge-strength-low',
-          style: {
-            width: 2.7,
-          },
-        },
-        {
-          selector: 'edge.kg-edge-status-approved',
-          style: {
-            opacity: 0.9,
-          },
-        },
-        {
-          selector: 'edge.kg-edge-status-under-review',
-          style: {
-            opacity: 0.68,
-          },
-        },
-        {
-          selector: 'edge.kg-edge-status-draft',
-          style: {
-            opacity: 0.45,
-          },
-        },
-        {
-          selector: 'edge.kg-edge-status-rejected',
-          style: {
-            opacity: 0.28,
-          },
-        },
-        {
-          selector: 'edge.kg-edge-status-retracted',
-          style: {
-            opacity: 0.2,
-          },
-        },
-        {
           selector: `edge.${CY_EDGE_FOCUS_LABEL_CLASS}, edge.${CY_EDGE_HOVER_LABEL_CLASS}, edge:selected`,
           style: {
             label: 'data(label)',
-            'text-background-opacity': 0.92,
+            'text-background-opacity': 0.94,
+            'font-weight': 700,
+          },
+        },
+        {
+          selector: `node.${CY_NODE_HOVER_CLASS}`,
+          style: {
+            'border-width': 4,
+            'underlay-color': '#0f172a',
+            'underlay-opacity': 0.14,
+            'underlay-padding': 3,
+          },
+        },
+        {
+          selector: `edge.${CY_EDGE_HOVER_CLASS}`,
+          style: {
+            opacity: 0.94,
+            'z-index': 24,
           },
         },
         {
           selector: `node.${CY_NODE_HIGHLIGHT_CLASS}`,
           style: {
             'border-color': '#0f766e',
-            'border-width': 4,
+            'border-width': 4.2,
             opacity: 1,
+            'underlay-color': '#0f766e',
+            'underlay-opacity': 0.16,
+            'underlay-padding': 4,
+            'z-index': 26,
           },
         },
         {
@@ -387,60 +415,140 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
           selector: 'node:selected',
           style: {
             'border-color': '#0f766e',
-            'border-width': 4.5,
+            'border-width': 5,
+            width: 'data(sizeSelected)',
+            height: 'data(sizeSelected)',
             opacity: 1,
+            'underlay-color': '#0f766e',
+            'underlay-opacity': 0.2,
+            'underlay-padding': 5,
+            'z-index': 28,
           },
         },
         {
           selector: `node.${CY_NODE_DIM_CLASS}`,
           style: {
-            opacity: 0.1,
+            opacity: 0.32,
+            'text-opacity': 0.45,
           },
         },
         {
           selector: `edge.${CY_EDGE_DIM_CLASS}`,
           style: {
-            opacity: 0.06,
+            opacity: 0.24,
+            'text-opacity': 0,
+          },
+        },
+        {
+          selector: `node.${CY_NODE_DIM_CLASS}.${CY_NODE_HOVER_CLASS}`,
+          style: {
+            opacity: 0.9,
+            'text-opacity': 1,
+          },
+        },
+        {
+          selector: `edge.${CY_EDGE_DIM_CLASS}.${CY_EDGE_HOVER_CLASS}`,
+          style: {
+            opacity: 0.92,
           },
         },
       ],
       layout: { name: 'grid', fit: true, padding: 20 },
-      wheelSensitivity: 0.2,
       minZoom: 0.1,
       maxZoom: 4,
     })
 
+    const suppressHoverFor = (durationMs: number): void => {
+      this.suppressHoverUntil = Date.now() + durationMs
+      this.handlers.onHoverChange?.(null)
+    }
+
+    this.cy.on('pan zoom dragpan', () => {
+      suppressHoverFor(90)
+    })
+    this.cy.on('boxstart', () => {
+      suppressHoverFor(90)
+    })
+
+    this.cy.on('tap', () => {
+      this.handlers.onCanvasTap?.()
+    })
     this.cy.on('tap', 'node', (event: EventObjectNode) => {
       this.handlers.onNodeClick?.(event.target.id())
     })
     this.cy.on('mouseover', 'node', (event: EventObjectNode) => {
+      if (Date.now() < this.suppressHoverUntil) {
+        return
+      }
+      const nodeId = event.target.id()
       const coordinates = hoverCoordinatesForNode(event)
+      if (this.hoveredNodeId && this.hoveredNodeId !== nodeId) {
+        this.cy?.getElementById(this.hoveredNodeId).removeClass(CY_NODE_HOVER_CLASS)
+      }
+      this.hoveredNodeId = nodeId
+      event.target.addClass(CY_NODE_HOVER_CLASS)
       event.target.connectedEdges().addClass(CY_EDGE_HOVER_LABEL_CLASS)
-      emitHover(this.handlers, 'node', event.target.id(), coordinates.x, coordinates.y)
+      event.target.connectedEdges().addClass(CY_EDGE_HOVER_CLASS)
+      emitHover(this.handlers, 'node', nodeId, coordinates.x, coordinates.y)
     })
     this.cy.on('mouseout', 'node', (event: EventObjectNode) => {
+      if (Date.now() < this.suppressHoverUntil) {
+        return
+      }
+      event.target.removeClass(CY_NODE_HOVER_CLASS)
       event.target.connectedEdges().removeClass(CY_EDGE_HOVER_LABEL_CLASS)
+      event.target.connectedEdges().removeClass(CY_EDGE_HOVER_CLASS)
+      if (this.hoveredNodeId === event.target.id()) {
+        this.hoveredNodeId = null
+      }
       this.handlers.onHoverChange?.(null)
     })
     this.cy.on('mouseover', 'edge', (event: EventObjectEdge) => {
+      if (Date.now() < this.suppressHoverUntil) {
+        return
+      }
+      const edgeId = event.target.id()
       const coordinates = hoverCoordinatesForEdge(event)
+      if (this.hoveredEdgeId && this.hoveredEdgeId !== edgeId) {
+        this.cy?.getElementById(this.hoveredEdgeId).removeClass(CY_EDGE_HOVER_CLASS)
+        this.cy?.getElementById(this.hoveredEdgeId).removeClass(CY_EDGE_HOVER_LABEL_CLASS)
+      }
+      this.hoveredEdgeId = edgeId
       event.target.addClass(CY_EDGE_HOVER_LABEL_CLASS)
-      emitHover(this.handlers, 'edge', event.target.id(), coordinates.x, coordinates.y)
+      event.target.addClass(CY_EDGE_HOVER_CLASS)
+      emitHover(this.handlers, 'edge', edgeId, coordinates.x, coordinates.y)
     })
     this.cy.on('mouseout', 'edge', (event: EventObjectEdge) => {
+      if (Date.now() < this.suppressHoverUntil) {
+        return
+      }
       event.target.removeClass(CY_EDGE_HOVER_LABEL_CLASS)
+      event.target.removeClass(CY_EDGE_HOVER_CLASS)
+      if (this.hoveredEdgeId === event.target.id()) {
+        this.hoveredEdgeId = null
+      }
       this.handlers.onHoverChange?.(null)
     })
   }
 
   public unmount(): void {
+    this.clearFallbackFitTasks()
     this.handlers.onHoverChange?.(null)
     this.cy?.destroy()
     this.cy = null
+    this.highlightSignature = ''
+    this.hoveredNodeId = null
+    this.hoveredEdgeId = null
+    this.suppressHoverUntil = 0
   }
 
   public setGraph(model: GraphModel): void {
     this.graph = model
+    this.highlightSignature = ''
+    this.hoveredNodeId = null
+    this.hoveredEdgeId = null
+    this.suppressHoverUntil = Date.now() + 120
+    this.handlers.onHoverChange?.(null)
     if (!this.cy) {
       return
     }
@@ -451,7 +559,14 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
       this.cy?.add(elements)
     })
 
-    this.cy.layout(buildLayoutOptions(model)).run()
+    this.clearFallbackFitTasks()
+    this.cy.resize()
+    const layout = this.cy.layout(buildLayoutOptions(model))
+    layout.on('layoutstop', () => {
+      this.cy?.fit(undefined, 36)
+    })
+    layout.run()
+    this.scheduleFallbackFitPasses()
   }
 
   public setHighlight(
@@ -461,6 +576,13 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
     if (!this.cy) {
       return
     }
+    const nextSignature = `${[...highlightedNodeIds].sort().join('|')}::${[...highlightedEdgeIds]
+      .sort()
+      .join('|')}`
+    if (nextSignature === this.highlightSignature) {
+      return
+    }
+    this.highlightSignature = nextSignature
     applyClassHighlight(this.cy, highlightedNodeIds, highlightedEdgeIds)
   }
 
@@ -490,6 +612,65 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
       return
     }
     this.cy.fit(undefined, 32)
+  }
+
+  public zoomIn(): void {
+    this.zoomBy(1.18)
+  }
+
+  public zoomOut(): void {
+    this.zoomBy(1 / 1.18)
+  }
+
+  private clearFallbackFitTasks(): void {
+    if (this.fallbackFitTimers.length === 0) {
+      return
+    }
+    for (const timerId of this.fallbackFitTimers) {
+      window.clearTimeout(timerId)
+    }
+    this.fallbackFitTimers = []
+  }
+
+  private scheduleFallbackFitPasses(): void {
+    if (!this.cy || !this.graph || this.graph.stats.nodeCount === 0) {
+      return
+    }
+
+    const runFitPass = (): void => {
+      if (!this.cy || !this.graph || this.graph.stats.nodeCount === 0) {
+        return
+      }
+      this.cy.resize()
+      this.cy.fit(undefined, 36)
+    }
+
+    window.requestAnimationFrame(runFitPass)
+    this.fallbackFitTimers.push(window.setTimeout(runFitPass, 140))
+    this.fallbackFitTimers.push(window.setTimeout(runFitPass, 340))
+  }
+
+  private zoomBy(scaleFactor: number): void {
+    if (!this.cy || !this.graph || this.graph.stats.nodeCount === 0) {
+      return
+    }
+
+    const currentZoom = this.cy.zoom()
+    const nextZoom = Math.max(
+      this.cy.minZoom(),
+      Math.min(this.cy.maxZoom(), currentZoom * scaleFactor),
+    )
+    if (Math.abs(nextZoom - currentZoom) < 0.001) {
+      return
+    }
+
+    this.cy.zoom({
+      level: nextZoom,
+      renderedPosition: {
+        x: this.cy.width() / 2,
+        y: this.cy.height() / 2,
+      },
+    })
   }
 }
 

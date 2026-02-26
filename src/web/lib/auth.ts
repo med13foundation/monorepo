@@ -67,6 +67,8 @@ const authApiClient = axios.create({
   proxy: false,
 })
 
+let hasLoggedRecoverableJwtWarning = false
+
 function formatAxiosError(error: unknown): string {
   if (!axios.isAxiosError(error)) {
     if (error instanceof Error) {
@@ -164,6 +166,58 @@ function toSafeExpiresAt(
 
   const expiryFromJwt = decodeJwtClaimValue(accessToken, "exp")
   return expiryFromJwt ?? 0
+}
+
+function toErrorMessage(value: unknown): string {
+  if (typeof value === "string") {
+    return value
+  }
+  if (value instanceof Error) {
+    return value.message
+  }
+  if (typeof value === "object" && value !== null) {
+    const message = (value as Record<string, unknown>).message
+    if (typeof message === "string") {
+      return message
+    }
+  }
+  return ""
+}
+
+function toErrorName(value: unknown): string {
+  if (value instanceof Error) {
+    return value.name
+  }
+  if (typeof value === "object" && value !== null) {
+    const name = (value as Record<string, unknown>).name
+    if (typeof name === "string") {
+      return name
+    }
+  }
+  return ""
+}
+
+function includesDecryptFailure(value: unknown): boolean {
+  const message = toErrorMessage(value).toLowerCase()
+  const name = toErrorName(value).toLowerCase()
+  return (
+    message.includes("decryption operation failed") ||
+    name.includes("jwedecryptionfailed")
+  )
+}
+
+export function isRecoverableSessionDecryptionError(value: unknown): boolean {
+  if (includesDecryptFailure(value)) {
+    return true
+  }
+  if (typeof value !== "object" || value === null) {
+    return false
+  }
+  const record = value as Record<string, unknown>
+  return (
+    includesDecryptFailure(record.error) ||
+    includesDecryptFailure(record.cause)
+  )
 }
 
 export const authOptions: NextAuthOptions = {
@@ -410,6 +464,35 @@ export const authOptions: NextAuthOptions = {
         })
       }
       return session
+    },
+  },
+  logger: {
+    error(code, metadata) {
+      if (
+        code === "JWT_SESSION_ERROR" &&
+        (isRecoverableSessionDecryptionError(metadata) ||
+          (typeof metadata === "object" &&
+            metadata !== null &&
+            Object.keys(metadata as Record<string, unknown>).length === 0))
+      ) {
+        if (process.env.NODE_ENV === "development" && !hasLoggedRecoverableJwtWarning) {
+          hasLoggedRecoverableJwtWarning = true
+          console.warn(
+            "[next-auth][warn][JWT_SESSION_RECOVERABLE] Stale session cookie detected; continuing as signed out."
+          )
+        }
+        return
+      }
+
+      console.error(`[next-auth][error][${code}]`, metadata)
+    },
+    warn(code) {
+      console.warn(`[next-auth][warn][${code}]`)
+    },
+    debug(code, metadata) {
+      if (process.env.NODE_ENV === "development") {
+        console.debug(`[next-auth][debug][${code}]`, metadata)
+      }
     },
   },
   pages: {

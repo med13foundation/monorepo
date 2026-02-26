@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import {
   cancelSpaceSourcePipelineRun,
+  fetchSourceWorkflowEvents,
   fetchSourceWorkflowMonitor,
   runSpaceSourcePipeline,
   runAllActiveSpaceSourcesIngestion,
@@ -28,6 +29,22 @@ export interface WorkflowCardStatusPayload {
   pending_relation_review_count: number
   graph_edges_delta_last_run: number
   graph_edges_total: number
+}
+
+export interface WorkflowEventCardItem {
+  event_id: string
+  occurred_at: string | null
+  category: string | null
+  stage: string | null
+  status: string | null
+  message: string
+}
+
+export interface WorkflowEventListPayload {
+  generated_at: string | null
+  total: number
+  has_more: boolean
+  events: WorkflowEventCardItem[]
 }
 
 function toNumber(value: unknown): number {
@@ -250,6 +267,65 @@ export async function fetchSourceWorkflowCardStatusAction(
     return {
       success: false,
       error: getActionErrorMessage(error, 'Failed to fetch source workflow counters'),
+    }
+  }
+}
+
+export async function fetchSourceWorkflowEventsAction(
+  spaceId: string,
+  sourceId: string,
+  options: {
+    run_id?: string | null
+    since?: string | null
+    limit?: number
+  } = {},
+): Promise<ActionResult<WorkflowEventListPayload>> {
+  try {
+    const token = await requireAccessToken()
+    const response = await fetchSourceWorkflowEvents(
+      spaceId,
+      sourceId,
+      {
+        run_id: options.run_id ?? undefined,
+        since: options.since ?? undefined,
+        limit: options.limit ?? 8,
+      },
+      token,
+    )
+    return {
+      success: true,
+      data: {
+        generated_at:
+          typeof response.generated_at === 'string' ? response.generated_at : null,
+        total: toNumber(response.total),
+        has_more: response.has_more === true,
+        events: Array.isArray(response.events)
+          ? response.events.map((event) => ({
+              event_id: event.event_id,
+              occurred_at:
+                typeof event.occurred_at === 'string' ? event.occurred_at : null,
+              category: typeof event.category === 'string' ? event.category : null,
+              stage: typeof event.stage === 'string' ? event.stage : null,
+              status: typeof event.status === 'string' ? event.status : null,
+              message:
+                typeof event.message === 'string' && event.message.trim().length > 0
+                  ? event.message
+                  : 'Workflow event updated.',
+            }))
+          : [],
+      },
+    }
+  } catch (error: unknown) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('[ServerAction] fetchSourceWorkflowEvents failed:', {
+        error,
+        spaceId,
+        sourceId,
+      })
+    }
+    return {
+      success: false,
+      error: getActionErrorMessage(error, 'Failed to fetch source workflow events'),
     }
   }
 }

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -39,7 +41,49 @@ class SourceWorkflowMonitorResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+WorkflowEventCategory = Literal[
+    "run",
+    "stage",
+    "document",
+    "queue",
+    "extraction",
+    "review",
+    "graph",
+]
+
+
+class SourceWorkflowEvent(BaseModel):
+    """One timeline event emitted by the source workflow monitor."""
+
+    model_config = ConfigDict(strict=True)
+
+    event_id: str
+    source_id: UUID
+    run_id: str | None = None
+    occurred_at: datetime
+    category: WorkflowEventCategory
+    stage: str | None = None
+    status: str | None = None
+    message: str
+    payload: JSONObject = Field(default_factory=dict)
+
+
+class SourceWorkflowEventListResponse(BaseModel):
+    """Detailed monitor events for one source (optionally one run)."""
+
+    model_config = ConfigDict(strict=True)
+
+    source_id: UUID
+    run_id: str | None = None
+    generated_at: datetime
+    events: list[SourceWorkflowEvent] = Field(default_factory=list)
+    total: int = 0
+    has_more: bool = False
+
+
 __all__ = [
     "SourcePipelineRunListResponse",
+    "SourceWorkflowEvent",
+    "SourceWorkflowEventListResponse",
     "SourceWorkflowMonitorResponse",
 ]

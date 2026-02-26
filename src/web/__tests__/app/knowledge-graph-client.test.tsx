@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import KnowledgeGraphClient from '@/app/(dashboard)/spaces/[spaceId]/knowledge-graph-client'
 import { fetchKernelSubgraph, searchKernelGraph } from '@/lib/api/kernel'
 import { useSession } from 'next-auth/react'
@@ -285,28 +285,21 @@ describe('KnowledgeGraphClient', () => {
     })
   })
 
-  it('applies relation filter and updates visible relation table rows', async () => {
+  it('applies relation filter and updates visible graph edges', async () => {
     mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
     await waitFor(() => {
       expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
     })
 
-    const showButtons = screen.getAllByRole('button', { name: 'Show' })
-    fireEvent.click(showButtons[0])
-
-    const relationTable = screen.getAllByRole('table')[0]
-    expect(within(relationTable).getByText('ASSOCIATED_WITH')).toBeInTheDocument()
-    expect(within(relationTable).getByText('CO_OCCURS_WITH')).toBeInTheDocument()
-
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
     fireEvent.click(screen.getByLabelText('ASSOCIATED_WITH'))
 
     await waitFor(() => {
-      const table = screen.getAllByRole('table')[0]
-      expect(within(table).getByText('ASSOCIATED_WITH')).toBeInTheDocument()
-      expect(within(table).queryByText('CO_OCCURS_WITH')).not.toBeInTheDocument()
+      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('1')
     })
   })
 })

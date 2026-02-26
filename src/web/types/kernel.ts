@@ -248,6 +248,36 @@ export interface SourceWorkflowMonitorResponse {
   warnings: string[]
 }
 
+export type SourceWorkflowEventCategory =
+  | 'run'
+  | 'stage'
+  | 'document'
+  | 'queue'
+  | 'extraction'
+  | 'review'
+  | 'graph'
+
+export interface SourceWorkflowEvent {
+  event_id: string
+  source_id: string
+  run_id: string | null
+  occurred_at: string
+  category: SourceWorkflowEventCategory
+  stage: string | null
+  status: string | null
+  message: string
+  payload: JSONObject
+}
+
+export interface SourceWorkflowEventsResponse {
+  source_id: string
+  run_id: string | null
+  generated_at: string
+  events: SourceWorkflowEvent[]
+  total: number
+  has_more: boolean
+}
+
 export interface GraphSearchRequest {
   question: string
   max_depth?: number

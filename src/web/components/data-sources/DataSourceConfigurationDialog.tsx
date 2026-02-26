@@ -33,7 +33,7 @@ import { DataSourceScheduleFields } from './DataSourceScheduleFields'
 import type { AiConfigFormValues } from './DataSourceAiConfigDialog'
 import type { ScheduleFormValues } from './DataSourceScheduleDialog'
 
-const aiConfigSchema: z.ZodType<AiConfigFormValues> = z.object({
+const aiConfigSchema = z.object({
   use_research_space_context: z.boolean().default(true),
   agent_prompt: z.string().default(''),
   model_id: z.string().nullable().default(null),
@@ -41,7 +41,7 @@ const aiConfigSchema: z.ZodType<AiConfigFormValues> = z.object({
   open_access_only: z.boolean().default(true),
 })
 
-const scheduleSchema: z.ZodType<ScheduleFormValues> = z.object({
+const scheduleSchema = z.object({
   enabled: z.boolean().default(true),
   frequency: z.enum(['manual', 'hourly', 'daily', 'weekly', 'monthly', 'cron']),
   startTime: z.string().optional(),

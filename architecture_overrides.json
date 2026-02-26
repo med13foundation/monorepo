@@ -53,6 +53,30 @@
       "max_lines": 1300,
       "reason": "Dictionary ORM includes expanded versioning/validity and transform-governance fields across multiple tables; model breakup is deferred to schema package reorganization.",
       "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/routes/research_spaces/kernel_relations_routes.py",
+      "max_lines": 700,
+      "reason": "Kernel relation route handlers remain consolidated while graph-route surface and filtering contracts are stabilized; module split is tracked as follow-up.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/services/authentication_service.py",
+      "max_lines": 650,
+      "reason": "Authentication flows are temporarily centralized while session lifecycle and admin controls finalize; service decomposition is planned.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/services/_ingestion_scheduling_core_helpers.py",
+      "max_lines": 700,
+      "reason": "Scheduling helper orchestration is currently grouped for deterministic retry and lock behavior; extraction by concern is planned.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/services/_pipeline_orchestration_execution_helpers.py",
+      "max_lines": 700,
+      "reason": "Unified pipeline execution helpers stay co-located during orchestration hardening; split into stage-specific modules is planned.",
+      "expires_on": "2026-12-31"
     }
   ],
   "class_size": [
