@@ -232,6 +232,19 @@ export interface SourcePipelineRunsResponse {
   total: number
 }
 
+export interface ArtanaStageProgressSnapshot {
+  stage: string
+  run_id: string | null
+  status: string | null
+  percent: number | null
+  current_stage: string | null
+  completed_stages: string[]
+  started_at: string | null
+  updated_at: string | null
+  eta_seconds: number | null
+  candidate_run_ids: string[]
+}
+
 export interface SourceWorkflowMonitorResponse {
   source_snapshot: JSONObject
   last_run: JSONObject | null
@@ -245,6 +258,7 @@ export interface SourceWorkflowMonitorResponse {
   relation_review: JSONObject
   graph_summary: JSONObject | null
   operational_counters: JSONObject
+  artana_progress?: Record<string, ArtanaStageProgressSnapshot>
   warnings: string[]
 }
 

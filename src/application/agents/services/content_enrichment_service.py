@@ -15,7 +15,6 @@ from src.application.agents.services._content_enrichment_helpers import (
     build_metadata_patch,
     merge_metadata,
     resolve_run_id,
-    try_parse_uuid,
 )
 from src.application.agents.services._content_enrichment_storage_helpers import (
     _ContentEnrichmentStorageHelpers,
@@ -165,7 +164,7 @@ class ContentEnrichmentService(
             self._persist_document_with_status(
                 document=document,
                 status=EnrichmentStatus.FAILED,
-                run_uuid=None,
+                run_id=None,
                 acquisition_method="skipped",
                 metadata_patch={
                     "content_enrichment_error": str(exc),
@@ -182,7 +181,6 @@ class ContentEnrichmentService(
             )
 
         run_id = resolve_run_id(contract)
-        run_uuid = try_parse_uuid(run_id)
 
         full_text_validation_failure = self._validate_required_full_text_contract(
             document=document,
@@ -204,7 +202,7 @@ class ContentEnrichmentService(
             self._persist_document_with_status(
                 document=document,
                 status=persisted_status,
-                run_uuid=run_uuid,
+                run_id=run_id,
                 acquisition_method=contract.acquisition_method,
                 metadata_patch=build_metadata_patch(
                     contract=contract,
@@ -229,7 +227,7 @@ class ContentEnrichmentService(
             self._persist_document_with_status(
                 document=document,
                 status=EnrichmentStatus.SKIPPED,
-                run_uuid=run_uuid,
+                run_id=run_id,
                 acquisition_method=contract.acquisition_method,
                 metadata_patch=build_metadata_patch(
                     contract=contract,
@@ -253,7 +251,7 @@ class ContentEnrichmentService(
             self._persist_document_with_status(
                 document=document,
                 status=EnrichmentStatus.FAILED,
-                run_uuid=run_uuid,
+                run_id=run_id,
                 acquisition_method=contract.acquisition_method,
                 metadata_patch=build_metadata_patch(
                     contract=contract,
@@ -285,7 +283,7 @@ class ContentEnrichmentService(
             self._persist_document_with_status(
                 document=document,
                 status=EnrichmentStatus.FAILED,
-                run_uuid=run_uuid,
+                run_id=run_id,
                 acquisition_method=contract.acquisition_method,
                 metadata_patch=build_metadata_patch(
                     contract=contract,
@@ -311,7 +309,7 @@ class ContentEnrichmentService(
             content_hash=storage_result.content_hash,
             content_length_chars=storage_result.content_length_chars,
             enrichment_method=contract.acquisition_method,
-            enrichment_agent_run_id=run_uuid,
+            enrichment_agent_run_id=run_id,
             enriched_at=datetime.now(UTC),
         )
         metadata_patch = build_metadata_patch(

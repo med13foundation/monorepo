@@ -490,7 +490,7 @@ async def test_process_document_hands_off_to_extraction_service_when_configured(
         review_required=False,
         shadow_mode=False,
         wrote_to_kernel=True,
-        run_id="90cc2d52-af8d-4dcf-8f03-95f807fe4b87",
+        run_id="extract:clinvar:sha256:handoff-run",
         observations_extracted=1,
         relations_extracted=0,
         rejected_facts=0,
@@ -524,6 +524,10 @@ async def test_process_document_hands_off_to_extraction_service_when_configured(
     persisted_document = repository.get_by_id(document.id)
     assert persisted_document is not None
     assert persisted_document.extraction_status == DocumentExtractionStatus.EXTRACTED
+    assert (
+        persisted_document.extraction_agent_run_id
+        == "extract:clinvar:sha256:handoff-run"
+    )
     assert (
         persisted_document.metadata.get("extraction_stage_status")
         == extraction_outcome.status
@@ -609,7 +613,7 @@ async def test_process_document_uses_agent_mutation_reconciliation_when_run_id_p
 
     contract = _build_contract(document.id).model_copy(
         update={
-            "agent_run_id": "7f2dd58b-0f35-4ea3-9cb5-e7840728bcfe",
+            "agent_run_id": "recognize:clinvar:sha256:mutation-run",
             "created_definitions": ["VAR_CLINICAL_SIGNIFICANCE"],
             "created_synonyms": ["clinical_significance"],
             "created_entity_types": ["VARIANT"],
@@ -639,6 +643,12 @@ async def test_process_document_uses_agent_mutation_reconciliation_when_run_id_p
     assert dictionary.created_variables == 0
     assert dictionary.created_synonyms == 0
     assert dictionary.created_entity_types == 0
+    persisted_document = repository.get_by_id(document.id)
+    assert persisted_document is not None
+    assert (
+        persisted_document.extraction_agent_run_id
+        == "recognize:clinvar:sha256:mutation-run"
+    )
 
 
 @pytest.mark.asyncio

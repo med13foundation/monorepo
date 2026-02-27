@@ -10,7 +10,17 @@ This chapter focuses on production patterns:
 * Middleware enforcement
 * Ledger & observability
 
-All examples are runnable and reflect the current API.
+## Chapter Metadata
+
+- Audience: Engineers who completed Chapter 1 and are moving to durable multi-session execution.
+- Prerequisites: Chapter 1 complete; comfort with `TaskUnit`, run IDs, and basic tooling.
+- Estimated time: 35 minutes.
+- Expected outcome: You can structure long-running harness workflows with supervisor coordination and production-safe middleware/audit practices.
+
+Code block contract for this chapter:
+
+* `python` blocks are standalone runnable scripts.
+* `pycon` blocks are in-context snippets and may assume existing `kernel`, `tenant`, or harness state.
 
 ---
 
@@ -20,12 +30,16 @@ Instead of directly spawning subagents from tools, modern Artana prefers **Super
 
 ```python
 import asyncio
-from pydantic import BaseModel
 
-from artana.harness import IncrementalTaskHarness, SupervisorHarness, TaskUnit
-from artana.kernel import ArtanaKernel
-from artana.models import TenantContext
-from artana.store import SQLiteStore
+from artana import (
+    ArtanaKernel,
+    IncrementalTaskHarness,
+    MockModelPort,
+    SQLiteStore,
+    SupervisorHarness,
+    TaskUnit,
+    TenantContext,
+)
 
 
 class ResearchHarness(IncrementalTaskHarness):
@@ -39,10 +53,21 @@ class ResearchHarness(IncrementalTaskHarness):
         print("Research task executed:", task.id)
 
 
+class SwarmSupervisor(SupervisorHarness):
+    async def step(self, *, context):
+        child = ResearchHarness(kernel=self.kernel, tenant=context.tenant)
+        return await self.run_child(
+            harness=child,
+            run_id=f"{context.run_id}::research",
+            tenant=context.tenant,
+            model=context.model,
+        )
+
+
 async def main():
     kernel = ArtanaKernel(
         store=SQLiteStore("chapter2_step1.db"),
-        model_port=None,
+        model_port=MockModelPort(output={"message": "unused"}),
     )
 
     tenant = TenantContext(
@@ -51,13 +76,8 @@ async def main():
         budget_usd_limit=5.0,
     )
 
-    supervisor = SupervisorHarness(kernel=kernel, tenant=tenant)
-    child_harness = ResearchHarness(kernel=kernel, tenant=tenant)
-
-    result = await supervisor.run_child(
-        harness=child_harness,
-        run_id="swarm_run_01"
-    )
+    supervisor = SwarmSupervisor(kernel=kernel, tenant=tenant)
+    result = await supervisor.run(run_id="swarm_run_01")
 
     print("Child task states:", result)
     await kernel.close()
@@ -80,10 +100,15 @@ This replaces ad-hoc autonomous loops with structured continuity.
 
 ```python
 import asyncio
-from artana.harness import IncrementalTaskHarness, TaskUnit
-from artana.kernel import ArtanaKernel
-from artana.models import TenantContext
-from artana.store import SQLiteStore
+
+from artana import (
+    ArtanaKernel,
+    IncrementalTaskHarness,
+    MockModelPort,
+    SQLiteStore,
+    TaskUnit,
+    TenantContext,
+)
 
 
 class DataPipelineHarness(IncrementalTaskHarness):
@@ -102,7 +127,7 @@ class DataPipelineHarness(IncrementalTaskHarness):
 async def main():
     kernel = ArtanaKernel(
         store=SQLiteStore("chapter2_step2.db"),
-        model_port=None,
+        model_port=MockModelPort(output={"message": "unused"}),
     )
 
     tenant = TenantContext(
@@ -139,7 +164,9 @@ Long-running agents evolve. Prompts change. Policies update.
 
 Artana supports safe replay policies.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.kernel import ReplayPolicy
 
 harness = DataPipelineHarness(
@@ -164,7 +191,7 @@ Replay modes:
 
 | Mode               | Behavior                         |
 | ------------------ | -------------------------------- |
-| strict             | Fail if prompt changes           |
+| strict             | Fail if model inputs/options change |
 | allow_prompt_drift | Replay safely with drift summary |
 | fork_on_drift      | Fork run if logic changed        |
 
@@ -176,7 +203,9 @@ This is critical for long-lived systems.
 
 Artifacts allow structured continuity across sessions.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 await harness.set_artifact(key="schema_version", value={"v": 2})
 schema = await harness.get_artifact(key="schema_version")
 print("Schema:", schema)
@@ -202,7 +231,9 @@ Use artifacts for:
 
 You can layer custom policies safely.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.middleware import (
     PIIScrubberMiddleware,
     QuotaMiddleware,
@@ -241,7 +272,17 @@ Order is enforced automatically:
 1. PII scrub
 2. Quota
 3. Capability guard
-4. Custom middleware
+4. Safety policy (if configured)
+5. Custom middleware
+
+Capability visibility helper (in-context, not standalone):
+
+```pycon
+capabilities_view = await kernel.describe_capabilities(tenant=tenant)
+visible_tools = kernel.list_tools_for_tenant(tenant=tenant)
+print(capabilities_view["final_allowed_tools"])
+print([tool.name for tool in visible_tools])
+```
 
 ---
 
@@ -249,14 +290,20 @@ Order is enforced automatically:
 
 Every run is a verifiable ledger.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
+from artana.store import SQLiteStore
+
 events = await kernel.get_events(run_id="pipeline_run_001")
 
 for event in events:
     print(event.seq, event.event_type)
 
-verified = await kernel._store.verify_run_chain("pipeline_run_001")
+store = SQLiteStore("chapter2_step5.db")
+verified = await store.verify_run_chain("pipeline_run_001")
 print("Chain valid:", verified)
+await store.close()
 ```
 
 You can audit:
@@ -276,7 +323,7 @@ This makes Artana suitable for regulated environments.
 
 Autonomous agents can inspect themselves.
 
-```python
+```text
 # query_event_history is automatically registered
 # when AutonomousAgent is used
 
@@ -293,6 +340,53 @@ This enables:
 
 ---
 
+# Step 8 — Productized Harness Templates and Tool Bundles
+
+Use built-in templates/bundles instead of rewriting common coding-agent plumbing.
+
+```pycon
+from artana import DraftReviewVerifySupervisor, ObservabilityTools
+from artana.tools import CodingHarnessTools
+
+coding_tools = CodingHarnessTools(sandbox_root="/tmp/agent_workspace")
+observability_tools = ObservabilityTools(root="/var/tmp/agent_observability")
+
+# Attach one registry as kernel tool_port per worker process.
+kernel = ArtanaKernel(
+    store=SQLiteStore("chapter2_tools.db"),
+    model_port=DemoModelPort(),
+    tool_port=coding_tools.registry(),
+)
+
+# Capability expectations for coding bundle:
+# - coding:worktree
+# - coding:read
+# - coding:write
+```
+
+Supervisor template usage:
+
+```pycon
+supervisor = DraftReviewVerifySupervisor(
+    kernel=kernel,
+    tenant=tenant,
+    drafter=drafter_harness,
+    reviewer=reviewer_harness,
+    verifier=verifier_harness,
+)
+
+result = await supervisor.run(run_id="draft_review_verify_run")
+print(result.approved)
+```
+
+Safety notes:
+
+* Keep `sandbox_root` and observability roots isolated per environment.
+* Grant only required capabilities to each tenant.
+* Use `@kernel.tool(side_effect=True)` for mutating tools to enforce idempotency context.
+
+---
+
 # Chapter 2 Summary
 
 In production, you should:
@@ -303,5 +397,16 @@ In production, you should:
 * Enforce incremental discipline
 * Choose replay mode deliberately
 * Layer middleware carefully
+* Prefer built-in templates (`DraftReviewVerifySupervisor`) and bundles (`CodingHarnessTools`, `ObservabilityTools`)
 * Rely on immutable event ledger
 * Use summaries instead of scanning full history
+
+## You Should Now Be Able To
+
+- Run durable harness sessions repeatedly with deterministic incremental progress.
+- Compose child harnesses behind a supervisor run topology.
+- Inspect capability filtering and event-ledger history for production troubleshooting.
+
+## Next Chapter
+
+Continue to [Chapter 3: Production Mode](./Chapter3.md) to harden failure handling, replay strategy, and crash recovery.

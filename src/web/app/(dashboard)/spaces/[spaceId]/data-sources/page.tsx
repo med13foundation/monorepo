@@ -50,6 +50,39 @@ function asObject(value: unknown): Record<string, unknown> {
     : {}
 }
 
+function toNullableNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+function parseArtanaProgress(
+  monitor: { artana_progress?: unknown },
+): SourceWorkflowCardStatus['artana_progress'] {
+  const root = asObject(monitor.artana_progress)
+  const entries = Object.entries(root)
+  if (entries.length === 0) {
+    return undefined
+  }
+  const parsed: NonNullable<SourceWorkflowCardStatus['artana_progress']> = {}
+  for (const [stageName, rawStage] of entries) {
+    const stage = asObject(rawStage)
+    parsed[stageName] = {
+      run_id: typeof stage.run_id === 'string' ? stage.run_id : null,
+      status: typeof stage.status === 'string' ? stage.status : null,
+      percent: toNullableNumber(stage.percent),
+      current_stage:
+        typeof stage.current_stage === 'string' ? stage.current_stage : null,
+    }
+  }
+  return parsed
+}
+
 function extractLastFailedStage(monitor: { last_run: unknown }): PipelineStage | null {
   const lastRun = asObject(monitor.last_run)
   const runStatus = typeof lastRun.status === 'string' ? lastRun.status : null
@@ -164,6 +197,7 @@ export default async function SpaceDataSourcesPage({
               pending_relation_review_count: toNumber(counters.pending_relation_review_count),
               graph_edges_delta_last_run: toNumber(counters.graph_edges_delta_last_run),
               graph_edges_total: toNumber(counters.graph_edges_total),
+              artana_progress: parseArtanaProgress(monitor),
             } satisfies SourceWorkflowCardStatus,
           ] as const
         } catch {

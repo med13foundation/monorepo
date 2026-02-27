@@ -65,9 +65,9 @@ class SourceDocument(BaseModel):
     content_length_chars: int | None = Field(default=None, ge=0)
     enrichment_status: EnrichmentStatus = EnrichmentStatus.PENDING
     enrichment_method: str | None = Field(default=None, max_length=64)
-    enrichment_agent_run_id: UUID | None = None
+    enrichment_agent_run_id: str | None = Field(default=None, max_length=255)
     extraction_status: DocumentExtractionStatus = DocumentExtractionStatus.PENDING
-    extraction_agent_run_id: UUID | None = None
+    extraction_agent_run_id: str | None = Field(default=None, max_length=255)
     metadata: JSONObject = Field(default_factory=_empty_metadata)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -79,7 +79,7 @@ class SourceDocument(BaseModel):
         content_hash: str | None = None,
         content_length_chars: int | None = None,
         enrichment_method: str | None = None,
-        enrichment_agent_run_id: UUID | None = None,
+        enrichment_agent_run_id: str | None = None,
         enriched_at: datetime | None = None,
     ) -> SourceDocument:
         """Return an updated document marked as enriched."""
@@ -98,7 +98,7 @@ class SourceDocument(BaseModel):
     def mark_extraction_in_progress(
         self,
         *,
-        extraction_agent_run_id: UUID | None = None,
+        extraction_agent_run_id: str | None = None,
         started_at: datetime | None = None,
     ) -> SourceDocument:
         """Return an updated document marked as in-progress for extraction."""
@@ -113,7 +113,7 @@ class SourceDocument(BaseModel):
     def mark_extracted(
         self,
         *,
-        extraction_agent_run_id: UUID | None = None,
+        extraction_agent_run_id: str | None = None,
         extracted_at: datetime | None = None,
     ) -> SourceDocument:
         """Return an updated document marked as extracted."""

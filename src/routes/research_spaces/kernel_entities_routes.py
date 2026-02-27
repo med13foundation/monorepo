@@ -39,12 +39,16 @@ from .router import (
 )
 
 
-def _parse_entity_ids_param(entity_ids: list[str] | None) -> list[str]:
+def _parse_entity_ids_param(
+    entity_ids: list[str] | None,
+) -> tuple[list[str], list[str]]:
     if entity_ids is None:
-        return []
+        return [], []
 
     normalized: list[str] = []
     seen: set[str] = set()
+    invalid: list[str] = []
+    invalid_seen: set[str] = set()
     for raw in entity_ids:
         for token in raw.split(","):
             trimmed = token.strip()
@@ -53,13 +57,16 @@ def _parse_entity_ids_param(entity_ids: list[str] | None) -> list[str]:
             try:
                 normalized_id = str(UUID(trimmed))
             except ValueError:
+                if trimmed not in invalid_seen:
+                    invalid_seen.add(trimmed)
+                    invalid.append(trimmed)
                 continue
             if normalized_id in seen:
                 continue
             seen.add(normalized_id)
             normalized.append(normalized_id)
 
-    return normalized
+    return normalized, invalid
 
 
 @research_spaces_router.get(
@@ -96,9 +103,15 @@ def list_kernel_entities(
         current_user.role,
     )
 
-    entity_ids = _parse_entity_ids_param(ids)
+    entity_ids, invalid_entity_ids = _parse_entity_ids_param(ids)
+    if invalid_entity_ids:
+        invalid_preview = ", ".join(invalid_entity_ids[:3])
+        raise HTTPException(
+            status_code=HTTP_400_BAD_REQUEST,
+            detail=f"Invalid entity id(s): {invalid_preview}",
+        )
 
-    if entity_ids:
+    if ids is not None:
         paged_ids = entity_ids[offset : offset + limit]
         entities = []
         for entity_id in paged_ids:

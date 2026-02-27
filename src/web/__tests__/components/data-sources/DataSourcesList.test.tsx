@@ -30,6 +30,7 @@ jest.mock('@/app/actions/data-sources', () => ({
 
 jest.mock('@/app/actions/kernel-ingest', () => ({
   cancelSpaceSourcePipelineRunAction: jest.fn(),
+  fetchSourceWorkflowEventsAction: jest.fn(),
   fetchSourceWorkflowCardStatusAction: jest.fn(),
   runSpaceSourcePipelineAction: jest.fn(),
 }))
@@ -376,5 +377,37 @@ describe('DataSourcesList - AI Controls', () => {
     expect(screen.queryByRole('menuitem', { name: /configure schedule/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /configure ai/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /test ai/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('DataSourcesList - Artana progress display', () => {
+  it('renders optional Artana stage progress badge when provided', () => {
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={dataSourcesResponse}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+        workflowStatusBySource={{
+          'source-1': {
+            last_pipeline_status: 'completed',
+            pending_paper_count: 0,
+            pending_relation_review_count: 0,
+            graph_edges_delta_last_run: 0,
+            graph_edges_total: 10,
+            artana_progress: {
+              extraction: {
+                run_id: 'extract:run:1',
+                status: 'running',
+                percent: 45,
+                current_stage: 'extract',
+              },
+            },
+          },
+        }}
+      />,
+    )
+
+    expect(screen.getByText(/Artana extraction 45%/i)).toBeInTheDocument()
   })
 })

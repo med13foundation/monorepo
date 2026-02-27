@@ -104,7 +104,7 @@ class SourceDocumentModel(Base):
         nullable=True,
     )
     enrichment_agent_run_id: Mapped[str | None] = mapped_column(
-        PGUUID(as_uuid=False),
+        String(255),
         nullable=True,
     )
     extraction_status: Mapped[str] = mapped_column(
@@ -114,7 +114,7 @@ class SourceDocumentModel(Base):
         index=True,
     )
     extraction_agent_run_id: Mapped[str | None] = mapped_column(
-        PGUUID(as_uuid=False),
+        String(255),
         nullable=True,
     )
     metadata_payload: Mapped[JSONObject] = mapped_column(

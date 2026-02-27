@@ -52,7 +52,9 @@ class SqlAlchemyProvenanceRepository(ProvenanceRepository):
             source_type=source_type,
             source_ref=source_ref,
             extraction_run_id=(
-                _as_uuid(extraction_run_id) if extraction_run_id is not None else None
+                extraction_run_id.strip()
+                if isinstance(extraction_run_id, str) and extraction_run_id.strip()
+                else None
             ),
             mapping_method=mapping_method,
             mapping_confidence=mapping_confidence,
@@ -97,9 +99,12 @@ class SqlAlchemyProvenanceRepository(ProvenanceRepository):
         self,
         extraction_run_id: str,
     ) -> list[KernelProvenanceRecord]:
+        normalized_run_id = extraction_run_id.strip()
+        if not normalized_run_id:
+            return []
         stmt = (
             select(ProvenanceModel)
-            .where(ProvenanceModel.extraction_run_id == _as_uuid(extraction_run_id))
+            .where(ProvenanceModel.extraction_run_id == normalized_run_id)
             .order_by(ProvenanceModel.created_at.desc())
         )
         return [

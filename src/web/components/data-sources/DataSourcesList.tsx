@@ -73,6 +73,14 @@ export interface SourceWorkflowCardStatus {
   pending_relation_review_count: number
   graph_edges_delta_last_run: number
   graph_edges_total: number
+  artana_progress?: Record<string, SourceWorkflowArtanaStage>
+}
+
+interface SourceWorkflowArtanaStage {
+  run_id: string | null
+  status: string | null
+  percent: number | null
+  current_stage: string | null
 }
 
 interface WorkflowSignal {
@@ -121,6 +129,34 @@ function describePipelineStage(status: SourceWorkflowCardStatus | undefined): st
     return 'Completed'
   }
   return 'Waiting for pipeline signal'
+}
+
+function describeArtanaStage(status: SourceWorkflowCardStatus | undefined): string | null {
+  if (!status?.artana_progress) {
+    return null
+  }
+  const stageOrder = ['extraction', 'enrichment', 'graph', 'pipeline'] as const
+  for (const stageName of stageOrder) {
+    const stage = status.artana_progress[stageName]
+    if (!stage) {
+      continue
+    }
+    if (stage.status === 'running' || stage.status === 'queued') {
+      const percentLabel = typeof stage.percent === 'number' ? `${stage.percent}%` : '...'
+      return `${stageName} ${percentLabel}`
+    }
+  }
+  for (const stageName of stageOrder) {
+    const stage = status.artana_progress[stageName]
+    if (!stage) {
+      continue
+    }
+    if (typeof stage.status === 'string' && stage.status.trim().length > 0) {
+      const percentLabel = typeof stage.percent === 'number' ? `${stage.percent}%` : 'n/a'
+      return `${stageName} ${stage.status} (${percentLabel})`
+    }
+  }
+  return null
 }
 
 function describeWorkflowChange(
@@ -694,6 +730,7 @@ export function DataSourcesList({
             const isPubMedSource = source.source_type === 'pubmed'
             const pubMedSnapshot = isPubMedSource ? parsePubMedSnapshot(source) : null
             const workflowStatus = liveWorkflowStatusBySource[source.id]
+            const artanaStageLabel = describeArtanaStage(workflowStatus)
             const displayTitle = normalizeSourceTitle(source.name)
             const description = isPubMedSource
               ? 'Biomedical literature database (NLM)'
@@ -814,6 +851,11 @@ export function DataSourcesList({
                           <Badge variant="secondary" className="h-5 px-2 text-xs">
                             <Loader2 className="mr-1 size-3 animate-spin" />
                             Running
+                          </Badge>
+                        )}
+                        {artanaStageLabel && (
+                          <Badge variant="outline" className="h-5 px-2 text-xs">
+                            Artana {artanaStageLabel}
                           </Badge>
                         )}
                       </div>
@@ -1009,6 +1051,7 @@ export function DataSourcesList({
                         </div>
                         <p className="mt-1 pl-6 text-xs text-muted-foreground">
                           Stage: {liveStageLabel} · Last signal: {lastSignalLabel} · Last poll: {lastPollLabel}
+                          {artanaStageLabel ? ` · Artana: ${artanaStageLabel}` : ''}
                           {' · '}
                           {lastSignalSummary}
                         </p>

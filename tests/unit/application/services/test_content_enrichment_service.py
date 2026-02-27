@@ -220,7 +220,7 @@ def _build_agent_contract(document_id: UUID) -> ContentEnrichmentContract:
         content_format="text",
         content_length_chars=19,
         content_text="Enriched full text.",
-        agent_run_id=str(uuid4()),
+        agent_run_id="enrich:pubmed:sha256:contract-run",
     )
 
 
@@ -329,6 +329,7 @@ async def test_process_document_uses_agent_and_storage_for_pubmed() -> None:
     assert updated.enrichment_method == "pmc_oa"
     assert updated.enriched_storage_key is not None
     assert updated.content_length_chars == 19
+    assert updated.enrichment_agent_run_id == "enrich:pubmed:sha256:contract-run"
 
 
 @pytest.mark.asyncio

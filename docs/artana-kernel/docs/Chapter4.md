@@ -12,13 +12,23 @@ This chapter demonstrates:
 * External orchestrator integration
 * Ledger observability at scale
 
-All examples are runnable.
+## Chapter Metadata
+
+- Audience: Engineers designing platform-level Artana architecture and custom orchestration layers.
+- Prerequisites: Chapters 1–3 complete; strong understanding of replay and policy enforcement.
+- Estimated time: 40 minutes.
+- Expected outcome: You can design advanced loop patterns and orchestration boundaries while preserving Artana safety guarantees.
+
+Code block contract for this chapter:
+
+* `python` blocks are standalone runnable scripts.
+* `pycon` blocks are in-context snippets and may require surrounding setup.
 
 ---
 
 # Step 1 — Enforced Enterprise Kernel (Mandatory Middleware)
 
-Production systems should use `KernelPolicy.enforced()`.
+For OS-grade safety controls, production systems should use `KernelPolicy.enforced_v2()`.
 
 ```python
 import asyncio
@@ -27,13 +37,16 @@ from pydantic import BaseModel
 
 from artana.agent import SingleStepModelClient
 from artana.kernel import ArtanaKernel, KernelPolicy
-from artana.middleware import (
-    PIIScrubberMiddleware,
-    QuotaMiddleware,
-    CapabilityGuardMiddleware,
-)
+from artana.middleware import SafetyPolicyMiddleware
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage
+from artana.safety import (
+    IntentRequirement,
+    SafetyPolicyConfig,
+    SemanticIdempotencyRequirement,
+    ToolLimitPolicy,
+    ToolSafetyPolicy,
+)
 from artana.store import SQLiteStore
 
 
@@ -50,15 +63,30 @@ class DemoModelPort:
 
 
 async def main():
+    safety = SafetyPolicyMiddleware(
+        config=SafetyPolicyConfig(
+            tools={
+                "transfer_funds": ToolSafetyPolicy(
+                    intent=IntentRequirement(require_intent=True),
+                    semantic_idempotency=SemanticIdempotencyRequirement(
+                        template="transfer:{tenant_id}:{account_id}:{amount}",
+                        required_fields=("account_id", "amount"),
+                    ),
+                    limits=ToolLimitPolicy(
+                        max_calls_per_run=3,
+                        max_amount_usd_per_call=500.0,
+                        amount_arg_path="amount",
+                    ),
+                )
+            }
+        )
+    )
+
     kernel = ArtanaKernel(
         store=SQLiteStore("chapter4_step1.db"),
         model_port=DemoModelPort(),
-        middleware=[
-            PIIScrubberMiddleware(),
-            QuotaMiddleware(),
-            CapabilityGuardMiddleware(),
-        ],
-        policy=KernelPolicy.enforced(),
+        middleware=ArtanaKernel.default_middleware_stack(safety=safety),
+        policy=KernelPolicy.enforced_v2(),
     )
 
     tenant = TenantContext(
@@ -67,7 +95,7 @@ async def main():
         budget_usd_limit=1.0,
     )
 
-    client = SingleStepModelClient(kernel=kernel)
+    client = SingleStepModelClient(kernel)
 
     result = await client.step(
         run_id="enforced_run",
@@ -85,11 +113,12 @@ async def main():
 asyncio.run(main())
 ```
 
-In enforced mode:
+In `enforced_v2` mode:
 
 * Missing middleware = kernel initialization error
 * Tool IO hooks required
 * Budget and capability checks mandatory
+* Safety policy middleware mandatory
 
 ---
 
@@ -108,12 +137,22 @@ from pydantic import BaseModel
 from artana.events import ChatMessage
 from artana.kernel import ArtanaKernel, ModelInput
 from artana.models import TenantContext
-from artana.ports.model import ModelRequest, ModelResult, ModelUsage, ToolCall
+from artana.ports.model import (
+    ModelCallOptions,
+    ModelRequest,
+    ModelResult,
+    ModelUsage,
+    ToolCall,
+)
 from artana.store import SQLiteStore
 
 
 class DebateResponse(BaseModel):
     text: str
+
+
+class StoreArgumentArgs(BaseModel):
+    value: str
 
 
 class DebateModelPort:
@@ -167,6 +206,7 @@ async def main():
             transcript + [ChatMessage(role="user", content="Store this idea")]
         ),
         output_schema=DebateResponse,
+        model_options=ModelCallOptions(api_mode="auto"),
         step_key="turn_1",
     )
 
@@ -175,7 +215,7 @@ async def main():
             run_id=run_id,
             tenant=tenant,
             tool_name=tool.tool_name,
-            arguments=BaseModel.model_validate({"value": "important"}),
+            arguments=StoreArgumentArgs(value="important"),
             step_key="tool_1",
         )
         print(tool_result.result_json)
@@ -185,6 +225,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+`ModelCallOptions(api_mode="auto")` is the standard baseline for model calls in kernel loops.
 
 Use this pattern when:
 
@@ -200,19 +242,25 @@ Long-lived systems evolve.
 
 Artana supports controlled run forking.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
+from artana.kernel import ModelInput
+from artana.ports.model import ModelCallOptions
+
 result = await kernel.step_model(
     run_id="long_run",
     tenant=tenant,
     model="demo-model",
     input=ModelInput.from_prompt("New improved prompt"),
     output_schema=Decision,
+    model_options=ModelCallOptions(api_mode="auto", verbosity="medium"),
     step_key="analysis_step",
     replay_policy="fork_on_drift",
 )
 ```
 
-If prompt changes:
+If model inputs/options change:
 
 * Original run remains immutable
 * New forked run is created
@@ -232,10 +280,16 @@ Production systems should coordinate harnesses, not raw agents.
 
 ```python
 import asyncio
-from artana.harness import IncrementalTaskHarness, SupervisorHarness, TaskUnit
-from artana.kernel import ArtanaKernel
-from artana.models import TenantContext
-from artana.store import SQLiteStore
+
+from artana import (
+    ArtanaKernel,
+    IncrementalTaskHarness,
+    MockModelPort,
+    SQLiteStore,
+    SupervisorHarness,
+    TaskUnit,
+    TenantContext,
+)
 
 
 class DeploymentHarness(IncrementalTaskHarness):
@@ -250,10 +304,21 @@ class DeploymentHarness(IncrementalTaskHarness):
         print("Executing:", task.id)
 
 
+class DeploymentSupervisor(SupervisorHarness):
+    async def step(self, *, context):
+        deployment = DeploymentHarness(kernel=self.kernel, tenant=context.tenant)
+        return await self.run_child(
+            harness=deployment,
+            run_id=f"{context.run_id}::deployment",
+            tenant=context.tenant,
+            model=context.model,
+        )
+
+
 async def main():
     kernel = ArtanaKernel(
         store=SQLiteStore("chapter4_step4.db"),
-        model_port=None,
+        model_port=MockModelPort(output={"message": "unused"}),
     )
 
     tenant = TenantContext(
@@ -262,13 +327,8 @@ async def main():
         budget_usd_limit=5.0,
     )
 
-    supervisor = SupervisorHarness(kernel=kernel, tenant=tenant)
-    deployment = DeploymentHarness(kernel=kernel, tenant=tenant)
-
-    result = await supervisor.run_child(
-        harness=deployment,
-        run_id="deployment_run",
-    )
+    supervisor = DeploymentSupervisor(kernel=kernel, tenant=tenant)
+    result = await supervisor.run(run_id="deployment_run")
 
     print("Deployment state:", result)
     await kernel.close()
@@ -298,7 +358,12 @@ from pydantic import BaseModel
 
 from artana.kernel import ArtanaKernel, ModelInput
 from artana.models import TenantContext
-from artana.ports.model import ModelRequest, ModelResult, ModelUsage
+from artana.ports.model import (
+    ModelCallOptions,
+    ModelRequest,
+    ModelResult,
+    ModelUsage,
+)
 from artana.store import SQLiteStore
 
 
@@ -334,6 +399,7 @@ async def generate_report(workflow_id: str, account_id: str) -> str:
         model="demo-model",
         input=ModelInput.from_prompt(f"Generate report for {account_id}"),
         output_schema=Report,
+        model_options=ModelCallOptions(api_mode="auto"),
         step_key="report_step",
     )
 
@@ -359,7 +425,9 @@ Artana manages durable execution and replay.
 
 Artana’s event store is a queryable audit log.
 
-```python
+Snippet (in-context, not standalone; assumes an existing SQLite event DB):
+
+```pycon
 import sqlite3
 
 connection = sqlite3.connect("chapter4_step1.db")
@@ -408,3 +476,13 @@ Production Artana systems combine:
 | Ledger       | Immutable audit trail             |
 
 ---
+
+## You Should Now Be Able To
+
+- Choose between harness-, workflow-, and kernel-level orchestration for advanced workloads.
+- Design replay-safe custom loops with explicit governance and middleware enforcement.
+- Integrate Artana as deterministic execution substrate under external schedulers.
+
+## Next Chapter
+
+Continue to [Chapter 5: Distributed Scaling & Multi-Tenant Deployment](./Chapter5.md) for worker topology, run operations, and production deployment guidance.

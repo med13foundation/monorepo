@@ -124,6 +124,7 @@ class SourceWorkflowMonitorRelationsMixin:
                 RelationEvidenceModel.id,
                 RelationEvidenceModel.confidence,
                 RelationEvidenceModel.evidence_summary,
+                RelationEvidenceModel.agent_run_id,
                 source_entity.display_label,
                 target_entity.display_label,
             )
@@ -154,8 +155,9 @@ class SourceWorkflowMonitorRelationsMixin:
                 "evidence_id": str(row[7]),
                 "evidence_confidence": float(row[8] or 0.0),
                 "evidence_summary": row[9],
-                "source_entity_label": row[10],
-                "target_entity_label": row[11],
+                "agent_run_id": row[10],
+                "source_entity_label": row[11],
+                "target_entity_label": row[12],
             }
             for row in rows
         ]

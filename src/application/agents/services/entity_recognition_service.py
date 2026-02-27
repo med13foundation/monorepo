@@ -251,7 +251,7 @@ class EntityRecognitionService(
             failure_reason = "missing_raw_record_metadata"
             self._persist_failed_document(
                 document=document,
-                run_uuid=None,
+                run_id=None,
                 metadata_patch={"entity_recognition_error": failure_reason},
             )
             return EntityRecognitionDocumentOutcome(
@@ -308,7 +308,7 @@ class EntityRecognitionService(
             failure_reason = "agent_execution_failed"
             self._persist_failed_document(
                 document=document,
-                run_uuid=None,
+                run_id=None,
                 metadata_patch={
                     "entity_recognition_error": str(exc),
                     "entity_recognition_failure_reason": failure_reason,
@@ -325,7 +325,6 @@ class EntityRecognitionService(
             )
 
         run_id = self._resolve_run_id(contract)
-        run_uuid = self._try_parse_uuid(run_id)
         governance = self._governance.evaluate(
             confidence_score=contract.confidence_score,
             evidence_count=len(contract.evidence),
@@ -337,7 +336,7 @@ class EntityRecognitionService(
         if governance.shadow_mode:
             self._persist_extracted_document(
                 document=document,
-                run_uuid=run_uuid,
+                run_id=run_id,
                 metadata_patch=self._build_outcome_metadata(
                     contract=contract,
                     governance=governance,
@@ -380,7 +379,7 @@ class EntityRecognitionService(
                     contract=contract,
                     governance=governance,
                     run_id=run_id,
-                    run_uuid=run_uuid,
+                    document_run_id=run_id,
                     model_id=model_id,
                     requested_shadow_mode=requested_shadow_mode,
                     research_space_settings=research_space_settings,
@@ -391,7 +390,7 @@ class EntityRecognitionService(
                 )
             self._persist_failed_document(
                 document=document,
-                run_uuid=run_uuid,
+                run_id=run_id,
                 metadata_patch=self._build_outcome_metadata(
                     contract=contract,
                     governance=governance,
@@ -419,7 +418,7 @@ class EntityRecognitionService(
             failure_reason = "missing_research_space_id"
             self._persist_failed_document(
                 document=document,
-                run_uuid=run_uuid,
+                run_id=run_id,
                 metadata_patch={
                     "entity_recognition_failure_reason": failure_reason,
                     "entity_recognition_run_id": run_id,
@@ -457,7 +456,7 @@ class EntityRecognitionService(
             failure_reason = "dictionary_mutation_failed"
             self._persist_failed_document(
                 document=document,
-                run_uuid=run_uuid,
+                run_id=run_id,
                 metadata_patch={
                     "entity_recognition_failure_reason": failure_reason,
                     "entity_recognition_error": str(exc),
@@ -482,7 +481,7 @@ class EntityRecognitionService(
                 contract=contract,
                 governance=governance,
                 run_id=run_id,
-                run_uuid=run_uuid,
+                document_run_id=run_id,
                 model_id=model_id,
                 requested_shadow_mode=requested_shadow_mode,
                 research_space_settings=research_space_settings,
@@ -502,7 +501,7 @@ class EntityRecognitionService(
             failure_reason = "no_pipeline_payloads"
             self._persist_failed_document(
                 document=document,
-                run_uuid=run_uuid,
+                run_id=run_id,
                 metadata_patch={
                     "entity_recognition_failure_reason": failure_reason,
                     "entity_recognition_run_id": run_id,
@@ -531,7 +530,7 @@ class EntityRecognitionService(
             failure_reason = "kernel_ingestion_failed"
             self._persist_failed_document(
                 document=document,
-                run_uuid=run_uuid,
+                run_id=run_id,
                 metadata_patch=self._build_outcome_metadata(
                     contract=contract,
                     governance=governance,
@@ -565,7 +564,7 @@ class EntityRecognitionService(
 
         self._persist_extracted_document(
             document=document,
-            run_uuid=run_uuid,
+            run_id=run_id,
             metadata_patch=self._build_outcome_metadata(
                 contract=contract,
                 governance=governance,
@@ -885,7 +884,7 @@ class EntityRecognitionService(
         contract: EntityRecognitionContract,
         governance: GovernanceDecision,
         run_id: str | None,
-        run_uuid: UUID | None,
+        document_run_id: str | None,
         model_id: str | None,
         requested_shadow_mode: bool,
         research_space_settings: ResearchSpaceSettings,
@@ -929,7 +928,7 @@ class EntityRecognitionService(
             metadata_patch["extraction_stage_failure_reason"] = failure_reason
             self._persist_failed_document(
                 document=document,
-                run_uuid=run_uuid,
+                run_id=document_run_id,
                 metadata_patch=metadata_patch,
             )
             return EntityRecognitionDocumentOutcome(
@@ -946,8 +945,11 @@ class EntityRecognitionService(
                 errors=(str(exc),),
             )
 
-        extraction_run_uuid = (
-            self._try_parse_uuid(extraction_outcome.run_id) or run_uuid
+        extraction_run_id = (
+            extraction_outcome.run_id.strip()
+            if isinstance(extraction_outcome.run_id, str)
+            and extraction_outcome.run_id.strip()
+            else document_run_id
         )
         graph_fallback_relation_payloads = self._build_graph_fallback_relation_payloads(
             seed_entity_ids=extraction_outcome.seed_entity_ids,
@@ -975,7 +977,7 @@ class EntityRecognitionService(
         if extraction_outcome.status == "failed":
             self._persist_failed_document(
                 document=document,
-                run_uuid=extraction_run_uuid,
+                run_id=extraction_run_id,
                 metadata_patch=metadata_patch,
             )
             return EntityRecognitionDocumentOutcome(
@@ -1002,7 +1004,7 @@ class EntityRecognitionService(
 
         self._persist_extracted_document(
             document=document,
-            run_uuid=extraction_run_uuid,
+            run_id=extraction_run_id,
             metadata_patch=metadata_patch,
         )
         return EntityRecognitionDocumentOutcome(

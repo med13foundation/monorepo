@@ -34,6 +34,26 @@ class SourceWorkflowMonitorPipelineMixin:
     """Data loading and shaping helpers for source workflow monitoring."""
 
     _session: Session
+    _RUN_SCOPED_PREFETCH_MULTIPLIER = 10
+    _RUN_SCOPED_PREFETCH_FLOOR = 500
+    _MONITOR_PREFETCH_HARD_CAP = 2_000
+    _PIPELINE_RUN_SCAN_MULTIPLIER = 6
+    _PIPELINE_RUN_SCAN_HARD_CAP = 5_000
+
+    @classmethod
+    def _resolve_prefetch_limit(
+        cls,
+        *,
+        limit: int,
+        run_scoped: bool,
+    ) -> int:
+        requested_limit = max(limit, 1)
+        if run_scoped:
+            requested_limit = max(
+                requested_limit * cls._RUN_SCOPED_PREFETCH_MULTIPLIER,
+                cls._RUN_SCOPED_PREFETCH_FLOOR,
+            )
+        return min(requested_limit, cls._MONITOR_PREFETCH_HARD_CAP)
 
     def _require_source(
         self,
@@ -59,11 +79,15 @@ class SourceWorkflowMonitorPipelineMixin:
         source_id: UUID,
         limit: int,
     ) -> list[PipelineRunRecord]:
+        fetch_limit = min(
+            max(limit, 1) * self._PIPELINE_RUN_SCAN_MULTIPLIER,
+            self._PIPELINE_RUN_SCAN_HARD_CAP,
+        )
         statement = (
             select(IngestionJobModel)
             .where(IngestionJobModel.source_id == str(source_id))
             .order_by(desc(IngestionJobModel.triggered_at))
-            .limit(max(limit, 1) * 6)
+            .limit(fetch_limit)
         )
         rows = self._session.execute(statement).scalars().all()
 
@@ -201,25 +225,46 @@ class SourceWorkflowMonitorPipelineMixin:
         *,
         source_id: UUID,
         run_id: str | None,
+        ingestion_job_id: str | None,
         limit: int,
     ) -> list[JSONObject]:
-        fetch_limit = max(limit * 10, 500) if run_id else limit
+        normalized_run_id = (
+            run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
+        )
+        normalized_ingestion_job_id = (
+            ingestion_job_id.strip()
+            if isinstance(ingestion_job_id, str) and ingestion_job_id.strip()
+            else None
+        )
+        fetch_limit = self._resolve_prefetch_limit(
+            limit=limit,
+            run_scoped=(
+                normalized_run_id is not None or normalized_ingestion_job_id is not None
+            ),
+        )
         statement = (
             select(SourceDocumentModel)
             .where(SourceDocumentModel.source_id == str(source_id))
             .order_by(desc(SourceDocumentModel.created_at))
-            .limit(max(fetch_limit, 1))
+            .limit(fetch_limit)
         )
         rows = self._session.execute(statement).scalars().all()
 
-        normalized_run_id = (
-            run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
-        )
         documents: list[JSONObject] = []
         for row in rows:
+            row_ingestion_job_id = normalize_optional_string(row.ingestion_job_id)
+            if (
+                normalized_ingestion_job_id is not None
+                and row_ingestion_job_id != normalized_ingestion_job_id
+            ):
+                continue
             metadata = coerce_json_object(row.metadata_payload)
             row_run_id = normalize_optional_string(metadata.get("pipeline_run_id"))
-            if normalized_run_id is not None and row_run_id != normalized_run_id:
+            if (
+                normalized_run_id is not None
+                and row_run_id is not None
+                and row_run_id != normalized_run_id
+            ):
                 continue
             documents.append(
                 {
@@ -228,7 +273,9 @@ class SourceWorkflowMonitorPipelineMixin:
                     "source_type": row.source_type,
                     "document_format": row.document_format,
                     "enrichment_status": row.enrichment_status,
+                    "enrichment_agent_run_id": row.enrichment_agent_run_id,
                     "extraction_status": row.extraction_status,
+                    "extraction_agent_run_id": row.extraction_agent_run_id,
                     "ingestion_job_id": row.ingestion_job_id,
                     "content_length_chars": row.content_length_chars,
                     "metadata": metadata,
@@ -245,29 +292,49 @@ class SourceWorkflowMonitorPipelineMixin:
         *,
         source_id: UUID,
         run_id: str | None,
+        ingestion_job_id: str | None,
         external_record_ids: set[str],
         limit: int,
     ) -> list[JSONObject]:
-        fetch_limit = max(limit * 10, 500) if run_id else limit
+        normalized_run_id = (
+            run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
+        )
+        normalized_ingestion_job_id = (
+            ingestion_job_id.strip()
+            if isinstance(ingestion_job_id, str) and ingestion_job_id.strip()
+            else None
+        )
+        fetch_limit = self._resolve_prefetch_limit(
+            limit=limit,
+            run_scoped=(
+                normalized_run_id is not None or normalized_ingestion_job_id is not None
+            ),
+        )
         statement = (
             select(ExtractionQueueItemModel)
             .where(ExtractionQueueItemModel.source_id == str(source_id))
             .order_by(desc(ExtractionQueueItemModel.queued_at))
-            .limit(max(fetch_limit, 1))
+            .limit(fetch_limit)
         )
         rows = self._session.execute(statement).scalars().all()
 
-        normalized_run_id = (
-            run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
-        )
         queue_rows: list[JSONObject] = []
         for row in rows:
+            row_ingestion_job_id = normalize_optional_string(row.ingestion_job_id)
             if (
-                normalized_run_id is not None
-                and row.source_record_id not in external_record_ids
+                normalized_ingestion_job_id is not None
+                and row_ingestion_job_id != normalized_ingestion_job_id
             ):
                 continue
             metadata = coerce_json_object(row.metadata_payload)
+            if normalized_run_id is not None and (
+                (
+                    normalize_optional_string(metadata.get("pipeline_run_id"))
+                    not in {None, normalized_run_id}
+                )
+                or row.source_record_id not in external_record_ids
+            ):
+                continue
             queue_rows.append(
                 {
                     "id": str(row.id),
@@ -296,29 +363,49 @@ class SourceWorkflowMonitorPipelineMixin:
         *,
         source_id: UUID,
         run_id: str | None,
+        ingestion_job_id: str | None,
         queue_item_ids: set[str],
         limit: int,
     ) -> list[JSONObject]:
-        fetch_limit = max(limit * 10, 500) if run_id else limit
+        normalized_run_id = (
+            run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
+        )
+        normalized_ingestion_job_id = (
+            ingestion_job_id.strip()
+            if isinstance(ingestion_job_id, str) and ingestion_job_id.strip()
+            else None
+        )
+        fetch_limit = self._resolve_prefetch_limit(
+            limit=limit,
+            run_scoped=(
+                normalized_run_id is not None or normalized_ingestion_job_id is not None
+            ),
+        )
         statement = (
             select(PublicationExtractionModel)
             .where(PublicationExtractionModel.source_id == str(source_id))
             .order_by(desc(PublicationExtractionModel.extracted_at))
-            .limit(max(fetch_limit, 1))
+            .limit(fetch_limit)
         )
         rows = self._session.execute(statement).scalars().all()
 
-        normalized_run_id = (
-            run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
-        )
         extraction_rows: list[JSONObject] = []
         for row in rows:
+            row_ingestion_job_id = normalize_optional_string(row.ingestion_job_id)
             if (
-                normalized_run_id is not None
-                and str(row.queue_item_id) not in queue_item_ids
+                normalized_ingestion_job_id is not None
+                and row_ingestion_job_id != normalized_ingestion_job_id
             ):
                 continue
             metadata = coerce_json_object(row.metadata_payload)
+            if normalized_run_id is not None and (
+                (
+                    normalize_optional_string(metadata.get("pipeline_run_id"))
+                    not in {None, normalized_run_id}
+                )
+                or str(row.queue_item_id) not in queue_item_ids
+            ):
+                continue
             extraction_rows.append(
                 {
                     "id": str(row.id),

@@ -39,17 +39,9 @@ class SourceDocumentMapper:
             content_length_chars=model.content_length_chars,
             enrichment_status=EnrichmentStatus(model.enrichment_status),
             enrichment_method=model.enrichment_method,
-            enrichment_agent_run_id=(
-                UUID(model.enrichment_agent_run_id)
-                if model.enrichment_agent_run_id
-                else None
-            ),
+            enrichment_agent_run_id=model.enrichment_agent_run_id,
             extraction_status=DocumentExtractionStatus(model.extraction_status),
-            extraction_agent_run_id=(
-                UUID(model.extraction_agent_run_id)
-                if model.extraction_agent_run_id
-                else None
-            ),
+            extraction_agent_run_id=model.extraction_agent_run_id,
             metadata=metadata_payload,
             created_at=model.created_at,
             updated_at=model.updated_at,

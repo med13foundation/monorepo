@@ -48,7 +48,7 @@ class KernelRelationEvidence(BaseModel):
     evidence_tier: str = Field(..., min_length=1, max_length=32)
     provenance_id: UUID | None = None
     source_document_id: UUID | None = None
-    agent_run_id: UUID | None = None
+    agent_run_id: str | None = Field(default=None, max_length=255)
     created_at: datetime
 
 

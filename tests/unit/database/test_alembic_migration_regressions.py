@@ -14,7 +14,7 @@ from uuid import uuid4
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_HEAD_REVISION = "021_add_page_load_perf_indexes"
+EXPECTED_HEAD_REVISION = "022_run_ids_as_text"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"
@@ -75,6 +75,32 @@ def test_upgrade_head_remaps_legacy_revision_alias(tmp_path: Path) -> None:
         )
 
     assert versions == [EXPECTED_HEAD_REVISION]
+
+
+def test_022_run_id_columns_are_textual_after_upgrade(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'run_id_columns_textual.db'}"
+    _run_alembic_upgrade(database_url=database_url, revision=EXPECTED_HEAD_REVISION)
+
+    engine = create_engine(database_url, future=True)
+    inspector = inspect(engine)
+
+    source_doc_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspector.get_columns("source_documents")
+    }
+    relation_evidence_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspector.get_columns("relation_evidence")
+    }
+    provenance_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspector.get_columns("provenance")
+    }
+
+    assert source_doc_columns["enrichment_agent_run_id"].startswith(("VARCHAR", "TEXT"))
+    assert source_doc_columns["extraction_agent_run_id"].startswith(("VARCHAR", "TEXT"))
+    assert relation_evidence_columns["agent_run_id"].startswith(("VARCHAR", "TEXT"))
+    assert provenance_columns["extraction_run_id"].startswith(("VARCHAR", "TEXT"))
 
 
 def test_006_backfills_extraction_queue_payload_reference_columns(

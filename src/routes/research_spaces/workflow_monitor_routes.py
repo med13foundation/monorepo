@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
+from threading import Lock
+from time import monotonic
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query
@@ -11,11 +15,13 @@ from sqlalchemy.orm import Session
 from src.application.services.membership_management_service import (
     MembershipManagementService,
 )
+from src.application.services.ports.run_progress_port import RunProgressPort
 from src.application.services.source_workflow_monitor_service import (
     SourceWorkflowMonitorService,
 )
 from src.database.session import get_session
 from src.domain.entities.user import User
+from src.infrastructure.llm.state import ArtanaKernelRunProgressRepository
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
@@ -34,12 +40,68 @@ from .workflow_monitor_schemas import (
     SourceWorkflowMonitorResponse,
 )
 
+logger = logging.getLogger(__name__)
+_RUN_PROGRESS_RETRY_INTERVAL_SECONDS = 30.0
+_RUN_PROGRESS_CACHE_LOCK = Lock()
+
+
+@dataclass
+class _RunProgressPortState:
+    port: RunProgressPort | None = None
+    last_failure_monotonic: float | None = None
+
+
+_RUN_PROGRESS_STATE = _RunProgressPortState()
+
+
+def _build_run_progress_port() -> RunProgressPort:
+    return ArtanaKernelRunProgressRepository()
+
+
+def _reset_run_progress_port_cache_for_tests() -> None:
+    """Reset cached run-progress state for deterministic unit tests."""
+    with _RUN_PROGRESS_CACHE_LOCK:
+        _RUN_PROGRESS_STATE.port = None
+        _RUN_PROGRESS_STATE.last_failure_monotonic = None
+
+
+def get_run_progress_port() -> RunProgressPort | None:
+    """Provide optional Artana run-progress adapter."""
+    with _RUN_PROGRESS_CACHE_LOCK:
+        if _RUN_PROGRESS_STATE.port is not None:
+            return _RUN_PROGRESS_STATE.port
+
+        now_monotonic = monotonic()
+        if _RUN_PROGRESS_STATE.last_failure_monotonic is not None and (
+            now_monotonic - _RUN_PROGRESS_STATE.last_failure_monotonic
+            < _RUN_PROGRESS_RETRY_INTERVAL_SECONDS
+        ):
+            return None
+
+        try:
+            port = _build_run_progress_port()
+        except Exception as exc:  # pragma: no cover - optional monitor enrichment
+            _RUN_PROGRESS_STATE.last_failure_monotonic = now_monotonic
+            logger.warning(
+                "Artana run-progress monitor unavailable; continuing without stage progress. %s",
+                exc,
+            )
+            return None
+
+        _RUN_PROGRESS_STATE.port = port
+        _RUN_PROGRESS_STATE.last_failure_monotonic = None
+        return port
+
 
 def get_source_workflow_monitor_service(
     session: Session = Depends(get_session),
+    run_progress: RunProgressPort | None = Depends(get_run_progress_port),
 ) -> SourceWorkflowMonitorService:
     """Provide source workflow monitor service."""
-    return SourceWorkflowMonitorService(session=session)
+    return SourceWorkflowMonitorService(
+        session=session,
+        run_progress=run_progress,
+    )
 
 
 class WorkflowMonitorQueryParams(BaseModel):
@@ -49,7 +111,7 @@ class WorkflowMonitorQueryParams(BaseModel):
 
 
 def get_workflow_monitor_query_params(
-    run_id: str | None = Query(default=None, min_length=1, max_length=128),
+    run_id: str | None = Query(default=None, min_length=1, max_length=255),
     limit: int = Query(50, ge=1, le=200),
     include_graph: bool = Query(default=True),
 ) -> WorkflowMonitorQueryParams:
@@ -67,7 +129,7 @@ class WorkflowEventsQueryParams(BaseModel):
 
 
 def get_workflow_events_query_params(
-    run_id: str | None = Query(default=None, min_length=1, max_length=128),
+    run_id: str | None = Query(default=None, min_length=1, max_length=255),
     limit: int = Query(200, ge=1, le=1000),
     since: str | None = Query(default=None, min_length=1, max_length=64),
 ) -> WorkflowEventsQueryParams:

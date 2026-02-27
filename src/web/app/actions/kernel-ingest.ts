@@ -29,6 +29,14 @@ export interface WorkflowCardStatusPayload {
   pending_relation_review_count: number
   graph_edges_delta_last_run: number
   graph_edges_total: number
+  artana_progress?: Record<string, WorkflowCardArtanaStage>
+}
+
+export interface WorkflowCardArtanaStage {
+  run_id: string | null
+  status: string | null
+  percent: number | null
+  current_stage: string | null
 }
 
 export interface WorkflowEventCardItem {
@@ -80,6 +88,40 @@ function asObject(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+function toNullableNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+function parseArtanaProgress(
+  monitor: SourceWorkflowMonitorResponse,
+): Record<string, WorkflowCardArtanaStage> | undefined {
+  const progressRoot = asObject(monitor.artana_progress)
+  const entries = Object.entries(progressRoot)
+  if (entries.length === 0) {
+    return undefined
+  }
+
+  const parsed: Record<string, WorkflowCardArtanaStage> = {}
+  for (const [stageName, rawStage] of entries) {
+    const stage = asObject(rawStage)
+    parsed[stageName] = {
+      run_id: typeof stage.run_id === 'string' ? stage.run_id : null,
+      status: typeof stage.status === 'string' ? stage.status : null,
+      percent: toNullableNumber(stage.percent),
+      current_stage:
+        typeof stage.current_stage === 'string' ? stage.current_stage : null,
+    }
+  }
+  return parsed
 }
 
 function extractLastFailedStage(monitor: SourceWorkflowMonitorResponse): PipelineStage | null {
@@ -254,6 +296,7 @@ export async function fetchSourceWorkflowCardStatusAction(
         pending_relation_review_count: toNumber(counters.pending_relation_review_count),
         graph_edges_delta_last_run: toNumber(counters.graph_edges_delta_last_run),
         graph_edges_total: toNumber(counters.graph_edges_total),
+        artana_progress: parseArtanaProgress(monitor),
       },
     }
   } catch (error: unknown) {

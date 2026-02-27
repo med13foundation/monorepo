@@ -270,7 +270,7 @@ class KernelProvenanceResponse(BaseModel):
     research_space_id: UUID
     source_type: str
     source_ref: str | None
-    extraction_run_id: UUID | None
+    extraction_run_id: str | None
     mapping_method: str | None
     mapping_confidence: float | None
     agent_model: str | None
@@ -280,17 +280,12 @@ class KernelProvenanceResponse(BaseModel):
 
     @classmethod
     def from_model(cls, model: KernelProvenanceRecord) -> KernelProvenanceResponse:
-        extraction_run_id_raw = model.extraction_run_id
         return cls(
             id=_to_uuid(model.id),
             research_space_id=_to_uuid(model.research_space_id),
             source_type=str(model.source_type),
             source_ref=model.source_ref,
-            extraction_run_id=(
-                _to_uuid(extraction_run_id_raw)
-                if extraction_run_id_raw is not None
-                else None
-            ),
+            extraction_run_id=model.extraction_run_id,
             mapping_method=model.mapping_method,
             mapping_confidence=model.mapping_confidence,
             agent_model=model.agent_model,

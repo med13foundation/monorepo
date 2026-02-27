@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -17,10 +17,22 @@ class StepResultLike(Protocol):
     output: object
 
 
-class SingleStepClientLike(Protocol):
-    """Protocol for clients exposing ``step`` execution."""
+@runtime_checkable
+class StepClientLike(Protocol):
+    """Runtime-checkable protocol for clients exposing ``step`` execution."""
 
-    async def step(self, **kwargs: object) -> StepResultLike: ...
+    async def step(  # noqa: PLR0913 - explicit step contract mirrors kernel API
+        self,
+        *,
+        run_id: str,
+        tenant: object,
+        model: str,
+        prompt: str,
+        output_schema: type[object],
+        step_key: str,
+        replay_policy: ReplayPolicy,
+        context_version: object | None = None,
+    ) -> StepResultLike: ...
 
 
 _DEFAULT_EXTERNAL_ID_KEYS: tuple[str, ...] = ("external_id", "id")
@@ -108,7 +120,7 @@ def _normalize_identifier(value: object) -> str | None:
 
 
 async def run_single_step_with_policy(  # noqa: PLR0913
-    client: SingleStepClientLike,
+    client: object,
     *,
     run_id: str,
     tenant: object,
@@ -117,26 +129,32 @@ async def run_single_step_with_policy(  # noqa: PLR0913
     output_schema: type[object],
     step_key: str,
     replay_policy: ReplayPolicy,
+    context_version: object | None = None,
 ) -> StepResultLike:
-    """Execute ``SingleStepModelClient.step`` with replay policy fallback."""
-    step_callable = client.step
-    step_kwargs: dict[str, object] = {
-        "run_id": run_id,
-        "tenant": tenant,
-        "model": model,
-        "prompt": prompt,
-        "output_schema": output_schema,
-        "step_key": step_key,
-        "replay_policy": replay_policy,
-    }
-    try:
-        return await step_callable(**step_kwargs)
-    except TypeError as exc:
-        message = str(exc)
-        if "replay_policy" not in message:
-            raise
-        step_kwargs.pop("replay_policy", None)
-        return await step_callable(**step_kwargs)
+    """Execute ``SingleStepModelClient.step`` with replay policy."""
+    if not isinstance(client, StepClientLike):
+        msg = "Client does not expose a compatible callable 'step' method."
+        raise TypeError(msg)
+    if context_version is not None:
+        return await client.step(
+            run_id=run_id,
+            tenant=tenant,
+            model=model,
+            prompt=prompt,
+            output_schema=output_schema,
+            step_key=step_key,
+            replay_policy=replay_policy,
+            context_version=context_version,
+        )
+    return await client.step(
+        run_id=run_id,
+        tenant=tenant,
+        model=model,
+        prompt=prompt,
+        output_schema=output_schema,
+        step_key=step_key,
+        replay_policy=replay_policy,
+    )
 
 
 __all__ = [

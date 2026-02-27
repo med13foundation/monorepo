@@ -26,7 +26,6 @@ from ._kernel_relation_repository_shared import (
     _as_uuid,
     _clamp_confidence,
     _normalize_evidence_tier,
-    _try_as_uuid,
 )
 
 if TYPE_CHECKING:
@@ -95,8 +94,17 @@ class SqlAlchemyKernelRelationRepository(
             self._session.flush()
         normalized_confidence = _clamp_confidence(confidence)
         normalized_tier = _normalize_evidence_tier(evidence_tier)
-        source_document_uuid = _try_as_uuid(source_document_id)
-        agent_run_uuid = _try_as_uuid(agent_run_id)
+        source_document_uuid: UUID | None = None
+        if source_document_id is not None:
+            try:
+                source_document_uuid = _as_uuid(source_document_id)
+            except ValueError:
+                source_document_uuid = None
+        agent_run_value = (
+            agent_run_id.strip()
+            if isinstance(agent_run_id, str) and agent_run_id.strip()
+            else None
+        )
 
         if provenance_uuid is not None and relation.provenance_id is None:
             relation.provenance_id = provenance_uuid
@@ -133,7 +141,7 @@ class SqlAlchemyKernelRelationRepository(
                 evidence_tier=normalized_tier,
                 provenance_id=provenance_uuid,
                 source_document_id=source_document_uuid,
-                agent_run_id=agent_run_uuid,
+                agent_run_id=agent_run_value,
             )
             self._session.add(evidence)
             self._session.flush()

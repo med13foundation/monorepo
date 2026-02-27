@@ -26,6 +26,31 @@ _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
+def _env_bool_optional(name: str) -> bool | None:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return None
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _resolve_strict_ai_mode() -> bool:
+    explicit_primary = _env_bool_optional("MED13_AI_STRICT_MODE")
+    if explicit_primary is not None:
+        return explicit_primary
+
+    explicit_legacy = _env_bool_optional("MED13_EMBEDDING_STRICT_MODE")
+    if explicit_legacy is not None:
+        return explicit_legacy
+
+    is_testing = env_bool("TESTING", default=False)
+    return not is_testing
+
+
 class HybridTextEmbeddingProvider(TextEmbeddingPort):
     """Compute embeddings via OpenAI with resilient retry/throttle controls."""
 
@@ -60,9 +85,7 @@ class HybridTextEmbeddingProvider(TextEmbeddingPort):
             default=30.0,
             minimum=0.5,
         )
-        self._strict_ai_mode = env_bool("MED13_AI_STRICT_MODE", default=True) or (
-            env_bool("MED13_EMBEDDING_STRICT_MODE", default=True)
-        )
+        self._strict_ai_mode = _resolve_strict_ai_mode()
         max_concurrency = env_int(
             "MED13_EMBEDDING_MAX_CONCURRENCY",
             default=1,

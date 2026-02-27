@@ -11,7 +11,17 @@ This chapter focuses on:
 * Adapter portability
 * Ledger integrity
 
-All examples use current APIs and are copy-paste runnable.
+## Chapter Metadata
+
+- Audience: Engineers deploying Artana in failure-prone or evolving environments.
+- Prerequisites: Chapters 1–2 complete; familiarity with harness lifecycle and replay basics.
+- Estimated time: 40 minutes.
+- Expected outcome: You can choose replay policies intentionally, recover from tool uncertainty, and design crash-safe long-running runs.
+
+Code block contract for this chapter:
+
+* `python` blocks are standalone runnable scripts.
+* `pycon` blocks are in-context snippets and may assume existing kernel/store/runtime state.
 
 ---
 
@@ -122,18 +132,35 @@ In production, prompts evolve.
 
 ReplayPolicy allows safe evolution.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.kernel import ReplayPolicy
+from artana.ports.model import ModelCallOptions
 
 # Strict replay (default safety)
-await kernel.step_model(..., replay_policy="strict")
+await kernel.step_model(
+    ...,
+    model_options=ModelCallOptions(api_mode="auto", verbosity="medium"),
+    replay_policy="strict",
+)
 
 # Allow prompt drift while preserving prior outputs
-await kernel.step_model(..., replay_policy="allow_prompt_drift")
+await kernel.step_model(
+    ...,
+    model_options=ModelCallOptions(api_mode="responses", previous_response_id="resp_prev"),
+    replay_policy="allow_prompt_drift",
+)
 
-# Fork run automatically if prompt changed
-await kernel.step_model(..., replay_policy="fork_on_drift")
+# Fork run automatically if model inputs/options change
+await kernel.step_model(
+    ...,
+    model_options=ModelCallOptions(api_mode="auto"),
+    replay_policy="fork_on_drift",
+)
 ```
+
+Drift matching includes prompt/messages plus model options (api mode, reasoning, verbosity, previous response chain) and Responses input items.
 
 Production guidance:
 
@@ -151,10 +178,15 @@ Production systems must survive crashes mid-run.
 
 ```python
 import asyncio
-from artana.harness import IncrementalTaskHarness, TaskUnit
-from artana.kernel import ArtanaKernel
-from artana.models import TenantContext
-from artana.store import SQLiteStore
+
+from artana import (
+    ArtanaKernel,
+    IncrementalTaskHarness,
+    MockModelPort,
+    SQLiteStore,
+    TaskUnit,
+    TenantContext,
+)
 
 
 class MigrationHarness(IncrementalTaskHarness):
@@ -173,7 +205,7 @@ class MigrationHarness(IncrementalTaskHarness):
 async def main():
     kernel = ArtanaKernel(
         store=SQLiteStore("chapter3_step3.db"),
-        model_port=None,
+        model_port=MockModelPort(output={"message": "unused"}),
     )
 
     tenant = TenantContext(
@@ -259,7 +291,7 @@ async def main():
         budget_usd_limit=5.0,
     )
 
-    client = SingleStepModelClient(kernel=kernel)
+    client = SingleStepModelClient(kernel)
 
     async def workflow(ctx: WorkflowContext):
         intent = await client.step(
@@ -305,11 +337,13 @@ Deterministic + AI + replay = production-safe orchestration.
 
 ---
 
-# Step 5 — Production Middleware (Enforced Mode)
+# Step 5 — Production Middleware (Enforced Modes)
 
-Production environments should enable enforcement mode:
+Baseline production enforcement:
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.kernel import KernelPolicy
 from artana.middleware import (
     PIIScrubberMiddleware,
@@ -329,12 +363,15 @@ kernel = ArtanaKernel(
 )
 ```
 
-Enforced mode requires:
+`KernelPolicy.enforced()` requires:
 
 * PII scrubber
 * Quota middleware
 * Capability guard
-* Tool IO hooks
+
+For side-effect-heavy production systems, prefer `KernelPolicy.enforced_v2()` and add
+`SafetyPolicyMiddleware` to activate intent plans, semantic idempotency, limits, approvals,
+and invariants.
 
 This prevents unsafe deployments.
 
@@ -344,7 +381,9 @@ This prevents unsafe deployments.
 
 Progressive skills allow dynamic tool exposure.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.agent import AutonomousAgent
 
 agent = AutonomousAgent(kernel=kernel)
@@ -363,14 +402,20 @@ Production tip:
 
 Every run is verifiable:
 
-```python
-events = await kernel.get_events("migration_run")
+Snippet (in-context, not standalone):
+
+```pycon
+from artana.store import SQLiteStore
+
+events = await kernel.get_events(run_id="migration_run")
 
 for event in events:
     print(event.seq, event.event_type)
 
-valid = await kernel._store.verify_run_chain("migration_run")
+store = SQLiteStore("chapter3_step3.db")
+valid = await store.verify_run_chain("migration_run")
 print("Ledger valid:", valid)
+await store.close()
 ```
 
 Production uses:
@@ -382,13 +427,20 @@ Production uses:
 
 ---
 
-# Step 8 — Adapter Swap (SQLite → Postgres)
+# Step 8 — Adapter Swap (SQLite → PostgresStore)
 
 Production swaps store implementation, not business logic.
 
-```python
-class PostgresStore(SQLiteStore):
-    """Production store adapter implementing EventStore interface."""
+Snippet (in-context, not standalone):
+
+```pycon
+from artana.store import PostgresStore
+
+store = PostgresStore(
+    dsn="postgresql://user:pass@db:5432/artana",
+    min_pool_size=2,
+    max_pool_size=20,
+)
 ```
 
 Kernel logic remains identical.
@@ -405,7 +457,7 @@ Only the persistence backend changes.
 | Crash safety            | WorkflowContext            |
 | Long-running discipline | IncrementalTaskHarness     |
 | Drift control           | ReplayPolicy               |
-| Policy enforcement      | KernelPolicy.enforced      |
+| Policy enforcement      | KernelPolicy.enforced_v2   |
 | Audit ledger            | verify_run_chain           |
 | Structured continuity   | artifacts + summaries      |
 | Safe scaling            | SupervisorHarness          |
@@ -418,8 +470,18 @@ Production Artana systems should:
 
 * Use Harness for long-running tasks
 * Use Workflow for deterministic orchestration
-* Use enforced middleware
+* Use enforced middleware (`enforced_v2` for OS-grade safety)
 * Use replay policies intentionally
 * Store structured artifacts
 * Validate clean state before sleep
 * Audit ledger integrity
+
+## You Should Now Be Able To
+
+- Recover safely from unknown tool outcomes without duplicating side effects.
+- Pick the correct replay policy (`strict`, `allow_prompt_drift`, or `fork_on_drift`) for your environment.
+- Resume long-running harness and workflow runs after interruptions with deterministic state.
+
+## Next Chapter
+
+Continue to [Chapter 4: Ultimate Architecture](./Chapter4.md) for advanced orchestration, custom loops, and platform-level composition patterns.

@@ -25,7 +25,7 @@ class KernelProvenanceRecord(BaseModel):
     research_space_id: UUID
     source_type: str = Field(..., min_length=1, max_length=64)
     source_ref: str | None = Field(None, max_length=1024)
-    extraction_run_id: UUID | None = None
+    extraction_run_id: str | None = Field(default=None, max_length=255)
     mapping_method: str | None = Field(None, max_length=64)
     mapping_confidence: float | None = Field(None, ge=0.0, le=1.0)
     agent_model: str | None = Field(None, max_length=128)

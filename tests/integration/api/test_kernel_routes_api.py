@@ -1265,6 +1265,70 @@ def test_kernel_entity_rejects_unknown_type(
     assert response.json()["detail"].startswith("Unknown entity_type")
 
 
+def test_kernel_entity_list_rejects_invalid_ids_filter(
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+
+    _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value="HGNC:18867",
+    )
+
+    response = test_client.get(
+        f"/research-spaces/{space.id}/entities",
+        headers=headers,
+        params={"ids": "not-a-uuid", "q": "MED13"},
+    )
+
+    assert response.status_code == 400
+    assert "Invalid entity id(s)" in response.json()["detail"]
+
+
+def test_kernel_entity_list_with_blank_ids_does_not_fallback_to_search(
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+
+    _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value="HGNC:18867",
+    )
+
+    response = test_client.get(
+        f"/research-spaces/{space.id}/entities",
+        headers=headers,
+        params={"ids": "", "q": "MED13"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 0
+    assert payload["entities"] == []
+
+
 def test_space_ingest_runs_only_configured_active_sources(
     test_client,
     db_session,

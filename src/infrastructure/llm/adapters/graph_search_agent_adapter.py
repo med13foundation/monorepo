@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 import httpx
 from pydantic import BaseModel
@@ -25,11 +25,14 @@ from src.infrastructure.llm.config import (
 from src.infrastructure.llm.prompts.graph_search import GRAPH_SEARCH_SYSTEM_PROMPT
 
 if TYPE_CHECKING:
+    from artana.ports.model import ModelRequest
+
     from src.domain.agents.contexts.graph_search_context import GraphSearchContext
 
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 _ARTANA_IMPORT_ERROR: Exception | None = None
+OutputT = TypeVar("OutputT", bound=BaseModel)
 
 try:
     from artana.agent import SingleStepModelClient
@@ -124,26 +127,22 @@ class _OpenAIChatModelPort:
             await self._client.aclose()
             self._client = None
 
-    async def complete(self, request: object) -> object:
+    async def complete(
+        self,
+        request: ModelRequest[OutputT],
+    ) -> ModelResult[OutputT]:
         api_key = self._resolve_openai_api_key()
         if api_key is None:
             msg = "OPENAI_API_KEY (or ARTANA_OPENAI_API_KEY) is not configured."
             raise RuntimeError(msg)
 
-        output_schema = getattr(request, "output_schema", None)
-        if not isinstance(output_schema, type) or not issubclass(
-            output_schema,
-            BaseModel,
-        ):
-            msg = "Artana model request output_schema must be a Pydantic BaseModel."
-            raise TypeError(msg)
-
+        output_schema = request.output_schema
         prompt = _extract_prompt(request)
         if not prompt:
             msg = "Artana model request is missing prompt/messages content."
             raise ValueError(msg)
 
-        requested_model = str(getattr(request, "model", "openai:gpt-5-mini"))
+        requested_model = str(request.model or "openai:gpt-5-mini")
         openai_model = _normalize_openai_model_id(requested_model)
         schema_name = output_schema.__name__.lower() or "graph_search_contract"
         payload = {
@@ -331,6 +330,7 @@ class ArtanaGraphSearchAdapter(GraphSearchPort):
                 output_schema=GraphSearchContract,
                 step_key="graph.search.v1",
                 replay_policy=self._runtime_policy.replay_policy,
+                context_version=self._runtime_policy.to_context_version(),
             )
             output = result.output
             contract = (
@@ -400,7 +400,7 @@ class ArtanaGraphSearchAdapter(GraphSearchPort):
             return 120.0
 
     @staticmethod
-    def _create_store() -> object:
+    def _create_store() -> PostgresStore:
         state_uri = resolve_artana_state_uri()
         if state_uri.startswith("postgresql://"):
             return PostgresStore(state_uri)

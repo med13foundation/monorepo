@@ -25,6 +25,27 @@ class ArtanaRuntimePolicy:
 
     replay_policy: ReplayPolicy = _DEFAULT_REPLAY_POLICY
     extraction_config_version: str = _DEFAULT_EXTRACTION_CONFIG_VERSION
+    context_system_prompt_hash: str | None = None
+    context_builder_version: str | None = None
+    context_compaction_version: str | None = None
+
+    def to_context_version(self) -> object | None:
+        """Build an optional Artana ``ContextVersion`` value from configured fields."""
+        if (
+            self.context_system_prompt_hash is None
+            and self.context_builder_version is None
+            and self.context_compaction_version is None
+        ):
+            return None
+        try:
+            from artana.kernel import ContextVersion
+        except ImportError:
+            return None
+        return ContextVersion(
+            system_prompt_hash=self.context_system_prompt_hash,
+            context_builder_version=self.context_builder_version,
+            compaction_version=self.context_compaction_version,
+        )
 
 
 @lru_cache(maxsize=1)
@@ -43,9 +64,24 @@ def load_runtime_policy(config_path: str | None = None) -> ArtanaRuntimePolicy:
         os.getenv("ARTANA_EXTRACTION_CONFIG_VERSION"),
         runtime_section.get("extraction_config_version"),
     )
+    context_system_prompt_hash = _resolve_optional_string(
+        os.getenv("ARTANA_CONTEXT_SYSTEM_PROMPT_HASH"),
+        runtime_section.get("context_system_prompt_hash"),
+    )
+    context_builder_version = _resolve_optional_string(
+        os.getenv("ARTANA_CONTEXT_BUILDER_VERSION"),
+        runtime_section.get("context_builder_version"),
+    )
+    context_compaction_version = _resolve_optional_string(
+        os.getenv("ARTANA_CONTEXT_COMPACTION_VERSION"),
+        runtime_section.get("context_compaction_version"),
+    )
     return ArtanaRuntimePolicy(
         replay_policy=replay_policy,
         extraction_config_version=extraction_config_version,
+        context_system_prompt_hash=context_system_prompt_hash,
+        context_builder_version=context_builder_version,
+        context_compaction_version=context_compaction_version,
     )
 
 
@@ -93,6 +129,19 @@ def _resolve_extraction_config_version(
         if normalized:
             return normalized
     return _DEFAULT_EXTRACTION_CONFIG_VERSION
+
+
+def _resolve_optional_string(
+    env_value: str | None,
+    config_value: object,
+) -> str | None:
+    for raw_value in (env_value, config_value):
+        if not isinstance(raw_value, str):
+            continue
+        normalized = raw_value.strip()
+        if normalized:
+            return normalized
+    return None
 
 
 __all__ = ["ArtanaRuntimePolicy", "ReplayPolicy", "load_runtime_policy"]

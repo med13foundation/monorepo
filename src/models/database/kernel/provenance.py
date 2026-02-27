@@ -52,10 +52,10 @@ class ProvenanceModel(Base):
         nullable=True,
         doc="File path, URL, or session ID",
     )
-    extraction_run_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
+    extraction_run_id: Mapped[str | None] = mapped_column(
+        String(255),
         nullable=True,
-        doc="Link to ingestion job",
+        doc="Optional ingestion/agent run reference",
     )
     mapping_method: Mapped[str | None] = mapped_column(
         String(64),

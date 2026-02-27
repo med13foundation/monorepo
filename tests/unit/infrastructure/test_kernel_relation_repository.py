@@ -218,6 +218,31 @@ def test_create_skips_duplicate_evidence_rows(
     assert len(evidence_rows) == 1
 
 
+def test_create_persists_non_uuid_agent_run_id(db_session: Session) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+
+    relation = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.91,
+        evidence_tier="LITERATURE",
+        agent_run_id="graph:connection:sha256:aa11bb22",
+    )
+
+    evidence_rows = db_session.scalars(
+        select(RelationEvidenceModel).where(
+            RelationEvidenceModel.relation_id == relation.id,
+        ),
+    ).all()
+    assert len(evidence_rows) == 1
+    assert evidence_rows[0].agent_run_id == "graph:connection:sha256:aa11bb22"
+
+
 def test_create_auto_promotes_when_default_thresholds_are_met(
     db_session: Session,
 ) -> None:

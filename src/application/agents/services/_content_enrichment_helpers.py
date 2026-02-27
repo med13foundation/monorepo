@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import UUID
 
 from src.domain.entities.user_data_source import SourceType
 from src.type_definitions.common import JSONObject  # noqa: TC001
@@ -118,16 +117,6 @@ def resolve_run_id(contract: ContentEnrichmentContract) -> str | None:
     return normalized or None
 
 
-def try_parse_uuid(value: str | None) -> UUID | None:
-    """Parse UUID strings safely, returning None for invalid values."""
-    if value is None:
-        return None
-    try:
-        return UUID(value)
-    except ValueError:
-        return None
-
-
 def build_metadata_patch(  # noqa: PLR0913
     *,
     contract: ContentEnrichmentContract,
@@ -203,6 +192,5 @@ __all__ = [
     "merge_metadata",
     "resolve_run_id",
     "serialize_contract_payload",
-    "try_parse_uuid",
     "write_temp_payload",
 ]

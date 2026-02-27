@@ -10,6 +10,18 @@ This chapter demonstrates:
 * Deployment topology
 * Production safety checklist
 
+## Chapter Metadata
+
+- Audience: Engineers operating Artana across teams, workers, and environments.
+- Prerequisites: Chapters 1–4 complete; familiarity with Postgres-backed deployments and worker patterns.
+- Estimated time: 35 minutes.
+- Expected outcome: You can operate distributed Artana runs, inspect state via CLI, and ship replay-safe upgrades.
+
+Code block contract for this chapter:
+
+* `pycon` blocks are in-context snippets for existing worker/orchestrator contexts.
+* Runnable end-to-end scripts live in `examples/` and are listed in `examples/README.md`.
+
 ---
 
 # 🏗️ Step 1 — Multi-Tenant Isolation (First-Class Concept)
@@ -18,7 +30,7 @@ In Artana, tenants are explicit.
 
 Every run is tied to:
 
-```python
+```pycon
 TenantContext(
     tenant_id="tenant_name",
     capabilities=frozenset({...}),
@@ -28,7 +40,7 @@ TenantContext(
 
 Example:
 
-```python
+```pycon
 from artana.kernel import ArtanaKernel
 from artana.models import TenantContext
 from artana.store import SQLiteStore
@@ -78,14 +90,15 @@ This enables horizontal scaling.
 
 Each worker process:
 
-```python
-from artana import ArtanaKernel, PostgresStore
+```pycon
+from artana import ArtanaKernel, KernelPolicy, PostgresStore
 from artana.ports.model_adapter import LiteLLMAdapter
 
 kernel = ArtanaKernel(
     store=PostgresStore("postgresql://user:pass@db:5432/artana"),  # shared DB
-    model_port=LiteLLMAdapter(...),
+    model_port=LiteLLMAdapter(...),  # model calls default to ModelCallOptions(api_mode="auto")
     middleware=ArtanaKernel.default_middleware_stack(),
+    policy=KernelPolicy.enforced(),
 )
 ```
 
@@ -98,13 +111,15 @@ Workers can:
 
 No in-memory coordination required.
 
+`api_mode="auto"` is the normal production flow: workers use Responses when supported and automatically fall back to chat-completions when a provider/model does not support Responses.
+
 ---
 
 # 🔁 Step 3 — Queue + Worker Architecture
 
 Example using a simple async queue:
 
-```python
+```pycon
 import asyncio
 
 task_queue = asyncio.Queue()
@@ -112,9 +127,21 @@ task_queue = asyncio.Queue()
 async def worker():
     while True:
         run_id, tenant = await task_queue.get()
+        worker_id = "worker-1"
+        leased = await kernel.acquire_run_lease(
+            run_id=run_id,
+            worker_id=worker_id,
+            ttl_seconds=30,
+        )
+        if not leased:
+            task_queue.task_done()
+            continue
         harness = DeploymentHarness(kernel=kernel, tenant=tenant)
-        await harness.run(run_id)
-        task_queue.task_done()
+        try:
+            await harness.run(run_id)
+        finally:
+            await kernel.release_run_lease(run_id=run_id, worker_id=worker_id)
+            task_queue.task_done()
 ```
 
 Key insight:
@@ -136,13 +163,13 @@ This enables:
 
 If a worker crashes mid-task:
 
-```python
+```pycon
 await harness.run("migration_run")
 ```
 
 On restart:
 
-```python
+```pycon
 await harness.run("migration_run")
 ```
 
@@ -161,7 +188,7 @@ Recovery is deterministic.
 
 `PostgresStore` is implemented in the Artana library and can be used directly:
 
-```python
+```pycon
 from artana.store import PostgresStore
 
 store = PostgresStore(
@@ -237,7 +264,7 @@ If incompatible change:
 
 Use:
 
-```python
+```pycon
 replay_policy="fork_on_drift"
 ```
 
@@ -282,11 +309,13 @@ Production metrics to track:
 
 Production kernel should:
 
-* Use KernelPolicy.enforced()
+* Use `KernelPolicy.enforced()` at minimum
+* Use `KernelPolicy.enforced_v2()` + `SafetyPolicyMiddleware` for side-effect tools
 * Enable PII scrubber
 * Enforce quota
 * Enforce capability guard
 * Validate tool idempotency
+* Configure safety policy (intent, semantic dedupe, limits, approvals, invariants) where needed
 * Monitor drift
 
 Optional:
@@ -302,18 +331,26 @@ Optional:
 
 Minimal production instantiation:
 
-```python
+```pycon
+from artana import ArtanaKernel, KernelPolicy
+from artana.middleware import SafetyPolicyMiddleware
+from artana.ports.model_adapter import LiteLLMAdapter
+from artana.safety import SafetyPolicyConfig
+from artana.store import PostgresStore
+
+safety = SafetyPolicyMiddleware(config=SafetyPolicyConfig(tools={...}))
+
 kernel = ArtanaKernel(
     store=PostgresStore("postgresql://..."),
-    model_port=LiteLLMAdapter(...),
-    middleware=ArtanaKernel.default_middleware_stack(),
-    policy=KernelPolicy.enforced(),
+    model_port=LiteLLMAdapter(...),  # auto Responses routing by default
+    middleware=ArtanaKernel.default_middleware_stack(safety=safety),
+    policy=KernelPolicy.enforced_v2(),
 )
 ```
 
 Workers:
 
-```python
+```pycon
 harness = MyHarness(kernel=kernel, tenant=tenant)
 await harness.run(run_id)
 ```
@@ -321,6 +358,46 @@ await harness.run(run_id)
 That’s it.
 
 Everything else is architecture.
+
+---
+
+# 🧰 Step 11 — CLI Operations for Run Inspection
+
+Use the built-in CLI to inspect distributed runs without writing ad-hoc SQL.
+
+```bash
+# List recent run IDs
+artana run list --db .state.db
+
+# Tail events for one run
+artana run tail run_123 --db .state.db
+
+# Verify hash-chain ledger integrity
+artana run verify-ledger run_123 --db .state.db
+
+# Run lifecycle summary (human and machine friendly)
+artana run status run_123 --db .state.db
+artana run status run_123 --db .state.db --json
+
+# Inspect summaries and artifacts
+artana run summaries run_123 --db .state.db --limit 20
+artana run artifacts run_123 --db .state.db --json
+
+# Scaffold a local starter (enforced by default)
+artana init ./starter --profile enforced
+artana init ./starter-dev --profile dev
+```
+
+Output shape:
+
+* `run list`: one run id per line
+* `run tail`: tab-separated `seq timestamp event_type parent_step_key`
+* `verify-ledger`: `valid` or `invalid` (exit code 0/1)
+* `status`: run status with last event metadata (`--json` for structured output)
+* `summaries`: recent run summaries (`--type` and `--limit` filters)
+* `artifacts`: latest artifact key/value snapshots (`--json` supported)
+
+Use `--dsn postgresql://...` for shared Postgres deployments.
 
 ---
 
@@ -350,7 +427,8 @@ Before deploying:
 * [ ] All tools idempotent
 * [ ] step_key stable
 * [ ] replay_policy chosen intentionally
-* [ ] KernelPolicy.enforced enabled
+* [ ] KernelPolicy.enforced/enforced_v2 configured intentionally
+* [ ] Run lease strategy defined for multi-worker runners
 * [ ] Budget limits configured
 * [ ] Ledger verification tested
 * [ ] Drift handling strategy decided
@@ -358,3 +436,13 @@ Before deploying:
 * [ ] Observability dashboards configured
 
 ---
+
+## You Should Now Be Able To
+
+- Run Artana workers in distributed topologies with deterministic replay and leasing.
+- Operate day-2 diagnostics with CLI status/summaries/artifacts flows.
+- Plan safe rollout and upgrade strategies for multi-tenant deployments.
+
+## Next Chapter
+
+Continue to [Chapter 6: OS-Grade Safety V2 and Harness Reality](./Chapter6.md) for intent plans, approvals, invariants, and safety-policy operations.

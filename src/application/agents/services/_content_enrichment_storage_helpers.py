@@ -25,7 +25,6 @@ from src.type_definitions.storage import StorageUseCase
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from uuid import UUID
 
     from src.application.services.storage_operation_coordinator import (
         StorageOperationCoordinator,
@@ -292,7 +291,7 @@ class _ContentEnrichmentStorageHelpers:
         *,
         document: SourceDocument,
         status: EnrichmentStatus,
-        run_uuid: UUID | None,
+        run_id: str | None,
         acquisition_method: str,
         metadata_patch: JSONObject,
     ) -> None:
@@ -300,7 +299,7 @@ class _ContentEnrichmentStorageHelpers:
             update={
                 "enrichment_status": status,
                 "enrichment_method": acquisition_method,
-                "enrichment_agent_run_id": run_uuid,
+                "enrichment_agent_run_id": run_id,
                 "updated_at": datetime.now(UTC),
                 "metadata": merge_metadata(document.metadata, metadata_patch),
             },

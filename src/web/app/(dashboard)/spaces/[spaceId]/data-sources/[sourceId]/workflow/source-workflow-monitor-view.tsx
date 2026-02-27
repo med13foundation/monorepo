@@ -56,6 +56,17 @@ export function SourceWorkflowMonitorView({
   const reviewQueueRows = asList(relationReview.review_queue_rows)
   const rejectedRows = asList(relationReview.rejected_relation_rows)
   const graphSummary = asRecord(monitor?.graph_summary)
+  const artanaProgress = asRecord(monitor?.artana_progress)
+  const artanaProgressRows = Object.entries(artanaProgress).map(([stageName, rawValue]) => {
+    const payload = asRecord(rawValue)
+    return {
+      stage: stageName,
+      run_id: payload.run_id,
+      status: payload.status,
+      percent: payload.percent,
+      current_stage: payload.current_stage,
+    }
+  })
   const warnings = Array.isArray(monitor?.warnings)
     ? monitor?.warnings.filter((item): item is string => typeof item === 'string')
     : []
@@ -96,8 +107,29 @@ export function SourceWorkflowMonitorView({
           <Badge variant="outline">
             Graph total edges: {toNumber(counters.graph_edges_total)}
           </Badge>
+          {artanaProgressRows.length > 0 && (
+            <Badge variant="outline">
+              Artana stages: {artanaProgressRows.length}
+            </Badge>
+          )}
         </CardContent>
       </Card>
+
+      {artanaProgressRows.length > 0 && (
+        <Card>
+          <CardContent className="flex flex-wrap items-center gap-2 py-4 text-xs">
+            {artanaProgressRows.map((row) => {
+              const percentLabel =
+                typeof row.percent === 'number' ? `${row.percent}%` : 'n/a'
+              return (
+                <Badge key={`${displayValue(row.stage)}-${displayValue(row.run_id)}`} variant="outline">
+                  {displayValue(row.stage)}: {displayValue(row.status)} ({percentLabel})
+                </Badge>
+              )
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       {monitorError ? (
         <Card>

@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+from typing import TYPE_CHECKING, TypeVar
 
 import httpx
 from pydantic import BaseModel
 
+if TYPE_CHECKING:
+    from artana.ports.model import ModelRequest, ModelResult
+
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+OutputT = TypeVar("OutputT", bound=BaseModel)
 
 
 def resolve_configured_openai_api_key() -> str | None:
@@ -162,26 +167,22 @@ class OpenAIJSONSchemaModelPort:
             await self._client.aclose()
             self._client = None
 
-    async def complete(self, request: object) -> object:
+    async def complete(
+        self,
+        request: ModelRequest[OutputT],
+    ) -> ModelResult[OutputT]:
         api_key = self._resolve_openai_api_key()
         if api_key is None:
             msg = "OPENAI_API_KEY (or ARTANA_OPENAI_API_KEY) is not configured."
             raise RuntimeError(msg)
 
-        output_schema = getattr(request, "output_schema", None)
-        if not isinstance(output_schema, type) or not issubclass(
-            output_schema,
-            BaseModel,
-        ):
-            msg = "Artana model request output_schema must be a Pydantic BaseModel."
-            raise TypeError(msg)
-
+        output_schema = request.output_schema
         prompt = _extract_prompt(request)
         if not prompt:
             msg = "Artana model request is missing prompt/messages content."
             raise ValueError(msg)
 
-        requested_model = str(getattr(request, "model", self._default_model))
+        requested_model = str(request.model or self._default_model)
         openai_model = _normalize_openai_model_id(requested_model)
         schema_name = output_schema.__name__.lower() or self._schema_name_fallback
         payload = {

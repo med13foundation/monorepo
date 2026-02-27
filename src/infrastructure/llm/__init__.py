@@ -30,6 +30,7 @@ __all__ = [
     "register_all_skills",
     "SkillRegistry",
     # State inspection
+    "ArtanaKernelRunProgressRepository",
     "SqlAlchemyAgentRunStateRepository",
 ]
 
@@ -117,6 +118,10 @@ _EXPORT_MAP: dict[str, tuple[str, str]] = {
     "SkillRegistry": (
         "src.infrastructure.llm.skills.registry",
         "SkillRegistry",
+    ),
+    "ArtanaKernelRunProgressRepository": (
+        "src.infrastructure.llm.state.run_progress_repository",
+        "ArtanaKernelRunProgressRepository",
     ),
     "SqlAlchemyAgentRunStateRepository": (
         "src.infrastructure.llm.state.agent_run_state_repository",

@@ -152,7 +152,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
             return 120.0
 
     @staticmethod
-    def _create_store() -> object:
+    def _create_store() -> PostgresStore:
         state_uri = resolve_artana_state_uri()
         if state_uri.startswith("postgresql://"):
             return PostgresStore(state_uri)
@@ -256,6 +256,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
             output_schema=MappingJudgeContract,
             step_key="mapping.judge.v1",
             replay_policy=self._runtime_policy.replay_policy,
+            context_version=self._runtime_policy.to_context_version(),
         )
         output = result.output
         contract = (

@@ -32,11 +32,11 @@ class _EntityRecognitionRuntimeHelpers:
         self,
         *,
         document: SourceDocument,
-        run_uuid: UUID | None,
+        run_id: str | None,
         metadata_patch: JSONObject,
     ) -> SourceDocument:
         extracted = document.mark_extracted(
-            extraction_agent_run_id=run_uuid,
+            extraction_agent_run_id=run_id,
             extracted_at=datetime.now(UTC),
         )
         updated = extracted.model_copy(
@@ -53,13 +53,13 @@ class _EntityRecognitionRuntimeHelpers:
         self,
         *,
         document: SourceDocument,
-        run_uuid: UUID | None,
+        run_id: str | None,
         metadata_patch: JSONObject,
     ) -> SourceDocument:
         failed = document.model_copy(
             update={
                 "extraction_status": DocumentExtractionStatus.FAILED,
-                "extraction_agent_run_id": run_uuid,
+                "extraction_agent_run_id": run_id,
                 "updated_at": datetime.now(UTC),
                 "metadata": self._merge_metadata(document.metadata, metadata_patch),
             },
