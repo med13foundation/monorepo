@@ -66,7 +66,10 @@ async def add_source_to_space(
         if not data_source_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to add source to research space",
+                detail=(
+                    "Source could not be added. Verify availability is set to "
+                    "Available and source configuration is valid."
+                ),
             )
 
         audit_service.record_action(

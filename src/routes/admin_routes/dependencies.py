@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from uuid import UUID
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from src.application.services import (
@@ -20,7 +20,7 @@ from src.application.services import (
     SystemStatusService,
     TemplateManagementService,
 )
-from src.database.session import SessionLocal
+from src.database import session as session_module
 from src.domain.entities.data_discovery_session import SourceCatalogEntry
 from src.infrastructure.dependency_injection.container import container
 from src.infrastructure.repositories import (
@@ -37,7 +37,24 @@ SYSTEM_ACTOR_ID = DEFAULT_OWNER_ID
 
 def get_db_session() -> Session:
     """Create a bare SQLAlchemy session for admin services."""
-    return SessionLocal()
+    session = session_module.SessionLocal()
+    session_module.set_session_rls_context(
+        session,
+        is_admin=True,
+        has_phi_access=True,
+        bypass_rls=False,
+    )
+    return session
+
+
+def get_admin_db_session() -> Generator[Session]:
+    """Yield a scoped SQLAlchemy session for admin endpoints."""
+
+    session = get_db_session()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def get_system_status_service() -> SystemStatusService:
@@ -45,24 +62,27 @@ def get_system_status_service() -> SystemStatusService:
     return container.get_system_status_service()
 
 
-def get_source_service() -> SourceManagementService:
+def get_source_service(
+    session: Session = Depends(get_admin_db_session),
+) -> SourceManagementService:
     """Instantiate the SourceManagementService with SQLAlchemy repositories."""
-    session = get_db_session()
     user_repo = SqlAlchemyUserDataSourceRepository(session)
     template_repo = SqlAlchemySourceTemplateRepository(session)
     return SourceManagementService(user_repo, template_repo)
 
 
-def get_template_service() -> TemplateManagementService:
+def get_template_service(
+    session: Session = Depends(get_admin_db_session),
+) -> TemplateManagementService:
     """Instantiate the TemplateManagementService."""
-    session = get_db_session()
     template_repo = SqlAlchemySourceTemplateRepository(session)
     return TemplateManagementService(template_repo)
 
 
-def get_activation_service() -> DataSourceActivationService:
+def get_activation_service(
+    session: Session = Depends(get_admin_db_session),
+) -> DataSourceActivationService:
     """Instantiate the DataSourceActivationService."""
-    session = get_db_session()
     activation_repo = SqlAlchemyDataSourceActivationRepository(session)
     return DataSourceActivationService(activation_repo)
 
@@ -92,9 +112,10 @@ def get_data_source_ai_test_service() -> Generator[DataSourceAiTestService]:
         yield service
 
 
-def get_ingestion_job_repository() -> SqlAlchemyIngestionJobRepository:
+def get_ingestion_job_repository(
+    session: Session = Depends(get_admin_db_session),
+) -> SqlAlchemyIngestionJobRepository:
     """Instantiate the ingestion job repository."""
-    session = get_db_session()
     return SqlAlchemyIngestionJobRepository(session)
 
 
@@ -113,25 +134,12 @@ def get_catalog_entry(session: Session, catalog_entry_id: str) -> SourceCatalogE
     return entry
 
 
-def get_storage_configuration_service() -> Generator[StorageConfigurationService]:
-    """Yield a storage configuration service scoped to a session."""
+def get_storage_configuration_service(
+    session: Session = Depends(get_admin_db_session),
+) -> StorageConfigurationService:
+    """Instantiate the storage configuration service scoped to the request session."""
 
-    session = get_db_session()
-    service = container.create_storage_configuration_service(session)
-    try:
-        yield service
-    finally:
-        session.close()
-
-
-def get_admin_db_session() -> Generator[Session]:
-    """Yield a scoped SQLAlchemy session for admin endpoints."""
-
-    session = get_db_session()
-    try:
-        yield session
-    finally:
-        session.close()
+    return container.create_storage_configuration_service(session)
 
 
 __all__ = [

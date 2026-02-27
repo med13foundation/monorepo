@@ -11,19 +11,17 @@ from . import (
     audit_service,
     authentication_service,
     authorization_service,
+    clinvar_ingestion_service,
     dashboard_service,
     data_discovery_service,
     data_source_activation_service,
     data_source_ai_test_service,
     data_source_authorization_service,
     discovery_configuration_service,
-    evidence_service,
     extraction_queue_service,
     extraction_runner_service,
-    gene_service,
     ingestion_scheduling_service,
-    mechanism_service,
-    phenotype_service,
+    membership_management_service,
     publication_extraction_service,
     publication_service,
     pubmed_discovery_service,
@@ -38,7 +36,6 @@ from . import (
     system_status_service,
     template_management_service,
     user_management_service,
-    variant_service,
 )
 
 AuthenticationService = authentication_service.AuthenticationService
@@ -52,6 +49,7 @@ DataDiscoveryServiceDependencies = (
 DataSourceAiTestService = data_source_ai_test_service.DataSourceAiTestService
 DataSourceAiTestDependencies = data_source_ai_test_service.DataSourceAiTestDependencies
 DataSourceAiTestSettings = data_source_ai_test_service.DataSourceAiTestSettings
+ClinVarIngestionService = clinvar_ingestion_service.ClinVarIngestionService
 DataSourceActivationService = data_source_activation_service.DataSourceActivationService
 DataSourceAuthorizationService = (
     data_source_authorization_service.DataSourceAuthorizationService
@@ -63,15 +61,15 @@ DataSourcePermission = data_source_authorization_service.DataSourcePermission
 DiscoveryConfigurationService = (
     discovery_configuration_service.DiscoveryConfigurationService
 )
-EvidenceApplicationService = evidence_service.EvidenceApplicationService
+
 ExtractionEnqueueSummary = extraction_queue_service.ExtractionEnqueueSummary
 ExtractionQueueService = extraction_queue_service.ExtractionQueueService
 ExtractionRunSummary = extraction_runner_service.ExtractionRunSummary
 ExtractionRunnerService = extraction_runner_service.ExtractionRunnerService
-GeneApplicationService = gene_service.GeneApplicationService
+
 IngestionSchedulingService = ingestion_scheduling_service.IngestionSchedulingService
-PhenotypeApplicationService = phenotype_service.PhenotypeApplicationService
-MechanismApplicationService = mechanism_service.MechanismApplicationService
+IngestionSchedulingOptions = ingestion_scheduling_service.IngestionSchedulingOptions
+MembershipManagementService = membership_management_service.MembershipManagementService
 PublicationApplicationService = publication_service.PublicationApplicationService
 PublicationExtractionListResult = (
     publication_extraction_service.PublicationExtractionListResult
@@ -80,6 +78,7 @@ PublicationExtractionService = (
     publication_extraction_service.PublicationExtractionService
 )
 PubMedDiscoveryService = pubmed_discovery_service.PubMedDiscoveryService
+PubMedIngestionDependencies = pubmed_ingestion_service.PubMedIngestionDependencies
 PubMedIngestionService = pubmed_ingestion_service.PubMedIngestionService
 PubMedQueryBuilder = pubmed_query_builder.PubMedQueryBuilder
 PubmedDownloadRequest = pubmed_discovery_service.PubmedDownloadRequest
@@ -95,7 +94,7 @@ StorageOperationCoordinator = storage_operation_coordinator.StorageOperationCoor
 SystemStatusService = system_status_service.SystemStatusService
 TemplateManagementService = template_management_service.TemplateManagementService
 UserManagementService = user_management_service.UserManagementService
-VariantApplicationService = variant_service.VariantApplicationService
+
 
 CreateSourceRequest = source_management_service.CreateSourceRequest
 UpdateSourceRequest = source_management_service.UpdateSourceRequest
@@ -116,6 +115,7 @@ __all__ = [
     "CreateSourceRequest",
     "CreateStorageConfigurationRequest",
     "CreateTemplateRequest",
+    "ClinVarIngestionService",
     "DashboardService",
     "DataDiscoveryService",
     "DataDiscoveryServiceDependencies",
@@ -127,16 +127,15 @@ __all__ = [
     "DataSourceAvailabilitySummary",
     "DataSourcePermission",
     "DiscoveryConfigurationService",
-    "EvidenceApplicationService",
     "ExtractionEnqueueSummary",
     "ExtractionQueueService",
     "ExtractionRunSummary",
     "ExtractionRunnerService",
-    "GeneApplicationService",
     "IngestionSchedulingService",
-    "MechanismApplicationService",
-    "PhenotypeApplicationService",
+    "IngestionSchedulingOptions",
+    "MembershipManagementService",
     "PubMedDiscoveryService",
+    "PubMedIngestionDependencies",
     "PubMedIngestionService",
     "PubMedQueryBuilder",
     "PubmedDownloadRequest",
@@ -158,5 +157,4 @@ __all__ = [
     "UpdateTemplateRequest",
     "UserManagementService",
     "UserRole",
-    "VariantApplicationService",
 ]

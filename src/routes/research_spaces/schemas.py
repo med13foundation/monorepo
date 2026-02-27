@@ -212,3 +212,44 @@ class CurationQueueResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+class SpaceOverviewDataSourcesResponse(BaseModel):
+    """Paginated data source preview for the space overview endpoint."""
+
+    items: list[DataSourceResponse]
+    total: int
+    page: int
+    limit: int
+    has_next: bool
+    has_prev: bool
+
+
+class SpaceOverviewAccessResponse(BaseModel):
+    """Access and role flags used by the space overview UI."""
+
+    has_space_access: bool
+    can_manage_members: bool
+    can_edit_space: bool
+    is_owner: bool
+    show_membership_notice: bool
+    effective_role: str
+
+
+class SpaceOverviewCountsResponse(BaseModel):
+    """Lightweight counts for common space overview widgets."""
+
+    member_count: int
+    data_source_count: int
+
+
+class SpaceOverviewResponse(BaseModel):
+    """Aggregated payload for space overview rendering."""
+
+    space: ResearchSpaceResponse
+    membership: MembershipResponse | None
+    access: SpaceOverviewAccessResponse
+    counts: SpaceOverviewCountsResponse
+    data_sources: SpaceOverviewDataSourcesResponse
+    curation_stats: CurationStatsResponse
+    curation_queue: CurationQueueResponse

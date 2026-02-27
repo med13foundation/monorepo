@@ -38,3 +38,20 @@ export function canInviteMembers(role: MembershipRole): boolean {
 export function canModifySpace(role: MembershipRole): boolean {
   return role === MembershipRole.OWNER || role === MembershipRole.ADMIN
 }
+
+export function canManageMechanisms(role: MembershipRole): boolean {
+  return (
+    role === MembershipRole.OWNER ||
+    role === MembershipRole.ADMIN ||
+    role === MembershipRole.CURATOR
+  )
+}
+
+export function canManageStatements(role: MembershipRole): boolean {
+  return (
+    role === MembershipRole.OWNER ||
+    role === MembershipRole.ADMIN ||
+    role === MembershipRole.CURATOR ||
+    role === MembershipRole.RESEARCHER
+  )
+}

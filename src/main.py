@@ -2,6 +2,7 @@ import asyncio
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
+from typing import Literal
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,20 +34,14 @@ from src.routes import (
     curation_router,
     dashboard_router,
     data_discovery_router,
-    evidence_router,
     export_router,
-    extractions_router,
-    genes_router,
     health_router,
-    mechanisms_router,
-    phenotypes_router,
     research_space_discovery_router,
     research_spaces_router,
     resources_router,
     root_router,
     search_router,
     users_router,
-    variants_router,
 )
 
 
@@ -54,8 +49,22 @@ def _skip_startup_tasks() -> bool:
     return os.getenv("MED13_SKIP_STARTUP_TASKS") == "1"
 
 
+def _runtime_role() -> Literal["all", "api", "scheduler"]:
+    configured = os.getenv("MED13_RUNTIME_ROLE", "all").strip().lower()
+    if configured in {"", "all"}:
+        return "all"
+    if configured == "api":
+        return "api"
+    if configured == "scheduler":
+        return "scheduler"
+    msg = "Unsupported MED13_RUNTIME_ROLE value. Use 'api', 'scheduler', or 'all'."
+    raise ValueError(msg)
+
+
 def _scheduler_disabled() -> bool:
-    return os.getenv("MED13_DISABLE_INGESTION_SCHEDULER") == "1"
+    if os.getenv("MED13_DISABLE_INGESTION_SCHEDULER") == "1":
+        return True
+    return _runtime_role() == "api"
 
 
 INGESTION_SCHEDULER_INTERVAL_SECONDS = int(
@@ -158,12 +167,6 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(root_router)
     app.include_router(resources_router)
-    app.include_router(genes_router)
-    app.include_router(variants_router)
-    app.include_router(mechanisms_router)
-    app.include_router(phenotypes_router)
-    app.include_router(evidence_router)
-    app.include_router(extractions_router)
     app.include_router(search_router)
     app.include_router(export_router)
     app.include_router(dashboard_router)

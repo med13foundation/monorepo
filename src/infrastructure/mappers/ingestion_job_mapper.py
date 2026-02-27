@@ -13,14 +13,16 @@ from src.domain.entities.ingestion_job import (
     IngestionTrigger,
     JobMetrics,
 )
+from src.domain.value_objects import Provenance
 from src.models.database.ingestion_job import (
     IngestionJobModel,
     IngestionStatusEnum,
     IngestionTriggerEnum,
 )
-from src.models.value_objects.provenance import Provenance
+from src.type_definitions.data_sources import normalize_ingestion_job_metadata
 
 if TYPE_CHECKING:
+    from src.infrastructure.llm.config.runtime_policy import ReplayPolicy
     from src.type_definitions.common import JSONObject
 else:
     JSONObject = dict[str, object]  # Runtime type stub
@@ -48,6 +50,17 @@ def _to_iso_seconds(value: datetime | None) -> str | None:
     return normalized.astimezone(UTC).isoformat(timespec="seconds")
 
 
+def _normalize_replay_policy(value: str) -> ReplayPolicy:
+    normalized = value.strip().lower()
+    if normalized == "strict":
+        return "strict"
+    if normalized == "allow_prompt_drift":
+        return "allow_prompt_drift"
+    if normalized == "fork_on_drift":
+        return "fork_on_drift"
+    return "strict"
+
+
 class IngestionJobMapper:
     """Bidirectional mapper between domain ingestion jobs and SQLAlchemy models."""
 
@@ -57,7 +70,7 @@ class IngestionJobMapper:
         metrics_payload = model.metrics or {}
         errors_payload = model.errors or []
         # Type: model.job_metadata is already dict[str, object] from SQLAlchemy JSON
-        metadata_payload: JSONObject = dict(model.job_metadata or {})
+        metadata_payload = normalize_ingestion_job_metadata(model.job_metadata)
         # Type: model.source_config_snapshot is already dict[str, object] from SQLAlchemy JSON
         snapshot_payload: JSONObject = dict(model.source_config_snapshot or {})
 
@@ -78,6 +91,8 @@ class IngestionJobMapper:
             provenance=Provenance.model_validate(model.provenance),
             metadata=metadata_payload,
             source_config_snapshot=snapshot_payload,
+            dictionary_version_used=int(model.dictionary_version_used),
+            replay_policy=_normalize_replay_policy(str(model.replay_policy)),
         )
 
     @staticmethod
@@ -95,8 +110,10 @@ class IngestionJobMapper:
             "metrics": job.metrics.model_dump(mode="json"),
             "errors": [error.model_dump(mode="json") for error in job.errors],
             "provenance": job.provenance.model_dump(mode="json"),
-            "job_metadata": dict(job.metadata),
+            "job_metadata": normalize_ingestion_job_metadata(job.metadata),
             "source_config_snapshot": dict(job.source_config_snapshot),
+            "dictionary_version_used": int(job.dictionary_version_used),
+            "replay_policy": job.replay_policy,
         }
 
     @staticmethod

@@ -20,16 +20,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from src.application import services as app_services
-from src.domain.services import (
-    EvidenceDomainService,
-    GeneDomainService,
-    VariantDomainService,
-)
 from src.infrastructure import observability, storage
 from src.infrastructure.dependency_injection.db_utils import (
     SessionLocal,
-    build_sqlite_connect_args,
-    configure_sqlite_engine,
     resolve_async_database_url,
 )
 from src.infrastructure.repositories import (
@@ -43,9 +36,27 @@ from .service_factories import ApplicationServiceFactoryMixin
 
 # AsyncSession, async_sessionmaker, and create_async_engine are imported above
 
-DEFAULT_DEV_JWT_SECRET = os.getenv("MED13_DEV_JWT_SECRET") or os.urandom(48).hex()
-
 logger = logging.getLogger(__name__)
+_ENVIRONMENT = os.getenv("MED13_ENV", "development").lower()
+_PRODUCTION_LIKE_ENVS = frozenset({"production", "staging"})
+_FALLBACK_DEV_JWT_SIGNING_MATERIAL = (
+    "med13-resource-library-dev-jwt-secret-change-in-production-2026-01"
+)
+
+
+def _resolve_default_jwt_secret() -> str:
+    configured_secret = os.getenv("MED13_DEV_JWT_SECRET")
+    if configured_secret:
+        return configured_secret
+    if _ENVIRONMENT in _PRODUCTION_LIKE_ENVS:
+        message = (
+            "MED13_DEV_JWT_SECRET must be set when MED13_ENV is production or staging."
+        )
+        raise RuntimeError(message)
+    return _FALLBACK_DEV_JWT_SIGNING_MATERIAL
+
+
+DEFAULT_DEV_JWT_SECRET = _resolve_default_jwt_secret()
 
 
 class DependencyContainer(ApplicationServiceFactoryMixin):
@@ -67,25 +78,26 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         resolved_secret = jwt_secret_key or DEFAULT_DEV_JWT_SECRET
         self.jwt_secret_key = resolved_secret
         self.jwt_algorithm = jwt_algorithm
+        if (
+            jwt_secret_key is None
+            and os.getenv("MED13_DEV_JWT_SECRET") is None
+            and _ENVIRONMENT not in _PRODUCTION_LIKE_ENVS
+        ):
+            logger.warning(
+                "MED13_DEV_JWT_SECRET is not set. Using fallback development "
+                "JWT secret; set MED13_DEV_JWT_SECRET for stable explicit config.",
+            )
 
         # Initialize ASYNC database engine (for Clean Architecture - auth)
         engine_kwargs: dict[str, object] = {
             "echo": False,  # Set to True for debugging
             "pool_pre_ping": True,
         }
-        if resolved_db_url.startswith("sqlite"):
-            engine_kwargs["connect_args"] = build_sqlite_connect_args(
-                include_thread_check=False,
-            )
-            engine_kwargs["poolclass"] = sa.pool.NullPool
 
         self.engine = create_async_engine(
             resolved_db_url,
             **engine_kwargs,
         )
-
-        if resolved_db_url.startswith("sqlite"):
-            configure_sqlite_engine(self.engine.sync_engine)
 
         # Create async session factory
         self.async_session_factory = async_sessionmaker(
@@ -113,16 +125,15 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         self._user_management_service: app_services.UserManagementService | None = None
         self._user_management_service_loop: asyncio.AbstractEventLoop | None = None
 
-        # Initialize Legacy domain services (pure business logic, no dependencies)
-        self._gene_domain_service: GeneDomainService | None = None
-        self._variant_domain_service: VariantDomainService | None = None
-        self._evidence_domain_service: EvidenceDomainService | None = None
         self._storage_plugin_registry = storage.initialize_storage_plugins()
         self._storage_metrics_recorder = (
             observability.logging_metrics_recorder.LoggingStorageMetricsRecorder()
         )
         self._system_status_repository: SqlAlchemySystemStatusRepository | None = None
         self._system_status_service: app_services.SystemStatusService | None = None
+        self._entity_recognition_agent = None
+        self._extraction_agent = None
+        self._graph_connection_agent = None
         self._query_agent = None
 
     def get_user_repository(self) -> SqlAlchemyUserRepository:
@@ -199,21 +210,6 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         return self._user_management_service
 
     # LEGACY SYSTEM METHODS (Sync SQLAlchemy for backward compatibility)
-
-    def get_gene_domain_service(self) -> GeneDomainService:
-        if self._gene_domain_service is None:
-            self._gene_domain_service = GeneDomainService()
-        return self._gene_domain_service
-
-    def get_variant_domain_service(self) -> VariantDomainService:
-        if self._variant_domain_service is None:
-            self._variant_domain_service = VariantDomainService()
-        return self._variant_domain_service
-
-    def get_evidence_domain_service(self) -> EvidenceDomainService:
-        if self._evidence_domain_service is None:
-            self._evidence_domain_service = EvidenceDomainService()
-        return self._evidence_domain_service
 
     # LEGACY APPLICATION SERVICES
 

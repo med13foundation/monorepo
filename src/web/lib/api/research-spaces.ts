@@ -1,5 +1,6 @@
 import { apiClient, authHeaders } from '@/lib/api/client'
 import type { AxiosError } from 'axios'
+import type { DataSourceListResponse } from '@/lib/api/data-sources'
 import type {
   CreateSpaceRequest,
   InviteMemberRequest,
@@ -61,6 +62,51 @@ export async function fetchResearchSpaceBySlug(
   const resp = await apiClient.get<ResearchSpace>(
     `/research-spaces/slug/${slug}`,
     authHeaders(token),
+  )
+  return resp.data
+}
+
+export interface SpaceOverviewAccess {
+  has_space_access: boolean
+  can_manage_members: boolean
+  can_edit_space: boolean
+  is_owner: boolean
+  show_membership_notice: boolean
+  effective_role: string
+}
+
+export interface SpaceOverviewCounts {
+  member_count: number
+  data_source_count: number
+}
+
+export interface SpaceOverviewResponse {
+  space: ResearchSpace
+  membership: ResearchSpaceMembership | null
+  access: SpaceOverviewAccess
+  counts: SpaceOverviewCounts
+  data_sources: DataSourceListResponse
+  curation_stats: CurationStats
+  curation_queue: CurationQueueResponse
+}
+
+export async function fetchSpaceOverview(
+  spaceId: string,
+  params?: {
+    data_source_limit?: number
+    queue_limit?: number
+  },
+  token?: string,
+): Promise<SpaceOverviewResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required')
+  }
+  const resp = await apiClient.get<SpaceOverviewResponse>(
+    `/research-spaces/${spaceId}/overview`,
+    {
+      params,
+      ...authHeaders(token),
+    },
   )
   return resp.data
 }
@@ -227,7 +273,18 @@ export async function fetchMyMembership(
     return resp.data
   } catch (error) {
     const axiosError = error as AxiosError
-    if (axiosError.response?.status === 404) {
+    const responseStatus = axiosError.response?.status
+    const errorCode = axiosError.code
+    const isTimeout = errorCode === 'ECONNABORTED'
+    const isNetworkFailure = axiosError.response === undefined
+    const isRecoverableBackendFailure =
+      typeof responseStatus === 'number' && responseStatus >= 500
+    if (
+      responseStatus === 404 ||
+      isTimeout ||
+      isNetworkFailure ||
+      isRecoverableBackendFailure
+    ) {
       return null
     }
     throw error
@@ -268,11 +325,24 @@ export async function fetchSpaceCurationStats(
   if (!token) {
     throw new Error('Authentication token is required')
   }
-  const resp = await apiClient.get<CurationStats>(
-    `/research-spaces/${spaceId}/curation/stats`,
-    authHeaders(token),
-  )
-  return resp.data
+  try {
+    const resp = await apiClient.get<CurationStats>(
+      `/research-spaces/${spaceId}/curation/stats`,
+      authHeaders(token),
+    )
+    return resp.data
+  } catch (error) {
+    const axiosError = error as AxiosError
+    if (axiosError.response?.status === 404 || axiosError.response?.status === 500) {
+      return {
+        total: 0,
+        pending: 0,
+        approved: 0,
+        rejected: 0,
+      }
+    }
+    throw error
+  }
 }
 
 export async function fetchSpaceCurationQueue(
@@ -289,12 +359,25 @@ export async function fetchSpaceCurationQueue(
   if (!token) {
     throw new Error('Authentication token is required')
   }
-  const resp = await apiClient.get<CurationQueueResponse>(
-    `/research-spaces/${spaceId}/curation/queue`,
-    {
-      params,
-      ...authHeaders(token),
-    },
-  )
-  return resp.data
+  try {
+    const resp = await apiClient.get<CurationQueueResponse>(
+      `/research-spaces/${spaceId}/curation/queue`,
+      {
+        params,
+        ...authHeaders(token),
+      },
+    )
+    return resp.data
+  } catch (error) {
+    const axiosError = error as AxiosError
+    if (axiosError.response?.status === 404 || axiosError.response?.status === 500) {
+      return {
+        items: [],
+        total: 0,
+        skip: params?.skip ?? 0,
+        limit: params?.limit ?? 50,
+      }
+    }
+    throw error
+  }
 }

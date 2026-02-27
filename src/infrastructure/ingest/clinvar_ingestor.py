@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from src.infrastructure.ingest.base_ingestor import BaseIngestor
@@ -22,6 +23,42 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ClinVarSearchPage:
+    """Search-stage page metadata returned by ClinVar ESearch."""
+
+    variant_ids: list[str]
+    total_count: int
+    retstart: int
+    retmax: int
+
+    @property
+    def returned_count(self) -> int:
+        """Number of IDs returned in this page."""
+        return len(self.variant_ids)
+
+
+@dataclass(frozen=True)
+class ClinVarFetchPage:
+    """Fetch-stage result including records and cursor metadata."""
+
+    records: list[RawRecord]
+    total_count: int
+    retstart: int
+    retmax: int
+    returned_count: int
+
+    @property
+    def next_retstart(self) -> int:
+        """Cursor offset for the next page."""
+        return self.retstart + self.returned_count
+
+    @property
+    def has_more(self) -> bool:
+        """Whether additional pages are available."""
+        return self.next_retstart < self.total_count
 
 
 class ClinVarIngestor(BaseIngestor):
@@ -53,6 +90,11 @@ class ClinVarIngestor(BaseIngestor):
         Returns:
             List of ClinVar records
         """
+        page = await self.fetch_page(**kwargs)
+        return page.records
+
+    async def fetch_page(self, **kwargs: JSONValue) -> ClinVarFetchPage:
+        """Fetch one ClinVar page with explicit cursor metadata."""
         # Step 1: Search for ClinVar records
         gene_symbol_value = kwargs.get("gene_symbol")
         gene_symbol = (
@@ -62,9 +104,16 @@ class ClinVarIngestor(BaseIngestor):
         search_kwargs = dict(kwargs)
         search_kwargs.pop("gene_symbol", None)
 
-        variant_ids = await self._search_variants(gene_symbol, **search_kwargs)
+        search_page = await self._search_variants(gene_symbol, **search_kwargs)
+        variant_ids = list(search_page.variant_ids)
         if not variant_ids:
-            return []
+            return ClinVarFetchPage(
+                records=[],
+                total_count=search_page.total_count,
+                retstart=search_page.retstart,
+                retmax=search_page.retmax,
+                returned_count=0,
+            )
 
         # Step 2: Fetch detailed records in batches
         all_records: list[RawRecord] = []
@@ -78,13 +127,19 @@ class ClinVarIngestor(BaseIngestor):
             # Small delay between batches to be respectful
             await asyncio.sleep(0.1)
 
-        return all_records
+        return ClinVarFetchPage(
+            records=all_records,
+            total_count=search_page.total_count,
+            retstart=search_page.retstart,
+            retmax=search_page.retmax,
+            returned_count=search_page.returned_count,
+        )
 
     async def _search_variants(
         self,
         gene_symbol: str,
         **kwargs: JSONValue,
-    ) -> list[str]:
+    ) -> ClinVarSearchPage:
         """
         Search ClinVar for variants related to a gene.
 
@@ -118,11 +173,14 @@ class ClinVarIngestor(BaseIngestor):
         query = " AND ".join(query_terms)
 
         # Use ESearch to find relevant records
+        retstart = max(self._coerce_int(kwargs.get("retstart"), 0), 0)
+        retmax = max(self._coerce_int(kwargs.get("max_results"), 1000), 1)
         params: dict[str, str | int | float | bool | None] = {
             "db": "clinvar",
             "term": query,
             "retmode": "json",
-            "retmax": self._coerce_int(kwargs.get("max_results"), 1000),
+            "retstart": retstart,
+            "retmax": retmax,
             "sort": "relevance",
         }
 
@@ -142,8 +200,21 @@ class ClinVarIngestor(BaseIngestor):
             if isinstance(id_list_raw, dict):
                 ids = id_list_raw.get("idlist", [])
                 if isinstance(ids, list):
-                    return [str(vid) for vid in ids]
-            return []
+                    return ClinVarSearchPage(
+                        variant_ids=[str(vid) for vid in ids],
+                        total_count=self._coerce_int(id_list_raw.get("count"), 0),
+                        retstart=self._coerce_int(
+                            id_list_raw.get("retstart"),
+                            retstart,
+                        ),
+                        retmax=self._coerce_int(id_list_raw.get("retmax"), retmax),
+                    )
+            return ClinVarSearchPage(
+                variant_ids=[],
+                total_count=0,
+                retstart=retstart,
+                retmax=retmax,
+            )
 
         sanitized: ClinVarSearchResponse | None = validation_result["sanitized_data"]
         if sanitized is None:
@@ -154,10 +225,32 @@ class ClinVarIngestor(BaseIngestor):
             if isinstance(esearch_fallback, dict):
                 raw_ids = esearch_fallback.get("idlist", [])
                 if isinstance(raw_ids, list):
-                    return [str(vid) for vid in raw_ids]
-            return []
+                    return ClinVarSearchPage(
+                        variant_ids=[str(vid) for vid in raw_ids],
+                        total_count=self._coerce_int(esearch_fallback.get("count"), 0),
+                        retstart=self._coerce_int(
+                            esearch_fallback.get("retstart"),
+                            retstart,
+                        ),
+                        retmax=self._coerce_int(
+                            esearch_fallback.get("retmax"),
+                            retmax,
+                        ),
+                    )
+            return ClinVarSearchPage(
+                variant_ids=[],
+                total_count=0,
+                retstart=retstart,
+                retmax=retmax,
+            )
 
-        return [str(vid) for vid in sanitized["esearchresult"]["idlist"]]
+        search_result = sanitized["esearchresult"]
+        return ClinVarSearchPage(
+            variant_ids=[str(vid) for vid in search_result["idlist"]],
+            total_count=self._coerce_int(search_result.get("count"), 0),
+            retstart=self._coerce_int(search_result.get("retstart"), retstart),
+            retmax=self._coerce_int(search_result.get("retmax"), retmax),
+        )
 
     async def _fetch_variant_details(
         self,

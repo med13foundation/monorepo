@@ -52,6 +52,7 @@ class StorageProviderPlugin(ABC):
             StorageUseCase.PDF,
             StorageUseCase.EXPORT,
             StorageUseCase.RAW_SOURCE,
+            StorageUseCase.DOCUMENT_CONTENT,
         }
 
     async def validate_config(

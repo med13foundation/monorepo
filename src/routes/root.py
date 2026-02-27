@@ -12,13 +12,37 @@ async def root() -> JSONObject:
     """Welcome endpoint with API information."""
     return {
         "message": "Welcome to the MED13 Resource Library API",
-        "description": "Curated resource library for MED13 variants, "
-        "phenotypes, and evidence",
+        "description": "Curated biomedical resource library built on a "
+        "metadata-driven kernel (dictionary + entities + observations + relations).",
         "version": "0.1.0",
         "documentation": "/docs",
-        "health_check": "/health/",
-        "resources": "/resources/",
-        "genes": "/genes/",
+        "health_check": "/health",
+        "resources": "/resources",
+        "dashboard": "/api/dashboard",
+        "research_spaces": "/research-spaces",
+        "kernel": {
+            "entities": "/research-spaces/{space_id}/entities",
+            "observations": "/research-spaces/{space_id}/observations",
+            "relations": "/research-spaces/{space_id}/relations",
+            "provenance": "/research-spaces/{space_id}/provenance",
+            "ingest": "/research-spaces/{space_id}/ingest",
+            "graph_export": "/research-spaces/{space_id}/graph/export",
+            "graph_subgraph": "/research-spaces/{space_id}/graph/subgraph",
+            "graph_search": "/research-spaces/{space_id}/graph/search",
+            "graph_connections_discover": (
+                "/research-spaces/{space_id}/graph/connections/discover"
+            ),
+            "entity_graph_connections": (
+                "/research-spaces/{space_id}/entities/{entity_id}/connections"
+            ),
+            "content_enrichment_run": (
+                "/research-spaces/{space_id}/documents/enrichment/run"
+            ),
+            "knowledge_extraction_run": (
+                "/research-spaces/{space_id}/documents/extraction/run"
+            ),
+        },
+        "admin": "/admin",
         "authentication": {
             "type": "JWT Bearer Token",
             "header": "Authorization",

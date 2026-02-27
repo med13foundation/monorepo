@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.models.value_objects.provenance import Provenance
+    from src.domain.value_objects.provenance import Provenance
     from src.type_definitions.common import JSONObject, JSONValue
 
 from src.type_definitions.json_utils import to_json_value

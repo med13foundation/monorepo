@@ -26,6 +26,7 @@ class SourceType(str, Enum):
     DATABASE = "database"
     WEB_SCRAPING = "web_scraping"  # Future use
     PUBMED = "pubmed"  # Biomedical literature ingestion
+    CLINVAR = "clinvar"  # ClinVar genomic variant ingestion
 
 
 class ScheduleFrequency(str, Enum):
@@ -66,6 +67,10 @@ class SourceConfiguration(BaseModel):
     format: str | None = Field(
         None,
         description="Data format (json, csv, xml, etc.)",
+    )
+    query: str | None = Field(
+        default=None,
+        description="Search query for the source (e.g. PubMed query)",
     )
 
     # Authentication

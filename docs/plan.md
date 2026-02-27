@@ -45,7 +45,7 @@ This plan follows **Clean Architecture principles** and assumes a **Postgres-bac
 - **Phase 2 (Expansion):** Neurodevelopmental, Ciliopathy/Mito, and Immune-mediated cohorts.
 - **Evaluation:** Diagnostic yield uplift and VUS reclassification with evidence tracking.
 
-## Implementation status (as of January 25, 2026)
+## Implementation status (as of January 26, 2026)
 
 **Legend:** DONE | PARTIAL | PLANNED
 
@@ -53,7 +53,8 @@ This plan follows **Clean Architecture principles** and assumes a **Postgres-bac
 - **Drug entity** DONE (`src/domain/entities/drug.py`)
 - **Pathway entity** DONE (`src/domain/entities/pathway.py`)
 - **ProteinDomain value object** DONE (`src/domain/value_objects/protein_structure.py`)
-- **Mechanism entity** DONE (domain + DB + API; `/mechanisms` endpoints)
+- **Mechanism entity** DONE (domain + DB + API; space-scoped endpoints under `/research-spaces/{space_id}/mechanisms` with UI surfaced in the per-space Knowledge Graph page)
+- **Statement of Understanding entity** DONE (domain + DB + API + UI; space-scoped endpoints under `/research-spaces/{space_id}/statements` with promotion to mechanisms)
 - **Variant schema enhancements** DONE (structural annotation + in-silico scores in `src/domain/entities/variant.py`)
 - **Phenotype longitudinal observations** DONE (`src/domain/entities/phenotype.py`)
 
@@ -70,7 +71,7 @@ This plan follows **Clean Architecture principles** and assumes a **Postgres-bac
 
 ### Phase 4: AI engine + UI
 - **Hypothesis scoring / inference services** PLANNED (not implemented)
-- **Knowledge graph UI** PARTIAL (route exists but is a placeholder page)
+- **Knowledge graph UI** PARTIAL (Statements of Understanding + mechanism management with promotion flow are integrated; graph explorer still pending)
 
 ---
 
@@ -101,6 +102,11 @@ We must introduce three new core entities to the `src/domain/entities/` module.
     *   **Purpose:** Represents a biological mechanism that bridges variants/domains to phenotypes.
     *   **Attributes:** `id`, `name`, `description`, `evidence_tier`, `confidence_score`.
     *   **Usage:** Node type in the graph, backed by evidence with provenance.
+
+*   **`StatementOfUnderstanding` (Hypothesis Layer)**
+    *   **Purpose:** Captures evolving mechanistic hypotheses prior to canonical promotion.
+    *   **Attributes:** `id`, `title`, `summary`, `evidence_tier`, `confidence_score`, `status`.
+    *   **Usage:** Primary reasoning workspace; promotes into `Mechanism` when well supported.
 
 ### **1.2 Expanded Mechanism & Outcome Entities (Sprint 3)**
 To fully capture the disease mechanism, we will add these entities in the next phase:

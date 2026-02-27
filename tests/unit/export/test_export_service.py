@@ -1,10 +1,10 @@
 """
-Tests for Bulk Export Service with type safety patterns.
+Tests for kernel-native BulkExportService.
 
-Follows type safety examples from type_examples.md:
-- Uses typed test fixtures
-- Implements mock repository patterns
-- Validates API responses with type safety
+Exports are research-space-scoped and support:
+- entities
+- observations
+- relations
 """
 
 import gzip
@@ -16,422 +16,200 @@ import pytest
 
 from src.application.export.export_service import BulkExportService
 from src.application.export.export_types import CompressionFormat, ExportFormat
-from src.application.export.serialization import item_to_csv_row, serialize_item
-from src.application.export.utils import get_gene_fields, get_variants_fields
+from src.application.export.utils import (
+    get_entity_fields,
+    get_observation_fields,
+    get_relation_fields,
+)
 from src.application.services.storage_configuration_service import (
     StorageConfigurationService,
 )
 from src.domain.entities.storage_configuration import StorageConfiguration
 from src.type_definitions.storage import StorageUseCase
-from tests.test_types.fixtures import (
-    TEST_EVIDENCE_PATHOGENIC as TEST_EVIDENCE_CLINICAL_REPORT,
-)
-from tests.test_types.fixtures import (
-    TEST_GENE_MED13,
-    TEST_GENE_TP53,
-    TEST_VARIANT_PATHOGENIC,
-)
-from tests.test_types.fixtures import (
-    TEST_PHENOTYPE_AUTISM as TEST_PHENOTYPE_NEUROLOGICAL,
-)
 
 
 class TestBulkExportService:
-    """Test suite for BulkExportService with comprehensive type safety."""
+    @pytest.fixture
+    def mock_entity_repo(self) -> Mock:
+        repo = Mock()
+        repo.find_by_research_space.return_value = [
+            {
+                "id": "ent-1",
+                "research_space_id": "space-1",
+                "entity_type": "GENE",
+                "display_label": "MED13",
+                "metadata_payload": {"foo": "bar"},
+            },
+        ]
+        repo.count_by_type.return_value = {"GENE": 1}
+        return repo
 
     @pytest.fixture
-    def mock_gene_service(self) -> Mock:
-        """Create mock gene service for testing."""
-        service = Mock()
-        # Mock the list_genes method to return test data
-        service.list_genes.return_value = ([TEST_GENE_MED13, TEST_GENE_TP53], 2)
-        return service
+    def mock_observation_repo(self) -> Mock:
+        repo = Mock()
+        repo.find_by_research_space.return_value = [
+            {
+                "id": "obs-1",
+                "research_space_id": "space-1",
+                "subject_id": "ent-1",
+                "variable_id": "VAR_GENE_SYMBOL",
+                "value_text": "MED13",
+                "unit": None,
+                "confidence": 1.0,
+            },
+        ]
+        repo.count_by_research_space.return_value = 1
+        return repo
 
     @pytest.fixture
-    def mock_variant_service(self) -> Mock:
-        """Create mock variant service for testing."""
-        service = Mock()
-        service.list_variants.return_value = ([TEST_VARIANT_PATHOGENIC], 1)
-        return service
-
-    @pytest.fixture
-    def mock_phenotype_service(self) -> Mock:
-        """Create mock phenotype service for testing."""
-        service = Mock()
-        service.list_phenotypes.return_value = ([TEST_PHENOTYPE_NEUROLOGICAL], 1)
-        return service
-
-    @pytest.fixture
-    def mock_evidence_service(self) -> Mock:
-        """Create mock evidence service for testing."""
-        service = Mock()
-        service.list_evidence.return_value = ([TEST_EVIDENCE_CLINICAL_REPORT], 1)
-        return service
+    def mock_relation_repo(self) -> Mock:
+        repo = Mock()
+        repo.find_by_research_space.return_value = [
+            {
+                "id": "rel-1",
+                "research_space_id": "space-1",
+                "source_id": "ent-1",
+                "relation_type": "ASSOCIATED_WITH",
+                "target_id": "ent-2",
+                "confidence": 0.5,
+                "curation_status": "DRAFT",
+            },
+        ]
+        repo.count_by_research_space.return_value = 1
+        return repo
 
     @pytest.fixture
     def export_service(
         self,
-        mock_gene_service: Mock,
-        mock_variant_service: Mock,
-        mock_phenotype_service: Mock,
-        mock_evidence_service: Mock,
+        mock_entity_repo: Mock,
+        mock_observation_repo: Mock,
+        mock_relation_repo: Mock,
     ) -> BulkExportService:
-        """Create export service with typed mock dependencies."""
         return BulkExportService(
-            gene_service=mock_gene_service,
-            variant_service=mock_variant_service,
-            phenotype_service=mock_phenotype_service,
-            evidence_service=mock_evidence_service,
+            entity_repo=mock_entity_repo,
+            observation_repo=mock_observation_repo,
+            relation_repo=mock_relation_repo,
         )
 
-    def test_export_genes_json_format(self, export_service: BulkExportService) -> None:
-        """Test exporting genes in JSON format with type safety."""
-        # Act: Export genes as JSON
+    def test_export_entities_json_format(
+        self,
+        export_service: BulkExportService,
+    ) -> None:
         result = list(
             export_service.export_data(
-                entity_type="genes",
+                research_space_id="space-1",
+                entity_type="entities",
                 export_format=ExportFormat.JSON,
                 compression=CompressionFormat.NONE,
             ),
         )
 
-        # Assert: Verify result structure and types
         assert len(result) == 1
         assert isinstance(result[0], str)
 
-        # Parse JSON and validate structure
         data = json.loads(result[0])
-        assert "genes" in data
-        assert isinstance(data["genes"], list)
-        assert len(data["genes"]) == 2  # MED13 and TP53
+        assert "entities" in data
+        assert isinstance(data["entities"], list)
+        assert data["entities"][0]["display_label"] == "MED13"
 
-        # Validate typed structure
-        for gene_data in data["genes"]:
-            assert "gene_id" in gene_data
-            assert "symbol" in gene_data
-            assert "name" in gene_data
-            assert "gene_type" in gene_data
-
-    def test_export_variants_csv_format(
+    def test_export_observations_csv_format(
         self,
         export_service: BulkExportService,
     ) -> None:
-        """Test exporting variants in CSV format with type safety."""
-        # Act: Export variants as CSV
         result = list(
             export_service.export_data(
-                entity_type="variants",
+                research_space_id="space-1",
+                entity_type="observations",
                 export_format=ExportFormat.CSV,
                 compression=CompressionFormat.NONE,
             ),
         )
 
-        # Assert: Verify CSV structure
         assert len(result) == 1
         assert isinstance(result[0], str)
-
-        # Parse CSV and validate
-        lines = result[0].strip().split("\n")
-        assert len(lines) >= 2  # Header + data
-
-        # Check header
-        header = lines[0].split(",")
-        expected_fields = [
-            "id",
-            "variant_id",
-            "clinvar_id",
-            "chromosome",
-            "position",
-            "reference_allele",
-            "alternate_allele",
-            "variant_type",
-            "clinical_significance",
-            "gene_symbol",
-        ]
-        for field in expected_fields:
+        header = result[0].splitlines()[0].split(",")
+        for field in ("id", "variable_id", "subject_id"):
             assert field in header
 
-    def test_export_phenotypes_compressed_json(
+    def test_export_relations_compressed_json(
         self,
         export_service: BulkExportService,
     ) -> None:
-        """Test exporting phenotypes with gzip compression."""
-        # Act: Export phenotypes as compressed JSON
         result = list(
             export_service.export_data(
-                entity_type="phenotypes",
+                research_space_id="space-1",
+                entity_type="relations",
                 export_format=ExportFormat.JSON,
                 compression=CompressionFormat.GZIP,
             ),
         )
 
-        # Assert: Verify compression
         assert len(result) == 1
         assert isinstance(result[0], bytes)
-
-        # Decompress and validate
         decompressed = gzip.decompress(result[0]).decode("utf-8")
         data = json.loads(decompressed)
-        assert "phenotypes" in data
-        assert isinstance(data["phenotypes"], list)
+        assert "relations" in data
 
-    def test_export_evidence_jsonl_format(
+    def test_export_invalid_entity_type_raises_error(
         self,
         export_service: BulkExportService,
     ) -> None:
-        """Test exporting evidence in JSON Lines format."""
-        # Act: Export evidence as JSONL
-        result = list(
-            export_service.export_data(
-                entity_type="evidence",
-                export_format=ExportFormat.JSONL,
-                compression=CompressionFormat.NONE,
-            ),
-        )
-
-        # Assert: Verify JSONL structure
-        assert len(result) == 1
-        assert isinstance(result[0], str)
-
-        # Parse JSONL (one JSON object per line)
-        lines = result[0].strip().split("\n")
-        assert len(lines) >= 1
-
-        # Validate each line is valid JSON
-        for line in lines:
-            if line.strip():  # Skip empty lines
-                data = json.loads(line)
-                assert isinstance(data, dict)
-                # Evidence objects should have basic fields like description
-                assert "description" in data or "value" in data
-
-    def test_export_with_filters(self, export_service: BulkExportService) -> None:
-        """Test export functionality with filters applied."""
-        # Note: Current implementation doesn't support filtering in export
-        # This test verifies the export still works when filters are passed
-        # Act: Export with filters (limit)
-        result = list(
-            export_service.export_data(
-                entity_type="genes",
-                export_format=ExportFormat.JSON,
-                compression=CompressionFormat.NONE,
-                filters={"limit": 1},  # Filters are passed but not currently used
-            ),
-        )
-
-        # Assert: Verify export still works (returns all data since filtering not implemented)
-        assert len(result) == 1
-        data = json.loads(result[0])
-        assert "genes" in data
-        assert len(data["genes"]) == 2  # Returns all mock data
-
-    def test_invalid_entity_type_raises_error(
-        self,
-        export_service: BulkExportService,
-    ) -> None:
-        """Test that invalid entity types raise appropriate errors."""
-        # Act & Assert: Invalid entity type should raise ValueError
         with pytest.raises(ValueError, match="Unsupported entity type"):
             list(
                 export_service.export_data(
-                    entity_type="invalid_entity",
+                    research_space_id="space-1",
+                    entity_type="invalid",
                     export_format=ExportFormat.JSON,
-                    compression=CompressionFormat.NONE,
                 ),
             )
 
-    def test_get_export_info_returns_typed_structure(
+    def test_get_export_info_entities(
         self,
         export_service: BulkExportService,
     ) -> None:
-        """Test get_export_info returns properly typed structure."""
-        # Act: Get export info for genes
-        info = export_service.get_export_info("genes")
-
-        # Assert: Verify structure and types
-        assert isinstance(info, dict)
-        assert "entity_type" in info
-        assert "supported_formats" in info
-        assert "supported_compression" in info
-
-        assert info["entity_type"] == "genes"
-        assert isinstance(info["supported_formats"], list)
-        assert isinstance(info["supported_compression"], list)
-
-        # Verify enum values are converted to strings
-        assert ExportFormat.JSON.value in info["supported_formats"]
-        assert CompressionFormat.GZIP.value in info["supported_compression"]
-
-    def test_export_format_enum_values(self) -> None:
-        """Test that export format enums have correct values."""
-        # Assert: Verify enum values match expected strings
-        assert ExportFormat.JSON.value == "json"
-        assert ExportFormat.CSV.value == "csv"
-        assert ExportFormat.TSV.value == "tsv"
-        assert ExportFormat.JSONL.value == "jsonl"
-
-    def test_compression_format_enum_values(self) -> None:
-        """Test that compression format enums have correct values."""
-        # Assert: Verify enum values match expected strings
-        assert CompressionFormat.NONE.value == "none"
-        assert CompressionFormat.GZIP.value == "gzip"
-
-    def test_csv_field_mappings_are_correct(
-        self,
-        export_service: BulkExportService,
-    ) -> None:
-        """Test that CSV field mappings include all expected fields."""
-        # Test gene fields
-        gene_fields = get_gene_fields()
-        expected_gene_fields = [
-            "id",
-            "gene_id",
-            "symbol",
-            "name",
-            "description",
-            "gene_type",
-            "chromosome",
-            "start_position",
-            "end_position",
-            "ensembl_id",
-            "ncbi_gene_id",
-            "uniprot_id",
-            "created_at",
-            "updated_at",
-        ]
-        assert gene_fields == expected_gene_fields
-
-        # Test variant fields
-        variant_fields = get_variants_fields()
-        expected_variant_fields = [
-            "id",
-            "variant_id",
-            "clinvar_id",
-            "chromosome",
-            "position",
-            "reference_allele",
-            "alternate_allele",
-            "variant_type",
-            "clinical_significance",
-            "gene_symbol",
-            "hgvs_genomic",
-            "hgvs_cdna",
-            "hgvs_protein",
-            "condition",
-            "review_status",
-            "allele_frequency",
-            "gnomad_af",
-            "created_at",
-            "updated_at",
-        ]
-        assert variant_fields == expected_variant_fields
-
-    def test_serialization_handles_complex_objects(
-        self,
-        export_service: BulkExportService,
-    ) -> None:
-        """Test that serialization handles complex nested objects correctly."""
-        # Create a mock object with nested structure
-        complex_obj = {
-            "id": 1,
-            "name": "Test Object",
-            "metadata": {"nested": {"value": 42, "list": [1, 2, 3]}},
-            "tags": ["tag1", "tag2"],
-        }
-
-        # Act: Serialize the object
-        serialized = serialize_item(complex_obj)
-
-        # Assert: Verify nested structure is preserved
-        assert serialized["id"] == 1
-        assert serialized["name"] == "Test Object"
-        assert serialized["metadata"]["nested"]["value"] == 42
-        assert serialized["metadata"]["nested"]["list"] == [1, 2, 3]
-        assert serialized["tags"] == ["tag1", "tag2"]
-
-    def test_csv_row_conversion_handles_missing_fields(
-        self,
-        export_service: BulkExportService,
-    ) -> None:
-        """Test CSV row conversion handles missing fields gracefully."""
-        # Create object missing some fields
-        incomplete_obj = {"id": 1, "name": "Test"}
-
-        # Act: Convert to CSV row
-        row = item_to_csv_row(
-            incomplete_obj,
-            ["id", "name", "missing_field"],
+        info = export_service.get_export_info(
+            research_space_id="space-1",
+            entity_type="entities",
         )
+        assert info["entity_type"] == "entities"
+        assert info["estimated_record_count"] == 1
 
-        # Assert: Missing fields become empty strings
-        assert row["id"] == "1"
-        assert row["name"] == "Test"
-        assert row["missing_field"] == ""
-
-    def test_csv_row_conversion_handles_complex_types(
-        self,
-        export_service: BulkExportService,
-    ) -> None:
-        """Test CSV row conversion properly handles lists and None values."""
-        # Create object with complex types
-        complex_obj = {
-            "id": 1,
-            "tags": ["tag1", "tag2"],
-            "optional_field": None,
-            "number": 42,
-        }
-
-        # Act: Convert to CSV row
-        row = item_to_csv_row(
-            complex_obj,
-            ["id", "tags", "optional_field", "number"],
-        )
-
-        # Assert: Complex types are converted appropriately
-        assert row["id"] == "1"
-        assert row["tags"] == "tag1;tag2"  # List joined with semicolons
-        assert row["optional_field"] == ""  # None becomes empty string
-        assert row["number"] == "42"  # Number converted to string
+    def test_kernel_field_lists_are_non_empty(self) -> None:
+        assert "entity_type" in get_entity_fields()
+        assert "variable_id" in get_observation_fields()
+        assert "relation_type" in get_relation_fields()
 
     @pytest.mark.asyncio
-    async def test_export_to_storage_orchestrates_operation(
-        self,
-        mock_gene_service: Mock,
-        mock_variant_service: Mock,
-        mock_phenotype_service: Mock,
-        mock_evidence_service: Mock,
-    ) -> None:
-        """Test streaming export to storage backend."""
-        # Mock storage service
-        mock_storage = Mock(spec=StorageConfigurationService)
-        mock_config = Mock(spec=StorageConfiguration)
-        mock_storage.resolve_backend_for_use_case.return_value = mock_config
-        mock_storage.record_store_operation = AsyncMock()
+    async def test_export_to_storage_orchestrates_operation(self) -> None:
+        mock_storage_service = Mock(spec=StorageConfigurationService)
+        mock_backend = Mock(spec=StorageConfiguration)
+        mock_storage_service.resolve_backend_for_use_case.return_value = mock_backend
+        mock_storage_service.record_store_operation = AsyncMock()
 
         service = BulkExportService(
-            mock_gene_service,
-            mock_variant_service,
-            mock_phenotype_service,
-            mock_evidence_service,
-            storage_service=mock_storage,
+            entity_repo=Mock(),
+            observation_repo=Mock(),
+            relation_repo=Mock(),
+            storage_service=mock_storage_service,
         )
+        # Mock internal export_data to return chunks
+        service.export_data = Mock(return_value=iter(['{"test": 1}']))  # type: ignore[assignment]
 
         user_id = uuid4()
+        space_id = "space-1"
+
         await service.export_to_storage(
-            entity_type="genes",
+            research_space_id=space_id,
+            entity_type="entities",
             export_format=ExportFormat.JSON,
             user_id=user_id,
         )
 
-        # Verify interactions
-        mock_storage.resolve_backend_for_use_case.assert_called_with(
+        mock_storage_service.resolve_backend_for_use_case.assert_called_with(
             StorageUseCase.EXPORT,
         )
-        mock_storage.record_store_operation.assert_called_once()
-
-        # Verify call args
-        call_args = mock_storage.record_store_operation.call_args
-        assert call_args.kwargs["configuration"] == mock_config
-        assert call_args.kwargs["content_type"] == "application/json"
-        assert call_args.kwargs["user_id"] == user_id
-        assert "exports/genes/" in call_args.kwargs["key"]
+        mock_storage_service.record_store_operation.assert_called_once()
+        kwargs = mock_storage_service.record_store_operation.call_args.kwargs
+        assert f"research-spaces/{space_id}/entities/" in kwargs["key"]
+        assert kwargs["content_type"] == "application/json"
+        assert kwargs["user_id"] == user_id

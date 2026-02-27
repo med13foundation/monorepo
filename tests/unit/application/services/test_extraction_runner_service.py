@@ -221,7 +221,7 @@ async def test_run_pending_persists_new_extraction() -> None:
         queue_repository=queue_repo,
         publication_repository=StubPublicationRepository(publication),
         extraction_repository=extraction_repo,
-        processor=processor,
+        processor_registry={"pubmed": processor},
         batch_size=1,
     )
 
@@ -266,7 +266,7 @@ async def test_run_pending_updates_existing_extraction() -> None:
         queue_repository=queue_repo,
         publication_repository=StubPublicationRepository(publication),
         extraction_repository=extraction_repo,
-        processor=processor,
+        processor_registry={"pubmed": processor},
         batch_size=1,
     )
 
@@ -291,7 +291,7 @@ async def test_run_pending_stores_text_payload() -> None:
         queue_repository=queue_repo,
         publication_repository=StubPublicationRepository(publication),
         extraction_repository=extraction_repo,
-        processor=processor,
+        processor_registry={"pubmed": processor},
         storage_coordinator=storage_coordinator,
         batch_size=1,
     )
@@ -306,3 +306,49 @@ async def test_run_pending_stores_text_payload() -> None:
     assert extraction_repo.created
     assert extraction_repo.created[0].document_reference == stored["key"]
     assert extraction_repo.created[0].text_source == ExtractionTextSource.TITLE_ABSTRACT
+
+
+@pytest.mark.asyncio
+async def test_run_pending_marks_failed_when_source_processor_missing() -> None:
+    item = _build_queue_item().model_copy(
+        update={
+            "source_type": "clinvar",
+            "source_record_id": "clinvar:clinvar_id:1001",
+            "publication_id": None,
+            "pubmed_id": None,
+            "metadata": {"raw_record": {"clinvar_id": "1001"}},
+        },
+    )
+    queue_repo = StubQueueRepository([item])
+    extraction_repo = StubExtractionRepository()
+    publication_repository = StubPublicationRepository(_build_publication(101))
+    processor = StubProcessor(_build_result(ExtractionOutcome.COMPLETED))
+
+    runner = ExtractionRunnerService(
+        queue_repository=queue_repo,
+        publication_repository=publication_repository,
+        extraction_repository=extraction_repo,
+        processor_registry={"pubmed": processor},
+        batch_size=1,
+    )
+
+    summary = await runner.run_pending()
+
+    assert summary.failed == 1
+    assert queue_repo.failed == ["no_extraction_processor_for_source_type:clinvar"]
+
+
+def test_has_processor_for_source_type_uses_registry() -> None:
+    publication_repository = StubPublicationRepository(_build_publication(101))
+    extraction_repository = StubExtractionRepository()
+    processor = StubProcessor(_build_result(ExtractionOutcome.COMPLETED))
+    runner = ExtractionRunnerService(
+        queue_repository=StubQueueRepository([]),
+        publication_repository=publication_repository,
+        extraction_repository=extraction_repository,
+        processor_registry={"clinvar": processor},
+        batch_size=1,
+    )
+
+    assert runner.has_processor_for_source_type("clinvar")
+    assert not runner.has_processor_for_source_type("pubmed")

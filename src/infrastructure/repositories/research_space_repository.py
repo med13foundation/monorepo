@@ -16,7 +16,7 @@ from src.domain.repositories.research_space_repository import (
     ResearchSpaceRepository as ResearchSpaceRepositoryInterface,
 )
 from src.infrastructure.mappers.research_space_mapper import ResearchSpaceMapper
-from src.models.database.research_space import ResearchSpaceModel
+from src.models.database.research_space import ResearchSpaceModel, SpaceStatusEnum
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from uuid import UUID
@@ -59,7 +59,7 @@ class SqlAlchemyResearchSpaceRepository(ResearchSpaceRepositoryInterface):
             existing_model.name = space.name
             existing_model.description = space.description
             existing_model.owner_id = str(space.owner_id)
-            existing_model.status = space.status.value
+            existing_model.status = SpaceStatusEnum(space.status.value)
             existing_model.settings = space.settings
             existing_model.tags = space.tags
             existing_model.updated_at = space.updated_at
@@ -115,9 +115,10 @@ class SqlAlchemyResearchSpaceRepository(ResearchSpaceRepositoryInterface):
         limit: int = 50,
     ) -> list[ResearchSpace]:
         """Find all spaces with a specific status."""
+        status_enum = SpaceStatusEnum(status.value)
         stmt = (
             select(ResearchSpaceModel)
-            .where(ResearchSpaceModel.status == status.value)
+            .where(ResearchSpaceModel.status == status_enum)
             .order_by(desc(ResearchSpaceModel.created_at))
             .offset(skip)
             .limit(limit)

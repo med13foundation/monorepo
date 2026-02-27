@@ -1,0 +1,392 @@
+"""Unit tests for the SQLAlchemy kernel dictionary repository adapter."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from src.infrastructure.repositories.kernel.kernel_dictionary_repository import (
+    SqlAlchemyDictionaryRepository,
+)
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+
+def _create_variable(
+    repository: SqlAlchemyDictionaryRepository,
+    *,
+    variable_id: str,
+    canonical_name: str,
+) -> None:
+    repository.create_variable(
+        variable_id=variable_id,
+        canonical_name=canonical_name,
+        display_name=canonical_name.replace("_", " ").title(),
+        data_type="STRING",
+        domain_context="general",
+        sensitivity="INTERNAL",
+        constraints={},
+        description=f"Dictionary repository test variable {variable_id}",
+        created_by="manual:test",
+        source_ref="test:repository",
+    )
+
+
+def _create_entity_type(
+    repository: SqlAlchemyDictionaryRepository,
+    *,
+    entity_type: str,
+) -> None:
+    repository.create_entity_type(
+        entity_type=entity_type,
+        display_name=entity_type.replace("_", " ").title(),
+        description=f"Dictionary repository test entity type {entity_type}",
+        domain_context="general",
+        expected_properties={},
+        created_by="manual:test",
+        source_ref="test:repository",
+    )
+
+
+def _create_relation_type(
+    repository: SqlAlchemyDictionaryRepository,
+    *,
+    relation_type: str,
+) -> None:
+    repository.create_relation_type(
+        relation_type=relation_type,
+        display_name=relation_type.replace("_", " ").title(),
+        description=f"Dictionary repository test relation type {relation_type}",
+        domain_context="general",
+        is_directional=True,
+        inverse_label=None,
+        created_by="manual:test",
+        source_ref="test:repository",
+    )
+
+
+def test_find_variables_excludes_inactive_by_default(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_variable(
+        repository,
+        variable_id="VAR_REPO_ACTIVE",
+        canonical_name="repo_active",
+    )
+    _create_variable(
+        repository,
+        variable_id="VAR_REPO_INACTIVE",
+        canonical_name="repo_inactive",
+    )
+
+    repository.set_variable_review_status(
+        "VAR_REPO_INACTIVE",
+        review_status="REVOKED",
+        reviewed_by="manual:test",
+        revocation_reason="Deprecated in tests",
+    )
+
+    default_results = repository.find_variables()
+    default_ids = {entry.id for entry in default_results}
+    assert "VAR_REPO_ACTIVE" in default_ids
+    assert "VAR_REPO_INACTIVE" not in default_ids
+
+    all_results = repository.find_variables(include_inactive=True)
+    all_ids = {entry.id for entry in all_results}
+    assert "VAR_REPO_ACTIVE" in all_ids
+    assert "VAR_REPO_INACTIVE" in all_ids
+
+
+def test_set_variable_review_status_updates_validity_fields(
+    db_session: Session,
+) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_variable(
+        repository,
+        variable_id="VAR_REPO_REVIEW",
+        canonical_name="repo_review",
+    )
+
+    revoked = repository.set_variable_review_status(
+        "VAR_REPO_REVIEW",
+        review_status="REVOKED",
+        reviewed_by="manual:test",
+        revocation_reason="Deprecated in tests",
+    )
+    assert revoked.review_status == "REVOKED"
+    assert revoked.is_active is False
+    assert revoked.valid_to is not None
+
+    reactivated = repository.set_variable_review_status(
+        "VAR_REPO_REVIEW",
+        review_status="ACTIVE",
+        reviewed_by="manual:test",
+    )
+    assert reactivated.review_status == "ACTIVE"
+    assert reactivated.is_active is True
+    assert reactivated.valid_to is None
+
+
+def test_merge_variable_definition_sets_versioning_state(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_variable(
+        repository,
+        variable_id="VAR_REPO_SOURCE",
+        canonical_name="repo_source",
+    )
+    _create_variable(
+        repository,
+        variable_id="VAR_REPO_TARGET",
+        canonical_name="repo_target",
+    )
+
+    merged = repository.merge_variable_definition(
+        "VAR_REPO_SOURCE",
+        "VAR_REPO_TARGET",
+        reason="Duplicate variable",
+        reviewed_by="manual:test",
+    )
+    assert merged.review_status == "REVOKED"
+    assert merged.is_active is False
+    assert merged.superseded_by == "VAR_REPO_TARGET"
+    assert merged.valid_to is not None
+
+    persisted = repository.get_variable("VAR_REPO_SOURCE")
+    assert persisted is not None
+    assert persisted.review_status == "REVOKED"
+    assert persisted.is_active is False
+    assert persisted.superseded_by == "VAR_REPO_TARGET"
+    assert persisted.valid_to is not None
+
+
+def test_merge_entity_type_sets_versioning_state(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_entity_type(repository, entity_type="ENTITY_REPO_SOURCE")
+    _create_entity_type(repository, entity_type="ENTITY_REPO_TARGET")
+
+    merged = repository.merge_entity_type(
+        "ENTITY_REPO_SOURCE",
+        "ENTITY_REPO_TARGET",
+        reason="Duplicate entity type",
+        reviewed_by="manual:test",
+    )
+    assert merged.review_status == "REVOKED"
+    assert merged.is_active is False
+    assert merged.superseded_by == "ENTITY_REPO_TARGET"
+    assert merged.valid_to is not None
+
+    persisted = repository.get_entity_type(
+        "ENTITY_REPO_SOURCE",
+        include_inactive=True,
+    )
+    assert persisted is not None
+    assert persisted.review_status == "REVOKED"
+    assert persisted.is_active is False
+    assert persisted.superseded_by == "ENTITY_REPO_TARGET"
+    assert persisted.valid_to is not None
+
+    default_results = repository.find_entity_types(domain_context="general")
+    default_ids = {entry.id for entry in default_results}
+    assert "ENTITY_REPO_TARGET" in default_ids
+    assert "ENTITY_REPO_SOURCE" not in default_ids
+
+    all_results = repository.find_entity_types(
+        domain_context="general",
+        include_inactive=True,
+    )
+    all_ids = {entry.id for entry in all_results}
+    assert "ENTITY_REPO_TARGET" in all_ids
+    assert "ENTITY_REPO_SOURCE" in all_ids
+
+
+def test_set_entity_type_review_status_updates_validity_fields(
+    db_session: Session,
+) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_entity_type(repository, entity_type="ENTITY_REPO_REVIEW")
+
+    revoked = repository.set_entity_type_review_status(
+        "ENTITY_REPO_REVIEW",
+        review_status="REVOKED",
+        reviewed_by="manual:test",
+        revocation_reason="Deprecated in tests",
+    )
+    assert revoked.review_status == "REVOKED"
+    assert revoked.is_active is False
+    assert revoked.valid_to is not None
+
+    reactivated = repository.set_entity_type_review_status(
+        "ENTITY_REPO_REVIEW",
+        review_status="ACTIVE",
+        reviewed_by="manual:test",
+    )
+    assert reactivated.review_status == "ACTIVE"
+    assert reactivated.is_active is True
+    assert reactivated.valid_to is None
+
+
+def test_merge_relation_type_sets_versioning_state(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_relation_type(repository, relation_type="REL_REPO_SOURCE")
+    _create_relation_type(repository, relation_type="REL_REPO_TARGET")
+
+    merged = repository.merge_relation_type(
+        "REL_REPO_SOURCE",
+        "REL_REPO_TARGET",
+        reason="Duplicate relation type",
+        reviewed_by="manual:test",
+    )
+    assert merged.review_status == "REVOKED"
+    assert merged.is_active is False
+    assert merged.superseded_by == "REL_REPO_TARGET"
+    assert merged.valid_to is not None
+
+    persisted = repository.get_relation_type(
+        "REL_REPO_SOURCE",
+        include_inactive=True,
+    )
+    assert persisted is not None
+    assert persisted.review_status == "REVOKED"
+    assert persisted.is_active is False
+    assert persisted.superseded_by == "REL_REPO_TARGET"
+    assert persisted.valid_to is not None
+
+    default_results = repository.find_relation_types(domain_context="general")
+    default_ids = {entry.id for entry in default_results}
+    assert "REL_REPO_TARGET" in default_ids
+    assert "REL_REPO_SOURCE" not in default_ids
+
+    all_results = repository.find_relation_types(
+        domain_context="general",
+        include_inactive=True,
+    )
+    all_ids = {entry.id for entry in all_results}
+    assert "REL_REPO_TARGET" in all_ids
+    assert "REL_REPO_SOURCE" in all_ids
+
+
+def test_set_relation_type_review_status_updates_validity_fields(
+    db_session: Session,
+) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_relation_type(repository, relation_type="REL_REPO_REVIEW")
+
+    revoked = repository.set_relation_type_review_status(
+        "REL_REPO_REVIEW",
+        review_status="REVOKED",
+        reviewed_by="manual:test",
+        revocation_reason="Deprecated in tests",
+    )
+    assert revoked.review_status == "REVOKED"
+    assert revoked.is_active is False
+    assert revoked.valid_to is not None
+
+    reactivated = repository.set_relation_type_review_status(
+        "REL_REPO_REVIEW",
+        review_status="ACTIVE",
+        reviewed_by="manual:test",
+    )
+    assert reactivated.review_status == "ACTIVE"
+    assert reactivated.is_active is True
+    assert reactivated.valid_to is None
+
+
+def test_transform_production_filter_and_promotion(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository.create_transform(
+        transform_id="TR_REPO_PROMOTE",
+        input_unit="mg",
+        output_unit="g",
+        category="UNIT_CONVERSION",
+        implementation_ref="func:std_lib.convert.mg_to_g",
+        is_deterministic=True,
+        is_production_allowed=False,
+        test_input=1000,
+        expected_output=1.0,
+        status="ACTIVE",
+        created_by="manual:test",
+    )
+    db_session.commit()
+
+    pre_promotion = repository.get_transform(
+        "mg",
+        "g",
+        require_production=True,
+    )
+    assert pre_promotion is None
+
+    promoted = repository.promote_transform(
+        "TR_REPO_PROMOTE",
+        reviewed_by="manual:test",
+    )
+    assert promoted.is_production_allowed is True
+
+    post_promotion = repository.get_transform(
+        "mg",
+        "g",
+        require_production=True,
+    )
+    assert post_promotion is not None
+    assert post_promotion.id == "TR_REPO_PROMOTE"
+
+
+def test_verify_transform_reports_failure_for_bad_fixture(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository.create_transform(
+        transform_id="TR_REPO_BAD_FIXTURE",
+        input_unit="kg",
+        output_unit="g",
+        category="UNIT_CONVERSION",
+        implementation_ref="func:std_lib.convert.g_to_mg",
+        is_deterministic=True,
+        is_production_allowed=False,
+        test_input=2,
+        expected_output=2,
+        status="ACTIVE",
+        created_by="manual:test",
+    )
+    db_session.commit()
+
+    verification = repository.verify_transform("TR_REPO_BAD_FIXTURE")
+    assert verification.transform_id == "TR_REPO_BAD_FIXTURE"
+    assert verification.passed is False
+    assert verification.actual_output is not None
+
+
+def test_create_transform_persists_phase7_fields(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    created = repository.create_transform(
+        transform_id="TR_REPO_CREATE",
+        input_unit="mg/dL",
+        output_unit="mmol/L",
+        category="UNIT_CONVERSION",
+        input_data_type="FLOAT",
+        output_data_type="FLOAT",
+        implementation_ref="func:std_lib.convert.mg_dl_to_mmol_l_glucose",
+        is_deterministic=True,
+        is_production_allowed=False,
+        test_input=180.182,
+        expected_output=10.0,
+        description="Glucose conversion transform",
+        status="ACTIVE",
+        created_by="manual:test",
+        source_ref="test:create-transform",
+    )
+    db_session.commit()
+
+    assert created.id == "TR_REPO_CREATE"
+    assert created.category == "UNIT_CONVERSION"
+    assert created.input_data_type == "FLOAT"
+    assert created.output_data_type == "FLOAT"
+    assert created.is_deterministic is True
+    assert created.is_production_allowed is False
+    assert created.test_input == 180.182
+    assert created.expected_output == 10.0
+    assert created.description == "Glucose conversion transform"
+
+    persisted = repository.get_transform(
+        "mg/dL",
+        "mmol/L",
+        include_inactive=True,
+    )
+    assert persisted is not None
+    assert persisted.id == "TR_REPO_CREATE"

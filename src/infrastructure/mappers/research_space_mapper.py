@@ -8,7 +8,7 @@ for the Research Spaces module with strong type safety.
 from uuid import UUID
 
 from src.domain.entities.research_space import ResearchSpace, SpaceStatus
-from src.models.database.research_space import ResearchSpaceModel
+from src.models.database.research_space import ResearchSpaceModel, SpaceStatusEnum
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
 
@@ -77,7 +77,7 @@ class ResearchSpaceMapper:
             name=str(entity.name),
             description=str(entity.description),
             owner_id=entity.owner_id,  # UUID object
-            status=entity.status.value,
+            status=SpaceStatusEnum(entity.status.value),
             settings=entity.settings,
             tags=entity.tags,
             created_at=entity.created_at,

@@ -13,6 +13,11 @@ type SpaceAccess = {
   showMembershipNotice: boolean
 }
 
+interface DistributionPoint {
+  label: string
+  count: number
+}
+
 interface SpaceDetailClientProps {
   spaceId: string
   space: ResearchSpace | null
@@ -21,6 +26,8 @@ interface SpaceDetailClientProps {
   dataSources: DataSourceListResponse | null
   curationStats: CurationStats | null
   curationQueue: CurationQueueResponse | null
+  relationTypeDistribution: DistributionPoint[]
+  nodeDistribution: DistributionPoint[]
   access: SpaceAccess
 }
 
@@ -32,6 +39,8 @@ export default function SpaceDetailClient({
   dataSources,
   curationStats,
   curationQueue,
+  relationTypeDistribution,
+  nodeDistribution,
   access,
 }: SpaceDetailClientProps) {
   return (
@@ -44,6 +53,8 @@ export default function SpaceDetailClient({
         dataSources={dataSources}
         curationStats={curationStats}
         curationQueue={curationQueue}
+        relationTypeDistribution={relationTypeDistribution}
+        nodeDistribution={nodeDistribution}
         access={access}
       />
     </div>

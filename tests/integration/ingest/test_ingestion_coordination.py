@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.domain.value_objects import DataSource, Provenance
 from src.infrastructure.ingest.base_ingestor import IngestionResult, IngestionStatus
 from src.infrastructure.ingest.coordinator import (
     IngestionCoordinator,
     IngestionPhase,
     IngestionTask,
 )
-from src.models.value_objects import DataSource, Provenance
 
 
 class TestIngestionCoordinator:

@@ -1,26 +1,17 @@
 """
-State management for Flujo pipelines.
+State management for AI runtime persistence and inspection.
 
-Provides state backend management, lifecycle handling, and
-read-only state inspection capabilities.
+Provides read-only state inspection capabilities.
 """
 
-from src.infrastructure.llm.state.backend_manager import (
-    StateBackendManager,
-    get_state_backend,
+from src.infrastructure.llm.state.agent_run_state_repository import (
+    SqlAlchemyAgentRunStateRepository,
 )
-from src.infrastructure.llm.state.flujo_state_repository import (
-    SqlAlchemyFlujoStateRepository,
-)
-from src.infrastructure.llm.state.lifecycle import (
-    FlujoLifecycleManager,
-    flujo_lifespan,
+from src.infrastructure.llm.state.run_progress_repository import (
+    ArtanaKernelRunProgressRepository,
 )
 
 __all__ = [
-    "flujo_lifespan",
-    "FlujoLifecycleManager",
-    "get_state_backend",
-    "SqlAlchemyFlujoStateRepository",
-    "StateBackendManager",
+    "ArtanaKernelRunProgressRepository",
+    "SqlAlchemyAgentRunStateRepository",
 ]

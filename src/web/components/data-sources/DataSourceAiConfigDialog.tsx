@@ -19,27 +19,27 @@ import {
 import { Button } from '@/components/ui/button'
 import {
   Form,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormControl,
-  FormDescription,
-  FormMessage,
 } from '@/components/ui/form'
-import { Textarea } from '@/components/ui/textarea'
-import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
-import { AiModelSelector } from './AiModelSelector'
+import {
+  AiManagedConfigFields,
+  PubMedConfigFields,
+} from './DataSourceAiConfigFormFields'
+import {
+  DEFAULT_CLINVAR_AGENT_PROMPT,
+  getSourceAgentConfigSnapshot,
+} from './sourceAgentConfig'
 
 const aiConfigSchema = z.object({
-  is_ai_managed: z.boolean().default(false),
   use_research_space_context: z.boolean().default(true),
   agent_prompt: z.string().default(''),
   model_id: z.string().nullable().default(null),
+  max_results: z.number().int().min(1).max(10000).default(5),
+  open_access_only: z.boolean().default(true),
 })
 
-type AiConfigFormValues = z.infer<typeof aiConfigSchema>
+export type AiConfigFormValues = z.infer<typeof aiConfigSchema>
 
 interface DataSourceAiConfigDialogProps {
   source: DataSource | null
@@ -62,24 +62,51 @@ export function DataSourceAiConfigDialog({
   const config = isRecord(source?.config) ? source?.config : {}
   const metadata = isRecord(config.metadata) ? config.metadata : {}
   const agentConfig = isRecord(metadata.agent_config) ? metadata.agent_config : {}
-  const defaultIsAiManaged = agentConfig.is_ai_managed === true
+  const sourceAgentConfigSnapshot = source
+    ? getSourceAgentConfigSnapshot(source)
+    : null
+  const isPubMedSource = source?.source_type === 'pubmed'
+  const queryAgentSourceType = sourceAgentConfigSnapshot?.queryAgentSourceType ?? null
+  const supportsAiConfiguration = sourceAgentConfigSnapshot?.supportsAiControls ?? false
+  const sourceQuery =
+    typeof metadata.query === 'string'
+      ? metadata.query
+      : typeof config.query === 'string'
+        ? config.query
+        : ''
   const defaultAgentPrompt =
-    typeof agentConfig.agent_prompt === 'string' ? agentConfig.agent_prompt : ''
+    typeof agentConfig.agent_prompt === 'string'
+      ? agentConfig.agent_prompt
+      : sourceAgentConfigSnapshot?.isClinvarCatalogSource
+        ? DEFAULT_CLINVAR_AGENT_PROMPT
+        : sourceQuery
   const defaultUseContext =
     typeof agentConfig.use_research_space_context === 'boolean'
       ? agentConfig.use_research_space_context
       : true
   const defaultModelIdFromConfig =
     typeof agentConfig.model_id === 'string' ? agentConfig.model_id : null
+  const defaultMaxResults =
+    typeof metadata.max_results === 'number' && Number.isFinite(metadata.max_results)
+      ? Math.max(1, Math.min(10000, Math.floor(metadata.max_results)))
+      : 5
+  const defaultOpenAccessOnly = metadata.open_access_only !== false
 
   const defaultValues = useMemo<AiConfigFormValues>(
     () => ({
-      is_ai_managed: defaultIsAiManaged,
       use_research_space_context: defaultUseContext,
       agent_prompt: defaultAgentPrompt,
       model_id: defaultModelIdFromConfig,
+      max_results: defaultMaxResults,
+      open_access_only: defaultOpenAccessOnly,
     }),
-    [defaultAgentPrompt, defaultIsAiManaged, defaultUseContext, defaultModelIdFromConfig],
+    [
+      defaultAgentPrompt,
+      defaultMaxResults,
+      defaultModelIdFromConfig,
+      defaultOpenAccessOnly,
+      defaultUseContext,
+    ],
   )
 
   const form = useForm<AiConfigFormValues>({
@@ -91,21 +118,40 @@ export function DataSourceAiConfigDialog({
     form.reset(defaultValues)
   }, [defaultValues, form, open])
 
-  if (!source || source.source_type !== 'pubmed') {
+  if (!source || !supportsAiConfiguration) {
     return null
   }
 
   const onSubmit = async (values: AiConfigFormValues) => {
-    const updatedMetadata = {
-      ...metadata,
-      agent_config: {
-        is_ai_managed: values.is_ai_managed,
-        agent_prompt: values.agent_prompt,
-        use_research_space_context: values.use_research_space_context,
-        model_id: values.model_id,
-      },
+    const updatedAgentConfig: Record<string, unknown> = {
+      ...agentConfig,
+      is_ai_managed: true,
+      agent_prompt: values.agent_prompt,
+      use_research_space_context: values.use_research_space_context,
+      model_id: values.model_id,
     }
-    const updatedConfig = { ...config, metadata: updatedMetadata }
+    if (queryAgentSourceType !== null) {
+      updatedAgentConfig.query_agent_source_type = queryAgentSourceType
+    }
+    const updatedMetadata: Record<string, unknown> = {
+      ...metadata,
+      agent_config: updatedAgentConfig,
+    }
+    if (isPubMedSource) {
+      const normalizedQuery = values.agent_prompt.trim()
+      const fallbackQuery = sourceQuery.trim() || source.name.trim() || 'pubmed'
+      updatedMetadata.query =
+        normalizedQuery.length > 0 ? normalizedQuery : fallbackQuery
+      updatedMetadata.max_results = Math.max(1, Math.min(10000, values.max_results))
+      updatedMetadata.open_access_only = true
+    }
+    const updatedConfig: Record<string, unknown> = {
+      ...config,
+      metadata: updatedMetadata,
+    }
+    if (isPubMedSource) {
+      updatedConfig.query = updatedMetadata.query
+    }
 
     try {
       setIsSaving(true)
@@ -129,94 +175,21 @@ export function DataSourceAiConfigDialog({
     }
   }
 
-  const isAiManaged = form.watch('is_ai_managed')
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle>Configure AI agent</DialogTitle>
           <DialogDescription>
-            Control how the AI agent builds PubMed ingestion queries for this source.
+            Control how the AI agent builds ingestion queries for this source. AI-managed
+            queries are always enabled.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
-            <FormField
-              control={form.control}
-              name="is_ai_managed"
-              render={({ field }) => (
-                <FormItem className="flex items-center justify-between rounded-md border p-3">
-                  <div className="space-y-0.5">
-                    <FormLabel>AI-managed queries</FormLabel>
-                    <FormDescription>
-                      Let the agent generate optimized search queries automatically.
-                    </FormDescription>
-                  </div>
-                  <FormControl>
-                    <Switch checked={field.value} onCheckedChange={field.onChange} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
+            <AiManagedConfigFields form={form} isPubMedSource={isPubMedSource} />
 
-            {isAiManaged && (
-              <>
-                <FormField
-                  control={form.control}
-                  name="model_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>AI Model</FormLabel>
-                      <FormControl>
-                        <AiModelSelector value={field.value} onChange={field.onChange} />
-                      </FormControl>
-                      <FormDescription>
-                        Choose which AI model powers query generation for this source.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="use_research_space_context"
-                  render={({ field }) => (
-                    <FormItem className="flex items-center justify-between rounded-md border p-3">
-                      <div className="space-y-0.5">
-                        <FormLabel>Use research space context</FormLabel>
-                        <FormDescription>
-                          Provide the research space description to the agent.
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="agent_prompt"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Agent instructions</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="e.g. Focus on clinical case studies and mechanistic pathways."
-                          className="min-h-[100px]"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Custom instructions to steer the agent behavior.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </>
-            )}
+            {isPubMedSource && <PubMedConfigFields form={form} />}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

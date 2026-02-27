@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import delete, desc, func, select, text
+from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 
 from src.domain.entities.ingestion_job import (
     IngestionError,
@@ -17,6 +19,7 @@ from src.domain.entities.ingestion_job import (
 from src.domain.repositories.ingestion_job_repository import (
     IngestionJobRepository,
 )
+from src.infrastructure.llm.config import load_runtime_policy
 from src.infrastructure.mappers.ingestion_job_mapper import IngestionJobMapper
 from src.models.database.ingestion_job import (
     IngestionJobModel,
@@ -40,6 +43,35 @@ class SqlAlchemyIngestionJobRepository(IngestionJobRepository):
     def __init__(self, session: Session | None = None) -> None:
         self._session = session
 
+    @staticmethod
+    def _is_missing_optional_column_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "column ingestion_jobs.job_metadata does not exist" in message
+            or "column ingestion_jobs.source_config_snapshot does not exist" in message
+            or "column ingestion_jobs.dictionary_version_used does not exist" in message
+            or "column ingestion_jobs.replay_policy does not exist" in message
+        )
+
+    def _resolve_dictionary_version_used(self) -> int:
+        try:
+            value = self.session.execute(
+                text("SELECT COALESCE(MAX(id), 0) FROM dictionary_changelog"),
+            ).scalar_one()
+        except (OperationalError, ProgrammingError, SQLAlchemyError):
+            self.session.rollback()
+            return 0
+        if isinstance(value, int):
+            return max(value, 0)
+        if isinstance(value, float):
+            return max(int(value), 0)
+        if isinstance(value, str):
+            try:
+                return max(int(value), 0)
+            except ValueError:
+                return 0
+        return 0
+
     @property
     def session(self) -> Session:
         if self._session is None:
@@ -49,6 +81,12 @@ class SqlAlchemyIngestionJobRepository(IngestionJobRepository):
 
     def save(self, job: IngestionJob) -> IngestionJob:
         payload = IngestionJobMapper.to_model_dict(job)
+        raw_dictionary_version = payload.get("dictionary_version_used")
+        if not isinstance(raw_dictionary_version, int) or raw_dictionary_version < 0:
+            payload["dictionary_version_used"] = self._resolve_dictionary_version_used()
+        raw_replay_policy = payload.get("replay_policy")
+        if not isinstance(raw_replay_policy, str) or not raw_replay_policy.strip():
+            payload["replay_policy"] = load_runtime_policy().replay_policy
         model = self.session.get(IngestionJobModel, payload["id"])
         if model is None:
             model = IngestionJobModel(**payload)
@@ -69,7 +107,18 @@ class SqlAlchemyIngestionJobRepository(IngestionJobRepository):
         self,
         stmt: Select[tuple[IngestionJobModel]],
     ) -> list[IngestionJob]:
-        models = self.session.execute(stmt).scalars().all()
+        logger = logging.getLogger(__name__)
+        try:
+            models = self.session.execute(stmt).scalars().all()
+        except (OperationalError, ProgrammingError) as exc:
+            if not self._is_missing_optional_column_error(exc):
+                raise
+            logger.warning(
+                "Ingestion job optional columns are unavailable; returning empty history list",
+                exc_info=exc,
+            )
+            self.session.rollback()
+            return []
         return [IngestionJobMapper.to_domain(model) for model in models]
 
     def find_by_source(

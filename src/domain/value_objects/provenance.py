@@ -1,21 +1,22 @@
+"""
+Value object for data provenance and lineage tracking.
+
+This is a domain-level value object used across ingestion, packaging, and
+evidence workflows. It is intentionally independent of persistence models.
+"""
+
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableSequence, Sequence
-from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 
+from pydantic import BaseModel, ConfigDict, Field
 
-def _empty_metadata() -> Mapping[str, object]:
-    return {}
-
-
-def _empty_processing_steps() -> Sequence[str]:
-    return ()
+from src.type_definitions.common import JSONObject  # noqa: TC001
 
 
 class DataSource(str, Enum):
-    """Enumeration of domain-level data sources."""
+    """Enumeration of data sources for MED13."""
 
     CLINVAR = "clinvar"
     PUBMED = "pubmed"
@@ -25,61 +26,90 @@ class DataSource(str, Enum):
     COMPUTED = "computed"
 
 
-@dataclass(frozen=True)
-class Provenance:
-    source: DataSource
-    acquired_by: str
-    source_version: str | None = None
-    source_url: str | None = None
-    acquired_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    processing_steps: Sequence[str] = field(default_factory=_empty_processing_steps)
-    quality_score: float | None = None
-    validation_status: str = "pending"
-    metadata: Mapping[str, object] = field(default_factory=_empty_metadata)
+class Provenance(BaseModel):
+    """
+    Value object for tracking data provenance and lineage.
 
-    def __post_init__(self) -> None:
-        if not self.acquired_by:
-            message = "acquired_by must be provided"
-            raise ValueError(message)
-        if self.quality_score is not None and not (0.0 <= self.quality_score <= 1.0):
-            message = "quality_score must be between 0.0 and 1.0"
-            raise ValueError(message)
-        if isinstance(self.processing_steps, MutableSequence):
-            object.__setattr__(self, "processing_steps", tuple(self.processing_steps))
+    Immutable record of where data came from, when it was acquired,
+    and how it has been processed in the MED13 knowledge base.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    # Source information
+    source: DataSource = Field(..., description="Original data source")
+    source_version: str | None = Field(None, description="Version of source data")
+    source_url: str | None = Field(None, description="URL where data was retrieved")
+
+    # Acquisition metadata
+    acquired_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        description="When data was acquired",
+    )
+    acquired_by: str = Field(..., description="System/user that acquired the data")
+
+    # Processing history
+    # Store as tuple to preserve deep immutability (frozen BaseModel does not
+    # prevent in-place mutation of nested lists).
+    processing_steps: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Sequence of processing steps applied",
+    )
+
+    # Quality and validation
+    quality_score: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Data quality score (0-1)",
+    )
+    validation_status: str = Field(
+        default="pending",
+        description="Current validation status",
+    )
+
+    # Additional metadata
+    metadata: JSONObject = Field(
+        default_factory=dict,
+        description="Additional source-specific metadata",
+    )
 
     def add_processing_step(self, step: str) -> Provenance:
-        """Return a new Provenance with an additional processing step."""
-        if not step:
-            message = "processing step cannot be empty"
-            raise ValueError(message)
-        return replace(self, processing_steps=(*tuple(self.processing_steps), step))
+        """Create new Provenance with additional processing step."""
+        return self.model_copy(
+            update={"processing_steps": (*self.processing_steps, step)},
+        )
 
     def update_quality_score(self, score: float) -> Provenance:
-        """Return a new Provenance with an updated quality score."""
-        if not (0.0 <= score <= 1.0):
-            message = "quality_score must be between 0.0 and 1.0"
-            raise ValueError(message)
-        return replace(self, quality_score=score)
+        """Create new Provenance with updated quality score."""
+        return self.model_copy(
+            update={"quality_score": score},
+        )
 
     def mark_validated(self, status: str = "validated") -> Provenance:
-        """Return a new Provenance with updated validation status."""
-        if not status:
-            message = "validation status cannot be empty"
-            raise ValueError(message)
-        return replace(self, validation_status=status)
+        """Create new Provenance with updated validation status."""
+        return self.model_copy(
+            update={"validation_status": status},
+        )
 
     @property
     def is_validated(self) -> bool:
-        return self.validation_status in ("validated", "approved")
+        """Check if data has been validated."""
+        return self.validation_status in ["validated", "approved"]
 
     @property
     def processing_summary(self) -> str:
+        """Get summary of processing history."""
         if not self.processing_steps:
             return "No processing steps recorded"
         return " → ".join(self.processing_steps)
 
     def __str__(self) -> str:
-        return f"{self.source.value} ({self.acquired_at.date()}) - {self.validation_status}"
+        """String representation of provenance."""
+        return (
+            f"{self.source.value} ({self.acquired_at.date()}) - "
+            f"{self.validation_status}"
+        )
 
 
 __all__ = ["DataSource", "Provenance"]

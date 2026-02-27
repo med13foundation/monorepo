@@ -136,19 +136,19 @@ class UserModel(Base):
     )
 
     # Relationships
-    owned_spaces = relationship(
+    owned_research_spaces = relationship(
         "ResearchSpaceModel",
         back_populates="owner",
         foreign_keys="ResearchSpaceModel.owner_id",
         cascade="all, delete-orphan",
     )
-    space_memberships = relationship(
+    research_space_memberships = relationship(
         "ResearchSpaceMembershipModel",
         back_populates="user",
         foreign_keys="ResearchSpaceMembershipModel.user_id",
         cascade="all, delete-orphan",
     )
-    sent_invitations = relationship(
+    sent_research_space_invitations = relationship(
         "ResearchSpaceMembershipModel",
         back_populates="inviter",
         foreign_keys="ResearchSpaceMembershipModel.invited_by",

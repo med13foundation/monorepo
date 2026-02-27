@@ -31,10 +31,15 @@ from .common import (
 from .confidence import ConfidenceExtras, ConfidenceScoreOptions
 from .curation import ReviewRecordLike
 from .data_sources import (
+    AgentRunTableSummary,
     DataSourceAiTestFinding,
     DataSourceAiTestLink,
     DataSourceAiTestResult,
-    FlujoTableSummary,
+    IngestionExtractionQueueMetadata,
+    IngestionExtractionRunMetadata,
+    IngestionIdempotencyMetadata,
+    IngestionJobMetadata,
+    IngestionQueryGenerationMetadata,
     SourceCatalogEntrySeed,
 )
 from .external_apis import (
@@ -112,7 +117,7 @@ __all__ = [
     "DatasetMetadataOptions",
     "DecodedTokenPayload",
     "DOIMintResult",
-    "FlujoTableSummary",
+    "AgentRunTableSummary",
     "EvidenceUpdate",
     "ExtractionFact",
     "ExtractionFactType",
@@ -123,6 +128,11 @@ __all__ = [
     "GoogleCloudStorageConfig",
     "HashInfo",
     "HPOOntologyResponse",
+    "IngestionExtractionQueueMetadata",
+    "IngestionExtractionRunMetadata",
+    "IngestionIdempotencyMetadata",
+    "IngestionJobMetadata",
+    "IngestionQueryGenerationMetadata",
     "LicenseInfo",
     "LicenseManifest",
     "LicenseRecord",

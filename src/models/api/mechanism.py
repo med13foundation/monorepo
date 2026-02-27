@@ -5,6 +5,7 @@ Pydantic models for mechanism-related API requests and responses.
 """
 
 from datetime import datetime
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -42,15 +43,24 @@ class ProteinDomainPayload(BaseModel):
     coordinates: list[ProteinDomainCoordinate] | None = None
 
 
+class MechanismLifecycleState(str, Enum):
+    """Lifecycle state for canonical mechanisms."""
+
+    DRAFT = "draft"
+    REVIEWED = "reviewed"
+    CANONICAL = "canonical"
+    DEPRECATED = "deprecated"
+
+
 class MechanismCreate(BaseModel):
     """Schema for creating new mechanisms."""
 
     model_config = ConfigDict(strict=True)
 
     name: str = Field(..., min_length=1, max_length=200)
-    description: str | None = Field(None, max_length=2000)
+    description: str = Field(..., min_length=1, max_length=2000)
     evidence_tier: EvidenceLevel = Field(
-        default=EvidenceLevel.SUPPORTING,
+        ...,
         description="Evidence tier for this mechanism",
     )
     confidence_score: float = Field(
@@ -60,8 +70,12 @@ class MechanismCreate(BaseModel):
         description="Confidence score between 0.0 and 1.0",
     )
     source: str = Field(default="manual_curation", max_length=100)
+    lifecycle_state: MechanismLifecycleState = Field(
+        default=MechanismLifecycleState.DRAFT,
+        description="Lifecycle state for this mechanism",
+    )
     protein_domains: list[ProteinDomainPayload] = Field(default_factory=list)
-    phenotype_ids: list[int] = Field(default_factory=list)
+    phenotype_ids: list[int] = Field(..., min_length=1)
 
 
 class MechanismUpdate(BaseModel):
@@ -74,6 +88,7 @@ class MechanismUpdate(BaseModel):
     evidence_tier: EvidenceLevel | None = None
     confidence_score: float | None = Field(None, ge=0, le=1)
     source: str | None = Field(None, max_length=100)
+    lifecycle_state: MechanismLifecycleState | None = None
     protein_domains: list[ProteinDomainPayload] | None = None
     phenotype_ids: list[int] | None = None
 
@@ -89,6 +104,7 @@ class MechanismResponse(BaseModel):
     evidence_tier: EvidenceLevel
     confidence_score: float
     source: str
+    lifecycle_state: MechanismLifecycleState
     protein_domains: list[ProteinDomainPayload]
     phenotype_ids: list[int]
     phenotype_count: int
@@ -105,4 +121,5 @@ __all__ = [
     "MechanismList",
     "ProteinDomainPayload",
     "ProteinDomainCoordinate",
+    "MechanismLifecycleState",
 ]

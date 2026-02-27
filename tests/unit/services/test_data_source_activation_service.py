@@ -111,13 +111,13 @@ def service() -> DataSourceActivationService:
     return DataSourceActivationService(InMemoryActivationRepository())
 
 
-def test_default_permissions_block_all_except_pubmed(
+def test_default_permissions_block_all_except_pubmed_and_clinvar(
     service: DataSourceActivationService,
 ) -> None:
     assert service.is_source_active("pubmed") is True
     assert service.is_source_active("pubmed", uuid4()) is True
-    assert service.is_source_active("clinvar") is False
-    assert service.is_source_active("clinvar", uuid4()) is False
+    assert service.is_source_active("clinvar") is True
+    assert service.is_source_active("clinvar", uuid4()) is True
 
 
 def test_global_rule_controls_default(service: DataSourceActivationService) -> None:

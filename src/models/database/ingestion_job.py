@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, ForeignKey, String
+from sqlalchemy import JSON, ForeignKey, Integer, String
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -62,8 +62,15 @@ class IngestionJobModel(Base):
 
     # Execution details
     trigger: Mapped[IngestionTriggerEnum] = mapped_column(
-        SQLEnum(IngestionTriggerEnum),
+        SQLEnum(
+            IngestionTriggerEnum,
+            name="ingestiontriggerenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
+        default=IngestionTriggerEnum.MANUAL,
+        server_default=IngestionTriggerEnum.MANUAL.value,
     )
     triggered_by: Mapped[str | None] = mapped_column(
         PGUUID(as_uuid=False),
@@ -74,9 +81,15 @@ class IngestionJobModel(Base):
 
     # Status and progress
     status: Mapped[IngestionStatusEnum] = mapped_column(
-        SQLEnum(IngestionStatusEnum),
+        SQLEnum(
+            IngestionStatusEnum,
+            name="ingestionstatusenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         default=IngestionStatusEnum.PENDING,
+        server_default=IngestionStatusEnum.PENDING.value,
         index=True,
     )
     started_at: Mapped[str | None] = mapped_column(String(30), nullable=True)
@@ -107,6 +120,18 @@ class IngestionJobModel(Base):
         JSON,
         nullable=False,
         default=dict,
+    )
+    dictionary_version_used: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    replay_policy: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="strict",
+        server_default="strict",
     )
 
     # Relationships

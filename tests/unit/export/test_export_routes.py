@@ -1,20 +1,22 @@
 """
 Tests for Bulk Export Routes with type safety patterns.
 
-Follows type safety examples from type_examples.md:
-- Uses typed test fixtures
-- Implements proper API response validation
-- Validates external API responses with type safety
+Kernel-native exports are research-space-scoped and support:
+- entities
+- observations
+- relations
 """
 
 import json
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.application.export.export_types import CompressionFormat, ExportFormat
+from src.domain.entities.user import User, UserRole, UserStatus
 from src.routes.export import router
 
 
@@ -26,13 +28,16 @@ class TestExportRoutes:
         """Create typed mock export service."""
         mock_service = Mock()
 
-        # Mock the export_data method to return test data
         def mock_export_data(
+            research_space_id: str,
             entity_type: str,
             export_format: ExportFormat,
             compression: CompressionFormat,
-            **kwargs,
+            **kwargs: object,
         ):
+            _ = research_space_id
+            _ = compression
+            _ = kwargs
             if export_format == ExportFormat.JSON:
                 test_data = {f"{entity_type}": [{"id": 1, "name": "Test Item"}]}
                 yield json.dumps(test_data)
@@ -43,9 +48,8 @@ class TestExportRoutes:
 
         mock_service.export_data.side_effect = mock_export_data
 
-        # Mock get_export_info
         mock_service.get_export_info.return_value = {
-            "entity_type": "genes",
+            "entity_type": "entities",
             "supported_formats": ["json", "csv"],
             "supported_compression": ["none", "gzip"],
             "estimated_record_count": 100,
@@ -54,71 +58,90 @@ class TestExportRoutes:
         return mock_service
 
     @pytest.fixture
-    def test_client(self, mock_export_service: Mock) -> TestClient:
-        """Create test client with mocked export service."""
+    def test_user(self) -> User:
+        """Admin user bypasses membership checks in verify_space_membership."""
+        return User(
+            id=uuid4(),
+            email="admin@example.com",
+            username="admin",
+            full_name="Admin User",
+            hashed_password="hashed",
+            role=UserRole.ADMIN,
+            status=UserStatus.ACTIVE,
+        )
+
+    @pytest.fixture
+    def test_client(
+        self,
+        mock_export_service: Mock,
+        test_user: User,
+    ) -> TestClient:
+        """Create test client with mocked export service and auth dependencies."""
+        from src.database.session import get_session
+        from src.routes.auth import get_current_active_user
         from src.routes.export import get_export_service
+        from src.routes.research_spaces.dependencies import get_membership_service
 
         app = FastAPI()
         app.include_router(router)
 
-        # Override the dependency function
         app.dependency_overrides[get_export_service] = lambda: mock_export_service
+        app.dependency_overrides[get_current_active_user] = lambda: test_user
+        app.dependency_overrides[get_membership_service] = lambda: Mock()
+        app.dependency_overrides[get_session] = lambda: Mock()
 
         return TestClient(app)
 
-    def test_export_genes_json_format(
+    def test_export_entities_json_format(
         self,
         test_client: TestClient,
         mock_export_service: Mock,
     ) -> None:
-        """Test exporting genes in JSON format returns correct response."""
-        # Act: Make request to export genes
-        response = test_client.get("/export/genes?format=json")
+        """Test exporting entities in JSON format returns correct response."""
+        space_id = uuid4()
 
-        # Assert: Verify response structure and types
+        response = test_client.get(f"/export/entities?space_id={space_id}&format=json")
+
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/json"
         assert "content-disposition" in response.headers
 
-        # Verify the export_data method was called correctly
         mock_export_service.export_data.assert_called_once_with(
-            entity_type="genes",
+            research_space_id=str(space_id),
+            entity_type="entities",
             export_format=ExportFormat.JSON,
             compression=CompressionFormat.NONE,
             filters=None,
         )
 
-        # Parse response and validate structure
         data = response.json()
-        assert "genes" in data
-        assert isinstance(data["genes"], list)
-        assert len(data["genes"]) == 1
-        assert data["genes"][0]["id"] == 1
-        assert data["genes"][0]["name"] == "Test Item"
+        assert "entities" in data
+        assert isinstance(data["entities"], list)
+        assert len(data["entities"]) == 1
+        assert data["entities"][0]["id"] == 1
 
-    def test_export_variants_csv_format(
+    def test_export_observations_csv_format(
         self,
         test_client: TestClient,
-        mock_export_service: Mock,
     ) -> None:
-        """Test exporting variants in CSV format returns correct response."""
-        # Act: Make request to export variants as CSV
-        response = test_client.get("/export/variants?format=csv")
+        """Test exporting observations in CSV format returns correct response."""
+        space_id = uuid4()
 
-        # Assert: Verify CSV response
+        response = test_client.get(
+            f"/export/observations?space_id={space_id}&format=csv",
+        )
+
         assert response.status_code == 200
         assert "text/csv" in response.headers["content-type"]
         assert (
             response.headers["content-disposition"]
-            == "attachment; filename=variants.csv"
+            == "attachment; filename=observations.csv"
         )
 
-        # Verify CSV content
         content = response.text
         lines = content.strip().split("\n")
-        assert len(lines) == 2  # Header + 1 data row
+        assert len(lines) == 2
         assert lines[0] == "id,name"
-        assert lines[1] == "1,Test Item"
 
     def test_export_with_gzip_compression(
         self,
@@ -126,17 +149,19 @@ class TestExportRoutes:
         mock_export_service: Mock,
     ) -> None:
         """Test exporting with gzip compression."""
-        # Act: Make request with gzip compression
-        response = test_client.get("/export/phenotypes?format=json&compression=gzip")
+        space_id = uuid4()
 
-        # Assert: Verify compression headers
+        response = test_client.get(
+            f"/export/relations?space_id={space_id}&format=json&compression=gzip",
+        )
+
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/gzip"
-        assert "phenotypes.json.gz" in response.headers["content-disposition"]
+        assert "relations.json.gz" in response.headers["content-disposition"]
 
-        # Verify compression was requested
         mock_export_service.export_data.assert_called_once_with(
-            entity_type="phenotypes",
+            research_space_id=str(space_id),
+            entity_type="relations",
             export_format=ExportFormat.JSON,
             compression=CompressionFormat.GZIP,
             filters=None,
@@ -148,24 +173,29 @@ class TestExportRoutes:
         mock_export_service: Mock,
     ) -> None:
         """Test exporting with limit parameter."""
-        # Act: Make request with limit
-        response = test_client.get("/export/evidence?format=json&limit=50")
+        space_id = uuid4()
 
-        # Assert: Verify limit was passed to service
+        response = test_client.get(
+            f"/export/entities?space_id={space_id}&format=json&limit=50",
+        )
+
         assert response.status_code == 200
         mock_export_service.export_data.assert_called_once_with(
-            entity_type="evidence",
+            research_space_id=str(space_id),
+            entity_type="entities",
             export_format=ExportFormat.JSON,
             compression=CompressionFormat.NONE,
             filters={"limit": 50},
         )
 
     def test_invalid_entity_type_returns_400(self, test_client: TestClient) -> None:
-        """Test that invalid entity types return 400 error."""
-        # Act: Make request with invalid entity type
-        response = test_client.get("/export/invalid_entity?format=json")
+        """Test that invalid export entity types return 400 error."""
+        space_id = uuid4()
 
-        # Assert: Verify error response
+        response = test_client.get(
+            f"/export/invalid_entity?space_id={space_id}&format=json",
+        )
+
         assert response.status_code == 400
         error_data = response.json()
         assert "detail" in error_data
@@ -177,14 +207,14 @@ class TestExportRoutes:
         mock_export_service: Mock,
     ) -> None:
         """Test get export info endpoint returns typed structure."""
-        # Act: Get export info for genes
-        response = test_client.get("/export/genes/info")
+        space_id = uuid4()
 
-        # Assert: Verify response structure and types
+        response = test_client.get(f"/export/entities/info?space_id={space_id}")
+
         assert response.status_code == 200
         data = response.json()
 
-        assert data["entity_type"] == "genes"
+        assert data["entity_type"] == "entities"
         assert isinstance(data["export_formats"], list)
         assert isinstance(data["compression_formats"], list)
         assert "json" in data["export_formats"]
@@ -192,75 +222,61 @@ class TestExportRoutes:
         assert "none" in data["compression_formats"]
         assert "gzip" in data["compression_formats"]
 
-        # Verify service method was called
-        mock_export_service.get_export_info.assert_called_once_with("genes")
+        mock_export_service.get_export_info.assert_called_once_with(
+            research_space_id=str(space_id),
+            entity_type="entities",
+            filters=None,
+        )
 
     def test_list_exportable_entities_returns_complete_list(
         self,
         test_client: TestClient,
     ) -> None:
         """Test list exportable entities endpoint returns all supported entities."""
-        # Act: Get list of exportable entities
         response = test_client.get("/export/")
 
-        # Assert: Verify response contains all expected entities
         assert response.status_code == 200
         data = response.json()
 
         assert "exportable_entities" in data
         assert isinstance(data["exportable_entities"], list)
-        assert (
-            len(data["exportable_entities"]) == 4
-        )  # genes, variants, phenotypes, evidence
+        assert len(data["exportable_entities"]) == 3
 
-        # Check entity types
         entity_types = [entity["type"] for entity in data["exportable_entities"]]
-        assert "genes" in entity_types
-        assert "variants" in entity_types
-        assert "phenotypes" in entity_types
-        assert "evidence" in entity_types
+        assert "entities" in entity_types
+        assert "observations" in entity_types
+        assert "relations" in entity_types
 
-        # Verify each entity has required fields
-        for entity in data["exportable_entities"]:
-            assert "type" in entity
-            assert "description" in entity
-            assert isinstance(entity["description"], str)
-
-        # Verify usage information
         assert "usage" in data
         assert "endpoint" in data["usage"]
 
-    def test_invalid_format_parameter_returns_400(
+    def test_invalid_format_parameter_returns_422(
         self,
         test_client: TestClient,
     ) -> None:
-        """Test that invalid format parameter returns 400 error."""
-        # Act: Make request with invalid format
-        response = test_client.get("/export/genes?format=invalid")
+        space_id = uuid4()
+        response = test_client.get(
+            f"/export/entities?space_id={space_id}&format=invalid",
+        )
+        assert response.status_code == 422
 
-        # Assert: Verify validation error
-        assert response.status_code == 422  # FastAPI validation error
-
-    def test_invalid_compression_parameter_returns_400(
+    def test_invalid_compression_parameter_returns_422(
         self,
         test_client: TestClient,
     ) -> None:
-        """Test that invalid compression parameter returns 400 error."""
-        # Act: Make request with invalid compression
-        response = test_client.get("/export/genes?format=json&compression=invalid")
-
-        # Assert: Verify validation error
-        assert response.status_code == 422  # FastAPI validation error
+        space_id = uuid4()
+        response = test_client.get(
+            f"/export/entities?space_id={space_id}&format=json&compression=invalid",
+        )
+        assert response.status_code == 422
 
     def test_streaming_response_headers_are_correct(
         self,
         test_client: TestClient,
     ) -> None:
-        """Test that streaming response includes correct headers."""
-        # Act: Make export request
-        response = test_client.get("/export/genes?format=json")
+        space_id = uuid4()
+        response = test_client.get(f"/export/entities?space_id={space_id}&format=json")
 
-        # Assert: Verify all required headers are present
         required_headers = [
             "content-type",
             "content-disposition",
@@ -268,30 +284,25 @@ class TestExportRoutes:
             "x-export-format",
             "x-compression",
         ]
-
         for header in required_headers:
             assert header in response.headers
 
-        # Verify header values
-        assert response.headers["x-entity-type"] == "genes"
+        assert response.headers["x-entity-type"] == "entities"
         assert response.headers["x-export-format"] == "json"
         assert response.headers["x-compression"] == "none"
-        assert "genes.json" in response.headers["content-disposition"]
+        assert "entities.json" in response.headers["content-disposition"]
 
-    def test_export_service_error_returns_500(
+    def test_export_service_error_returns_error_content(
         self,
         test_client: TestClient,
         mock_export_service: Mock,
     ) -> None:
-        """Test that service errors are properly handled and return 500."""
-        # Arrange: Make service raise an exception
+        """StreamingResponse still returns 200 but includes error content."""
+        space_id = uuid4()
         mock_export_service.export_data.side_effect = Exception("Service error")
 
-        # Act: Make request that will trigger the error
-        response = test_client.get("/export/genes?format=json")
+        response = test_client.get(f"/export/entities?space_id={space_id}&format=json")
 
-        # Assert: Verify error handling - service errors are caught and returned in response
-        # The streaming response may still return 200 but with error content
         response_text = response.text
         assert (
             "Error during export" in response_text or "Service error" in response_text

@@ -6,13 +6,15 @@ import {
   FolderKanban,
   CloudDownload,
   ListChecks,
-  Network,
+  BookOpen,
+  BarChart3,
   Users,
   Settings,
   Plus,
   ArrowLeft,
   type LucideIcon,
 } from "lucide-react"
+import { KnowledgeGraphIcon } from "@/components/icons/KnowledgeGraphIcon"
 import type {
   NavItem,
   NavGroup,
@@ -61,6 +63,30 @@ export function buildDashboardNavItems(
     groups.push({
       label: "Administration",
       items: [
+        {
+          id: "admin-dictionary",
+          title: "Dictionary",
+          url: "/admin/dictionary",
+          icon: BookOpen,
+          isActive: pathname.startsWith("/admin/dictionary"),
+          allowedRoles: [UserRole.ADMIN],
+        },
+        {
+          id: "admin-audit",
+          title: "Audit Logs",
+          url: "/admin/audit",
+          icon: ListChecks,
+          isActive: pathname.startsWith("/admin/audit"),
+          allowedRoles: [UserRole.ADMIN],
+        },
+        {
+          id: "admin-phi-access",
+          title: "PHI Access",
+          url: "/admin/phi-access",
+          icon: Users,
+          isActive: pathname.startsWith("/admin/phi-access"),
+          allowedRoles: [UserRole.ADMIN],
+        },
         {
           id: "admin-settings",
           title: "System Settings",
@@ -117,8 +143,15 @@ export function buildSpaceNavItems(
         id: "knowledge-graph",
         title: "Knowledge Graph",
         url: `/spaces/${spaceId}/knowledge-graph`,
-        icon: Network,
+        icon: KnowledgeGraphIcon,
         isActive: pathname.startsWith(`/spaces/${spaceId}/knowledge-graph`),
+      },
+      {
+        id: "observations",
+        title: "Observations",
+        url: `/spaces/${spaceId}/observations`,
+        icon: BarChart3,
+        isActive: pathname.startsWith(`/spaces/${spaceId}/observations`),
       },
     ],
   }
@@ -319,6 +352,9 @@ export function buildBreadcrumbs(
         settings: "System Settings",
         users: "User Management",
         "data-sources": "Data Sources",
+        dictionary: "Dictionary",
+        audit: "Audit Logs",
+        "phi-access": "PHI Access",
       }
       items.push({
         label: adminLabels[adminPage] || adminPage,

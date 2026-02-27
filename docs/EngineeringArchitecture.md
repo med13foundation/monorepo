@@ -72,7 +72,7 @@ The MED13 Resource Library implements a robust **Clean Architecture** with compl
 - **Presets System**: User and Space-scoped search configurations for reproducible research
 - **Automation**: Background jobs for PDF downloading and ingestion linkage
 
-### ✅ **AI Agent System (Flujo) - PRODUCTION READY**
+### ✅ **AI Agent System (Artana) - PRODUCTION READY**
 **Contract-First, Evidence-Based AI Architecture:**
 
 ```
@@ -92,7 +92,7 @@ The MED13 Resource Library implements a robust **Clean Architecture** with compl
                                  │
 ┌─────────────────────────────────────────────────────────────┐
 │        Infrastructure Layer (src/infrastructure/llm/)       │
-│  • Adapters: FlujoQueryAgentAdapter                         │
+│  • Adapters: ArtanaQueryAgentAdapter                         │
 │  • Factories: Agent creation with consistent configuration  │
 │  • Pipelines: Governance patterns, confidence routing       │
 │  • State: PostgreSQL backend, lifecycle management          │
@@ -103,16 +103,15 @@ The MED13 Resource Library implements a robust **Clean Architecture** with compl
 - **Evidence-First Outputs**: Every decision includes confidence score, rationale, and evidence
 - **Governance Patterns**: Confidence-based routing for human-in-the-loop review
 - **Granular Durability**: Per-turn state persistence for auditability
-- **Clean Architecture**: Domain contracts stay in domain layer, Flujo integration in infrastructure
-- **Type Safety**: Fully typed contracts (documented `Any` exception for Flujo generics only)
-- **Reasoning Techniques**: Chain of Thought (`GranularStep`), Tree of Thoughts (`TreeSearchStep`), and native reasoning models
+- **Clean Architecture**: Domain contracts stay in domain layer, runtime integration in infrastructure
+- **Type Safety**: Fully typed contracts across adapters and services
+- **Reasoning Techniques**: Native reasoning models with configurable effort and verbosity
 
 **Current Agents:**
 - **Query Generation (PubMed)**: Generates optimized PubMed Boolean queries from research context
 
 **See Also:**
-- `docs/flujo/agent_architecture.md` - Complete implementation guide
-- `docs/flujo/reasoning.md` - Reasoning techniques (A* search, Tree of Thoughts)
+- `docs/artana-kernel/docs/agent_migration.md` - Artana migration and runtime architecture
 
 ### ✅ **Production Infrastructure - ESTABLISHED**
 - **Cloud Run Deployment**: Multi-service container orchestration
@@ -206,7 +205,7 @@ Pattern for Each New Agent:
 3. Define port interface in domain layer
 4. Create system prompt and factory
 5. Build pipeline with governance patterns
-6. Implement adapter using Flujo
+6. Implement adapter using Artana
 7. Create application service for orchestration
 
 Benefits:
@@ -319,7 +318,7 @@ Benefits:
 # DomainEventBus + SourceCreated/Updated/StatusChanged events power audit trails
 ```
 
-#### **AI Agent Infrastructure (Flujo)**
+#### **AI Agent Infrastructure (Artana)**
 ```python
 # src/domain/agents/ - Contracts, contexts, ports (domain interfaces)
 # src/application/agents/ - Use case orchestration services

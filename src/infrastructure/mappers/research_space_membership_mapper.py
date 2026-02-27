@@ -11,7 +11,10 @@ from src.domain.entities.research_space_membership import (
     MembershipRole,
     ResearchSpaceMembership,
 )
-from src.models.database.research_space import ResearchSpaceMembershipModel
+from src.models.database.research_space import (
+    MembershipRoleEnum,
+    ResearchSpaceMembershipModel,
+)
 
 
 class ResearchSpaceMembershipMapper:
@@ -85,7 +88,7 @@ class ResearchSpaceMembershipMapper:
             id=entity.id,  # UUID object
             space_id=entity.space_id,  # UUID object
             user_id=entity.user_id,  # UUID object
-            role=entity.role.value,
+            role=MembershipRoleEnum(entity.role.value),
             invited_by=entity.invited_by,  # UUID object or None
             invited_at=entity.invited_at,
             joined_at=entity.joined_at,

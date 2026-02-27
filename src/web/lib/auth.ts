@@ -24,6 +24,7 @@ declare module "next-auth/jwt" {
     access_token: string
     refresh_token: string
     expires_at: number
+    refresh_failed?: boolean
     user: {
       id: string
       email: string
@@ -59,6 +60,165 @@ interface AuthenticatedUser extends BackendUser {
 
 // FastAPI backend URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
+const authApiClient = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 15000,
+  // Avoid Node.js proxy-from-env URL parsing path (DEP0169 on Node 24+)
+  proxy: false,
+})
+
+let hasLoggedRecoverableJwtWarning = false
+
+function formatAxiosError(error: unknown): string {
+  if (!axios.isAxiosError(error)) {
+    if (error instanceof Error) {
+      return error.message
+    }
+    return "Unknown error"
+  }
+
+  const status = error.response?.status ?? "unknown"
+  const responseData = error.response?.data
+
+  if (typeof responseData === "string" && responseData.trim().length > 0) {
+    return `status=${status} ${responseData}`
+  }
+
+  if (responseData && typeof responseData === "object") {
+    const responseObject = responseData as Record<string, unknown>
+    if (Object.keys(responseObject).length > 0) {
+      const detail = responseObject.detail
+      if (typeof detail === "string" && detail.trim().length > 0) {
+        return `status=${status} ${detail}`
+      }
+      return `status=${status} ${JSON.stringify(responseObject)}`
+    }
+  }
+
+  const requestUrl = error.config?.url
+  return `status=${status} ${error.message}${requestUrl ? ` (${requestUrl})` : ""}`
+}
+
+function decodeJwtClaimValue(
+  accessToken: string,
+  claim: "exp",
+): number | null {
+  try {
+    const parts = accessToken.split(".")
+    if (parts.length !== 3) {
+      return null
+    }
+
+    const base64Url = parts[1]
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/")
+    const padded = `${base64}${"=".repeat((4 - (base64.length % 4)) % 4)}`
+    const payloadJson = Buffer.from(padded, "base64").toString("utf8")
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>
+
+    const rawExp = payload[claim]
+    if (typeof rawExp === "number" && Number.isFinite(rawExp)) {
+      return claim === "exp" ? rawExp * 1000 : null
+    }
+    if (typeof rawExp === "string") {
+      const parsedExp = Number(rawExp)
+      return Number.isFinite(parsedExp) ? parsedExp * 1000 : null
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function resolveExpiresAt(
+  value: unknown,
+  accessToken: string | undefined,
+): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed
+    }
+  }
+
+  const expiryFromToken = accessToken
+    ? decodeJwtClaimValue(accessToken, "exp")
+    : null
+  if (expiryFromToken && expiryFromToken > 0) {
+    return expiryFromToken
+  }
+
+  return 0
+}
+
+function toSafeExpiresAt(
+  tokenExpiresIn: number | string | undefined,
+  accessToken: string,
+): number {
+  const parsed = typeof tokenExpiresIn === "string"
+    ? Number(tokenExpiresIn)
+    : tokenExpiresIn
+  if (typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0) {
+    return Date.now() + parsed * 1000
+  }
+
+  const expiryFromJwt = decodeJwtClaimValue(accessToken, "exp")
+  return expiryFromJwt ?? 0
+}
+
+function toErrorMessage(value: unknown): string {
+  if (typeof value === "string") {
+    return value
+  }
+  if (value instanceof Error) {
+    return value.message
+  }
+  if (typeof value === "object" && value !== null) {
+    const message = (value as Record<string, unknown>).message
+    if (typeof message === "string") {
+      return message
+    }
+  }
+  return ""
+}
+
+function toErrorName(value: unknown): string {
+  if (value instanceof Error) {
+    return value.name
+  }
+  if (typeof value === "object" && value !== null) {
+    const name = (value as Record<string, unknown>).name
+    if (typeof name === "string") {
+      return name
+    }
+  }
+  return ""
+}
+
+function includesDecryptFailure(value: unknown): boolean {
+  const message = toErrorMessage(value).toLowerCase()
+  const name = toErrorName(value).toLowerCase()
+  return (
+    message.includes("decryption operation failed") ||
+    name.includes("jwedecryptionfailed")
+  )
+}
+
+export function isRecoverableSessionDecryptionError(value: unknown): boolean {
+  if (includesDecryptFailure(value)) {
+    return true
+  }
+  if (typeof value !== "object" || value === null) {
+    return false
+  }
+  const record = value as Record<string, unknown>
+  return (
+    includesDecryptFailure(record.error) ||
+    includesDecryptFailure(record.cause)
+  )
+}
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -75,7 +235,7 @@ export const authOptions: NextAuthOptions = {
 
         try {
           // Call FastAPI login endpoint
-          const response = await axios.post<BackendLoginResponse>(`${API_BASE_URL}/auth/login`, {
+          const response = await authApiClient.post<BackendLoginResponse>("/auth/login", {
             email: credentials.email,
             password: credentials.password,
           })
@@ -121,7 +281,7 @@ export const authOptions: NextAuthOptions = {
             email_verified: user.email_verified,
             access_token,
             refresh_token,
-            expires_at: Date.now() + expires_in * 1000, // Convert to milliseconds
+            expires_at: toSafeExpiresAt(expires_in, access_token), // Convert to milliseconds
           }
 
           return authenticatedUser
@@ -183,7 +343,8 @@ export const authOptions: NextAuthOptions = {
         return {
           access_token: customUser.access_token,
           refresh_token: customUser.refresh_token,
-          expires_at: customUser.expires_at,
+          expires_at: resolveExpiresAt(customUser.expires_at, customUser.access_token),
+          refresh_failed: false,
           user: {
             id: customUser.id,
             email: customUser.email!,
@@ -195,14 +356,23 @@ export const authOptions: NextAuthOptions = {
         }
       }
 
+      if (token.refresh_failed) {
+        return token
+      }
+
       // Return previous token if the access token has not expired yet
-      const expiresAt = token.expires_at as number | undefined
+      const expiresAt = resolveExpiresAt(token.expires_at, token.access_token)
+      const normalizedToken = {
+        ...token,
+        expires_at: expiresAt,
+      }
+
       if (expiresAt && Date.now() < expiresAt) {
         // Ensure access_token exists before returning
         if (!token.access_token) {
           console.warn("JWT callback: Token exists but missing access_token", { token })
         }
-        return token
+        return normalizedToken
       }
 
       // If token expired or missing, return null to force re-authentication
@@ -218,12 +388,17 @@ export const authOptions: NextAuthOptions = {
       const refreshToken = token.refresh_token
       if (!refreshToken) {
         console.error("JWT callback: Cannot refresh token - refresh_token is missing", { token })
-        // Return token as-is to allow session to expire naturally
-        return token
+        return {
+          ...normalizedToken,
+          access_token: '',
+          refresh_token: '',
+          expires_at: 0,
+          refresh_failed: true,
+        }
       }
 
       try {
-        const response = await axios.post<{ access_token: string; refresh_token: string; expires_in: number }>(`${API_BASE_URL}/auth/refresh`, {
+        const response = await authApiClient.post<{ access_token: string; refresh_token: string; expires_in: number }>("/auth/refresh", {
           refresh_token: refreshToken
         })
 
@@ -236,19 +411,24 @@ export const authOptions: NextAuthOptions = {
         }
 
         return {
-          ...token,
+          ...normalizedToken,
           access_token,
           refresh_token,
           expires_at: Date.now() + expires_in * 1000,
+          refresh_failed: false,
         }
       } catch (error) {
-        if (axios.isAxiosError(error)) {
-          console.error("Token refresh error:", error.response?.data || error.message)
-        } else {
-          console.error("Token refresh error:", (error as Error)?.message)
+        const isExpectedRefresh401 = axios.isAxiosError(error) && error.response?.status === 401
+        if (!isExpectedRefresh401) {
+          console.error("Token refresh error:", formatAxiosError(error))
         }
-        // Return token as-is to allow session to expire naturally
-        return token
+        return {
+          ...normalizedToken,
+          access_token: '',
+          refresh_token: '',
+          expires_at: 0,
+          refresh_failed: true,
+        }
       }
     },
     async session({ session, token }) {
@@ -269,7 +449,7 @@ export const authOptions: NextAuthOptions = {
         }
 
         // Debug: Log if access_token is missing
-        if (!tokenAccessToken) {
+        if (!tokenAccessToken && !token.refresh_failed) {
           console.error("Session callback: access_token is missing from token!", {
             tokenKeys: Object.keys(token || {}),
             hasUser: !!tokenUser,
@@ -284,6 +464,35 @@ export const authOptions: NextAuthOptions = {
         })
       }
       return session
+    },
+  },
+  logger: {
+    error(code, metadata) {
+      if (
+        code === "JWT_SESSION_ERROR" &&
+        (isRecoverableSessionDecryptionError(metadata) ||
+          (typeof metadata === "object" &&
+            metadata !== null &&
+            Object.keys(metadata as Record<string, unknown>).length === 0))
+      ) {
+        if (process.env.NODE_ENV === "development" && !hasLoggedRecoverableJwtWarning) {
+          hasLoggedRecoverableJwtWarning = true
+          console.warn(
+            "[next-auth][warn][JWT_SESSION_RECOVERABLE] Stale session cookie detected; continuing as signed out."
+          )
+        }
+        return
+      }
+
+      console.error(`[next-auth][error][${code}]`, metadata)
+    },
+    warn(code) {
+      console.warn(`[next-auth][warn][${code}]`)
+    },
+    debug(code, metadata) {
+      if (process.env.NODE_ENV === "development") {
+        console.debug(`[next-auth][debug][${code}]`, metadata)
+      }
     },
   },
   pages: {

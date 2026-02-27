@@ -4,96 +4,95 @@ Domain entities for MED13 Resource Library.
 These entities represent the core business objects and their relationships.
 """
 
-# Data Discovery entities
-from .data_discovery_parameters import (
+from . import (
+    data_source_configs,
+    ingestion_job,
+    ingestion_scheduler_job,
+    ingestion_source_lock,
+    publication,
+    source_document,
+    source_record_ledger,
+    source_sync_state,
+    user_data_source,
+)
+from .data_discovery import (
     AdvancedQueryParameters,
+    DataDiscoverySession,
+    DiscoverySearchJob,
+    DiscoverySearchStatus,
     PubMedSortOption,
     QueryParameterCapabilities,
     QueryParameters,
     QueryParameterType,
-    TestResultStatus,
-)
-from .data_discovery_session import (
-    DataDiscoverySession,
     QueryTestResult,
     SourceCatalogEntry,
+    TestResultStatus,
 )
-from .data_source_activation import (
+from .data_sources import (
     ActivationScope,
+    CheckpointKind,
     DataSourceActivation,
-)
-from .discovery_search_job import (
-    DiscoverySearchJob,
-    DiscoverySearchStatus,
-)
-from .drug import Drug, DrugApprovalStatus, TherapeuticModality
-from .evidence import Evidence
-from .extraction_queue_item import ExtractionQueueItem, ExtractionStatus
-from .gene import Gene
-
-# Data Sources module entities
-from .ingestion_job import (
+    DocumentExtractionStatus,
+    DocumentFormat,
+    EnrichmentStatus,
+    ExtractionQueueItem,
+    ExtractionStatus,
     IngestionError,
     IngestionJob,
+    IngestionSchedule,
+    IngestionSchedulerJob,
+    IngestionSourceLock,
     IngestionStatus,
     IngestionTrigger,
     JobMetrics,
+    QualityMetrics,
+    SourceConfiguration,
+    SourceDocument,
+    SourceRecordLedgerEntry,
+    SourceStatus,
+    SourceSyncState,
+    SourceTemplate,
+    SourceType,
+    StorageConfiguration,
+    StorageHealthSnapshot,
+    StorageOperation,
+    StorageProviderMetadata,
+    StorageProviderTestResult,
+    TemplateCategory,
+    TemplateUIConfig,
+    UserDataSource,
+    ValidationRule,
 )
-from .mechanism import Mechanism
-from .pathway import Pathway
-from .phenotype import LongitudinalObservation, Phenotype
 from .publication import Publication
 from .publication_extraction import (
     ExtractionOutcome,
     ExtractionTextSource,
     PublicationExtraction,
 )
-from .source_template import (
-    SourceTemplate,
-    TemplateCategory,
-    TemplateUIConfig,
-    ValidationRule,
-)
-from .storage_configuration import (
-    StorageConfiguration,
-    StorageHealthSnapshot,
-    StorageOperation,
-    StorageProviderMetadata,
-    StorageProviderTestResult,
-)
-from .user_data_source import (
-    IngestionSchedule,
-    QualityMetrics,
-    SourceConfiguration,
-    SourceStatus,
-    SourceType,
-    UserDataSource,
-)
-from .variant import InSilicoScores, ProteinStructuralAnnotation, Variant
 
 __all__ = [
     "AdvancedQueryParameters",
+    "ActivationScope",
     "DataDiscoverySession",
-    "Drug",
-    "DrugApprovalStatus",
-    "Evidence",
-    "ExtractionQueueItem",
+    "DataSourceActivation",
+    "DiscoverySearchJob",
+    "DiscoverySearchStatus",
+    "CheckpointKind",
     "ExtractionOutcome",
+    "DocumentExtractionStatus",
+    "DocumentFormat",
+    "EnrichmentStatus",
+    "ExtractionQueueItem",
     "ExtractionStatus",
     "ExtractionTextSource",
-    "Gene",
     "IngestionError",
     "IngestionJob",
     "IngestionSchedule",
+    "IngestionSchedulerJob",
     "IngestionStatus",
+    "IngestionSourceLock",
     "IngestionTrigger",
-    "InSilicoScores",
     "JobMetrics",
-    "LongitudinalObservation",
-    "Mechanism",
-    "Pathway",
-    "Phenotype",
-    "ProteinStructuralAnnotation",
     "Publication",
     "PublicationExtraction",
     "PubMedSortOption",
@@ -104,23 +103,29 @@ __all__ = [
     "QueryTestResult",
     "SourceCatalogEntry",
     "SourceConfiguration",
+    "SourceDocument",
+    "SourceRecordLedgerEntry",
     "SourceStatus",
+    "SourceSyncState",
     "SourceTemplate",
     "SourceType",
-    "TemplateCategory",
-    "TemplateUIConfig",
-    "TestResultStatus",
-    "TherapeuticModality",
-    "UserDataSource",
-    "ValidationRule",
-    "Variant",
-    "ActivationScope",
-    "DataSourceActivation",
     "StorageConfiguration",
     "StorageHealthSnapshot",
     "StorageOperation",
     "StorageProviderMetadata",
     "StorageProviderTestResult",
-    "DiscoverySearchJob",
-    "DiscoverySearchStatus",
+    "TemplateCategory",
+    "TemplateUIConfig",
+    "TestResultStatus",
+    "UserDataSource",
+    "ValidationRule",
+    "data_source_configs",
+    "ingestion_job",
+    "ingestion_scheduler_job",
+    "ingestion_source_lock",
+    "publication",
+    "source_document",
+    "source_record_ledger",
+    "source_sync_state",
+    "user_data_source",
 ]

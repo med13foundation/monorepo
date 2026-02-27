@@ -2,7 +2,7 @@
 Model registry implementation for AI agent configurations.
 
 Implements the ModelRegistryPort interface, loading models from
-flujo.toml configuration with environment variable overrides.
+artana.toml configuration with environment variable overrides.
 
 This is the single source of truth for available AI models.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -28,33 +28,34 @@ from src.domain.agents.models import (
 from src.domain.agents.ports import ModelRegistryPort
 
 # Default config path relative to project root
-DEFAULT_CONFIG_PATH = "flujo.toml"
+DEFAULT_CONFIG_PATH = "artana.toml"
 
 
-class FlujoModelRegistry(ModelRegistryPort):
+class ArtanaModelRegistry(ModelRegistryPort):
     """
-    Model registry implementation loading from flujo.toml.
+    Model registry implementation loading from artana.toml.
 
     Provides centralized access to model configurations for
     agent factories, cost tracking, and model selection.
 
     Configuration hierarchy (highest priority first):
     1. Environment variables (MED13_AI_{CAPABILITY}_MODEL)
-    2. flujo.toml [models] section
+    2. artana.toml [models] section
     3. Fallback to first enabled model
     """
 
-    _instance: FlujoModelRegistry | None = None
+    _instance: ArtanaModelRegistry | None = None
     _models: dict[str, ModelSpec]
     _defaults: dict[ModelCapability, str]
     _cost_config: dict[str, dict[str, float]]
+    _allow_runtime_model_overrides: bool
 
     def __init__(self, config_path: str | Path | None = None) -> None:
         """
         Initialize the registry from configuration.
 
         Args:
-            config_path: Path to flujo.toml (defaults to project root)
+            config_path: Path to artana.toml (defaults to project root)
         """
         self._config_path = (
             Path(config_path) if config_path else Path(DEFAULT_CONFIG_PATH)
@@ -62,7 +63,7 @@ class FlujoModelRegistry(ModelRegistryPort):
         self._load_configuration()
 
     def _load_configuration(self) -> None:
-        """Load models and defaults from flujo.toml."""
+        """Load models and defaults from artana.toml."""
         config = self._read_config_file()
 
         # Parse models from registry section
@@ -73,6 +74,9 @@ class FlujoModelRegistry(ModelRegistryPort):
 
         # Store cost config for reference
         self._cost_config = self._parse_cost_config(config)
+        self._allow_runtime_model_overrides = self._parse_allow_runtime_model_overrides(
+            config,
+        )
 
     def _read_config_file(self) -> dict[str, object]:
         """Read and parse the TOML configuration file."""
@@ -125,8 +129,11 @@ class FlujoModelRegistry(ModelRegistryPort):
             raw_reasoning = spec.get("default_reasoning_settings")
             if isinstance(raw_reasoning, dict):
                 reasoning_settings = ModelReasoningSettings(
-                    effort=raw_reasoning.get("effort", "medium"),
-                    summary=raw_reasoning.get("summary", "detailed"),
+                    effort=self._parse_reasoning_effort(raw_reasoning.get("effort")),
+                    verbosity=self._parse_reasoning_verbosity(
+                        raw_reasoning.get("verbosity"),
+                    ),
+                    summary=self._parse_reasoning_summary(raw_reasoning.get("summary")),
                 )
 
             # Parse cost tier
@@ -220,6 +227,18 @@ class FlujoModelRegistry(ModelRegistryPort):
 
         return result
 
+    def _parse_allow_runtime_model_overrides(
+        self,
+        config: Mapping[str, object],
+    ) -> bool:
+        models_section = config.get("models", {})
+        if isinstance(models_section, dict):
+            raw_value = models_section.get("allow_runtime_model_overrides")
+            if isinstance(raw_value, bool):
+                return raw_value
+
+        return False
+
     def _get_cost_providers(self, config: Mapping[str, object]) -> dict[str, object]:
         """Extract cost.providers section from config."""
         cost = config.get("cost", {})
@@ -237,6 +256,36 @@ class FlujoModelRegistry(ModelRegistryPort):
             parts = model_id.split(":", 1)
             return parts[0], parts[1]
         return "openai", model_id
+
+    @staticmethod
+    def _parse_reasoning_effort(raw_value: object) -> Literal["low", "medium", "high"]:
+        if raw_value == "low":
+            return "low"
+        if raw_value == "high":
+            return "high"
+        return "medium"
+
+    @staticmethod
+    def _parse_reasoning_verbosity(
+        raw_value: object,
+    ) -> Literal["low", "medium", "high"] | None:
+        if raw_value == "low":
+            return "low"
+        if raw_value == "high":
+            return "high"
+        if raw_value == "medium":
+            return "medium"
+        return "medium"
+
+    @staticmethod
+    def _parse_reasoning_summary(
+        raw_value: object,
+    ) -> Literal["brief", "detailed"] | None:
+        if raw_value == "brief":
+            return "brief"
+        if raw_value == "detailed":
+            return "detailed"
+        return None
 
     # =========================================================================
     # ModelRegistryPort Implementation
@@ -271,7 +320,7 @@ class FlujoModelRegistry(ModelRegistryPort):
 
         Resolution order:
         1. Environment variable (MED13_AI_{CAPABILITY}_MODEL)
-        2. flujo.toml [models] defaults
+        2. artana.toml [models] defaults
         3. First enabled model with the capability
         """
         # 1. Check environment variable
@@ -282,7 +331,7 @@ class FlujoModelRegistry(ModelRegistryPort):
             if model.is_enabled and model.supports_capability(capability):
                 return model
 
-        # 2. Check flujo.toml defaults
+        # 2. Check artana.toml defaults
         if capability in self._defaults:
             default_id = self._defaults[capability]
             if default_id in self._models:
@@ -313,6 +362,23 @@ class FlujoModelRegistry(ModelRegistryPort):
         """List all registered model IDs."""
         return list(self._models.keys())
 
+    def allow_runtime_model_overrides(self) -> bool:
+        """
+        Whether runtime/per-source model_id overrides are allowed.
+
+        Environment override:
+        - MED13_AI_ALLOW_RUNTIME_MODEL_OVERRIDES=1|true|yes|on to enable
+        - MED13_AI_ALLOW_RUNTIME_MODEL_OVERRIDES=0|false|no|off to disable
+        """
+        raw_env = os.getenv("MED13_AI_ALLOW_RUNTIME_MODEL_OVERRIDES")
+        if isinstance(raw_env, str):
+            normalized = raw_env.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        return self._allow_runtime_model_overrides
+
     # =========================================================================
     # Convenience Methods
     # =========================================================================
@@ -329,7 +395,7 @@ class FlujoModelRegistry(ModelRegistryPort):
 
 
 @lru_cache(maxsize=1)
-def get_model_registry() -> FlujoModelRegistry:
+def get_model_registry() -> ArtanaModelRegistry:
     """
     Get the singleton model registry instance.
 
@@ -337,9 +403,9 @@ def get_model_registry() -> FlujoModelRegistry:
     instance is used throughout the application.
 
     Returns:
-        The global FlujoModelRegistry instance
+        The global ArtanaModelRegistry instance
     """
-    return FlujoModelRegistry()
+    return ArtanaModelRegistry()
 
 
 def get_default_model_id(capability: ModelCapability) -> str:
@@ -362,16 +428,16 @@ def get_default_model_id(capability: ModelCapability) -> str:
 # =============================================================================
 # Legacy Compatibility Layer
 # =============================================================================
-# These maintain backward compatibility with existing code that uses
+# Thin compatibility wrapper for code paths that still use
 # ModelRegistry class methods directly.
 
 
 class ModelRegistry:
     """
-    Legacy compatibility wrapper for FlujoModelRegistry.
+    Compatibility wrapper for ArtanaModelRegistry.
 
     Provides the same class-method interface as the previous
-    implementation for backward compatibility.
+    implementation.
 
     New code should use get_model_registry() instead.
     """

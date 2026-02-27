@@ -6,6 +6,7 @@ Provides streaming data export capabilities in multiple formats.
 
 import gzip
 from collections.abc import Generator
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -13,7 +14,11 @@ from sqlalchemy.orm import Session
 
 from src.application.export.export_service import BulkExportService
 from src.application.export.export_types import CompressionFormat, ExportFormat
+from src.application.services.membership_management_service import (
+    MembershipManagementService,
+)
 from src.database.session import get_session
+from src.domain.entities.user import User
 from src.infrastructure.dependency_injection.dependencies import (
     get_legacy_dependency_container,
 )
@@ -23,6 +28,12 @@ from src.models.api.common import (
     ExportOptionsResponse,
     UsageInfo,
 )
+from src.routes.auth import get_current_active_user
+from src.routes.research_spaces.dependencies import (
+    get_membership_service,
+    verify_space_membership,
+)
+from src.type_definitions.common import QueryFilters
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -38,6 +49,8 @@ def get_export_service(db: Session = Depends(get_session)) -> BulkExportService:
 @router.get("/{entity_type}")
 async def export_entity_data(
     entity_type: str,
+    space_id: UUID = Query(..., description="Research space scope"),
+    *,
     export_format: ExportFormat = Query(
         ExportFormat.JSON,
         description="Export format",
@@ -53,6 +66,14 @@ async def export_entity_data(
         le=100000,
         description="Maximum number of records to export",
     ),
+    kernel_entity_type: str | None = Query(
+        None,
+        alias="type",
+        description="Filter kernel entity_type when exporting entities (e.g. GENE)",
+    ),
+    current_user: User = Depends(get_current_active_user),
+    membership_service: MembershipManagementService = Depends(get_membership_service),
+    session: Session = Depends(get_session),
     service: "BulkExportService" = Depends(get_export_service),
 ) -> StreamingResponse:
     """
@@ -61,7 +82,7 @@ async def export_entity_data(
     Supports streaming for large datasets to avoid memory issues.
     """
     # Validate entity type
-    valid_entity_types = ["genes", "variants", "phenotypes", "evidence"]
+    valid_entity_types = ["entities", "observations", "relations"]
     if entity_type not in valid_entity_types:
         raise HTTPException(
             status_code=400,
@@ -69,6 +90,20 @@ async def export_entity_data(
         )
 
     try:
+        verify_space_membership(
+            space_id,
+            current_user.id,
+            membership_service,
+            session,
+            current_user.role,
+        )
+
+        filters: QueryFilters = {}
+        if limit is not None:
+            filters["limit"] = limit
+        if entity_type == "entities" and kernel_entity_type is not None:
+            filters["entity_type"] = kernel_entity_type
+
         # Set up filename and content type based on format and compression
         filename = f"{entity_type}.{export_format.value}"
         if compression == CompressionFormat.GZIP:
@@ -87,10 +122,11 @@ async def export_entity_data(
         def generate() -> Generator[str | bytes]:
             try:
                 yield from service.export_data(
+                    research_space_id=str(space_id),
                     entity_type=entity_type,
                     export_format=export_format,
                     compression=compression,
-                    filters={"limit": limit} if limit else None,
+                    filters=filters or None,
                 )
             except Exception as e:
                 # Log the error and yield an error message
@@ -120,12 +156,21 @@ async def export_entity_data(
 @router.get("/{entity_type}/info", response_model=ExportOptionsResponse)
 async def get_export_info(
     entity_type: str,
+    space_id: UUID = Query(..., description="Research space scope"),
+    kernel_entity_type: str | None = Query(
+        None,
+        alias="type",
+        description="Filter kernel entity_type when exporting entities (e.g. GENE)",
+    ),
+    current_user: User = Depends(get_current_active_user),
+    membership_service: MembershipManagementService = Depends(get_membership_service),
+    session: Session = Depends(get_session),
     service: "BulkExportService" = Depends(get_export_service),
 ) -> ExportOptionsResponse:
     """
     Get information about export options and data statistics for an entity type.
     """
-    valid_entity_types = ["genes", "variants", "phenotypes", "evidence"]
+    valid_entity_types = ["entities", "observations", "relations"]
     if entity_type not in valid_entity_types:
         raise HTTPException(
             status_code=400,
@@ -133,7 +178,23 @@ async def get_export_info(
         )
 
     try:
-        info = service.get_export_info(entity_type)
+        verify_space_membership(
+            space_id,
+            current_user.id,
+            membership_service,
+            session,
+            current_user.role,
+        )
+
+        filters: QueryFilters = {}
+        if kernel_entity_type is not None:
+            filters["entity_type"] = kernel_entity_type
+
+        info = service.get_export_info(
+            research_space_id=str(space_id),
+            entity_type=entity_type,
+            filters=filters or None,
+        )
         return ExportOptionsResponse(
             entity_type=entity_type,
             export_formats=[fmt.value for fmt in ExportFormat],
@@ -155,26 +216,22 @@ async def list_exportable_entities() -> ExportableEntitiesResponse:
     return ExportableEntitiesResponse(
         exportable_entities=[
             ExportEntityInfo(
-                type="genes",
-                description="Genetic entity data including symbols, names, and genomic locations",
+                type="entities",
+                description="Kernel entities (graph nodes) scoped to a research space",
             ),
             ExportEntityInfo(
-                type="variants",
-                description="Genetic variant data including ClinVar IDs, positions, and clinical significance",
+                type="observations",
+                description="Kernel observations (typed facts) scoped to a research space",
             ),
             ExportEntityInfo(
-                type="phenotypes",
-                description="HPO phenotype data including terms, definitions, and categories",
-            ),
-            ExportEntityInfo(
-                type="evidence",
-                description="Evidence linking variants to phenotypes with confidence scores",
+                type="relations",
+                description="Kernel relations (graph edges) scoped to a research space",
             ),
         ],
         supported_formats=[fmt.value for fmt in ExportFormat],
         supported_compression=[comp.value for comp in CompressionFormat],
         usage=UsageInfo(
-            endpoint="GET /export/{entity_type}?format=json&compression=gzip",
-            description="Download entity data in specified format with optional compression",
+            endpoint="GET /export/{entity_type}?space_id={uuid}&format=json&compression=gzip",
+            description="Download research-space-scoped kernel data in the specified format",
         ),
     )

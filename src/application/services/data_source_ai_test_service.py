@@ -6,24 +6,29 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pydantic
 
+from src.application.services.data_source_ai_test_helpers import (
+    LOW_CONFIDENCE_THRESHOLD,
+    apply_clinvar_defaults,
+    build_clinvar_findings,
+    build_findings,
+    extract_search_terms,
+    should_use_clinvar_gateway,
+    should_use_pubmed_gateway,
+)
 from src.domain.entities import data_source_configs, user_data_source
 from src.type_definitions import data_sources as data_source_types
 
 logger = logging.getLogger(__name__)
 
-# Confidence threshold below which queries are logged as warnings
-LOW_CONFIDENCE_THRESHOLD = 0.5
-
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from src.application.services.ports.flujo_state_port import FlujoStatePort
+    from src.application.services.ports.agent_run_state_port import AgentRunStatePort
     from src.domain.agents.ports.query_agent_port import (
         QueryAgentPort,
         QueryAgentRunMetadataProvider,
@@ -32,6 +37,7 @@ if TYPE_CHECKING:
         ResearchSpaceRepository,
         UserDataSourceRepository,
     )
+    from src.domain.services.clinvar_ingestion import ClinVarGateway
     from src.domain.services.pubmed_ingestion import PubMedGateway
     from src.type_definitions.common import RawRecord, SourceMetadata
 
@@ -51,9 +57,10 @@ class DataSourceAiTestDependencies:
 
     source_repository: UserDataSourceRepository
     pubmed_gateway: PubMedGateway
+    clinvar_gateway: ClinVarGateway
     query_agent: QueryAgentPort | None
     research_space_repository: ResearchSpaceRepository | None
-    flujo_state: FlujoStatePort | None = None
+    agent_run_state: AgentRunStatePort | None = None
     run_id_provider: QueryAgentRunMetadataProvider | None = None
 
 
@@ -67,10 +74,11 @@ class DataSourceAiTestService:
     ) -> None:
         self._source_repository = dependencies.source_repository
         self._pubmed_gateway = dependencies.pubmed_gateway
+        self._clinvar_gateway = dependencies.clinvar_gateway
         self._query_agent = dependencies.query_agent
         self._run_id_provider = dependencies.run_id_provider
         self._research_space_repository = dependencies.research_space_repository
-        self._flujo_state = dependencies.flujo_state
+        self._agent_run_state = dependencies.agent_run_state
         resolved_settings = settings or DataSourceAiTestSettings()
         self._sample_size = max(resolved_settings.sample_size, 1)
         self._ai_model_name = resolved_settings.ai_model_name
@@ -82,14 +90,15 @@ class DataSourceAiTestService:
         """Run a lightweight AI-driven test against a data source configuration."""
         source = self._require_source(source_id)
         checked_at = dt.datetime.now(dt.UTC)
-        config = self._build_pubmed_config(source)
+        config = self._build_source_config(source)
         error_message = self._validate_preconditions(source=source, config=config)
         executed_query: str | None = None
         fetched_records = 0
         findings: list[data_source_types.DataSourceAiTestFinding] = []
-        flujo_run_id: str | None = None
-        flujo_tables: list[data_source_types.FlujoTableSummary] = []
+        agent_run_id: str | None = None
+        agent_run_tables: list[data_source_types.AgentRunTableSummary] = []
         ai_executed = False
+        fetch_attempted = False
 
         # Track the actual model used (configured or default)
         actual_model_id: str | None = None
@@ -99,49 +108,52 @@ class DataSourceAiTestService:
                 source,
                 config,
             )
+            agent_source_type = config.agent_config.query_agent_source_type
             ai_executed = True
             # Use configured model_id or fall back to default
             actual_model_id = config.agent_config.model_id or self._ai_model_name
             intelligent_query = await self._generate_intelligent_query(
                 research_space_description,
                 config.agent_config.agent_prompt,
-                config.agent_config.model_id,
+                source_type=agent_source_type,
+                model_id=config.agent_config.model_id,
             )
 
             if not intelligent_query:
                 error_message = "AI agent did not return a query. Refine the AI instructions and try again."
             else:
                 executed_query = intelligent_query
-                test_config = config.model_copy(
-                    update={
-                        "query": intelligent_query,
-                        "max_results": self._sample_size,
-                        "relevance_threshold": 0,
-                    },
+                (
+                    fetch_attempted,
+                    fetched_records,
+                    findings,
+                    fetch_error,
+                ) = await self._fetch_test_records(
+                    source=source,
+                    config=config,
+                    executed_query=intelligent_query,
                 )
-                try:
-                    raw_records = await self._pubmed_gateway.fetch_records(test_config)
-                    fetched_records = len(raw_records)
-                    findings = self._build_findings(raw_records)
-                    if fetched_records == 0:
-                        error_message = (
-                            "PubMed returned no results for the AI-generated query. "
-                            "Adjust the prompt or filters and try again."
-                        )
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.exception("AI test failed for source %s", source.id)
-                    error_message = f"PubMed request failed: {exc!s}"
+                if fetch_error is not None:
+                    error_message = fetch_error
 
         if ai_executed:
-            flujo_run_id, flujo_tables = self._resolve_flujo_state(checked_at)
+            agent_run_id, agent_run_tables = self._resolve_agent_run_state(checked_at)
 
         success = error_message is None
         if error_message is None:
-            message = f"AI test succeeded with {fetched_records} record(s) returned."
+            if fetch_attempted:
+                message = (
+                    f"AI test succeeded with {fetched_records} record(s) returned."
+                )
+            else:
+                message = (
+                    f"AI query generated successfully; no connector fetch step for "
+                    f"{agent_source_type}."
+                )
         else:
             message = error_message
 
-        search_terms = self._extract_search_terms(executed_query)
+        search_terms = extract_search_terms(executed_query)
         model_name = self._resolve_model_name(
             has_query_agent=self._query_agent is not None,
             configured_model_id=actual_model_id,
@@ -158,8 +170,8 @@ class DataSourceAiTestService:
             sample_size=self._sample_size,
             findings=findings,
             checked_at=checked_at,
-            flujo_run_id=flujo_run_id,
-            flujo_tables=flujo_tables,
+            agent_run_id=agent_run_id,
+            agent_run_tables=agent_run_tables,
         )
 
     def _require_source(self, source_id: UUID) -> user_data_source.UserDataSource:
@@ -170,15 +182,114 @@ class DataSourceAiTestService:
         return source
 
     @staticmethod
-    def _build_pubmed_config(
+    def _build_source_config(
         source: user_data_source.UserDataSource,
     ) -> data_source_configs.PubMedQueryConfig | None:
         metadata: SourceMetadata = dict(source.configuration.metadata or {})
+        metadata_with_defaults = apply_clinvar_defaults(
+            metadata,
+        )
         try:
-            return data_source_configs.PubMedQueryConfig.model_validate(metadata)
+            return data_source_configs.PubMedQueryConfig.model_validate(
+                metadata_with_defaults,
+            )
         except pydantic.ValidationError as exc:
             logger.warning("Invalid PubMed config for source %s: %s", source.id, exc)
             return None
+
+    @staticmethod
+    def _build_clinvar_test_config(
+        *,
+        source: user_data_source.UserDataSource,
+        executed_query: str,
+    ) -> data_source_configs.ClinVarQueryConfig | None:
+        metadata: SourceMetadata = dict(source.configuration.metadata or {})
+        metadata_with_defaults = apply_clinvar_defaults(
+            metadata,
+        )
+        metadata_with_defaults["query"] = executed_query
+        metadata_with_defaults["max_results"] = 5
+        try:
+            return data_source_configs.ClinVarQueryConfig.model_validate(
+                metadata_with_defaults,
+            )
+        except pydantic.ValidationError as exc:
+            logger.warning("Invalid ClinVar config for source %s: %s", source.id, exc)
+            return None
+
+    async def _fetch_test_records(
+        self,
+        *,
+        source: user_data_source.UserDataSource,
+        config: data_source_configs.PubMedQueryConfig,
+        executed_query: str,
+    ) -> tuple[
+        bool,
+        int,
+        list[data_source_types.DataSourceAiTestFinding],
+        str | None,
+    ]:
+        if should_use_pubmed_gateway(source, config):
+            test_config = config.model_copy(
+                update={
+                    "query": executed_query,
+                    "max_results": self._sample_size,
+                    "relevance_threshold": 0,
+                },
+            )
+            try:
+                raw_records = await self._pubmed_gateway.fetch_records(test_config)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("AI test failed for source %s", source.id)
+                return True, 0, [], f"PubMed request failed: {exc!s}"
+
+            findings = self._build_findings(raw_records)
+            fetched_records = len(raw_records)
+            error_message = (
+                "PubMed returned no results for the AI-generated query. "
+                "Adjust the prompt or filters and try again."
+                if fetched_records == 0
+                else None
+            )
+            return True, fetched_records, findings, error_message
+
+        if should_use_clinvar_gateway(source, config):
+            clinvar_test_config = self._build_clinvar_test_config(
+                source=source,
+                executed_query=executed_query,
+            )
+            if clinvar_test_config is None:
+                return (
+                    True,
+                    0,
+                    [],
+                    "ClinVar source configuration is invalid. "
+                    "Review source settings and try again.",
+                )
+            try:
+                raw_records = await self._clinvar_gateway.fetch_records(
+                    clinvar_test_config,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("AI test failed for source %s", source.id)
+                return True, 0, [], f"ClinVar request failed: {exc!s}"
+
+            findings = self._build_clinvar_findings(raw_records)
+            fetched_records = len(raw_records)
+            error_message = (
+                "ClinVar returned no results for the AI-generated query. "
+                "Adjust the prompt or filters and try again."
+                if fetched_records == 0
+                else None
+            )
+            return True, fetched_records, findings, error_message
+
+        # Non-PubMed/ClinVar sources currently support query generation validation only.
+        logger.info(
+            "Skipping connector fetch for unsupported AI test source %s",
+            source.id,
+        )
+        return False, 0, [], None
 
     def _validate_preconditions(
         self,
@@ -186,10 +297,14 @@ class DataSourceAiTestService:
         source: user_data_source.UserDataSource,
         config: data_source_configs.PubMedQueryConfig | None,
     ) -> str | None:
-        if source.source_type != user_data_source.SourceType.PUBMED:
-            return "AI testing is only supported for PubMed sources."
+        if source.source_type not in (
+            user_data_source.SourceType.PUBMED,
+            user_data_source.SourceType.API,
+            user_data_source.SourceType.CLINVAR,
+        ):
+            return "AI testing is only supported for PubMed, ClinVar, or API sources."
         if config is None:
-            return "PubMed configuration is invalid. Review the source settings."
+            return "Source configuration is invalid. Review the source settings."
         if not config.agent_config.is_ai_managed:
             return "AI-managed queries are disabled for this source."
         if self._query_agent is None:
@@ -217,6 +332,7 @@ class DataSourceAiTestService:
         self,
         research_space_description: str,
         agent_prompt: str,
+        source_type: str,
         model_id: str | None = None,
     ) -> str:
         if self._query_agent is None:
@@ -225,7 +341,7 @@ class DataSourceAiTestService:
             contract = await self._query_agent.generate_query(
                 research_space_description=research_space_description,
                 user_instructions=agent_prompt,
-                source_type="pubmed",
+                source_type=source_type,
                 model_id=model_id,
             )
 
@@ -261,113 +377,23 @@ class DataSourceAiTestService:
         model = configured_model_id or self._ai_model_name
         return model.strip() if isinstance(model, str) and model.strip() else None
 
-    @staticmethod
-    def _extract_search_terms(query: str | None) -> list[str]:
-        if not query:
-            return []
-
-        terms: list[str] = []
-        quoted_terms = re.findall(r'"([^"]+)"', query)
-        for term in quoted_terms:
-            normalized = term.strip()
-            if normalized and normalized not in terms:
-                terms.append(normalized)
-
-        scrubbed = re.sub(r'"[^"]+"', " ", query)
-        scrubbed = re.sub(r"\[[^\]]+\]", " ", scrubbed)
-        scrubbed = scrubbed.replace("(", " ").replace(")", " ")
-        for token in scrubbed.split():
-            normalized = token.strip()
-            if not normalized:
-                continue
-            if normalized.upper() in {"AND", "OR", "NOT"}:
-                continue
-            if normalized not in terms:
-                terms.append(normalized)
-
-        return terms
-
     def _build_findings(
         self,
         records: list[RawRecord],
     ) -> list[data_source_types.DataSourceAiTestFinding]:
-        findings: list[data_source_types.DataSourceAiTestFinding] = []
-        for record in records[: self._sample_size]:
-            pubmed_id = self._coerce_scalar(record.get("pubmed_id"))
-            title = self._coerce_scalar(record.get("title")) or "Untitled PubMed record"
-            doi = self._coerce_scalar(record.get("doi"))
-            pmc_id = self._coerce_scalar(record.get("pmc_id"))
-            publication_date = self._coerce_scalar(record.get("publication_date"))
-            journal = self._extract_journal_title(record.get("journal"))
-            links = self._build_links(pubmed_id, pmc_id, doi)
+        return build_findings(records, self._sample_size)
 
-            findings.append(
-                data_source_types.DataSourceAiTestFinding(
-                    title=title,
-                    pubmed_id=pubmed_id,
-                    doi=doi,
-                    pmc_id=pmc_id,
-                    publication_date=publication_date,
-                    journal=journal,
-                    links=links,
-                ),
-            )
-        return findings
+    def _build_clinvar_findings(
+        self,
+        records: list[RawRecord],
+    ) -> list[data_source_types.DataSourceAiTestFinding]:
+        return build_clinvar_findings(records, self._sample_size)
 
-    @staticmethod
-    def _coerce_scalar(value: object | None) -> str | None:
-        if isinstance(value, str):
-            return value.strip() or None
-        if isinstance(value, int | float):
-            return str(value)
-        return None
-
-    @staticmethod
-    def _extract_journal_title(value: object | None) -> str | None:
-        if not isinstance(value, dict):
-            return None
-        title_value = value.get("title")
-        return (
-            title_value.strip()
-            if isinstance(title_value, str) and title_value.strip()
-            else None
-        )
-
-    @staticmethod
-    def _build_links(
-        pubmed_id: str | None,
-        pmc_id: str | None,
-        doi: str | None,
-    ) -> list[data_source_types.DataSourceAiTestLink]:
-        links: list[data_source_types.DataSourceAiTestLink] = []
-        if pubmed_id:
-            links.append(
-                data_source_types.DataSourceAiTestLink(
-                    label="PubMed",
-                    url=f"https://pubmed.ncbi.nlm.nih.gov/{pubmed_id}/",
-                ),
-            )
-        if pmc_id:
-            links.append(
-                data_source_types.DataSourceAiTestLink(
-                    label="PubMed Central",
-                    url=f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/",
-                ),
-            )
-        if doi:
-            links.append(
-                data_source_types.DataSourceAiTestLink(
-                    label="DOI",
-                    url=f"https://doi.org/{doi}",
-                ),
-            )
-        return links
-
-    def _resolve_flujo_state(
+    def _resolve_agent_run_state(
         self,
         checked_at: dt.datetime,
-    ) -> tuple[str | None, list[data_source_types.FlujoTableSummary]]:
-        if self._flujo_state is None:
+    ) -> tuple[str | None, list[data_source_types.AgentRunTableSummary]]:
+        if self._agent_run_state is None:
             return None, []
 
         if self._run_id_provider is None:
@@ -376,12 +402,12 @@ class DataSourceAiTestService:
         run_id = self._run_id_provider.get_last_run_id()
         if run_id is None:
             window_start = checked_at - dt.timedelta(minutes=2)
-            run_id = self._flujo_state.find_latest_run_id(since=window_start)
+            run_id = self._agent_run_state.find_latest_run_id(since=window_start)
 
         if run_id is None:
             return None, []
 
-        return run_id, self._flujo_state.get_run_table_summaries(run_id)
+        return run_id, self._agent_run_state.get_run_table_summaries(run_id)
 
 
 __all__ = [

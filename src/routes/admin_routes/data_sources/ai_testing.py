@@ -17,7 +17,7 @@ router = APIRouter()
     "/{source_id}/ai/test",
     response_model=DataSourceAiTestResult,
     summary="Test AI configuration",
-    description="Run a lightweight PubMed test using the AI configuration.",
+    description="Run a lightweight AI query test for the configured data source.",
 )
 async def test_ai_configuration(
     source_id: UUID,

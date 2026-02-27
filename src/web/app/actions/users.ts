@@ -22,6 +22,7 @@ type ActionResult<T> =
 
 function revalidateUsers() {
   revalidatePath('/system-settings')
+  revalidatePath('/admin/phi-access')
 }
 
 export async function createUserAction(

@@ -2,231 +2,234 @@
 
 from __future__ import annotations
 
-import json
-import logging
-import tempfile
-from pathlib import Path
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
-from src.domain.entities import data_source_configs, publication, user_data_source
-from src.domain.services.pubmed_ingestion import PubMedGateway, PubMedIngestionSummary
+from src.domain.entities import data_source_configs, user_data_source
+from src.domain.services.pubmed_ingestion import (
+    PubMedGateway,
+    PubMedIngestionSummary,
+)
 from src.domain.transform.transformers.pubmed_record_transformer import (
     PubMedRecordTransformer,
 )
-from src.type_definitions.storage import StorageUseCase
 
-# Confidence threshold below which queries are logged as warnings
-LOW_CONFIDENCE_THRESHOLD = 0.5
+from ._pubmed_ingestion_helpers import PubMedIngestionServiceHelpers
+from .query_generation_service import (
+    QueryGenerationService,
+    QueryGenerationServiceDependencies,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
+    from src.application.services.ports.ingestion_pipeline_port import (
+        IngestionPipelinePort,
+    )
     from src.application.services.storage_configuration_service import (
         StorageConfigurationService,
     )
     from src.domain.agents.ports.query_agent_port import QueryAgentPort
-    from src.domain.repositories import PublicationRepository, ResearchSpaceRepository
-    from src.type_definitions.common import (
-        PublicationUpdate,
-        RawRecord,
-        SourceMetadata,
+    from src.domain.repositories import (
+        PublicationRepository,
+        ResearchSpaceRepository,
+        SourceDocumentRepository,
     )
+    from src.domain.services.ingestion import IngestionRunContext
+    from src.type_definitions.common import JSONObject, SourceMetadata
 
-logger = logging.getLogger(__name__)
+
+@dataclass(frozen=True)
+class _LedgerDedupOutcome:
+    filtered_records: list[dict[str, object]]
+    entries_to_upsert: list[dict[str, object]]
+    new_records: int
+    updated_records: int
+    unchanged_records: int
 
 
-class PubMedIngestionService:
+@dataclass(frozen=True)
+class PubMedIngestionDependencies:
+    """Optional collaborators for PubMed ingestion orchestration."""
+
+    publication_repository: PublicationRepository | None = None
+    transformer: PubMedRecordTransformer | None = None
+    storage_service: StorageConfigurationService | None = None
+    query_agent: QueryAgentPort | None = None
+    research_space_repository: ResearchSpaceRepository | None = None
+    source_document_repository: SourceDocumentRepository | None = None
+    query_generation_service: QueryGenerationService | None = None
+
+
+class PubMedIngestionService(PubMedIngestionServiceHelpers):
     """Coordinate fetching, transforming, and persisting PubMed data per source."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         gateway: PubMedGateway,
-        publication_repository: PublicationRepository,
-        transformer: PubMedRecordTransformer | None = None,
-        storage_service: StorageConfigurationService | None = None,
-        query_agent: QueryAgentPort | None = None,
-        research_space_repository: ResearchSpaceRepository | None = None,
+        pipeline: IngestionPipelinePort,
+        dependencies: PubMedIngestionDependencies | None = None,
     ) -> None:
+        resolved_dependencies = dependencies or PubMedIngestionDependencies()
         self._gateway = gateway
-        self._publication_repository = publication_repository
-        self._transformer = transformer or PubMedRecordTransformer()
-        self._storage_service = storage_service
-        self._query_agent = query_agent
-        self._research_space_repository = research_space_repository
+        self._pipeline = pipeline
+        self._publication_repository = resolved_dependencies.publication_repository
+        self._transformer = (
+            resolved_dependencies.transformer or PubMedRecordTransformer()
+        )
+        self._storage_service = resolved_dependencies.storage_service
+        self._query_agent = resolved_dependencies.query_agent
+        self._research_space_repository = (
+            resolved_dependencies.research_space_repository
+        )
+        self._source_document_repository = (
+            resolved_dependencies.source_document_repository
+        )
+        self._query_generation_service = (
+            resolved_dependencies.query_generation_service
+            or QueryGenerationService(
+                dependencies=QueryGenerationServiceDependencies(
+                    query_agent=self._query_agent,
+                    research_space_repository=self._research_space_repository,
+                ),
+            )
+        )
 
     async def ingest(
         self,
         source: user_data_source.UserDataSource,
+        context: IngestionRunContext | None = None,
     ) -> PubMedIngestionSummary:
         """Execute ingestion for a PubMed data source."""
         self._assert_source_type(source)
         config = self._build_config(source.configuration)
+        query_resolution = await self._resolve_query_configuration(
+            source=source,
+            config=config,
+        )
+        config = query_resolution.config
+        query_generation_decision = query_resolution.query_generation_decision
+        query_generation_confidence = query_resolution.query_generation_confidence
+        query_generation_run_id = query_resolution.query_generation_run_id
+        query_generation_execution_mode = (
+            query_resolution.query_generation_execution_mode
+        )
+        query_generation_fallback_reason = (
+            query_resolution.query_generation_fallback_reason
+        )
+        checkpoint_before = (
+            dict(context.source_sync_state.checkpoint_payload)
+            if context is not None
+            else None
+        )
+        query_signature = (
+            context.query_signature
+            if context is not None and context.query_signature.strip()
+            else self._build_query_signature(
+                source_type=source.source_type,
+                metadata=config.model_dump(mode="json"),
+            )
+        )
 
-        # AI-Managed Logic
+        fetch_result = await self._fetch_records_with_checkpoint(
+            config=config,
+            checkpoint_before=checkpoint_before,
+        )
+        raw_records_data = fetch_result.records
+        forced_external_record_ids: set[str] | None = None
+        if isinstance(config.pinned_pubmed_id, str) and config.pinned_pubmed_id.strip():
+            normalized_pmid = config.pinned_pubmed_id.strip()
+            forced_external_record_ids = {
+                f"pubmed:pmid:{normalized_pmid}",
+                f"pubmed:pubmed_id:{normalized_pmid}",
+            }
+        dedup_outcome = self._build_ledger_dedup_outcome(
+            source=source,
+            records=raw_records_data,
+            context=context,
+            force_external_record_ids=forced_external_record_ids,
+        )
+        filtered_records = dedup_outcome.filtered_records
+
+        raw_storage_key: str | None = None
+        if self._storage_service:
+            raw_storage_key = await self._persist_raw_records(raw_records_data, source)
+        self._upsert_source_documents(
+            records=raw_records_data,
+            source=source,
+            context=context,
+            raw_storage_key=raw_storage_key,
+        )
+
+        raw_records = self._to_pipeline_records(
+            filtered_records,
+            original_source_id=str(source.id),
+        )
+
+        observations_created = 0
+        if source.research_space_id is not None:
+            result = self._pipeline.run(
+                raw_records,
+                research_space_id=str(source.research_space_id),
+            )
+            observations_created = result.observations_created
+        else:
+            # Keep source-level behavior consistent with legacy implementation
+            # without requiring an injected logger.
+            pass
+
         if (
-            config.agent_config.is_ai_managed
-            and self._query_agent
-            and self._research_space_repository
+            context is not None
+            and context.source_record_ledger_repository is not None
+            and dedup_outcome.entries_to_upsert
         ):
-            research_space_description = ""
-            if (
-                config.agent_config.use_research_space_context
-                and source.research_space_id
-            ):
-                space = self._research_space_repository.find_by_id(
-                    source.research_space_id,
-                )
-                if space:
-                    research_space_description = space.description
-
-            # Generate intelligent query using the new contract-based interface
-            contract = await self._query_agent.generate_query(
-                research_space_description=research_space_description,
-                user_instructions=config.agent_config.agent_prompt,
-                source_type="pubmed",
-                model_id=config.agent_config.model_id,
+            context.source_record_ledger_repository.upsert_entries(
+                dedup_outcome.entries_to_upsert,
             )
 
-            if contract.decision == "generated" and contract.query:
-                # Override static query with AI-generated one
-                config = config.model_copy(update={"query": contract.query})
-            elif contract.decision == "escalate":
-                logger.warning(
-                    "AI query generation escalated: %s (confidence=%.2f)",
-                    contract.rationale,
-                    contract.confidence_score,
-                )
-            elif contract.confidence_score < LOW_CONFIDENCE_THRESHOLD:
-                logger.warning(
-                    "Low confidence AI query (%.2f): %s",
-                    contract.confidence_score,
-                    contract.rationale,
-                )
-
-        raw_records = await self._gateway.fetch_records(config)
-
-        # Persist raw records if a storage backend is configured
-        if self._storage_service:
-            await self._persist_raw_records(raw_records, source)
-
-        publications = self._transform_records(raw_records)
-        created, updated, created_ids, updated_ids = self._persist_publications(
-            publications,
-        )
+        checkpoint_after_raw = fetch_result.checkpoint_after
+        if isinstance(checkpoint_after_raw, dict):
+            checkpoint_after_payload: JSONObject = dict(checkpoint_after_raw)
+        else:
+            checkpoint_after_payload = self._build_fallback_checkpoint(
+                fetched_records=fetch_result.fetched_records,
+                processed_records=len(filtered_records),
+            )
 
         return PubMedIngestionSummary(
             source_id=source.id,
-            fetched_records=len(raw_records),
-            parsed_publications=len(publications),
-            created_publications=created,
-            updated_publications=updated,
-            created_publication_ids=created_ids,
-            updated_publication_ids=updated_ids,
+            fetched_records=fetch_result.fetched_records,
+            parsed_publications=len(raw_records),
+            created_publications=observations_created,
+            updated_publications=0,
+            extraction_targets=self._build_extraction_targets(
+                filtered_records,
+                source_type=source.source_type,
+            ),
             executed_query=config.query,
+            query_generation_run_id=query_generation_run_id,
+            query_generation_model=config.agent_config.model_id,
+            query_generation_decision=query_generation_decision,
+            query_generation_confidence=query_generation_confidence,
+            query_generation_execution_mode=query_generation_execution_mode,
+            query_generation_fallback_reason=query_generation_fallback_reason,
+            query_generation_downstream_fetched_records=fetch_result.fetched_records,
+            query_generation_downstream_processed_records=len(filtered_records),
+            query_signature=query_signature,
+            checkpoint_before=checkpoint_before,
+            checkpoint_after=checkpoint_after_payload,
+            checkpoint_kind=fetch_result.checkpoint_kind.value,
+            new_records=dedup_outcome.new_records,
+            updated_records=dedup_outcome.updated_records,
+            unchanged_records=dedup_outcome.unchanged_records,
+            skipped_records=dedup_outcome.unchanged_records,
         )
-
-    async def _persist_raw_records(
-        self,
-        records: Iterable[RawRecord],
-        source: user_data_source.UserDataSource,
-    ) -> None:
-        """Persist raw records to storage if backend is available."""
-        if not self._storage_service:
-            return
-
-        backend = self._storage_service.resolve_backend_for_use_case(
-            StorageUseCase.RAW_SOURCE,
-        )
-        if not backend:
-            return
-
-        # Create a temporary file to store the raw records
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
-            json.dump(list(records), tmp, default=str)
-            tmp_path = Path(tmp.name)
-
-        try:
-            # Generate a unique key for this ingestion run
-            timestamp = source.updated_at.strftime("%Y%m%d_%H%M%S")
-            key = f"pubmed/{source.id}/raw/{timestamp}_{uuid4().hex[:8]}.json"
-
-            await self._storage_service.record_store_operation(
-                configuration=backend,
-                key=key,
-                file_path=tmp_path,
-                content_type="application/json",
-                user_id=source.owner_id,
-                metadata={
-                    "source_id": str(source.id),
-                    "record_count": len(list(records)),
-                },
-            )
-        finally:
-            # clean up temp file
-            if tmp_path.exists():
-                tmp_path.unlink()
-
-    def _transform_records(
-        self,
-        records: Iterable[RawRecord],
-    ) -> list[publication.Publication]:
-        transformed: list[publication.Publication] = []
-        for record in records:
-            try:
-                publication = self._transformer.to_publication(record)
-            except ValueError:
-                continue
-            transformed.append(publication)
-        return transformed
-
-    def _persist_publications(
-        self,
-        publications: Iterable[publication.Publication],
-    ) -> tuple[int, int, tuple[int, ...], tuple[int, ...]]:
-        created = 0
-        updated = 0
-        created_ids: list[int] = []
-        updated_ids: list[int] = []
-        for publication_record in publications:
-            pmid = publication_record.identifier.pubmed_id
-            if pmid and (existing := self._publication_repository.find_by_pmid(pmid)):
-                if existing.id is None:
-                    continue
-                updates = self._build_update_payload(publication_record)
-                updated_entity = self._publication_repository.update_publication(
-                    existing.id,
-                    updates,
-                )
-                if updated_entity.id is not None:
-                    updated_ids.append(updated_entity.id)
-                updated += 1
-            else:
-                created_entity = self._publication_repository.create(publication_record)
-                if created_entity.id is not None:
-                    created_ids.append(created_entity.id)
-                created += 1
-        return created, updated, tuple(created_ids), tuple(updated_ids)
-
-    @staticmethod
-    def _build_update_payload(
-        publication: publication.Publication,
-    ) -> PublicationUpdate:
-        return {
-            "title": publication.title,
-            "authors": list(publication.authors),
-            "journal": publication.journal,
-            "publication_year": publication.publication_year,
-            "abstract": publication.abstract,
-            "doi": publication.identifier.doi,
-            "pmid": publication.identifier.pubmed_id,
-        }
 
     @staticmethod
     def _build_config(
         configuration: user_data_source.SourceConfiguration,
     ) -> data_source_configs.PubMedQueryConfig:
         metadata: SourceMetadata = dict(configuration.metadata or {})
+        if configuration.query:
+            metadata["query"] = configuration.query
         return data_source_configs.PubMedQueryConfig.model_validate(metadata)
 
     @staticmethod

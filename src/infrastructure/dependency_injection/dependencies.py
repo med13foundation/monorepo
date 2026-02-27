@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from src.application.services.authentication_service import AuthenticationService
 from src.application.services.user_management_service import UserManagementService
-from src.database.session import SessionLocal
+from src.database.session import SessionLocal, set_session_rls_context
 from src.infrastructure.dependency_injection.container import (
     DependencyContainer,
     container,
@@ -111,6 +111,7 @@ def get_data_discovery_service_dependency() -> Generator[DataDiscoveryService]:
     even when downstream code raises.
     """
     session = SessionLocal()
+    set_session_rls_context(session, bypass_rls=True)
     try:
         service = container.create_data_discovery_service(session)
         yield service
@@ -123,6 +124,7 @@ def get_discovery_configuration_service_dependency() -> (
 ):
     """Provide a scoped DiscoveryConfigurationService for FastAPI routes."""
     session = SessionLocal()
+    set_session_rls_context(session, bypass_rls=True)
     try:
         service = container.create_discovery_configuration_service(session)
         yield service
@@ -133,6 +135,7 @@ def get_discovery_configuration_service_dependency() -> (
 def get_pubmed_discovery_service_dependency() -> Generator[PubMedDiscoveryService]:
     """Provide a scoped PubMedDiscoveryService for FastAPI routes."""
     session = SessionLocal()
+    set_session_rls_context(session, bypass_rls=True)
     try:
         service = container.create_pubmed_discovery_service(session)
         yield service

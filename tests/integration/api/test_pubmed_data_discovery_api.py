@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
-from sqlalchemy import text
 
 from src.database.session import SessionLocal, engine
 from src.domain.entities.user import User, UserRole, UserStatus
@@ -25,20 +24,14 @@ from src.models.database.data_discovery import (
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
 from src.routes.auth import get_current_active_user
+from tests.db_reset import reset_database
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 
 def _reset_database() -> None:
-    with engine.begin() as connection:
-        if connection.dialect.name == "postgresql":
-            connection.execute(
-                text("DROP TYPE IF EXISTS data_source_permission_level CASCADE"),
-            )
-            connection.execute(text("DROP TYPE IF EXISTS presetscopeenum CASCADE"))
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    reset_database(engine, Base.metadata)
 
 
 def _create_user(session: SessionLocal) -> UUID:

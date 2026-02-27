@@ -2,89 +2,179 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Awaitable, Callable, Mapping  # noqa: UP035
-from uuid import UUID, uuid4
+from typing import TYPE_CHECKING
 
-from src.application.services.pubmed_discovery_service import (
-    PUBMED_STORAGE_METADATA_ARTICLE_ID_KEY,
-    PUBMED_STORAGE_METADATA_JOB_ID_KEY,
-    PUBMED_STORAGE_METADATA_OWNER_ID_KEY,
-    PUBMED_STORAGE_METADATA_RETRYABLE_KEY,
-    PUBMED_STORAGE_METADATA_USE_CASE_KEY,
-    PubMedDiscoveryService,
-    PubmedDownloadRequest,
+from src.application.services._ingestion_scheduling_core_helpers import (
+    _IngestionSchedulingCoreHelpers,
 )
-from src.domain.entities import ingestion_job, user_data_source
-from src.domain.services.storage_providers import StorageOperationError
-from src.models.value_objects.provenance import (
-    DataSource as ProvenanceSource,
+from src.application.services._ingestion_scheduling_metadata_helpers import (
+    _IngestionSchedulingMetadataHelpers,
 )
-from src.models.value_objects.provenance import (
-    Provenance,
+from src.application.services._ingestion_scheduling_queue_helpers import (
+    _IngestionSchedulingQueueHelpers,
 )
-from src.type_definitions.storage import StorageOperationRecord, StorageUseCase
+from src.domain.entities import user_data_source
 
 if TYPE_CHECKING:
-    from src.application.services.extraction_queue_service import (
+    from collections.abc import Awaitable, Callable, Mapping
+    from datetime import datetime
+    from uuid import UUID
+
+    from src.application.services import (
         ExtractionQueueService,
-    )
-    from src.application.services.extraction_runner_service import (
         ExtractionRunnerService,
     )
     from src.application.services.ports.scheduler_port import (
         ScheduledJob,
         SchedulerPort,
     )
+    from src.application.services.pubmed_discovery_service import PubMedDiscoveryService
+    from src.domain.entities.user_data_source import UserDataSource
     from src.domain.repositories import (
         ingestion_job_repository,
         storage_repository,
         user_data_source_repository,
     )
-    from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
-    from src.type_definitions.common import JSONObject
+    from src.domain.repositories import (
+        ingestion_source_lock_repository as source_lock_repo,
+    )
+    from src.domain.repositories import (
+        source_record_ledger_repository as source_record_ledger_repo,
+    )
+    from src.domain.repositories import (
+        source_sync_state_repository as source_sync_state_repo,
+    )
+    from src.domain.services.ingestion import IngestionRunSummary
 
-logger = logging.getLogger(__name__)
+
+@dataclass(frozen=True)
+class IngestionSchedulingOptions:
+    storage_operation_repository: (
+        storage_repository.StorageOperationRepository | None
+    ) = None
+    pubmed_discovery_service: PubMedDiscoveryService | None = None
+    extraction_queue_service: ExtractionQueueService | None = None
+    extraction_runner_service: ExtractionRunnerService | None = None
+    source_sync_state_repository: (
+        source_sync_state_repo.SourceSyncStateRepository | None
+    ) = None
+    source_record_ledger_repository: (
+        source_record_ledger_repo.SourceRecordLedgerRepository | None
+    ) = None
+    scheduler_heartbeat_seconds: int = 30
+    scheduler_lease_ttl_seconds: int = 120
+    scheduler_stale_running_timeout_seconds: int = 300
+    ingestion_job_hard_timeout_seconds: int = 7200
+    # Backward-compatible aliases retained while transitioning option names.
+    source_lock_repository: source_lock_repo.IngestionSourceLockRepository | None = None
+    source_lock_lease_ttl_seconds: int | None = None
+    source_lock_heartbeat_seconds: int | None = None
+    source_lock_owner: str = "ingestion-scheduler"
+    source_ledger_retention_days: int | None = 180
+    source_ledger_cleanup_batch_size: int = 1000
+    retry_batch_size: int = 25
+    post_ingestion_hook: (
+        Callable[[UserDataSource, IngestionRunSummary], Awaitable[None]] | None
+    ) = None
 
 
-class IngestionSchedulingService:
+class IngestionSchedulingService(
+    _IngestionSchedulingCoreHelpers,
+    _IngestionSchedulingMetadataHelpers,
+    _IngestionSchedulingQueueHelpers,
+):
     """Coordinates scheduler registration and execution of ingestion jobs."""
 
-    def __init__(  # noqa: PLR0913 - scheduler wiring requires explicit dependencies
+    def __init__(
         self,
         scheduler: SchedulerPort,
         source_repository: user_data_source_repository.UserDataSourceRepository,
         job_repository: ingestion_job_repository.IngestionJobRepository,
         ingestion_services: Mapping[
             user_data_source.SourceType,
-            Callable[
-                [user_data_source.UserDataSource],
-                Awaitable[PubMedIngestionSummary],
-            ],
+            Callable[..., Awaitable[IngestionRunSummary]],
         ],
-        storage_operation_repository: (
-            storage_repository.StorageOperationRepository | None
-        ) = None,
-        pubmed_discovery_service: PubMedDiscoveryService | None = None,
-        extraction_queue_service: ExtractionQueueService | None = None,
-        extraction_runner_service: ExtractionRunnerService | None = None,
-        retry_batch_size: int = 25,
+        options: IngestionSchedulingOptions | None = None,
     ) -> None:
+        resolved_options = options or IngestionSchedulingOptions()
         self._scheduler = scheduler
         self._source_repository = source_repository
         self._job_repository = job_repository
         self._ingestion_services = dict(ingestion_services)
-        self._storage_operation_repository = storage_operation_repository
-        self._pubmed_discovery_service = pubmed_discovery_service
-        self._extraction_queue_service = extraction_queue_service
-        self._extraction_runner_service = extraction_runner_service
-        self._retry_batch_size = max(retry_batch_size, 1)
+        self._storage_operation_repository = (
+            resolved_options.storage_operation_repository
+        )
+        self._pubmed_discovery_service = resolved_options.pubmed_discovery_service
+        self._extraction_queue_service = resolved_options.extraction_queue_service
+        self._extraction_runner_service = resolved_options.extraction_runner_service
+        self._source_sync_state_repository = (
+            resolved_options.source_sync_state_repository
+        )
+        self._source_record_ledger_repository = (
+            resolved_options.source_record_ledger_repository
+        )
+        resolved_ingestion_hard_timeout_seconds = max(
+            resolved_options.ingestion_job_hard_timeout_seconds,
+            1,
+        )
+        resolved_scheduler_stale_timeout_seconds = max(
+            resolved_options.scheduler_stale_running_timeout_seconds,
+            1,
+        )
+        # Stale-running recovery must never preempt an in-flight job before the
+        # configured hard timeout window.
+        self._ingestion_job_hard_timeout_seconds = (
+            resolved_ingestion_hard_timeout_seconds
+        )
+        self._scheduler_stale_running_timeout_seconds = max(
+            resolved_scheduler_stale_timeout_seconds,
+            resolved_ingestion_hard_timeout_seconds,
+        )
+        self._source_lock_repository = resolved_options.source_lock_repository
+        resolved_lease_ttl_seconds = (
+            resolved_options.source_lock_lease_ttl_seconds
+            if resolved_options.source_lock_lease_ttl_seconds is not None
+            else resolved_options.scheduler_lease_ttl_seconds
+        )
+        resolved_heartbeat_seconds = (
+            resolved_options.source_lock_heartbeat_seconds
+            if resolved_options.source_lock_heartbeat_seconds is not None
+            else resolved_options.scheduler_heartbeat_seconds
+        )
+        self._source_lock_lease_ttl_seconds = max(
+            resolved_lease_ttl_seconds,
+            1,
+        )
+        self._source_lock_heartbeat_seconds = max(
+            resolved_heartbeat_seconds,
+            1,
+        )
+        self._source_lock_owner = (
+            resolved_options.source_lock_owner.strip() or "ingestion-scheduler"
+        )
+        if resolved_options.source_ledger_retention_days is None:
+            self._source_ledger_retention_days = None
+        else:
+            self._source_ledger_retention_days = max(
+                resolved_options.source_ledger_retention_days,
+                1,
+            )
+        self._source_ledger_cleanup_batch_size = max(
+            resolved_options.source_ledger_cleanup_batch_size,
+            1,
+        )
+        self._retry_batch_size = max(resolved_options.retry_batch_size, 1)
+        self._post_ingestion_hook = resolved_options.post_ingestion_hook
+
+    def get_job_repository(self) -> ingestion_job_repository.IngestionJobRepository:
+        """Expose the ingestion-job repository for cross-service orchestration."""
+        return self._job_repository
 
     async def schedule_source(self, source_id: UUID) -> ScheduledJob:
         """Register a source with the scheduler backend."""
         source = self._get_source(source_id)
+        self._assert_extraction_contract(source)
         schedule = source.ingestion_schedule
         if not schedule.requires_scheduler:
             msg = "Source schedule must be enabled with non-manual frequency"
@@ -113,290 +203,30 @@ class IngestionSchedulingService:
 
     async def run_due_jobs(self, *, as_of: datetime | None = None) -> None:
         """Execute all jobs that are due as of the provided timestamp."""
+        self._recover_stale_running_jobs()
         due_jobs = self._scheduler.get_due_jobs(as_of=as_of)
         for job in due_jobs:
             await self._execute_job(job)
         await self._retry_failed_pdf_downloads()
+        self._compact_source_record_ledger()
 
     async def trigger_ingestion(
         self,
         source_id: UUID,
-    ) -> PubMedIngestionSummary:
-        """Manually trigger ingestion for a source outside of scheduler cadence."""
+        *,
+        skip_post_ingestion_hook: bool = False,
+        force_recover_lock: bool = False,
+    ) -> IngestionRunSummary:
+        """Manually trigger ingestion for a source outside scheduler cadence."""
         source = self._get_source(source_id)
-        return await self._run_ingestion_for_source(source)
-
-    async def _execute_job(self, scheduled_job: ScheduledJob) -> None:
-        source = self._get_source(scheduled_job.source_id)
-        if (
-            source.ingestion_schedule.frequency
-            == user_data_source.ScheduleFrequency.MANUAL
-        ):
-            return
-        await self._run_ingestion_for_source(source)
-
-    async def _run_ingestion_for_source(
-        self,
-        source: user_data_source.UserDataSource,
-    ) -> PubMedIngestionSummary:
-        service = self._ingestion_services.get(source.source_type)
-        if service is None:
-            msg = f"No ingestion service registered for {source.source_type}"
+        if source.status != user_data_source.SourceStatus.ACTIVE:
+            msg = "Source must be active before ingestion can run"
             raise ValueError(msg)
-
-        job = self._job_repository.save(self._create_ingestion_job(source))
-        running = self._job_repository.save(job.start_execution())
-        try:
-            summary = await service(source)
-            metrics = ingestion_job.JobMetrics(
-                records_processed=summary.created_publications
-                + summary.updated_publications,
-                records_failed=0,
-                records_skipped=0,
-                bytes_processed=0,
-                api_calls_made=0,
-                duration_seconds=None,
-                records_per_second=None,
-            )
-            # Record executed query in metadata if available
-            metadata = dict(running.metadata or {})
-            if hasattr(summary, "executed_query") and summary.executed_query:
-                metadata["executed_query"] = summary.executed_query
-
-            extraction_metadata = self._enqueue_extraction(
-                source=source,
-                ingestion_job_id=running.id,
-                summary=summary,
-            )
-            if extraction_metadata:
-                metadata["extraction_queue"] = extraction_metadata
-                extraction_run = await self._run_extraction(
-                    source=source,
-                    ingestion_job_id=running.id,
-                    queued_count=extraction_metadata["queued"],
-                )
-                if extraction_run:
-                    metadata["extraction_run"] = extraction_run
-
-            completed = running.model_copy(
-                update={"metadata": metadata},
-            ).complete_successfully(metrics)
-        except Exception as exc:  # pragma: no cover - defensive
-            error = ingestion_job.IngestionError(
-                error_type="scheduler_failure",
-                error_message=str(exc),
-                record_id=None,
-            )
-            failed = running.fail(error)
-            self._job_repository.save(failed)
-            raise
-        else:
-            self._job_repository.save(completed)
-            updated_source = (
-                self._source_repository.record_ingestion(source.id) or source
-            )
-            self._update_schedule_after_run(updated_source)
-            return summary
-
-    def _enqueue_extraction(
-        self,
-        *,
-        source: user_data_source.UserDataSource,
-        ingestion_job_id: UUID,
-        summary: PubMedIngestionSummary,
-    ) -> dict[str, int] | None:
-        if self._extraction_queue_service is None:
-            return None
-
-        combined_ids = list(summary.created_publication_ids) + list(
-            summary.updated_publication_ids,
-        )
-        publication_ids = list(dict.fromkeys(combined_ids))
-        if not publication_ids:
-            return None
-
-        enqueue_summary = self._extraction_queue_service.enqueue_for_ingestion(
-            source_id=source.id,
-            ingestion_job_id=ingestion_job_id,
-            publication_ids=publication_ids,
-        )
-        return {
-            "requested": enqueue_summary.requested,
-            "queued": enqueue_summary.queued,
-            "skipped": enqueue_summary.skipped,
-            "version": enqueue_summary.extraction_version,
-        }
-
-    async def _run_extraction(
-        self,
-        *,
-        source: user_data_source.UserDataSource,
-        ingestion_job_id: UUID,
-        queued_count: int,
-    ) -> JSONObject | None:
-        if self._extraction_runner_service is None:
-            return None
-        if queued_count <= 0:
-            return None
-        summary = await self._extraction_runner_service.run_for_ingestion_job(
-            source_id=source.id,
-            ingestion_job_id=ingestion_job_id,
-            expected_items=queued_count,
-        )
-        return summary.to_metadata()
-
-    def _create_ingestion_job(
-        self,
-        source: user_data_source.UserDataSource,
-    ) -> ingestion_job.IngestionJob:
-        return ingestion_job.IngestionJob(
-            id=uuid4(),
-            source_id=source.id,
-            trigger=ingestion_job.IngestionTrigger.SCHEDULED,
-            triggered_by=None,
-            started_at=None,
-            completed_at=None,
-            provenance=Provenance(
-                source=ProvenanceSource.COMPUTED,
-                source_version=None,
-                source_url=None,
-                acquired_by="ingestion-scheduler",
-                processing_steps=["scheduled_ingestion"],
-                quality_score=None,
-            ),
-            metadata={},
-            source_config_snapshot=source.configuration.model_dump(),
-        )
-
-    def _get_source(self, source_id: UUID) -> user_data_source.UserDataSource:
-        source = self._source_repository.find_by_id(source_id)
-        if source is None:
-            msg = f"Data source {source_id} not found"
+        if not source.ingestion_schedule.requires_scheduler:
+            msg = "Source must have an enabled non-manual ingestion schedule"
             raise ValueError(msg)
-        return source
-
-    def _update_schedule_after_run(
-        self,
-        source: user_data_source.UserDataSource,
-    ) -> None:
-        schedule = source.ingestion_schedule
-        updates: dict[str, datetime | None] = {"last_run_at": datetime.now(UTC)}
-        job_id = schedule.backend_job_id
-        if job_id:
-            job = self._scheduler.get_job(job_id)
-            if job:
-                updates["next_run_at"] = job.next_run_at
-        updated_schedule = schedule.model_copy(update=updates)
-        self._source_repository.update_ingestion_schedule(source.id, updated_schedule)
-
-    async def _retry_failed_pdf_downloads(self) -> None:
-        """Retry failed PDF storage operations for PubMed discovery jobs."""
-        if (
-            self._storage_operation_repository is None
-            or self._pubmed_discovery_service is None
-        ):
-            return
-
-        operations = self._storage_operation_repository.list_failed_store_operations(
-            limit=self._retry_batch_size,
+        return await self._run_ingestion_for_source(
+            source,
+            skip_post_ingestion_hook=skip_post_ingestion_hook,
+            force_recover_lock=force_recover_lock,
         )
-        for operation in operations:
-            context = self._build_pdf_retry_context(operation)
-            if context is None:
-                continue
-            job = self._pubmed_discovery_service.get_search_job(
-                context.owner_id,
-                context.job_id,
-            )
-            if job is None:
-                self._mark_operation_retry_disabled(operation)
-                continue
-
-            if self._article_already_stored(job.result_metadata, context.article_id):
-                self._mark_operation_retry_disabled(operation)
-                continue
-
-            try:
-                await self._pubmed_discovery_service.download_article_pdf(
-                    context.owner_id,
-                    PubmedDownloadRequest(
-                        job_id=context.job_id,
-                        article_id=context.article_id,
-                    ),
-                )
-            except (
-                RuntimeError,
-                ValueError,
-                StorageOperationError,
-            ) as exc:  # pragma: no cover - defensive logging upstream
-                logger.warning(
-                    "PubMed PDF retry failed",
-                    extra={
-                        "job_id": str(context.job_id),
-                        "article_id": context.article_id,
-                        "error": str(exc),
-                    },
-                )
-                continue
-            else:
-                self._mark_operation_retry_disabled(operation)
-
-    @staticmethod
-    def _article_already_stored(
-        metadata: Mapping[str, object],
-        article_id: str,
-    ) -> bool:
-        stored_assets = metadata.get("stored_assets")
-        if not isinstance(stored_assets, dict):
-            return False
-        normalized_id = str(article_id)
-        stored_keys = {str(key) for key in stored_assets}
-        return normalized_id in stored_keys
-
-    def _build_pdf_retry_context(
-        self,
-        operation: StorageOperationRecord,
-    ) -> _PdfRetryContext | None:
-        metadata = operation.metadata or {}
-        use_case = metadata.get(PUBMED_STORAGE_METADATA_USE_CASE_KEY)
-        retryable = metadata.get(PUBMED_STORAGE_METADATA_RETRYABLE_KEY, True)
-        if use_case != StorageUseCase.PDF.value or not bool(retryable):
-            return None
-        job_id_raw = metadata.get(PUBMED_STORAGE_METADATA_JOB_ID_KEY)
-        owner_id_raw = metadata.get(PUBMED_STORAGE_METADATA_OWNER_ID_KEY)
-        article_id_raw = metadata.get(PUBMED_STORAGE_METADATA_ARTICLE_ID_KEY)
-        if not job_id_raw or not owner_id_raw or not article_id_raw:
-            return None
-        try:
-            return _PdfRetryContext(
-                operation_id=operation.id,
-                job_id=UUID(str(job_id_raw)),
-                owner_id=UUID(str(owner_id_raw)),
-                article_id=str(article_id_raw),
-            )
-        except ValueError:
-            return None
-
-    def _mark_operation_retry_disabled(
-        self,
-        operation: StorageOperationRecord,
-    ) -> None:
-        if self._storage_operation_repository is None:
-            return
-        metadata = (
-            dict(operation.metadata) if isinstance(operation.metadata, dict) else {}
-        )
-        metadata[PUBMED_STORAGE_METADATA_RETRYABLE_KEY] = False
-        metadata["retry_completed_at"] = datetime.now(UTC).isoformat()
-        self._storage_operation_repository.update_operation_metadata(
-            operation.id,
-            metadata,
-        )
-
-
-@dataclass(frozen=True)
-class _PdfRetryContext:
-    operation_id: UUID
-    job_id: UUID
-    owner_id: UUID
-    article_id: str

@@ -44,7 +44,10 @@ class PublicationExtractionResponse(BaseModel):
     model_config = ConfigDict(strict=True)
 
     id: str = Field(..., description="Extraction record identifier")
-    publication_id: int = Field(..., description="Publication database ID")
+    publication_id: int | None = Field(
+        None,
+        description="Publication database ID when linked",
+    )
     pubmed_id: str | None = Field(None, description="PubMed identifier")
     source_id: str = Field(..., description="Data source identifier")
     ingestion_job_id: str = Field(..., description="Ingestion job identifier")

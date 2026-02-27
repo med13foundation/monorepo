@@ -24,6 +24,8 @@ export function SidebarWrapper({ children, currentMembership }: SidebarWrapperPr
   const { data: session, status } = useSession()
   const { spaces, isLoading: spacesLoading } = useSpaceContext()
   const pathname = usePathname()
+  const isKnowledgeGraphRoute = pathname.includes('/knowledge-graph')
+  const isCurationRoute = pathname.includes('/curation')
 
   // Extract current space from URL if we're in a space context
   const spaceIdFromUrl = extractSpaceIdFromPath(pathname)
@@ -93,7 +95,13 @@ export function SidebarWrapper({ children, currentMembership }: SidebarWrapperPr
       />
       <SidebarInset className="relative flex h-svh flex-col overflow-y-auto overflow-x-hidden">
         <GlobalHeader currentSpace={currentSpace} />
-        <div className="mx-auto w-full max-w-[1200px] flex-1 p-brand-sm pt-0 md:p-brand-md md:pt-0 lg:p-brand-lg lg:pt-0">
+        <div
+          className={
+            isKnowledgeGraphRoute || isCurationRoute
+              ? 'w-full flex-1 p-0'
+              : 'mx-auto w-full max-w-[1200px] flex-1 p-brand-sm pt-0 md:p-brand-md md:pt-0 lg:p-brand-lg lg:pt-0'
+          }
+        >
           {children}
         </div>
       </SidebarInset>

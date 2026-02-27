@@ -20,6 +20,20 @@ import type { CurationQueueResponse, CurationStats } from '@/lib/api/research-sp
 import { DashboardSection, SectionGrid, StatCard } from '@/components/ui/composition-patterns'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { toast } from 'sonner'
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 
 interface ResearchSpaceAccess {
   hasSpaceAccess: boolean
@@ -37,6 +51,8 @@ interface ResearchSpaceDetailProps {
   dataSources: DataSourceListResponse | null
   curationStats: CurationStats | null
   curationQueue: CurationQueueResponse | null
+  relationTypeDistribution: Array<{ label: string; count: number }>
+  nodeDistribution: Array<{ label: string; count: number }>
   access: ResearchSpaceAccess
   defaultTab?: string
 }
@@ -63,6 +79,8 @@ export function ResearchSpaceDetail({
   dataSources,
   curationStats,
   curationQueue,
+  relationTypeDistribution,
+  nodeDistribution,
   access,
   defaultTab = 'overview',
 }: ResearchSpaceDetailProps) {
@@ -79,6 +97,23 @@ export function ResearchSpaceDetail({
     acc[status] = (acc[status] ?? 0) + 1
     return acc
   }, {})
+  const curationTotal = curationStats?.total ?? 0
+  const pendingCount = curationStats?.pending ?? 0
+  const approvedCount = curationStats?.approved ?? 0
+  const rejectedCount = curationStats?.rejected ?? 0
+  const curatedCount = approvedCount + rejectedCount
+  const notCuratedCount = Math.max(curationTotal - curatedCount, pendingCount)
+  const completionRate =
+    curationTotal > 0 ? Math.round((curatedCount / curationTotal) * 100) : 0
+  const statusAreaData = [
+    { label: 'Pending', value: pendingCount },
+    { label: 'Approved', value: approvedCount },
+    { label: 'Rejected', value: rejectedCount },
+  ]
+  const curationBalanceData = [
+    { label: 'Curated', value: curatedCount, fill: 'hsl(var(--chart-1))' },
+    { label: 'Not Curated', value: notCuratedCount, fill: 'hsl(var(--chart-2))' },
+  ]
 
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false)
   const [updateRoleDialogOpen, setUpdateRoleDialogOpen] = useState(false)
@@ -320,22 +355,166 @@ export function ResearchSpaceDetail({
               </DashboardSection>
 
               <DashboardSection
-                title="Curation Activity"
-                description="Review workload within this research space"
+                title="Curation Health"
+                description="Curated vs not-curated balance and status distribution"
               >
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <div className="rounded-lg border p-3">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Pending review</p>
-                    <p className="text-2xl font-semibold text-foreground">{curationStats?.pending ?? 0}</p>
-                  </div>
-                  <div className="rounded-lg border p-3">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Approved</p>
-                    <p className="text-2xl font-semibold text-foreground">{curationStats?.approved ?? 0}</p>
-                  </div>
-                  <div className="rounded-lg border p-3">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Rejected</p>
-                    <p className="text-2xl font-semibold text-foreground">{curationStats?.rejected ?? 0}</p>
-                  </div>
+                <div className="grid gap-4 lg:grid-cols-3">
+                  <Card className="lg:col-span-2">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Status Distribution</CardTitle>
+                      <CardDescription>Pending, approved, and rejected records</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-56 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={statusAreaData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="statusAreaFill" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.55} />
+                                <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0.08} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                            <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} />
+                            <RechartsTooltip />
+                            <Area
+                              type="monotone"
+                              dataKey="value"
+                              stroke="hsl(var(--chart-1))"
+                              strokeWidth={2}
+                              fill="url(#statusAreaFill)"
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Curation Balance</CardTitle>
+                      <CardDescription>Curated records vs backlog</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="mx-auto h-44 w-full max-w-[230px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={curationBalanceData}
+                              dataKey="value"
+                              nameKey="label"
+                              innerRadius={48}
+                              outerRadius={76}
+                              paddingAngle={3}
+                            >
+                              {curationBalanceData.map((entry) => (
+                                <Cell key={entry.label} fill={entry.fill} />
+                              ))}
+                            </Pie>
+                            <RechartsTooltip />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                          <span className="text-muted-foreground">Curated</span>
+                          <span className="font-semibold text-foreground">{curatedCount}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                          <span className="text-muted-foreground">Not curated</span>
+                          <span className="font-semibold text-foreground">{notCuratedCount}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                          <span className="text-muted-foreground">Completion</span>
+                          <span className="font-semibold text-foreground">{completionRate}%</span>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Relation Type Distribution</CardTitle>
+                      <CardDescription>Most frequent relation types in this space</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {relationTypeDistribution.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No relation-type data available yet.</p>
+                      ) : (
+                        <div className="h-64 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={relationTypeDistribution}
+                              layout="vertical"
+                              margin={{ top: 8, right: 8, left: 8, bottom: 0 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                              <XAxis
+                                type="number"
+                                allowDecimals={false}
+                                tickLine={false}
+                                axisLine={false}
+                                fontSize={12}
+                              />
+                              <YAxis
+                                type="category"
+                                dataKey="label"
+                                width={150}
+                                tickLine={false}
+                                axisLine={false}
+                                fontSize={11}
+                              />
+                              <RechartsTooltip />
+                              <Bar dataKey="count" fill="hsl(var(--chart-4))" radius={[0, 6, 6, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Node Distribution</CardTitle>
+                      <CardDescription>Most connected nodes in current relation graph</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {nodeDistribution.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No node-distribution data available yet.</p>
+                      ) : (
+                        <div className="h-64 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={nodeDistribution}
+                              layout="vertical"
+                              margin={{ top: 8, right: 8, left: 8, bottom: 0 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                              <XAxis
+                                type="number"
+                                allowDecimals={false}
+                                tickLine={false}
+                                axisLine={false}
+                                fontSize={12}
+                              />
+                              <YAxis
+                                type="category"
+                                dataKey="label"
+                                width={150}
+                                tickLine={false}
+                                axisLine={false}
+                                fontSize={11}
+                              />
+                              <RechartsTooltip />
+                              <Bar dataKey="count" fill="hsl(var(--chart-5))" radius={[0, 6, 6, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
                 </div>
               </DashboardSection>
 

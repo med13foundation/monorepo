@@ -20,7 +20,7 @@ router = APIRouter(prefix="/ai-models", tags=["AI Models"])
 class ModelSpecResponse(BaseModel):
     """Response model for a single AI model specification."""
 
-    model_id: str = Field(..., description="Flujo model identifier")
+    model_id: str = Field(..., description="Model identifier")
     display_name: str = Field(..., description="Human-readable name")
     provider: str = Field(..., description="Model provider (openai, anthropic)")
     capabilities: list[str] = Field(..., description="Supported capabilities")

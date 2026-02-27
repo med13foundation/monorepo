@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from src.models.value_objects.provenance import DataSource, Provenance
+from src.domain.value_objects.provenance import DataSource, Provenance
 
 QUALITY_SCORE_VALID = 0.95
 QUALITY_SCORE_UPDATE = 0.85
@@ -38,7 +38,7 @@ class TestProvenance:
         assert provenance.source_url == "https://www.ncbi.nlm.nih.gov/clinvar/"
         assert provenance.acquired_by == "test_system"
         assert provenance.acquired_at == acquired_at
-        assert provenance.processing_steps == ["normalized", "validated"]
+        assert provenance.processing_steps == ("normalized", "validated")
         assert provenance.quality_score == QUALITY_SCORE_VALID
         assert provenance.validation_status == "validated"
         assert provenance.metadata == {"key": "value"}
@@ -47,7 +47,7 @@ class TestProvenance:
         """Test default values for Provenance."""
         provenance = Provenance(source=DataSource.PUBMED, acquired_by="test_system")
 
-        assert provenance.processing_steps == []
+        assert provenance.processing_steps == ()
         assert provenance.validation_status == "pending"
         assert provenance.metadata == {}
         assert provenance.quality_score is None
@@ -59,8 +59,8 @@ class TestProvenance:
 
         new_provenance = provenance.add_processing_step("normalized")
 
-        assert new_provenance.processing_steps == ["normalized"]
-        assert provenance.processing_steps == []  # Original unchanged
+        assert new_provenance.processing_steps == ("normalized",)
+        assert provenance.processing_steps == ()  # Original unchanged
 
     def test_update_quality_score(self):
         """Test updating quality score."""

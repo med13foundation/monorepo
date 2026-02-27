@@ -151,8 +151,7 @@ med13-resource-library/
 ├── alembic/                     # Database migrations
 ├── Dockerfile                   # Multi-service container definitions
 ├── Makefile                     # Development workflow automation
-├── pyproject.toml              # Python project configuration
-├── requirements*.txt           # Dependency specifications
+├── pyproject.toml              # Python project/dependency configuration
 └── Procfile                     # Cloud Run deployment configurations
 ```
 
@@ -166,10 +165,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
 COPY . .
+RUN pip install .
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
 ```
@@ -377,8 +374,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
+        pip install -e ".[dev]"
 
     - name: Run quality checks
       run: make all
@@ -466,41 +462,24 @@ DEBUG=False
 CORS_ORIGINS=https://med13-admin.com
 ```
 
-#### requirements.txt
+#### pyproject.toml (dependency excerpt)
 ```
-# MED13 Resource Library - Production Dependencies
-# Compatible with Python 3.12+
+[project]
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.8.0",
+  "sqlalchemy>=2.0.0",
+  "alembic>=1.13.0",
+  "httpx>=0.27.0",
+]
 
-# Core web framework
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-
-# Data validation and typing
-pydantic>=2.5.0
-pydantic-settings>=2.1.0
-
-# Database
-sqlalchemy>=2.0.0
-alembic>=1.13.0
-
-# HTTP client
-httpx>=0.25.0
-
-# Data processing
-pandas>=2.1.0
-numpy>=1.24.0
-
-# UI and visualization
-plotly>=5.17.0
-dash>=2.14.0
-dash-bootstrap-components>=1.5.0
-
-# Utilities
-python-multipart>=0.0.6
-
-# Google Cloud (uncomment when gcloud SDK is set up)
-# google-cloud-secretmanager>=2.16.0
-# google-cloud-storage>=2.10.0
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.11.10,<0.12.0",
+  "mypy>=1.8.0",
+]
 ```
 
 ## Database Configuration

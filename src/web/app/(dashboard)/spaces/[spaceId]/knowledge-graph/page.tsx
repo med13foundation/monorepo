@@ -4,12 +4,38 @@ import { authOptions } from '@/lib/auth'
 import KnowledgeGraphClient from '../knowledge-graph-client'
 
 interface KnowledgeGraphPageProps {
-  params: {
+  params: Promise<{
     spaceId: string
-  }
+  }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
 }
 
-export default async function KnowledgeGraphPage({ params }: KnowledgeGraphPageProps) {
+function parseSearchParam(
+  value: string | string[] | undefined,
+): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0]
+  }
+  return value
+}
+
+function parsePositiveInt(
+  value: string | undefined,
+  fallback: number,
+): number {
+  if (!value) {
+    return fallback
+  }
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+export default async function KnowledgeGraphPage({
+  params,
+  searchParams,
+}: KnowledgeGraphPageProps) {
+  const { spaceId } = await params
+  const resolvedSearchParams = await searchParams
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 
@@ -17,5 +43,18 @@ export default async function KnowledgeGraphPage({ params }: KnowledgeGraphPageP
     redirect('/auth/login?error=SessionExpired')
   }
 
-  return <KnowledgeGraphClient spaceId={params.spaceId} />
+  const question = parseSearchParam(resolvedSearchParams.q)?.trim() ?? ''
+  const topK = parsePositiveInt(parseSearchParam(resolvedSearchParams.top_k), 25)
+  const maxDepth = parsePositiveInt(parseSearchParam(resolvedSearchParams.max_depth), 2)
+  const forceAgent = parseSearchParam(resolvedSearchParams.force_agent) === '1'
+
+  return (
+    <KnowledgeGraphClient
+      spaceId={spaceId}
+      initialQuestion={question}
+      initialTopK={topK}
+      initialMaxDepth={maxDepth}
+      initialForceAgent={forceAgent}
+    />
+  )
 }

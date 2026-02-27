@@ -9,7 +9,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
 const MAX_RETRY_ATTEMPTS = 3
 const BASE_RETRY_DELAY_MS = 250
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
-const RETRYABLE_ERROR_CODES = new Set(['ECONNABORTED', 'ETIMEDOUT'])
+const RETRYABLE_ERROR_CODES = new Set(['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET', 'EPIPE'])
 
 type RetryableConfig<T = unknown> = AxiosRequestConfig<T> & {
   __retryCount?: number
@@ -34,6 +34,9 @@ const calculateRetryDelay = (attempt: number) =>
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
+  // Backend API calls are direct and should not traverse environment proxies.
+  // This avoids Node.js DEP0169 warnings from proxy-from-env/url.parse on Node 24+.
+  proxy: false,
 })
 
 apiClient.interceptors.request.use((config) => {
@@ -59,7 +62,14 @@ export function shouldRetryRequest(error: AxiosError) {
     return false
   }
 
-  if (error.code && RETRYABLE_ERROR_CODES.has(error.code)) {
+  const errorCode = error.code ?? ''
+  const normalizedMessage = error.message.toLowerCase()
+  const hasRetryableCode = RETRYABLE_ERROR_CODES.has(errorCode)
+  const hasRetryableMessage =
+    normalizedMessage.includes('socket hang up') ||
+    normalizedMessage.includes('network error')
+
+  if (hasRetryableCode || hasRetryableMessage) {
     return true
   }
 

@@ -44,6 +44,10 @@ interface AdvancedSettingsState {
   autoApprove: boolean
   requireReview: boolean
   reviewThreshold: number
+  relationGovernanceMode: 'FULL_AUTO' | 'HUMAN_IN_LOOP'
+  relationDefaultReviewThreshold: number
+  relationReviewThresholdsText: string
+  dictionaryAgentCreationPolicy: 'ACTIVE' | 'PENDING_REVIEW'
   maxDataSources: number
   allowedSourceTypes: string
   publicRead: boolean
@@ -64,6 +68,16 @@ const toAdvancedState = (settings?: ResearchSpaceSettings): AdvancedSettingsStat
   autoApprove: settings?.auto_approve ?? false,
   requireReview: settings?.require_review ?? true,
   reviewThreshold: settings?.review_threshold ?? 0.8,
+  relationGovernanceMode:
+    settings?.relation_governance_mode === 'HUMAN_IN_LOOP'
+      ? 'HUMAN_IN_LOOP'
+      : 'FULL_AUTO',
+  relationDefaultReviewThreshold: settings?.relation_default_review_threshold ?? 0.7,
+  relationReviewThresholdsText: toThresholdText(settings?.relation_review_thresholds),
+  dictionaryAgentCreationPolicy:
+    settings?.dictionary_agent_creation_policy === 'PENDING_REVIEW'
+      ? 'PENDING_REVIEW'
+      : 'ACTIVE',
   maxDataSources: settings?.max_data_sources ?? 25,
   allowedSourceTypes: (settings?.allowed_source_types ?? []).join(', '),
   publicRead: settings?.public_read ?? false,
@@ -241,7 +255,7 @@ export default function SpaceSettingsClient({ spaceId, space }: SpaceSettingsCli
                 className="font-mono"
                 value={formState.slug}
                 onChange={handleChange('slug')}
-                pattern="^[a-z0-9\\-]+$"
+                pattern="^[a-z0-9-]+$"
                 title="Lowercase letters, numbers, and hyphens only"
                 required
               />
@@ -318,6 +332,88 @@ export default function SpaceSettingsClient({ spaceId, space }: SpaceSettingsCli
                   <p className="text-xs text-muted-foreground">
                     Minimum confidence score (0–1) before auto approval.
                   </p>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="relation-governance-mode">Relation governance mode</Label>
+                  <Select
+                    value={advancedSettings.relationGovernanceMode}
+                    onValueChange={(value) =>
+                      handleAdvancedChange(
+                        'relationGovernanceMode',
+                        value as AdvancedSettingsState['relationGovernanceMode'],
+                      )
+                    }
+                  >
+                    <SelectTrigger id="relation-governance-mode">
+                      <SelectValue placeholder="Select governance mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="FULL_AUTO">FULL_AUTO</SelectItem>
+                      <SelectItem value="HUMAN_IN_LOOP">HUMAN_IN_LOOP</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    FULL_AUTO persists accepted relations automatically. HUMAN_IN_LOOP routes
+                    uncertain relation outcomes to review.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="relation-default-threshold">
+                    Relation default review threshold
+                  </Label>
+                  <Input
+                    id="relation-default-threshold"
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={advancedSettings.relationDefaultReviewThreshold}
+                    onChange={(event) =>
+                      handleAdvancedChange(
+                        'relationDefaultReviewThreshold',
+                        Number(event.target.value),
+                      )
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="relation-threshold-map">
+                    Relation-specific thresholds
+                  </Label>
+                  <Textarea
+                    id="relation-threshold-map"
+                    rows={3}
+                    value={advancedSettings.relationReviewThresholdsText}
+                    onChange={(event) =>
+                      handleAdvancedChange('relationReviewThresholdsText', event.target.value)
+                    }
+                    placeholder="PHYSICALLY_INTERACTS_WITH=0.75, ASSOCIATED_WITH=0.65"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Comma-separated relation thresholds in `RELATION_TYPE=value` format.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="dictionary-agent-creation-policy">
+                    Dictionary agent creation policy
+                  </Label>
+                  <Select
+                    value={advancedSettings.dictionaryAgentCreationPolicy}
+                    onValueChange={(value) =>
+                      handleAdvancedChange(
+                        'dictionaryAgentCreationPolicy',
+                        value as AdvancedSettingsState['dictionaryAgentCreationPolicy'],
+                      )
+                    }
+                  >
+                    <SelectTrigger id="dictionary-agent-creation-policy">
+                      <SelectValue placeholder="Select policy" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ACTIVE">ACTIVE</SelectItem>
+                      <SelectItem value="PENDING_REVIEW">PENDING_REVIEW</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </CardContent>
             </Card>
@@ -446,6 +542,10 @@ function buildSettingsPayload(state: AdvancedSettingsState): ResearchSpaceSettin
     auto_approve: state.autoApprove,
     require_review: state.requireReview,
     review_threshold: state.reviewThreshold,
+    relation_governance_mode: state.relationGovernanceMode,
+    relation_default_review_threshold: state.relationDefaultReviewThreshold,
+    relation_review_thresholds: parseThresholdText(state.relationReviewThresholdsText),
+    dictionary_agent_creation_policy: state.dictionaryAgentCreationPolicy,
     max_data_sources: state.maxDataSources,
     allowed_source_types: state.allowedSourceTypes
       .split(',')
@@ -470,4 +570,37 @@ function arraysShallowEqual<T>(a: T[], b: T[]): boolean {
     return false
   }
   return a.every((value, index) => value === b[index])
+}
+
+function parseThresholdText(value: string): Record<string, number> {
+  const normalizedEntries = value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+
+  const thresholds: Record<string, number> = {}
+  for (const entry of normalizedEntries) {
+    const [rawRelationType, rawThreshold] = entry.split('=', 2)
+    if (!rawRelationType || !rawThreshold) {
+      continue
+    }
+    const relationType = rawRelationType.trim().toUpperCase()
+    const threshold = Number(rawThreshold.trim())
+    if (!relationType || Number.isNaN(threshold)) {
+      continue
+    }
+    thresholds[relationType] = Math.max(0, Math.min(1, threshold))
+  }
+  return thresholds
+}
+
+function toThresholdText(
+  value: ResearchSpaceSettings['relation_review_thresholds'] | undefined,
+): string {
+  if (!value) {
+    return ''
+  }
+  return Object.entries(value)
+    .map(([relationType, threshold]) => `${relationType}=${threshold}`)
+    .join(', ')
 }

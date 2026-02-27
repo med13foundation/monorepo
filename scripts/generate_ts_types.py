@@ -69,6 +69,11 @@ def _discover_default_modules(repo_root: Path) -> list[str]:
     if discovery_schemas not in modules:
         modules.append(discovery_schemas)
 
+    # Include shared data discovery parameter models referenced by route schemas.
+    discovery_parameters = "src.domain.entities.data_discovery_parameters"
+    if discovery_parameters not in modules:
+        modules.append(discovery_parameters)
+
     return sorted(set(modules))
 
 

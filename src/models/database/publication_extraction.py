@@ -28,9 +28,9 @@ class PublicationExtractionModel(Base):
 
     id: Mapped[str] = mapped_column(PGUUID(as_uuid=False), primary_key=True)
 
-    publication_id: Mapped[int] = mapped_column(
+    publication_id: Mapped[int | None] = mapped_column(
         ForeignKey("publications.id"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     pubmed_id: Mapped[str | None] = mapped_column(

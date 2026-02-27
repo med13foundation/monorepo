@@ -32,6 +32,7 @@ async def _seed_user(
 ) -> tuple[str, str]:
     """Seed the same user into sync and async stores."""
     resolved_password = password or TEST_AUTH_PASSWORD
+    username = email.split("@")[0]
 
     # Sync store
     session = db_session.SessionLocal()
@@ -40,7 +41,7 @@ async def _seed_user(
         session.add(
             UserModel(
                 email=email,
-                username="auth-regression",
+                username=username,
                 full_name="Auth Regression",
                 hashed_password=PasswordHasher().hash_password(resolved_password),
                 role=UserRole.ADMIN,
@@ -58,7 +59,7 @@ async def _seed_user(
         await async_session.execute(
             UserModel.__table__.insert().values(
                 email=email,
-                username="auth-regression",
+                username=username,
                 full_name="Auth Regression",
                 hashed_password=PasswordHasher().hash_password(resolved_password),
                 role=UserRole.ADMIN,
@@ -88,3 +89,32 @@ async def test_auth_login_regression(test_engine) -> None:
     assert payload.get("access_token")
     assert payload.get("refresh_token")
     assert payload.get("user", {}).get("email") == email
+
+
+async def test_auth_refresh_regression(test_engine) -> None:
+    """Ensure /auth/refresh accepts JSON body refresh_token and returns new tokens."""
+    email, password = await _seed_user(email="auth-refresh@example.com")
+    app = create_app()
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        login_response = await client.post(
+            "/auth/login",
+            json={"email": email, "password": password},
+        )
+        assert login_response.status_code == 200, login_response.json()
+
+        login_payload = login_response.json()
+        refresh_token = login_payload.get("refresh_token")
+        assert isinstance(refresh_token, str)
+        assert refresh_token
+
+        refresh_response = await client.post(
+            "/auth/refresh",
+            json={"refresh_token": refresh_token},
+        )
+
+    assert refresh_response.status_code == 200, refresh_response.json()
+    refresh_payload = refresh_response.json()
+    assert refresh_payload.get("access_token")
+    assert refresh_payload.get("refresh_token")

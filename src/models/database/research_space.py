@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
+from typing import TypeVar
 from uuid import uuid4
 
 from sqlalchemy import JSON, ForeignKey, Index, String, Text
@@ -12,6 +13,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
 from .base import Base
+
+_E = TypeVar("_E", bound=Enum)
+
+
+def _enum_values(enum_cls: type[_E]) -> list[str]:
+    """Persist Python Enums using their .value strings (not their names)."""
+    return [str(member.value) for member in enum_cls]
 
 
 class SpaceStatusEnum(str, Enum):
@@ -75,10 +83,14 @@ class ResearchSpaceModel(Base):
         nullable=False,
         doc="User ID of the space owner",
     )
-    status: Mapped[str] = mapped_column(
-        SQLEnum(SpaceStatusEnum),
+    status: Mapped[SpaceStatusEnum] = mapped_column(
+        SQLEnum(
+            SpaceStatusEnum,
+            values_callable=_enum_values,
+            name="spacestatusenum",
+        ),
         nullable=False,
-        default=SpaceStatusEnum.ACTIVE.value,
+        default=SpaceStatusEnum.ACTIVE,
         doc="Space lifecycle status",
     )
 
@@ -110,7 +122,11 @@ class ResearchSpaceModel(Base):
     )
 
     # Relationships
-    owner = relationship("UserModel", back_populates="owned_spaces")
+    owner = relationship(
+        "UserModel",
+        back_populates="owned_research_spaces",
+        foreign_keys=[owner_id],
+    )
     memberships = relationship(
         "ResearchSpaceMembershipModel",
         back_populates="space",
@@ -165,8 +181,12 @@ class ResearchSpaceMembershipModel(Base):
     )
 
     # Role & Permissions
-    role: Mapped[str] = mapped_column(
-        SQLEnum(MembershipRoleEnum),
+    role: Mapped[MembershipRoleEnum] = mapped_column(
+        SQLEnum(
+            MembershipRoleEnum,
+            values_callable=_enum_values,
+            name="membershiproleenum",
+        ),
         nullable=False,
         doc="User's role in the space",
     )
@@ -210,12 +230,12 @@ class ResearchSpaceMembershipModel(Base):
     user = relationship(
         "UserModel",
         foreign_keys=[user_id],
-        back_populates="space_memberships",
+        back_populates="research_space_memberships",
     )
     inviter = relationship(
         "UserModel",
         foreign_keys=[invited_by],
-        back_populates="sent_invitations",
+        back_populates="sent_research_space_invitations",
     )
 
     __table_args__ = (

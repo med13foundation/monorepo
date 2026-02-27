@@ -22,8 +22,19 @@ WEB_LOG := logs/web.log
 WEB_PID_FILE_ABS := $(abspath $(WEB_PID_FILE))
 WEB_LOG_ABS := $(abspath $(WEB_LOG))
 NEXT_DEV_ENV := NEXTAUTH_SECRET=med13-resource-library-nextauth-secret-key-for-development-2024-secure-random-string NEXTAUTH_URL=http://localhost:3000 NEXT_PUBLIC_API_URL=http://localhost:8080
+BACKEND_DEV_ENV := MED13_DEV_JWT_SECRET=med13-resource-library-backend-jwt-secret-for-development-2026-01
+NEXTAUTH_URL ?= http://localhost:3000
+NEXT_BUILD_ENV := NEXTAUTH_URL=$(NEXTAUTH_URL)
+WEB_WAIT_TIMEOUT_SECONDS ?= 120
+WEB_WAIT_INTERVAL_SECONDS ?= 2
 
 ADMIN_PASSWORD_EFFECTIVE := $(strip $(or $(ADMIN_PASSWORD),$(MED13_ADMIN_PASSWORD)))
+
+# pip-audit exceptions:
+# - CVE-2025-69872: diskcache has no upstream fix yet.
+# - CVE-2026-25580: tracked dependency advisory under evaluation.
+PIP_AUDIT_IGNORE_VULNS := CVE-2025-69872 CVE-2026-25580
+PIP_AUDIT_IGNORE_FLAGS := $(foreach vuln,$(PIP_AUDIT_IGNORE_VULNS),--ignore-vuln $(vuln))
 
 # Detect environment type
 CI_ENV := $(CI)
@@ -71,7 +82,7 @@ endef
 
 # Warn if venv is not active but exists
 define check_venv
-	@if [ "$(VENV_ACTIVE)" = "false" ] && [ -d "$(VENV)" ]; then \
+	@if [ "$(VENV_ACTIVE)" = "false" ] && [ -d "$(VENV)" ] && [ "$(SUPPRESS_VENV_WARNING)" != "1" ]; then \
 		echo "⚠️  Virtual environment exists but not activated."; \
 		echo "   Run: source $(VENV)/bin/activate"; \
 		echo "   Or use: make activate"; \
@@ -109,7 +120,10 @@ define ensure_web_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-flujo-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test
+.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait phi-backfill-dry-run phi-backfill-commit
+
+PY_CHECK_PATHS := src tests scripts alembic
+PY_STRICT_CHECK_PATHS := src
 
 # Default target
 help: ## Show this help message
@@ -142,12 +156,13 @@ deactivate: ## Show command to deactivate virtual environment
 # Installation
 install: ## Install production dependencies
 	$(call check_venv)
-	$(USE_PIP) install -r requirements.txt
+	$(USE_PIP) install --upgrade "pip>=26.0"
+	$(USE_PIP) install -e .
 
 install-dev: ## Install development dependencies
 	$(call check_venv)
-	$(USE_PIP) install -r requirements.txt
-	$(USE_PIP) install -r requirements-dev.txt
+	$(USE_PIP) install --upgrade "pip>=26.0"
+	$(USE_PIP) install -e ".[dev]"
 
 # Development setup
 setup-dev: install-dev ## Set up development environment
@@ -169,45 +184,29 @@ generate-ts-types: ## Generate TypeScript definitions from backend models
 # Testing
 test: ## Run all tests (excluding heavy performance tests)
 	$(call check_venv)
-ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) -m pytest -m "not performance"
-else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest -m "not performance")
-endif
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py -m "not performance")
 
 test-performance: ## Run performance tests
 	$(call check_venv)
-ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) -m pytest tests/performance
-else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest tests/performance)
-endif
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py tests/performance)
 
 test-contract: ## Run API contract tests
 	$(call check_venv)
-ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) -m pytest tests/security/test_schemathesis_contracts.py
-else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest tests/security/test_schemathesis_contracts.py)
-endif
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py tests/security/test_schemathesis_contracts.py)
 
 test-architecture: ## Run architectural compliance tests (type_examples.md pattern validation)
 	$(call check_venv)
-ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) -m pytest tests/unit/architecture/test_architectural_compliance.py -v -m architecture
-else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest tests/unit/architecture/test_architectural_compliance.py -v -m architecture)
-endif
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py tests/unit/architecture/test_architectural_compliance.py -v -m architecture)
 
-test-flujo-architecture: ## Run Flujo AI agent architecture compliance tests
+test-artana-architecture: ## Run Artana AI agent architecture compliance tests
 	$(call check_venv)
-	$(USE_PYTHON) -m pytest tests/unit/architecture/test_flujo_compliance.py -v -m architecture
+	$(USE_PYTHON) -m pytest tests/unit/architecture/test_architectural_compliance.py -v -m architecture
 
-test-all-architecture: test-architecture test-flujo-architecture validate-architecture validate-dependencies ## Run all architecture tests
+test-all-architecture: test-architecture test-artana-architecture validate-architecture validate-dependencies ## Run all architecture tests
 
 validate-architecture: ## Validate architectural compliance
 	$(call check_venv)
@@ -223,124 +222,124 @@ validate-dependencies: ## Validate dependency graph and layer boundaries (fails 
 
 validate-dependencies-warn: ## Validate dependencies (warnings only, doesn't fail)
 	$(call check_venv)
-	@echo "🔍 Validating dependencies (warnings only)..."
-	-$(USE_PYTHON) scripts/validate_dependencies.py || echo "⚠️  Dependency validation found issues (see docs/known-architectural-debt.md)"
+	@echo "🔍 Validating dependencies (non-blocking)..."
+	@$(USE_PYTHON) scripts/validate_dependencies.py || echo "Dependency validation found issues (see docs/known-architectural-debt.md)"
 
 test-verbose: ## Run tests with verbose output
 	$(call check_venv)
-ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) -m pytest -v --tb=short
-else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest -v --tb=short)
-endif
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py -v --tb=short)
 
 test-cov: ## Run tests with coverage report
 	$(call check_venv)
-ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) -m pytest --cov=src --cov-report=html --cov-report=term-missing
-else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest --cov=src --cov-report=html --cov-report=term-missing)
-endif
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py --cov=src --cov-report=html --cov-report=term-missing)
 
 test-watch: ## Run tests in watch mode
 	$(call check_venv)
-ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) -m pytest-watch
-else
-	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) -m pytest-watch)
-endif
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 MED13_TEST_RUNNER=pytest-watch $(USE_PYTHON) scripts/run_isolated_postgres_tests.py)
 
 # Code Quality
 lint: ## Run all linting tools (warnings only)
 	$(call check_venv)
 	@echo "Running flake8..."
-	-$(USE_PYTHON) -m flake8 src tests --max-line-length=88 --extend-ignore=E203,W503,E501 --exclude=src/web/node_modules || echo "⚠️  Flake8 found style issues (non-blocking)"
+	-$(USE_PYTHON) -m flake8 $(PY_CHECK_PATHS) --max-line-length=88 --extend-ignore=E203,W503,E501,E402 --exclude=src/web/node_modules || echo "⚠️  Flake8 found style issues (non-blocking)"
 	@echo "Running ruff..."
-	-$(USE_PYTHON) -m ruff check src tests || echo "⚠️  Ruff found linting issues (non-blocking)"
+	-$(USE_PYTHON) -m ruff check $(PY_CHECK_PATHS) || echo "⚠️  Ruff found linting issues (non-blocking)"
 	@echo "Running mypy..."
-	-$(USE_PYTHON) -m mypy src || echo "⚠️  MyPy found type issues (non-blocking)"
+	-$(USE_PYTHON) -m mypy $(PY_CHECK_PATHS) || echo "⚠️  MyPy found type issues (non-blocking)"
 	@echo "Running bandit (non-blocking)..."
-	-$(USE_PYTHON) -m bandit -r src -f json -o bandit-results.json 2>&1 | grep -vE "(WARNING.*Test in comment|WARNING.*Unknown test found)" || echo "⚠️  Bandit found security issues (non-blocking)"
+	-$(USE_PYTHON) -m bandit -r $(PY_CHECK_PATHS) -f json -o bandit-results.json 2>&1 | grep -vE "(WARNING.*Test in comment|WARNING.*Unknown test found)" || echo "⚠️  Bandit found security issues (non-blocking)"
 
 lint-strict: ## Run all linting tools (fails on error)
 	$(call check_venv)
 	@echo "Running flake8 (strict)..."
-	$(USE_PYTHON) -m flake8 src tests --max-line-length=88 --extend-ignore=E203,W503,E501 --exclude=src/web/node_modules
+	@$(USE_PYTHON) -m flake8 $(PY_CHECK_PATHS) --max-line-length=88 --extend-ignore=E203,W503,E501,E402 --exclude=src/web/node_modules
 	@echo "Running ruff (strict)..."
-	$(USE_PYTHON) -m ruff check src tests
+	@$(USE_PYTHON) -m ruff check $(PY_CHECK_PATHS)
 	@echo "Running bandit (strict)..."
-	$(USE_PYTHON) -m bandit -r src -f json -o bandit-results.json 2>&1 | grep -vE "(WARNING.*Test in comment|WARNING.*Unknown test found)" || true
+	@$(USE_PYTHON) -m bandit -r $(PY_CHECK_PATHS) -f json -o bandit-results.json 2>&1 | grep -vEi "(Test in comment|Unknown test found)" || true
 
 format: ## Format code with Black and sort imports with ruff
 	$(call check_venv)
-	$(USE_PYTHON) -m black src tests
-	-$(USE_PYTHON) -m ruff check --fix src tests || echo "⚠️  Ruff found linting issues (non-blocking)"
+	@$(USE_PYTHON) -m black $(PY_CHECK_PATHS)
+	@$(USE_PYTHON) -m ruff check --fix $(PY_CHECK_PATHS) || echo "Ruff found linting issues (non-blocking)"
 
 format-check: ## Check code formatting without making changes
 	$(call check_venv)
-	$(USE_PYTHON) -m black --check src tests
-	$(USE_PYTHON) -m ruff check src tests
+	$(USE_PYTHON) -m black --check $(PY_CHECK_PATHS)
+	$(USE_PYTHON) -m ruff check $(PY_CHECK_PATHS)
 
 type-check: ## Run mypy type checking with strict settings (warnings only)
 	$(call check_venv)
-	-$(USE_PYTHON) -m mypy src --strict --show-error-codes || echo "⚠️  MyPy found type issues (non-blocking)"
+	-$(USE_PYTHON) -m mypy $(PY_STRICT_CHECK_PATHS) --strict --show-error-codes || echo "⚠️  MyPy found type issues (non-blocking)"
 
 type-check-strict: ## Run mypy type checking with strict settings (fails on error)
 	$(call check_venv)
-	$(USE_PYTHON) -m mypy src --strict --show-error-codes
+	@$(USE_PYTHON) -m mypy $(PY_STRICT_CHECK_PATHS) --strict --show-error-codes
 
 type-check-report: ## Generate mypy type checking report
 	$(call check_venv)
-	$(USE_PYTHON) -m mypy src --html-report mypy-report
+	$(USE_PYTHON) -m mypy $(PY_STRICT_CHECK_PATHS) --html-report mypy-report
+
+type-check-full: ## Run strict mypy across src/tests/scripts/alembic (warnings only, legacy debt visibility)
+	$(call check_venv)
+	-$(USE_PYTHON) -m mypy $(PY_CHECK_PATHS) --strict --show-error-codes || echo "⚠️  MyPy found type issues outside runtime strict gate"
 
 security-audit: ## Run comprehensive security audit (pip-audit, bandit) [blocking on MEDIUM/HIGH]
 	$(call check_venv)
 	@echo "Running pip-audit..."
-	$(USE_PIP) install pip-audit --quiet || true
-	pip-audit --format json | tee pip-audit-results.json || true
+	@$(USE_PIP) install pip-audit --quiet || true
+	@pip-audit $(PIP_AUDIT_IGNORE_FLAGS) --format json > pip-audit-results.json || true
 	@if [ -n "$$SAFETY_API_KEY" ]; then \
 		echo "Running safety..."; \
 		SAFETY_API_KEY="$$SAFETY_API_KEY" safety --stage development scan --save-as json safety-results.json --use-server-matching || true; \
 	fi
 	@echo "Running bandit (blocking on MEDIUM/HIGH)..."
-	$(USE_PYTHON) -m bandit -r src --severity-level medium -f json -o bandit-results.json 2>&1 | grep -vE "(WARNING.*Test in comment|WARNING.*Unknown test found)" || true
+	@$(USE_PYTHON) -m bandit -r $(PY_CHECK_PATHS) --severity-level medium -f json -o bandit-results.json 2>&1 | grep -vEi "(Test in comment|Unknown test found)" || true
 
 security-full: security-audit ## Full security assessment with all tools
+
+phi-backfill-dry-run: ## Dry-run PHI identifier encryption backfill
+	$(call check_venv)
+	$(USE_PYTHON) scripts/backfill_phi_identifiers.py
+
+phi-backfill-commit: ## Commit PHI identifier encryption backfill changes
+	$(call check_venv)
+	$(USE_PYTHON) scripts/backfill_phi_identifiers.py --commit
 
 # Local Development
 run-local: ## Run the application locally
 	$(call check_venv)
-ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload
-else
+	@$(MAKE) -s setup-postgres
 	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,$(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload)
-endif
+	$(call run_with_postgres_env,$(BACKEND_DEV_ENV) $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload)
 
 run-all-postgres: ## Restart Postgres, run migrations, seed admin, start backend + Next.js
+	$(call check_venv)
 	@$(MAKE) -s stop-all
 	@$(MAKE) -s docker-postgres-up
-	@$(MAKE) -s postgres-migrate
-	@$(MAKE) -s init-flujo-schema
-	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin)
-	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1
+	@$(MAKE) -s postgres-migrate SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s init-artana-schema SUPPRESS_VENV_WARNING=1
+	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin SUPPRESS_VENV_WARNING=1)
+	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
 	@echo "Backend running in background. Starting Next.js..."
 	@$(MAKE) -s web-clean
-	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1
+	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
 	@echo "All services running. FastAPI logs: $(BACKEND_LOG) | Next.js logs: $(WEB_LOG)"
 
 dev-postgres: ## Start Postgres (if needed) + services for local development
+	$(call check_venv)
 	@$(MAKE) -s setup-postgres
-	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin)
-	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1
+	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin SUPPRESS_VENV_WARNING=1)
+	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
 	@echo "Backend running in background. Starting Next.js..."
-	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1
+	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
 	@echo "All services running. FastAPI logs: $(BACKEND_LOG) | Next.js logs: $(WEB_LOG)"
 start-local: ## Run FastAPI backend in the background (logs/backend.log)
 	$(call check_venv)
+	@$(MAKE) -s setup-postgres
 	@mkdir -p $(dir $(BACKEND_LOG))
 	@if lsof -ti tcp:8080 >/dev/null 2>&1; then \
 		echo "Port 8080 already in use. Run 'make stop-local' or free the port before starting in background."; \
@@ -350,15 +349,10 @@ start-local: ## Run FastAPI backend in the background (logs/backend.log)
 		echo "FastAPI already running (PID $$(cat "$(BACKEND_PID_FILE)"))."; \
 		exit 0; \
 	fi
-ifeq ($(POSTGRES_ACTIVE),)
-	@nohup $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 >> "$(BACKEND_LOG)" 2>&1 &
-	@echo $$! > "$(BACKEND_PID_FILE)"
-else
 ifneq ($(SKIP_POSTGRES_MIGRATE),1)
 	@$(MAKE) postgres-migrate
 endif
-	@/bin/bash -lc "set -a; source \"$(POSTGRES_ENV_FILE)\"; set +a; nohup $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 >> \"$(BACKEND_LOG)\" 2>&1 & echo \$$! > \"$(BACKEND_PID_FILE)\""
-endif
+	@/bin/bash -lc "set -a; source \"$(POSTGRES_ENV_FILE)\"; set +a; $(BACKEND_DEV_ENV) nohup $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 >> \"$(BACKEND_LOG)\" 2>&1 & echo \$$! > \"$(BACKEND_PID_FILE)\""
 	@i=0; while [ ! -f "$(BACKEND_PID_FILE)" ] && [ $$i -lt 10 ]; do sleep 0.5; i=$$((i+1)); done
 	@if [ -f "$(BACKEND_PID_FILE)" ]; then \
 		PID=$$(cat "$(BACKEND_PID_FILE)"); \
@@ -380,22 +374,17 @@ backend-status: ## Show FastAPI background process status
 	fi
 
 run-local-postgres: ## Run the FastAPI backend with Postgres env vars loaded
-	$(call run_with_postgres_env,$(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload)
+	$(call run_with_postgres_env,$(BACKEND_DEV_ENV) $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload)
 
 
 run-web: ## Run the Next.js admin interface locally (seeds admin user if needed)
 	$(call ensure_web_deps)
+	@$(MAKE) -s setup-postgres
 	@echo "Ensuring admin user exists..."
-ifeq ($(POSTGRES_ACTIVE),)
-	@$(MAKE) db-seed-admin || echo "Warning: Could not seed admin user (backend may not be running)"
-	@echo "Starting Next.js admin interface..."
-	cd src/web && $(NEXT_DEV_ENV) npm run dev
-else
 	@$(MAKE) postgres-migrate
 	$(call run_with_postgres_env,$(MAKE) db-seed-admin || echo "Warning: Could not seed admin user (backend may not be running)")
 	@echo "Starting Next.js admin interface..."
 	$(call run_with_postgres_env,cd src/web && $(NEXT_DEV_ENV) npm run dev)
-endif
 
 run-web-postgres: ## Run the Next.js admin interface with Postgres env vars loaded
 	$(call ensure_web_deps)
@@ -406,6 +395,7 @@ run-web-postgres: ## Run the Next.js admin interface with Postgres env vars load
 
 start-web: ## Run Next.js admin interface in the background (logs/web.log)
 	$(call check_venv)
+	@$(MAKE) -s setup-postgres
 	$(call ensure_web_deps)
 	@mkdir -p $(dir $(WEB_LOG))
 	@if lsof -ti tcp:3000 >/dev/null 2>&1; then \
@@ -416,24 +406,59 @@ start-web: ## Run Next.js admin interface in the background (logs/web.log)
 		echo "Next.js already running (PID $$(cat "$(WEB_PID_FILE)"))."; \
 		exit 0; \
 	fi
+ifneq ($(SKIP_ADMIN_SEED),1)
 	@echo "Ensuring admin user exists..."
-ifeq ($(POSTGRES_ACTIVE),)
-	@$(MAKE) db-seed-admin || echo "Warning: Could not seed admin user (backend may not be running)"
-	@/bin/bash -lc "cd src/web && $(NEXT_DEV_ENV) nohup npm run dev >> \"$(WEB_LOG_ABS)\" 2>&1 & echo \$$! > \"$(WEB_PID_FILE_ABS)\""
-else
+endif
 ifneq ($(SKIP_POSTGRES_MIGRATE),1)
 	@$(MAKE) postgres-migrate
 endif
+ifneq ($(SKIP_ADMIN_SEED),1)
 	$(call run_with_postgres_env,$(MAKE) db-seed-admin || echo "Warning: Could not seed admin user (backend may not be running)")
-	@/bin/bash -lc "set -a; source \"$(POSTGRES_ENV_FILE)\"; set +a; cd src/web && $(NEXT_DEV_ENV) nohup npm run dev >> \"$(WEB_LOG_ABS)\" 2>&1 & echo \$$! > \"$(WEB_PID_FILE_ABS)\""
 endif
+	@/bin/bash -lc "set -a; source \"$(POSTGRES_ENV_FILE)\"; set +a; cd src/web && $(NEXT_DEV_ENV) nohup npm run dev >> \"$(WEB_LOG_ABS)\" 2>&1 & echo \$$! > \"$(WEB_PID_FILE_ABS)\""
 	@i=0; while [ ! -f "$(WEB_PID_FILE)" ] && [ $$i -lt 10 ]; do sleep 0.5; i=$$((i+1)); done
 	@if [ -f "$(WEB_PID_FILE)" ]; then \
 		PID=$$(cat "$(WEB_PID_FILE)"); \
+		sleep 2; \
+		if ! kill -0 $$PID 2>/dev/null; then \
+			echo "Next.js process $$PID exited shortly after launch. Recent logs:"; \
+			tail -n 80 "$(WEB_LOG)" || true; \
+			rm -f "$(WEB_PID_FILE)"; \
+			exit 1; \
+		fi; \
 		echo "Next.js started in background (PID $$PID). Logs: $(WEB_LOG)"; \
 	else \
 		echo "Next.js launch command executed but PID file was not created. Check $(WEB_LOG) for details."; \
+		tail -n 80 "$(WEB_LOG)" || true; \
+		exit 1; \
 	fi
+	@$(MAKE) -s web-wait
+
+web-wait: ## Wait until Next.js is reachable on http://localhost:3000
+	@attempts=0; \
+	max_attempts=$$(( $(WEB_WAIT_TIMEOUT_SECONDS) / $(WEB_WAIT_INTERVAL_SECONDS) )); \
+	if [ $$max_attempts -lt 1 ]; then max_attempts=1; fi; \
+	while true; do \
+		if curl -sS --max-time 3 http://localhost:3000/ >/dev/null 2>&1; then \
+			echo "Next.js is reachable at http://localhost:3000"; \
+			exit 0; \
+		fi; \
+		if [ -f "$(WEB_PID_FILE)" ]; then \
+			PID=$$(cat "$(WEB_PID_FILE)"); \
+			if ! kill -0 $$PID 2>/dev/null; then \
+				echo "Next.js process $$PID is not running. Recent logs:"; \
+				tail -n 80 "$(WEB_LOG)" || true; \
+				exit 1; \
+			fi; \
+		fi; \
+		attempts=$$((attempts+1)); \
+		if [ $$attempts -ge $$max_attempts ]; then \
+			echo "Timed out waiting for Next.js readiness after $(WEB_WAIT_TIMEOUT_SECONDS)s. Recent logs:"; \
+			tail -n 80 "$(WEB_LOG)" || true; \
+			exit 1; \
+		fi; \
+		sleep $(WEB_WAIT_INTERVAL_SECONDS); \
+	done
 
 test-postgres: ## Run pytest with Postgres env vars loaded
 	$(call run_with_postgres_env,$(USE_PYTHON) -m pytest)
@@ -484,6 +509,18 @@ stop-web: ## Stop the Next.js admin interface
 			kill -9 $$REMAINING >/dev/null 2>&1 || true; \
 		fi; \
 		echo "Port 3000 cleared."; \
+		handled=1; \
+	fi; \
+	NEXT_DEV_PIDS=$$(pgrep -f "src/web.*next dev" 2>/dev/null || true); \
+	if [ -n "$$NEXT_DEV_PIDS" ]; then \
+		echo "Terminating lingering Next.js dev processes: $$NEXT_DEV_PIDS"; \
+		kill $$NEXT_DEV_PIDS >/dev/null 2>&1 || true; \
+		sleep 1; \
+		REMAINING_NEXT=$$(pgrep -f "src/web.*next dev" 2>/dev/null || true); \
+		if [ -n "$$REMAINING_NEXT" ]; then \
+			echo "Force killing stubborn Next.js dev processes: $$REMAINING_NEXT"; \
+			kill -9 $$REMAINING_NEXT >/dev/null 2>&1 || true; \
+		fi; \
 		handled=1; \
 	fi; \
 	if [ $$handled -eq 0 ]; then \
@@ -537,7 +574,7 @@ docker-postgres-down: ## Stop Postgres container (data persists)
 	fi
 	@echo "Stopping Postgres container..."
 	$(POSTGRES_COMPOSE) down && rm -f "$(POSTGRES_ACTIVE_FLAG)" || true
-	@echo "Postgres mode flags cleared (commands revert to SQLite)."
+	@echo "Postgres mode flags cleared."
 
 docker-postgres-destroy: ## Stop Postgres container and remove volumes
 	@if [ ! -f "$(POSTGRES_ENV_FILE)" ]; then \
@@ -546,7 +583,7 @@ docker-postgres-destroy: ## Stop Postgres container and remove volumes
 	fi
 	@echo "Destroying Postgres container and volumes..."
 	$(POSTGRES_COMPOSE) down -v && rm -f "$(POSTGRES_ACTIVE_FLAG)" || true
-	@echo "Postgres mode flags cleared (commands revert to SQLite)."
+	@echo "Postgres mode flags cleared."
 
 docker-postgres-logs: ## Tail Postgres logs
 	@if [ ! -f "$(POSTGRES_ENV_FILE)" ]; then \
@@ -563,85 +600,62 @@ docker-postgres-status: ## Show Postgres container status
 	fi
 	$(POSTGRES_COMPOSE) ps
 
-postgres-disable: ## Keep container running but force commands back to SQLite
+postgres-disable: ## Keep container running but disable auto-Postgres mode
 	@rm -f "$(POSTGRES_ACTIVE_FLAG)"
 	@echo "Postgres mode flag removed. Existing containers unaffected."
 
 postgres-wait: ## Wait until Postgres is ready to accept connections
-ifeq ($(POSTGRES_ACTIVE),)
-	@echo "Postgres mode inactive; skipping wait."
-else
 	$(call ensure_postgres_env)
 	@if [ -z "$$($(POSTGRES_COMPOSE) ps -q $(POSTGRES_SERVICE))" ]; then \
 		if [ "$(MED13_SKIP_COMPOSE)" = "1" ]; then \
 			echo "Postgres container is not running and MED13_SKIP_COMPOSE=1; skipping auto-start."; \
-			echo "Skipping Postgres wait/migrate steps (tests will run with default DB)."; \
+			echo "Skipping Postgres wait/migrate steps."; \
 			exit 0; \
 		else \
 			echo "Postgres container is not running; starting via $(POSTGRES_COMPOSE_FILE)..."; \
 			$(POSTGRES_COMPOSE) up -d $(POSTGRES_SERVICE); \
+			touch "$(POSTGRES_ACTIVE_FLAG)"; \
 		fi \
 	fi
 	@echo "Waiting for Postgres health check..."
 	$(call run_with_postgres_env,$(USE_PYTHON) scripts/wait_for_postgres.py)
-endif
 
-postgres-migrate: ## Run Alembic migrations when Postgres mode is active
-ifeq ($(POSTGRES_ACTIVE),)
-	@echo "Postgres mode inactive; skipping migrations."
-else
+postgres-migrate: ## Run Alembic migrations with Postgres
 	@$(MAKE) -s postgres-wait
 	@echo "Applying Alembic migrations (Postgres)..."
 	$(call run_with_postgres_env,$(ALEMBIC_BIN) upgrade heads)
-endif
 
-init-flujo-schema: ## Initialize the flujo schema in Postgres
+init-artana-schema: ## Initialize the artana schema in Postgres
 	$(call check_venv)
-	@echo "Creating flujo schema..."
-ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) scripts/init_flujo_schema.py
-else
-	$(call run_with_postgres_env,$(USE_PYTHON) scripts/init_flujo_schema.py)
-endif
+	@echo "Creating artana schema..."
+	$(call run_with_postgres_env,$(USE_PYTHON) scripts/init_artana_schema.py)
 
-setup-postgres: ## Full PostgreSQL setup including flujo schema
+setup-postgres: ## Full PostgreSQL setup including artana schema
 	@$(MAKE) -s docker-postgres-up
 	@$(MAKE) -s postgres-wait
 	@$(MAKE) -s postgres-migrate
-	@$(MAKE) -s init-flujo-schema
-	@echo "PostgreSQL setup complete with flujo schema."
+	@$(MAKE) -s init-artana-schema
+	@echo "PostgreSQL setup complete with artana schema."
 
 # Database
 db-migrate: ## Run database migrations
-ifeq ($(POSTGRES_ACTIVE),)
-	alembic upgrade head
-else
+	@$(MAKE) -s postgres-wait
 	$(call run_with_postgres_env,alembic upgrade heads)
-endif
 
 db-create: ## Create database migration
 	@echo "Creating new migration..."
-ifeq ($(POSTGRES_ACTIVE),)
-	alembic revision --autogenerate -m "$(msg)"
-else
+	@$(MAKE) -s postgres-wait
 	$(call run_with_postgres_env,alembic revision --autogenerate -m "$(msg)")
-endif
 
 db-reset: ## Reset database (WARNING: destroys data)
 	@echo "This will destroy all data. Are you sure? [y/N] " && read ans && [ $${ans:-N} = y ]
-ifeq ($(POSTGRES_ACTIVE),)
-	alembic downgrade base
-else
+	@$(MAKE) -s postgres-wait
 	$(call run_with_postgres_env,alembic downgrade base)
-endif
 
 db-seed: ## Seed database with test data
 	$(call check_venv)
-ifeq ($(POSTGRES_ACTIVE),)
-	$(USE_PYTHON) scripts/seed_database.py
-else
+	@$(MAKE) -s postgres-wait
 	$(call run_with_postgres_env,$(USE_PYTHON) scripts/seed_database.py)
-endif
 
 db-seed-admin: ## Seed admin user (requires ADMIN_PASSWORD or MED13_ADMIN_PASSWORD)
 	$(call check_venv)
@@ -650,11 +664,8 @@ db-seed-admin: ## Seed admin user (requires ADMIN_PASSWORD or MED13_ADMIN_PASSWO
 		exit 1; \
 	fi
 	@echo "Seeding admin user..."
-ifeq ($(POSTGRES_ACTIVE),)
-	@ADMIN_PASSWORD="$(ADMIN_PASSWORD_EFFECTIVE)" $(USE_PYTHON) scripts/seed_admin_user.py --password "$$ADMIN_PASSWORD"
-else
+	@$(MAKE) -s postgres-wait
 	$(call run_with_postgres_env,ADMIN_PASSWORD="$(ADMIN_PASSWORD_EFFECTIVE)" $(USE_PYTHON) scripts/seed_admin_user.py --password "$$ADMIN_PASSWORD")
-endif
 
 db-reset-admin-password: ## Reset admin password (requires ADMIN_PASSWORD or MED13_ADMIN_PASSWORD)
 	$(call check_venv)
@@ -663,28 +674,40 @@ db-reset-admin-password: ## Reset admin password (requires ADMIN_PASSWORD or MED
 		exit 1; \
 	fi
 	@echo "Resetting admin password..."
-ifeq ($(POSTGRES_ACTIVE),)
-	@ADMIN_PASSWORD="$(ADMIN_PASSWORD_EFFECTIVE)" $(USE_PYTHON) scripts/reset_admin_password.py --password "$$ADMIN_PASSWORD"
-else
+	@$(MAKE) -s postgres-wait
 	$(call run_with_postgres_env,ADMIN_PASSWORD="$(ADMIN_PASSWORD_EFFECTIVE)" $(USE_PYTHON) scripts/reset_admin_password.py --password "$$ADMIN_PASSWORD")
-endif
 
 db-verify-admin: ## Verify admin user exists
 	$(call check_venv)
 	@echo "Verifying admin user..."
-ifeq ($(POSTGRES_ACTIVE),)
-	@$(USE_PYTHON) scripts/reset_admin_password.py --verify-only
-else
+	@$(MAKE) -s postgres-wait
 	$(call run_with_postgres_env,$(USE_PYTHON) scripts/reset_admin_password.py --verify-only)
-endif
 
 # Deployment
+deploy-dev: ## Deploy to dev environment
+	@echo "Deploying to dev..."
+	gcloud run deploy med13-resource-library-dev \
+		--source . \
+		--region us-central1 \
+		--no-allow-unauthenticated \
+		--service-account med13-dev@YOUR_PROJECT_ID.iam.gserviceaccount.com
+	gcloud run deploy med13-admin-dev \
+		--source src/web \
+		--region us-central1 \
+		--no-allow-unauthenticated \
+		--service-account med13-dev@YOUR_PROJECT_ID.iam.gserviceaccount.com
+
 deploy-staging: ## Deploy to staging environment
 	@echo "Deploying to staging..."
 	gcloud run deploy med13-resource-library-staging \
 		--source . \
 		--region us-central1 \
-		--allow-unauthenticated=false \
+		--no-allow-unauthenticated \
+		--service-account med13-staging@YOUR_PROJECT_ID.iam.gserviceaccount.com
+	gcloud run deploy med13-admin-staging \
+		--source src/web \
+		--region us-central1 \
+		--no-allow-unauthenticated \
 		--service-account med13-staging@YOUR_PROJECT_ID.iam.gserviceaccount.com
 
 deploy-prod: ## Deploy to production environment
@@ -692,19 +715,13 @@ deploy-prod: ## Deploy to production environment
 	gcloud run deploy med13-resource-library \
 		--source . \
 		--region us-central1 \
-		--allow-unauthenticated=false \
-		--service-account med13-prod@YOUR_PROJECT_ID.iam.gserviceaccount.com
-
-	gcloud run deploy med13-curation \
-		--source . \
-		--region us-central1 \
-		--allow-unauthenticated=false \
+		--no-allow-unauthenticated \
 		--service-account med13-prod@YOUR_PROJECT_ID.iam.gserviceaccount.com
 
 	gcloud run deploy med13-admin \
-		--source . \
+		--source src/web \
 		--region us-central1 \
-		--allow-unauthenticated=false \
+		--no-allow-unauthenticated \
 		--service-account med13-prod@YOUR_PROJECT_ID.iam.gserviceaccount.com
 
 # Cloud Operations
@@ -739,7 +756,7 @@ web-install: ## Install Next.js dependencies
 	cd src/web && npm install
 
 web-build: ## Build Next.js admin interface
-	cd src/web && npm run build
+	cd src/web && $(NEXT_BUILD_ENV) npm run build
 
 web-clean: ## Remove Next.js build artifacts
 	rm -rf src/web/.next
@@ -791,33 +808,11 @@ venv-check: ## Ensure virtual environment is active
 
 # Report directory for QA outputs
 REPORT_DIR := reports
-TIMESTAMP := $(shell date +%Y%m%d_%H%M%S)
-QA_REPORT := $(REPORT_DIR)/qa_report_$(TIMESTAMP).txt
 
-all: venv-check check-env format lint-strict type-check-strict validate-architecture validate-dependencies-warn web-build web-lint web-type-check web-test-all test test-architecture security-audit ## Run complete quality assurance suite (fails on first error)
-	@echo ""
-	@echo "✅ All quality checks passed!"
+all: all-report ## Run complete quality assurance suite (fails on first error)
 
-all-report: ## Run complete QA suite with report generation (fails on first error)
-	@mkdir -p $(REPORT_DIR)
-	@echo "=========================================" > $(QA_REPORT)
-	@echo "MED13 Resource Library - QA Report" >> $(QA_REPORT)
-	@echo "Generated: $(shell date)" >> $(QA_REPORT)
-	@echo "=========================================" >> $(QA_REPORT)
-	@echo "" >> $(QA_REPORT)
-	@echo "Running quality assurance suite..." | tee -a $(QA_REPORT)
-	@bash -c 'set -o pipefail; $(MAKE) venv-check check-env format lint-strict type-check-strict web-build web-lint web-type-check web-test-all test test-architecture security-audit 2>&1 | tee -a $(QA_REPORT)' || \
-		(echo "" >> $(QA_REPORT); \
-		 echo "❌ QA Suite FAILED at: $(shell date)" >> $(QA_REPORT); \
-		 echo ""; \
-		 echo "❌ QA Suite FAILED - Report saved to: $(QA_REPORT)"; \
-		 exit 1)
-	@echo "" >> $(QA_REPORT)
-	@echo "✅ All quality checks passed!" >> $(QA_REPORT)
-	@echo "Completed at: $(shell date)" >> $(QA_REPORT)
-	@echo ""
-	@echo "✅ All quality checks passed!"
-	@echo "Report saved to: $(QA_REPORT)"
+all-report: ## Run complete QA suite with final warnings/errors report (fails on first error)
+	@bash scripts/run_qa_report.sh
 
 # CI/CD Simulation
 ci: install-dev lint test security-audit ## Run full CI pipeline locally
@@ -829,11 +824,13 @@ check-env: ## Check if development environment is properly set up
 	@echo "   Python Executable: $(USE_PYTHON)"
 	@echo ""
 	@echo "Checking Python version..."
-	$(USE_PYTHON) --version
+	@$(USE_PYTHON) --version
 	@echo "Checking pip version..."
-	$(USE_PIP) --version
+	@$(USE_PIP) --version
 	@echo "Checking if requirements are installed..."
-	$(USE_PYTHON) -c "import fastapi, uvicorn, sqlalchemy, pydantic; print('✅ Core dependencies OK')" 2>/dev/null || echo "❌ Core dependencies missing - run 'make install-dev'"
+	@$(USE_PYTHON) -c "import fastapi, uvicorn, sqlalchemy, pydantic; print('✅ Core dependencies OK')" 2>/dev/null || echo "Core dependencies missing - run 'make install-dev'"
+	@echo "Checking Dockerized Postgres/Redis status..."
+	@$(MAKE) -s docker-postgres-status || true
 	@echo "Checking pre-commit..."
 	@if command -v pre-commit >/dev/null 2>&1; then \
 		echo "pre-commit available"; \
@@ -847,13 +844,17 @@ docs-serve: ## Serve documentation locally
 	cd docs && $(USE_PYTHON) -m http.server 8000
 
 # Backup and Recovery
-backup-db: ## Create database backup (SQLite)
-	@echo "Creating SQLite database backup..."
-	cp med13.db backup_$(shell date +%Y%m%d_%H%M%S).db
+backup-db: ## Create Postgres database backup using pg_dump
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,PGPASSWORD="$$MED13_POSTGRES_PASSWORD" pg_dump -h "$$MED13_POSTGRES_HOST" -p "$$MED13_POSTGRES_PORT" -U "$$MED13_POSTGRES_USER" -d "$$MED13_POSTGRES_DB" > backup_$(shell date +%Y%m%d_%H%M%S).sql)
 
-restore-db: ## Restore database from backup (specify FILE variable)
-	@echo "Restoring SQLite database from $(FILE)..."
-	cp $(FILE) med13.db
+restore-db: ## Restore Postgres database from backup (specify FILE variable)
+	@if [ -z "$(FILE)" ]; then \
+		echo "Usage: make restore-db FILE=<backup.sql>"; \
+		exit 1; \
+	fi
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,PGPASSWORD="$$MED13_POSTGRES_PASSWORD" psql -h "$$MED13_POSTGRES_HOST" -p "$$MED13_POSTGRES_PORT" -U "$$MED13_POSTGRES_USER" -d "$$MED13_POSTGRES_DB" -f "$(FILE)")
 restart-postgres: ## Recreate Postgres container (down -v, up)
 	@$(MAKE) -s docker-postgres-destroy
 	@$(MAKE) -s docker-postgres-up

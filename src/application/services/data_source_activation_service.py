@@ -14,7 +14,12 @@ from src.domain.repositories.data_source_activation_repository import (  # noqa:
     DataSourceActivationRepository,
 )
 
-DEFAULT_AVAILABLE_SOURCES: frozenset[str] = frozenset({"pubmed"})
+DEFAULT_AVAILABLE_SOURCES: frozenset[str] = frozenset(
+    {
+        "pubmed",
+        "clinvar",
+    },
+)
 
 
 @dataclass(frozen=True)

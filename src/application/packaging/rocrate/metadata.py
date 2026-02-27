@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.models.value_objects.provenance import Provenance
+    from src.domain.value_objects.provenance import Provenance
     from src.type_definitions.common import JSONObject
 
 

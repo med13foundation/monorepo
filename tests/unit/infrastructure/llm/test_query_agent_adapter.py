@@ -1,36 +1,33 @@
-"""Tests for FlujoQueryAgentAdapter model selection functionality."""
+"""Tests for ArtanaQueryAgentAdapter behavior."""
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.domain.agents.contracts.query_generation import QueryGenerationContract
 from src.domain.agents.models import ModelCapability, ModelSpec
-from src.infrastructure.llm.adapters.query_agent_adapter import FlujoQueryAgentAdapter
+from src.infrastructure.llm.adapters.query_agent_adapter import ArtanaQueryAgentAdapter
+from src.infrastructure.llm.config import QuerySourcePolicy, UsageLimits
+
+_ADAPTER_MODULE = "src.infrastructure.llm.adapters.query_agent_adapter"
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
-class TestFlujoQueryAgentAdapterModelSelection:
-    """Tests for model selection in the query agent adapter."""
-
-    @pytest.fixture
-    def mock_registry(self) -> MagicMock:
-        """Create a mock model registry."""
-        registry = MagicMock()
-
-        # Create mock model specs
-        gpt4o_mini = ModelSpec(
-            model_id="openai:gpt-4o-mini",
-            display_name="GPT-4o Mini",
-            provider="openai",
-            capabilities=frozenset({ModelCapability.QUERY_GENERATION}),
-            prompt_tokens_per_1k=0.00015,
-            completion_tokens_per_1k=0.0006,
-            is_default=True,
-        )
-        gpt5 = ModelSpec(
-            model_id="openai:gpt-5",
-            display_name="GPT-5",
+@pytest.fixture
+def mock_model_specs() -> dict[str, ModelSpec]:
+    """Create model specs used by registry mocks."""
+    return {
+        "openai:gpt-5-mini": ModelSpec(
+            model_id="openai:gpt-5-mini",
+            display_name="GPT-5 Mini",
             provider="openai",
             capabilities=frozenset(
                 {
@@ -38,358 +35,283 @@ class TestFlujoQueryAgentAdapterModelSelection:
                     ModelCapability.EVIDENCE_EXTRACTION,
                 },
             ),
-            is_reasoning_model=True,
-            prompt_tokens_per_1k=0.00125,
-            completion_tokens_per_1k=0.01,
+            prompt_tokens_per_1k=0.00025,
+            completion_tokens_per_1k=0.002,
+            timeout_seconds=120.0,
+            is_default=True,
+        ),
+        "openai:gpt-5-nano": ModelSpec(
+            model_id="openai:gpt-5-nano",
+            display_name="GPT-5 Nano",
+            provider="openai",
+            capabilities=frozenset({ModelCapability.QUERY_GENERATION}),
+            prompt_tokens_per_1k=0.00005,
+            completion_tokens_per_1k=0.0004,
+            timeout_seconds=90.0,
+        ),
+    }
+
+
+@pytest.fixture
+def mock_registry(mock_model_specs: dict[str, ModelSpec]) -> MagicMock:
+    """Create a model registry mock compatible with adapter logic."""
+    registry = MagicMock()
+    registry.get_default_model.return_value = mock_model_specs["openai:gpt-5-mini"]
+    registry.get_model.side_effect = lambda model_id: mock_model_specs[model_id]
+    registry.validate_model_for_capability.side_effect = (
+        lambda model_id, capability: model_id in mock_model_specs
+        and capability in mock_model_specs[model_id].capabilities
+    )
+    registry.allow_runtime_model_overrides.return_value = True
+    return registry
+
+
+@pytest.fixture
+def mock_governance() -> MagicMock:
+    """Create governance config mock used by adapter."""
+    governance = MagicMock()
+    governance.usage_limits = UsageLimits(
+        total_cost_usd=1.0,
+        max_turns=8,
+        max_tokens=4096,
+    )
+    governance.require_evidence = False
+    governance.needs_human_review.return_value = False
+    return governance
+
+
+@contextmanager
+def create_adapter(
+    *,
+    mock_registry: MagicMock,
+    mock_governance: MagicMock,
+    source_policies: dict[str, QuerySourcePolicy] | None = None,
+    model: str | None = None,
+    step_output: QueryGenerationContract | None = None,
+    step_error: Exception | None = None,
+) -> Iterator[tuple[ArtanaQueryAgentAdapter, MagicMock, MagicMock, MagicMock]]:
+    """
+    Build adapter with all external dependencies mocked.
+
+    Returns:
+        tuple(adapter, client_mock, kernel_mock, model_port_mock)
+    """
+    if source_policies is None:
+        source_policies = {}
+    if step_output is None:
+        step_output = QueryGenerationContract(
+            decision="generated",
+            confidence_score=0.92,
+            rationale="Generated query successfully.",
+            evidence=[],
+            query="MED13[Title/Abstract]",
+            source_type="pubmed",
+            query_complexity="simple",
         )
 
-        registry.get_default_model.return_value = gpt4o_mini
-        registry.get_model.side_effect = lambda mid: {
-            "openai:gpt-4o-mini": gpt4o_mini,
-            "openai:gpt-5": gpt5,
-        }.get(mid, KeyError(mid))
-        registry.validate_model_for_capability.return_value = True
+    client = MagicMock()
+    if step_error is not None:
+        client.step = AsyncMock(side_effect=step_error)
+    else:
+        client.step = AsyncMock(return_value=SimpleNamespace(output=step_output))
 
-        return registry
+    kernel = MagicMock()
+    kernel.close = AsyncMock()
 
-    @pytest.fixture
-    def mock_pipeline(self) -> MagicMock:
-        """Create a mock Flujo pipeline that returns escalate contract."""
-        pipeline = MagicMock()
+    model_port = MagicMock()
+    model_port.aclose = AsyncMock()
 
-        # Return an empty async iterator - the adapter will return
-        # empty_result_contract for this case
-        async def mock_run_async(
-            *args: object,
-            **kwargs: object,
-        ) -> object:  # type: ignore[misc]
-            # Return nothing - pipeline produces no output
-            return
-            yield  # Make this a generator
+    with (
+        patch(f"{_ADAPTER_MODULE}._ARTANA_IMPORT_ERROR", None),
+        patch(f"{_ADAPTER_MODULE}.get_model_registry", return_value=mock_registry),
+        patch(
+            f"{_ADAPTER_MODULE}.GovernanceConfig.from_environment",
+            return_value=mock_governance,
+        ),
+        patch(
+            f"{_ADAPTER_MODULE}.load_query_source_policies",
+            return_value=source_policies,
+        ),
+        patch.object(ArtanaQueryAgentAdapter, "_create_store", return_value=object()),
+        patch.object(ArtanaQueryAgentAdapter, "_create_tenant", return_value=object()),
+        patch(f"{_ADAPTER_MODULE}._OpenAIChatModelPort", return_value=model_port),
+        patch(f"{_ADAPTER_MODULE}.ArtanaKernel", return_value=kernel, create=True),
+        patch(
+            f"{_ADAPTER_MODULE}.SingleStepModelClient",
+            return_value=client,
+            create=True,
+        ),
+    ):
+        adapter = ArtanaQueryAgentAdapter(model=model)
+        yield adapter, client, kernel, model_port
 
-        pipeline.run_async = mock_run_async
-        return pipeline
 
-    def test_adapter_initializes_with_default_model(
+class TestArtanaQueryAgentAdapter:
+    """Tests for model resolution, governance, and execution flow."""
+
+    def test_adapter_initializes_with_default_registry(
         self,
         mock_registry: MagicMock,
+        mock_governance: MagicMock,
     ) -> None:
-        """Adapter should initialize with the default model from registry."""
-        with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-            ),
-        ):
-            adapter = FlujoQueryAgentAdapter()
+        with create_adapter(
+            mock_registry=mock_registry,
+            mock_governance=mock_governance,
+        ) as (adapter, _, _, _):
             assert adapter._registry is mock_registry
 
-    def test_resolve_model_id_with_none_returns_default(
+    def test_resolve_model_id_prefers_runtime_override(
         self,
         mock_registry: MagicMock,
+        mock_governance: MagicMock,
     ) -> None:
-        """When model_id is None, should resolve to default."""
-        with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-            ),
-        ):
-            adapter = FlujoQueryAgentAdapter()
-            resolved = adapter._resolve_model_id(None)
-            assert resolved == "openai:gpt-4o-mini"
+        with create_adapter(
+            mock_registry=mock_registry,
+            mock_governance=mock_governance,
+            model="openai:gpt-5-mini",
+        ) as (adapter, _, _, _):
+            model_id = adapter._resolve_model_id("pubmed", "openai:gpt-5-nano")
+            assert model_id == "openai:gpt-5-nano"
 
-    def test_resolve_model_id_with_valid_model(
+    def test_resolve_model_id_uses_source_policy_fallback(
         self,
         mock_registry: MagicMock,
+        mock_governance: MagicMock,
     ) -> None:
-        """When valid model_id is provided, should return it."""
-        with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-            ),
-        ):
-            adapter = FlujoQueryAgentAdapter()
-            resolved = adapter._resolve_model_id("openai:gpt-5")
-            assert resolved == "openai:gpt-5"
+        policies = {"clinvar": QuerySourcePolicy(model_id="openai:gpt-5-nano")}
+        with create_adapter(
+            mock_registry=mock_registry,
+            mock_governance=mock_governance,
+            source_policies=policies,
+            model="openai:gpt-5-mini",
+        ) as (adapter, _, _, _):
+            model_id = adapter._resolve_model_id("clinvar", None)
+            assert model_id == "openai:gpt-5-nano"
 
-    def test_resolve_model_id_with_invalid_model_falls_back(
+    def test_resolve_usage_limits_merges_source_profile_with_governance_defaults(
         self,
         mock_registry: MagicMock,
+        mock_governance: MagicMock,
     ) -> None:
-        """When invalid model_id is provided, should fall back to default."""
-        mock_registry.validate_model_for_capability.return_value = False
-        with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
+        policies = {
+            "clinvar": QuerySourcePolicy(
+                usage_limits=UsageLimits(
+                    total_cost_usd=2.5,
+                    max_turns=None,
+                    max_tokens=2048,
+                ),
             ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-            ),
-        ):
-            adapter = FlujoQueryAgentAdapter()
-            resolved = adapter._resolve_model_id("invalid:model")
-            # Should fall back to default
-            assert resolved == "openai:gpt-4o-mini"
-
-    def test_is_supported_source_pubmed(
-        self,
-        mock_registry: MagicMock,
-    ) -> None:
-        """Should support pubmed source type."""
-        with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-            ),
-        ):
-            adapter = FlujoQueryAgentAdapter()
-            assert adapter._is_supported_source("pubmed")
-            assert adapter._is_supported_source("PUBMED")
-            assert not adapter._is_supported_source("clinvar")
-
-    def test_is_openai_model_detection(
-        self,
-        mock_registry: MagicMock,
-    ) -> None:
-        """Should correctly detect OpenAI models."""
-        with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-            ),
-        ):
-            adapter = FlujoQueryAgentAdapter()
-            assert adapter._is_openai_model("openai:gpt-4o-mini")
-            assert adapter._is_openai_model("openai:gpt-5")
-            assert not adapter._is_openai_model("anthropic:claude-3")
-
-    def test_pipeline_caching_creates_for_different_models(
-        self,
-        mock_registry: MagicMock,
-        mock_pipeline: MagicMock,
-    ) -> None:
-        """Should create separate pipelines for different models."""
-        create_pipeline_mock = MagicMock(return_value=mock_pipeline)
-
-        with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-                create_pipeline_mock,
-            ),
-        ):
-            adapter = FlujoQueryAgentAdapter()
-
-            # Get pipeline for first model (created during init)
-            adapter._get_or_create_pipeline("pubmed", "openai:gpt-4o-mini")
-
-            # Get pipeline for second model
-            adapter._get_or_create_pipeline("pubmed", "openai:gpt-5")
-
-            # Should have two pipelines in cache
-            assert ("pubmed", "openai:gpt-4o-mini") in adapter._pipelines
-            assert ("pubmed", "openai:gpt-5") in adapter._pipelines
-
-    def test_pipeline_caching_reuses_same_model(
-        self,
-        mock_registry: MagicMock,
-        mock_pipeline: MagicMock,
-    ) -> None:
-        """Should reuse cached pipeline for same model."""
-        create_pipeline_mock = MagicMock(return_value=mock_pipeline)
-
-        with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-                create_pipeline_mock,
-            ),
-        ):
-            adapter = FlujoQueryAgentAdapter()
-            initial_call_count = create_pipeline_mock.call_count
-
-            # Get pipeline twice for same model
-            pipeline1 = adapter._get_or_create_pipeline("pubmed", "openai:gpt-4o-mini")
-            pipeline2 = adapter._get_or_create_pipeline("pubmed", "openai:gpt-4o-mini")
-
-            # Should be the same cached instance
-            assert pipeline1 is pipeline2
-            # Should not have created additional pipeline
-            assert create_pipeline_mock.call_count == initial_call_count
+        }
+        with create_adapter(
+            mock_registry=mock_registry,
+            mock_governance=mock_governance,
+            source_policies=policies,
+        ) as (adapter, _, _, _):
+            limits = adapter._resolve_usage_limits("clinvar")
+            assert limits.total_cost_usd == 2.5
+            assert limits.max_turns == 8
+            assert limits.max_tokens == 2048
 
     @pytest.mark.asyncio
-    async def test_generate_query_unsupported_source(
+    async def test_generate_query_unsupported_source_returns_escalate(
         self,
         mock_registry: MagicMock,
+        mock_governance: MagicMock,
     ) -> None:
-        """Should return escalate contract for unsupported source."""
-        with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-            ),
-        ):
-            adapter = FlujoQueryAgentAdapter()
+        with create_adapter(
+            mock_registry=mock_registry,
+            mock_governance=mock_governance,
+        ) as (adapter, client, _, _):
             result = await adapter.generate_query(
-                research_space_description="Test",
-                user_instructions="Test",
-                source_type="unsupported_source",
+                research_space_description="test",
+                user_instructions="test",
+                source_type="unsupported-source",
             )
-
             assert result.decision == "escalate"
             assert "not yet supported" in result.rationale
+            client.step.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_generate_query_no_api_key(
+    async def test_generate_query_without_api_key_returns_fallback(
         self,
         mock_registry: MagicMock,
+        mock_governance: MagicMock,
     ) -> None:
-        """Should return fallback contract when OpenAI key is missing."""
         with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-            ),
-            patch.dict("os.environ", {}, clear=True),
+            patch.dict(os.environ, {}, clear=True),
+            create_adapter(
+                mock_registry=mock_registry,
+                mock_governance=mock_governance,
+            ) as (adapter, client, _, _),
         ):
-            adapter = FlujoQueryAgentAdapter()
             result = await adapter.generate_query(
-                research_space_description="Test",
-                user_instructions="Test",
+                research_space_description="test",
+                user_instructions="test",
                 source_type="pubmed",
             )
-
             assert result.decision == "fallback"
             assert "API key not configured" in result.rationale
+            client.step.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_close_cleans_up_all_pipelines(
+    async def test_generate_query_success_returns_contract_and_tracks_run_id(
         self,
         mock_registry: MagicMock,
-        mock_pipeline: MagicMock,
+        mock_governance: MagicMock,
     ) -> None:
-        """Should close all cached pipelines on close()."""
-        mock_pipeline.aclose = AsyncMock()
-        lifecycle_manager = MagicMock()
-
         with (
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_model_registry",
-                return_value=mock_registry,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_state_backend",
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.get_lifecycle_manager",
-                return_value=lifecycle_manager,
-            ),
-            patch(
-                "src.infrastructure.llm.adapters.query_agent_adapter.create_pubmed_query_pipeline",
-                return_value=mock_pipeline,
-            ),
+            patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True),
+            create_adapter(
+                mock_registry=mock_registry,
+                mock_governance=mock_governance,
+            ) as (adapter, client, _, _),
         ):
-            adapter = FlujoQueryAgentAdapter()
+            result = await adapter.generate_query(
+                research_space_description="MED13 project",
+                user_instructions="Find MED13 interactions",
+                source_type="PUBMED",
+                user_id="user-1",
+                correlation_id="corr-1",
+            )
+            assert result.decision == "generated"
+            assert result.source_type == "pubmed"
+            assert result.query == "MED13[Title/Abstract]"
+            assert adapter.get_last_run_id() is not None
+            assert adapter.get_last_run_id().startswith("query:pubmed:")
+            client.step.assert_awaited_once()
 
-            # Create a second pipeline for different model
-            adapter._get_or_create_pipeline("pubmed", "openai:gpt-5")
+    @pytest.mark.asyncio
+    async def test_generate_query_step_error_returns_escalate(
+        self,
+        mock_registry: MagicMock,
+        mock_governance: MagicMock,
+    ) -> None:
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True),
+            create_adapter(
+                mock_registry=mock_registry,
+                mock_governance=mock_governance,
+                step_error=RuntimeError("network timeout"),
+            ) as (adapter, _, _, _),
+        ):
+            result = await adapter.generate_query(
+                research_space_description="test",
+                user_instructions="test",
+                source_type="pubmed",
+            )
+            assert result.decision == "escalate"
+            assert "network timeout" in result.rationale
 
-            # Should have 2 pipelines
-            assert len(adapter._pipelines) == 2
-
-            # Close adapter
+    @pytest.mark.asyncio
+    async def test_close_closes_kernel_and_model_port(
+        self,
+        mock_registry: MagicMock,
+        mock_governance: MagicMock,
+    ) -> None:
+        with create_adapter(
+            mock_registry=mock_registry,
+            mock_governance=mock_governance,
+        ) as (adapter, _, kernel, model_port):
             await adapter.close()
-
-            # All pipelines should be cleared
-            assert len(adapter._pipelines) == 0
-            lifecycle_manager.unregister_runner.assert_called()
+            kernel.close.assert_awaited_once()
+            model_port.aclose.assert_awaited_once()

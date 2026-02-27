@@ -33,8 +33,12 @@ class ExtractionQueueItem(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: UUID
-    publication_id: int
+    publication_id: int | None = None
     pubmed_id: str | None = None
+    source_type: str = "pubmed"
+    source_record_id: str = "unknown"
+    raw_storage_key: str | None = None
+    payload_ref: str | None = None
     source_id: UUID
     ingestion_job_id: UUID
     status: ExtractionStatus = Field(default=ExtractionStatus.PENDING)

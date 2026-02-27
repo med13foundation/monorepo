@@ -52,6 +52,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             "/health",
             "/resources",
             "/auth/login",
+            "/auth/refresh",
             "/auth/register",
             "/auth/forgot-password",
             "/auth/reset-password",

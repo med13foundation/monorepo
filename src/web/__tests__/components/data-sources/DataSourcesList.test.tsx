@@ -25,13 +25,14 @@ jest.mock('@/app/actions/data-sources', () => ({
   deleteDataSourceAction: jest.fn(),
   fetchIngestionJobHistoryAction: jest.fn(),
   testDataSourceAiConfigurationAction: jest.fn(),
-  triggerDataSourceIngestionAction: jest.fn(),
   updateDataSourceAction: jest.fn(),
 }))
 
-jest.mock('@/app/actions/extractions', () => ({
-  fetchExtractionDocumentUrlAction: jest.fn(),
-  fetchRecentExtractionsAction: jest.fn(),
+jest.mock('@/app/actions/kernel-ingest', () => ({
+  cancelSpaceSourcePipelineRunAction: jest.fn(),
+  fetchSourceWorkflowEventsAction: jest.fn(),
+  fetchSourceWorkflowCardStatusAction: jest.fn(),
+  runSpaceSourcePipelineAction: jest.fn(),
 }))
 
 jest.mock('@/components/data-discovery/DataDiscoveryContent', () => ({
@@ -178,5 +179,235 @@ describe('DiscoverSourcesDialog - onSourceAdded prop', () => {
     await waitFor(() => {
       expect(onSourceAdded).toHaveBeenCalled()
     })
+  })
+})
+
+describe('DataSourcesList - AI Controls', () => {
+  it('shows a consolidated Configure menu for any connector with query_agent_source_type', async () => {
+    const user = userEvent.setup()
+    const connectorSource: DataSource = {
+      id: 'source-future-connector',
+      name: 'Future Connector Source',
+      description: 'Generic connector source',
+      source_type: 'api',
+      status: 'active',
+      owner_id: 'user-123',
+      research_space_id: 'space-123',
+      config: {
+        metadata: {
+          agent_config: {
+            is_ai_managed: true,
+            query_agent_source_type: 'future_connector',
+            agent_prompt: 'Use connector-specific terminology.',
+          },
+        },
+      },
+      ingestion_schedule: {
+        enabled: true,
+        frequency: 'daily',
+        timezone: 'UTC',
+        start_time: null,
+        cron_expression: null,
+        backend_job_id: null,
+        next_run_at: null,
+        last_run_at: null,
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={{
+          items: [connectorSource],
+          total: 1,
+          page: 1,
+          limit: 20,
+          has_next: false,
+          has_prev: false,
+        }}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+      />,
+    )
+
+    const configureButton = screen.getByRole('button', {
+      name: /configure future connector source/i,
+    })
+    expect(configureButton).toBeInTheDocument()
+
+    await user.click(configureButton)
+
+    expect(screen.getByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^schedule$/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /ai config/i })).toBeInTheDocument()
+  })
+
+  it('shows a consolidated Configure menu for ClinVar AI-managed sources', async () => {
+    const user = userEvent.setup()
+    const clinvarSource: DataSource = {
+      id: 'source-clinvar',
+      name: 'ClinVar Pathogenicity Benchmark',
+      description: 'Curated benchmark set for pathogenicity tasks',
+      source_type: 'api',
+      status: 'active',
+      owner_id: 'user-123',
+      research_space_id: 'space-123',
+      config: {
+        metadata: {
+          agent_config: {
+            is_ai_managed: true,
+            query_agent_source_type: 'clinvar',
+            agent_prompt: 'Use ClinVar terminology for variant queries.',
+          },
+        },
+      },
+      ingestion_schedule: {
+        enabled: true,
+        frequency: 'daily',
+        timezone: 'UTC',
+        start_time: null,
+        cron_expression: null,
+        backend_job_id: null,
+        next_run_at: null,
+        last_run_at: null,
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={{
+          items: [clinvarSource],
+          total: 1,
+          page: 1,
+          limit: 20,
+          has_next: false,
+          has_prev: false,
+        }}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+      />,
+    )
+
+    const configureButton = screen.getByRole('button', {
+      name: /configure clinvar pathogenicity benchmark/i,
+    })
+    expect(configureButton).toBeInTheDocument()
+
+    await user.click(configureButton)
+
+    expect(screen.getByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^schedule$/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /ai config/i })).toBeInTheDocument()
+  })
+
+  it('shows a consolidated Configure menu for ClinVar discovery sources without agent config', async () => {
+    const user = userEvent.setup()
+    const clinvarSource: DataSource = {
+      id: 'source-clinvar-discovery',
+      name: 'ClinVar (from Data Discovery)',
+      description: 'Public archive connecting human genetic variants to phenotypes.',
+      source_type: 'api',
+      status: 'draft',
+      owner_id: 'user-123',
+      research_space_id: 'space-123',
+      config: {
+        metadata: {
+          catalog_entry_id: 'clinvar',
+          query: 'MED13 pathogenic variant',
+        },
+      },
+      ingestion_schedule: {
+        enabled: false,
+        frequency: 'manual',
+        timezone: 'UTC',
+        start_time: null,
+        cron_expression: null,
+        backend_job_id: null,
+        next_run_at: null,
+        last_run_at: null,
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={{
+          items: [clinvarSource],
+          total: 1,
+          page: 1,
+          limit: 20,
+          has_next: false,
+          has_prev: false,
+        }}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+      />,
+    )
+
+    const configureButton = screen.getByRole('button', {
+      name: /configure clinvar \(from data discovery\)/i,
+    })
+    expect(configureButton).toBeInTheDocument()
+
+    await user.click(configureButton)
+
+    expect(screen.getByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^schedule$/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /ai config/i })).toBeInTheDocument()
+  })
+
+  it('keeps AI buttons hidden for plain API sources without agent metadata', () => {
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={dataSourcesResponse}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: /^configure$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /configure schedule/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /configure ai/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /test ai/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('DataSourcesList - Artana progress display', () => {
+  it('renders optional Artana stage progress badge when provided', () => {
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={dataSourcesResponse}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+        workflowStatusBySource={{
+          'source-1': {
+            last_pipeline_status: 'completed',
+            pending_paper_count: 0,
+            pending_relation_review_count: 0,
+            graph_edges_delta_last_run: 0,
+            graph_edges_total: 10,
+            artana_progress: {
+              extraction: {
+                run_id: 'extract:run:1',
+                status: 'running',
+                percent: 45,
+                current_stage: 'extract',
+              },
+            },
+          },
+        }}
+      />,
+    )
+
+    expect(screen.getByText(/Artana extraction 45%/i)).toBeInTheDocument()
   })
 })

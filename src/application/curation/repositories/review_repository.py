@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
+
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from src.models.database.review import ReviewRecord
 
@@ -42,6 +45,7 @@ class ReviewRepository(Protocol):
         db: Session,
         entity_type: str,
         entity_id: str,
+        research_space_id: str | None = None,
     ) -> ReviewRecordLike | None: ...
 
     def get_stats(
@@ -52,6 +56,23 @@ class ReviewRepository(Protocol):
 
 
 class SqlAlchemyReviewRepository:
+    @staticmethod
+    def _is_missing_reviews_table_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            'relation "reviews" does not exist' in message
+            or "no such table: reviews" in message
+        )
+
+    @staticmethod
+    def _empty_stats() -> dict[str, int]:
+        return {
+            "total": 0,
+            "pending": 0,
+            "approved": 0,
+            "rejected": 0,
+        }
+
     def list_records(
         self,
         db: Session,
@@ -59,6 +80,7 @@ class SqlAlchemyReviewRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[ReviewRecordLike]:
+        logger = logging.getLogger(__name__)
         query = db.query(ReviewRecord)
         if flt.entity_type:
             query = query.filter(ReviewRecord.entity_type == flt.entity_type)
@@ -70,7 +92,20 @@ class SqlAlchemyReviewRepository:
             query = query.filter(
                 ReviewRecord.research_space_id == flt.research_space_id,
             )
-        orm_records = list(query.offset(offset).limit(limit).all())
+        try:
+            orm_records = list(query.offset(offset).limit(limit).all())
+        except (OperationalError, ProgrammingError) as exc:
+            if not self._is_missing_reviews_table_error(exc):
+                raise
+            logger.warning(
+                (
+                    "Reviews table unavailable while listing curation queue; "
+                    "returning empty list"
+                ),
+                exc_info=exc,
+            )
+            db.rollback()
+            return []
         return [
             {
                 "id": r.id,
@@ -122,16 +157,15 @@ class SqlAlchemyReviewRepository:
         db: Session,
         entity_type: str,
         entity_id: str,
+        research_space_id: str | None = None,
     ) -> ReviewRecordLike | None:
-        orm = (
-            db.query(ReviewRecord)
-            .filter(
-                ReviewRecord.entity_type == entity_type,
-                ReviewRecord.entity_id == entity_id,
-            )
-            .order_by(ReviewRecord.last_updated.desc())
-            .first()
+        query = db.query(ReviewRecord).filter(
+            ReviewRecord.entity_type == entity_type,
+            ReviewRecord.entity_id == entity_id,
         )
+        if research_space_id is not None:
+            query = query.filter(ReviewRecord.research_space_id == research_space_id)
+        orm = query.order_by(ReviewRecord.last_updated.desc()).first()
         if orm is None:
             return None
         return {
@@ -152,14 +186,28 @@ class SqlAlchemyReviewRepository:
         research_space_id: str | None = None,
     ) -> dict[str, int]:
         """Get curation statistics for a research space."""
+        logger = logging.getLogger(__name__)
         query = db.query(ReviewRecord)
         if research_space_id:
             query = query.filter(ReviewRecord.research_space_id == research_space_id)
 
-        total = query.count()
-        pending = query.filter(ReviewRecord.status == "pending").count()
-        approved = query.filter(ReviewRecord.status == "approved").count()
-        rejected = query.filter(ReviewRecord.status == "rejected").count()
+        try:
+            total = query.count()
+            pending = query.filter(ReviewRecord.status == "pending").count()
+            approved = query.filter(ReviewRecord.status == "approved").count()
+            rejected = query.filter(ReviewRecord.status == "rejected").count()
+        except (OperationalError, ProgrammingError) as exc:
+            if not self._is_missing_reviews_table_error(exc):
+                raise
+            logger.warning(
+                (
+                    "Reviews table unavailable while calculating curation stats; "
+                    "returning zeros"
+                ),
+                exc_info=exc,
+            )
+            db.rollback()
+            return self._empty_stats()
 
         return {
             "total": total,

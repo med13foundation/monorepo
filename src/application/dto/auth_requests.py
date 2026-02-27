@@ -15,7 +15,10 @@ class LoginRequest(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {"email": "user@example.com", "password": "SecurePassword123!"},
+            "example": {
+                "email": "user@example.com",
+                "password": "SecurePassword123!",
+            },
         },
     )
 
@@ -90,6 +93,20 @@ class ResetPasswordRequest(BaseModel):
             "example": {
                 "token": "reset-token-from-email",
                 "new_password": "NewSecurePassword456!",
+            },
+        },
+    )
+
+
+class RefreshTokenRequest(BaseModel):
+    """Request for refreshing access token."""
+
+    refresh_token: str = Field(min_length=1, max_length=4096)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
             },
         },
     )

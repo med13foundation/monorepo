@@ -32,6 +32,7 @@ class StorageUseCaseEnum(str, Enum):
     PDF = "pdf"
     EXPORT = "export"
     RAW_SOURCE = "raw_source"
+    DOCUMENT_CONTENT = "document_content"
     BACKUP = "backup"
 
 

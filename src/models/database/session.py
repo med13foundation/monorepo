@@ -111,6 +111,8 @@ class SessionModel(Base):
     __table_args__ = (
         # Composite indexes for performance
         Index("idx_sessions_user_status", "user_id", "status"),
+        Index("idx_sessions_session_token", "session_token"),
+        Index("idx_sessions_refresh_token", "refresh_token"),
         Index("idx_sessions_expires_at", "expires_at"),
         Index("idx_sessions_refresh_expires", "refresh_expires_at"),
         Index("idx_sessions_last_activity", "last_activity"),

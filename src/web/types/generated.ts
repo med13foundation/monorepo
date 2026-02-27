@@ -59,6 +59,22 @@ export interface AuthorInfo {
   orcid?: string | null;
 }
 
+export interface CatalogAIProfile {
+  is_ai_managed?: boolean;
+  source_type?: string;
+  agent_prompt?: string;
+  use_research_space_context?: boolean;
+  model_id?: string | null;
+  default_query?: string | null;
+}
+
+export interface CatalogDiscoveryDefaults {
+  schedule_enabled?: boolean;
+  schedule_frequency?: unknown;
+  schedule_timezone?: string;
+  ai_profile?: CatalogAIProfile;
+}
+
 export interface CreatePubmedPresetRequest {
   name: string;
   description?: string | null;
@@ -246,6 +262,14 @@ export interface ExportableEntitiesResponse {
   usage: UsageInfo;
 }
 
+export interface ExtractionFactResponse {
+  fact_type: unknown;
+  value: string;
+  normalized_id?: string | null;
+  source?: string | null;
+  attributes?: Record<string, unknown> | null;
+}
+
 export interface GeneCreate {
   symbol: string;
   name?: string | null;
@@ -316,6 +340,43 @@ export interface HealthResponse {
   version: string;
   uptime?: string | null;
   components?: Record<string, HealthComponent> | null;
+}
+
+export interface MechanismCreate {
+  name: string;
+  description: string;
+  evidence_tier: 'definitive' | 'strong' | 'moderate' | 'supporting' | 'weak' | 'disproven';
+  confidence_score?: number;
+  source?: string;
+  lifecycle_state?: 'draft' | 'reviewed' | 'canonical' | 'deprecated';
+  protein_domains?: ProteinDomainPayload[];
+  phenotype_ids: number[];
+}
+
+export interface MechanismResponse {
+  id: number;
+  name: string;
+  description?: string | null;
+  evidence_tier: 'definitive' | 'strong' | 'moderate' | 'supporting' | 'weak' | 'disproven';
+  confidence_score: number;
+  source: string;
+  lifecycle_state: 'draft' | 'reviewed' | 'canonical' | 'deprecated';
+  protein_domains: ProteinDomainPayload[];
+  phenotype_ids: number[];
+  phenotype_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MechanismUpdate {
+  name?: string | null;
+  description?: string | null;
+  evidence_tier?: 'definitive' | 'strong' | 'moderate' | 'supporting' | 'weak' | 'disproven' | null;
+  confidence_score?: number | null;
+  source?: string | null;
+  lifecycle_state?: 'draft' | 'reviewed' | 'canonical' | 'deprecated' | null;
+  protein_domains?: ProteinDomainPayload[] | null;
+  phenotype_ids?: number[] | null;
 }
 
 export interface OrchestratedSessionState {
@@ -417,6 +478,23 @@ export interface PhenotypeUpdate {
   severity_score?: number | null;
 }
 
+export interface ProteinDomainCoordinate {
+  x: number;
+  y: number;
+  z: number;
+  confidence?: number | null;
+}
+
+export interface ProteinDomainPayload {
+  name: string;
+  source_id?: string | null;
+  start_residue: number;
+  end_residue: number;
+  domain_type?: unknown;
+  description?: string | null;
+  coordinates?: ProteinDomainCoordinate[] | null;
+}
+
 export interface PublicationCreate {
   title: string;
   authors: AuthorInfo[];
@@ -438,6 +516,32 @@ export interface PublicationCreate {
   relevance_score?: number | null;
   full_text_url?: string | null;
   open_access?: boolean;
+}
+
+export interface PublicationExtractionDocumentResponse {
+  extraction_id: string;
+  document_reference: string;
+  url: string;
+}
+
+export interface PublicationExtractionResponse {
+  id: string;
+  publication_id: number;
+  pubmed_id?: string | null;
+  source_id: string;
+  ingestion_job_id: string;
+  queue_item_id: string;
+  status: 'completed' | 'failed' | 'skipped';
+  extraction_version: number;
+  processor_name: string;
+  processor_version?: string | null;
+  text_source: string;
+  document_reference?: string | null;
+  facts?: ExtractionFactResponse[];
+  metadata?: Record<string, unknown>;
+  extracted_at: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PublicationResponse {
@@ -512,6 +616,12 @@ export interface QueryParameterCapabilities {
   supports_clinical_significance?: boolean;
   supports_review_status?: boolean;
   supports_organism?: boolean;
+  discovery_defaults?: CatalogDiscoveryDefaults;
+}
+
+export interface QueryParameters {
+  gene_symbol?: string | null;
+  search_term?: string | null;
 }
 
 export interface QueryParametersModel {
@@ -552,7 +662,7 @@ export interface SourceCatalogEntry {
   category: string;
   subcategory: string | null;
   description: string;
-  source_type: 'file_upload' | 'api' | 'database' | 'web_scraping' | 'pubmed';
+  source_type: 'file_upload' | 'api' | 'database' | 'web_scraping' | 'pubmed' | 'clinvar';
   param_type: 'gene' | 'term' | 'gene_and_term' | 'none' | 'api';
   is_active: boolean;
   requires_auth: boolean;
@@ -568,7 +678,7 @@ export interface SourceCatalogResponse {
   category: string;
   subcategory: string | null;
   description: string;
-  source_type: 'file_upload' | 'api' | 'database' | 'web_scraping' | 'pubmed';
+  source_type: 'file_upload' | 'api' | 'database' | 'web_scraping' | 'pubmed' | 'clinvar';
   param_type: 'gene' | 'term' | 'gene_and_term' | 'none' | 'api';
   is_active: boolean;
   requires_auth: boolean;
@@ -576,6 +686,45 @@ export interface SourceCatalogResponse {
   success_rate: number;
   tags: string[];
   capabilities: QueryParameterCapabilities;
+}
+
+export interface StatementCreate {
+  title: string;
+  summary: string;
+  evidence_tier?: 'definitive' | 'strong' | 'moderate' | 'supporting' | 'weak' | 'disproven';
+  confidence_score?: number;
+  status?: 'draft' | 'under_review' | 'well_supported';
+  source?: string;
+  protein_domains?: ProteinDomainPayload[];
+  phenotype_ids?: number[];
+}
+
+export interface StatementResponse {
+  id: number;
+  title: string;
+  summary: string;
+  evidence_tier: 'definitive' | 'strong' | 'moderate' | 'supporting' | 'weak' | 'disproven';
+  confidence_score: number;
+  status: 'draft' | 'under_review' | 'well_supported';
+  source: string;
+  protein_domains: ProteinDomainPayload[];
+  phenotype_ids: number[];
+  phenotype_count: number;
+  promoted_mechanism_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StatementUpdate {
+  title?: string | null;
+  summary?: string | null;
+  evidence_tier?: 'definitive' | 'strong' | 'moderate' | 'supporting' | 'weak' | 'disproven' | null;
+  confidence_score?: number | null;
+  status?: 'draft' | 'under_review' | 'well_supported' | null;
+  source?: string | null;
+  protein_domains?: ProteinDomainPayload[] | null;
+  phenotype_ids?: number[] | null;
+  promoted_mechanism_id?: number | null;
 }
 
 export interface StorageOperationResponse {

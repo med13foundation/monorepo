@@ -84,8 +84,23 @@ class MechanismUpdate(TypedDict, total=False):
     evidence_tier: str
     confidence_score: float
     source: str
+    lifecycle_state: str
     protein_domains: list[JSONObject]
     phenotype_ids: list[int]
+
+
+class StatementUpdate(TypedDict, total=False):
+    """Type-safe statement update parameters."""
+
+    title: str
+    summary: str
+    evidence_tier: str
+    confidence_score: float
+    status: str
+    source: str
+    protein_domains: list[JSONObject]
+    phenotype_ids: list[int]
+    promoted_mechanism_id: int | None
 
 
 class EvidenceUpdate(TypedDict, total=False):
@@ -123,6 +138,12 @@ class PublicationUpdate(TypedDict, total=False):
 class ExtractionQueueUpdate(TypedDict, total=False):
     """Type-safe extraction queue update parameters."""
 
+    publication_id: int | None
+    pubmed_id: str | None
+    source_type: str
+    source_record_id: str
+    raw_storage_key: str | None
+    payload_ref: str | None
     status: str
     attempts: int
     last_error: str | None
@@ -315,6 +336,10 @@ class ResearchSpaceSettings(TypedDict, total=False):
     auto_approve: bool
     require_review: bool
     review_threshold: float
+    relation_default_review_threshold: float
+    relation_review_thresholds: dict[str, float]
+    relation_governance_mode: Literal["HUMAN_IN_LOOP", "FULL_AUTO"]
+    dictionary_agent_creation_policy: Literal["ACTIVE", "PENDING_REVIEW"]
 
     # Data source settings
     max_data_sources: int

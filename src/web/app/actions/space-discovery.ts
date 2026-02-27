@@ -63,6 +63,10 @@ function formatErrorDetail(detail: unknown): string | null {
 
 function getErrorMessage(error: unknown, fallback: string): string {
   const axiosError = error as AxiosError<{ detail?: unknown }>
+  const statusCode = axiosError.response?.status
+  if (statusCode === 401) {
+    return "Session expired. Please sign in again."
+  }
   const detail = axiosError.response?.data?.detail
   const formatted = formatErrorDetail(detail)
   if (formatted) {
@@ -191,11 +195,22 @@ export async function addSpaceDiscoverySources(
       })
     )
 
-    const failed = results.filter((result) => result.status === "rejected")
+    const failed = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    )
     if (failed.length > 0) {
+      const firstFailure = failed[0]
+      const firstFailureMessage = getErrorMessage(
+        firstFailure.reason,
+        "Failed to add source to space"
+      )
+
       return {
         success: false,
-        error: "Some sources could not be added. Please retry.",
+        error:
+          sourceIds.length === 1
+            ? firstFailureMessage
+            : `Some sources could not be added. ${firstFailureMessage}`,
       }
     }
 

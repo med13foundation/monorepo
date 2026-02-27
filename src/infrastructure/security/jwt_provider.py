@@ -316,11 +316,11 @@ class JWTProvider(JWTProviderService):
 
     def _decode_unverified_payload(self, token: str) -> dict[str, object]:
         """Decode a token without verifying the signature."""
-        payload = jwt.decode(token, options={"verify_signature": False})
-        if not isinstance(payload, dict):
+        decoded: object = jwt.decode(token, options={"verify_signature": False})
+        if not isinstance(decoded, dict):
             message = "Decoded token payload must be a JSON object"
             raise TypeError(message)
-        return payload
+        return {str(key): value for key, value in decoded.items()}
 
     def _coerce_decoded_payload(
         self,

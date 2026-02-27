@@ -47,7 +47,19 @@ class ModelReasoningSettings(BaseModel):
     """
 
     effort: Literal["low", "medium", "high"] = "medium"
-    summary: Literal["brief", "detailed"] = "detailed"
+    verbosity: Literal["low", "medium", "high"] | None = "medium"
+    # Legacy compatibility field: old configs used summary=brief|detailed.
+    summary: Literal["brief", "detailed"] | None = None
+
+    def resolved_verbosity(self) -> Literal["low", "medium", "high"]:
+        """Resolve effective verbosity, preserving legacy summary compatibility."""
+        if self.verbosity is not None:
+            return self.verbosity
+        if self.summary == "brief":
+            return "low"
+        if self.summary == "detailed":
+            return "medium"
+        return "medium"
 
 
 class ModelSpec(BaseModel):
@@ -59,7 +71,7 @@ class ModelSpec(BaseModel):
     space, data source).
 
     Attributes:
-        model_id: Flujo model identifier (e.g., "openai:gpt-4o-mini")
+        model_id: model identifier (e.g., "openai:gpt-5-mini")
         display_name: Human-readable name for UI
         provider: Model provider ("openai", "anthropic", etc.)
         capabilities: Set of tasks this model can perform
@@ -74,7 +86,7 @@ class ModelSpec(BaseModel):
         is_default: Whether this is a system default model
     """
 
-    model_id: str = Field(..., description="Flujo model identifier")
+    model_id: str = Field(..., description="Model identifier")
     display_name: str = Field(..., description="Human-readable name")
     provider: str = Field(..., description="Model provider")
     capabilities: frozenset[ModelCapability] = Field(
@@ -119,7 +131,7 @@ class ModelSpec(BaseModel):
         effort: Literal["low", "medium", "high"] | None = None,
     ) -> dict[str, dict[str, str]] | None:
         """
-        Get reasoning settings for Flujo model_settings parameter.
+        Get reasoning settings for runtime model_settings parameter.
 
         Returns None for non-reasoning models.
 
@@ -127,15 +139,16 @@ class ModelSpec(BaseModel):
             effort: Override the default effort level
 
         Returns:
-            Dictionary suitable for Flujo's model_settings parameter
+            Dictionary suitable for reasoning-capable model_settings payloads
         """
         if not self.is_reasoning_model:
             return None
 
         settings = self.default_reasoning_settings or ModelReasoningSettings()
         actual_effort = effort or settings.effort
+        actual_verbosity = settings.resolved_verbosity()
 
         return {
             "reasoning": {"effort": actual_effort},
-            "text": {"verbosity": "low" if settings.summary == "brief" else "detailed"},
+            "text": {"verbosity": actual_verbosity},
         }

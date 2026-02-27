@@ -2,6 +2,9 @@ import { apiClient, authHeaders } from './client'
 import type {
   DataSource,
   DataSourceIngestionSchedule,
+  IngestionIdempotencyMetadata,
+  IngestionJobMetadata,
+  IngestionQueryGenerationMetadata,
   ScheduleFrequency,
 } from '@/types/data-source'
 import type { JSONObject } from '@/types/generated'
@@ -52,15 +55,6 @@ export interface ScheduleConfigurationResponse {
   scheduled_job?: ScheduledJobResponse | null
 }
 
-export interface IngestionRunResponse {
-  source_id: string
-  fetched_records: number
-  parsed_publications: number
-  created_publications: number
-  updated_publications: number
-  executed_query?: string | null
-}
-
 export interface DataSourceAiTestLink {
   label: string
   url: string
@@ -76,7 +70,7 @@ export interface DataSourceAiTestFinding {
   links: DataSourceAiTestLink[]
 }
 
-export interface FlujoTableSummary {
+export interface AgentRunTableSummary {
   table_name: string
   row_count: number
   latest_created_at?: string | null
@@ -94,8 +88,8 @@ export interface DataSourceAiTestResult {
   sample_size: number
   findings: DataSourceAiTestFinding[]
   checked_at: string
-  flujo_run_id?: string | null
-  flujo_tables?: FlujoTableSummary[]
+  agent_run_id?: string | null
+  agent_run_tables?: AgentRunTableSummary[]
 }
 
 export interface IngestionJobHistoryItem {
@@ -108,6 +102,11 @@ export interface IngestionJobHistoryItem {
   records_failed: number
   records_skipped: number
   bytes_processed: number
+  executed_query?: string | null
+  query_generation?: IngestionQueryGenerationMetadata | null
+  idempotency?: IngestionIdempotencyMetadata | null
+  metadata_typed?: IngestionJobMetadata | null
+  metadata?: JSONObject
 }
 
 export interface IngestionJobHistoryResponse {
@@ -203,22 +202,6 @@ export async function updateDataSource(
   const response = await apiClient.put<DataSource>(
     `/admin/data-sources/${sourceId}`,
     payload,
-    authHeaders(token),
-  )
-  return response.data
-}
-
-export async function triggerDataSourceIngestion(
-  sourceId: string,
-  token?: string,
-): Promise<IngestionRunResponse> {
-  if (!token) {
-    throw new Error('Authentication token is required for triggerDataSourceIngestion')
-  }
-
-  const response = await apiClient.post<IngestionRunResponse>(
-    `/admin/data-sources/${sourceId}/schedule/run`,
-    {},
     authHeaders(token),
   )
   return response.data

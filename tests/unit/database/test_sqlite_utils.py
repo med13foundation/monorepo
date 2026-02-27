@@ -8,7 +8,7 @@ if TYPE_CHECKING:
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
-from src.database.sqlite_utils import (
+from tests.sqlite_utils import (
     DEFAULT_BUSY_TIMEOUT_MS,
     build_sqlite_connect_args,
     configure_sqlite_engine,

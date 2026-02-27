@@ -1,23 +1,24 @@
 """
 Base context for AI agent pipelines.
 
-Provides a typed context that extends Flujo's PipelineContext with
-MED13-specific fields for auditability and traceability.
+Provides a typed context with MED13-specific fields for auditability
+and traceability.
 """
 
-from flujo.domain.models import PipelineContext
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class BaseAgentContext(PipelineContext):
+class BaseAgentContext(BaseModel):
     """
     Base context for all MED13 AI agent pipelines.
 
-    Extends PipelineContext with fields required for:
+    Defines shared fields required for:
     - User attribution (audit trail)
     - Source tracking
     - Request metadata
     """
+
+    model_config = ConfigDict(extra="allow")
 
     user_id: str | None = Field(
         default=None,

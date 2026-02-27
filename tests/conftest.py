@@ -12,12 +12,13 @@ from types import ModuleType
 
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
 
 import src.models.database  # noqa: F401
-from src.database.sqlite_utils import build_sqlite_connect_args, configure_sqlite_engine
 from src.database.url_resolver import (
     resolve_async_database_url,
     to_async_database_url,
@@ -25,6 +26,7 @@ from src.database.url_resolver import (
 from src.models.database.audit import AuditLog  # noqa: F401
 from src.models.database.base import Base
 from src.models.database.user import UserModel  # noqa: F401
+from tests.sqlite_utils import build_sqlite_connect_args, configure_sqlite_engine
 
 # The original `from src.models.database.base import Base` was here, but it's moved up.
 
@@ -32,18 +34,31 @@ from src.models.database.user import UserModel  # noqa: F401
 # Support pytest-xdist by using unique database files per worker
 
 worker_id = os.environ.get("PYTEST_XDIST_WORKER", "")
-db_filename = f"test_med13_{worker_id}.db" if worker_id else "test_med13.db"
+process_id = os.getpid()
+db_suffix_parts = [part for part in (worker_id, str(process_id)) if part]
+db_filename = f"test_med13_{'_'.join(db_suffix_parts)}.db"
 TEST_DB_PATH = Path.cwd() / db_filename
 TEST_DATABASE_URL = f"sqlite:///{TEST_DB_PATH}"
+TEST_ASYNC_DATABASE_URL = f"sqlite+aiosqlite:///{TEST_DB_PATH}"
 
 # Set core env vars early so imports (e.g., SessionLocal) bind to the test DB.
 os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
-os.environ.setdefault("ASYNC_DATABASE_URL", to_async_database_url(TEST_DATABASE_URL))
+os.environ.setdefault("ASYNC_DATABASE_URL", TEST_ASYNC_DATABASE_URL)
 os.environ.setdefault("TESTING", "true")
 os.environ.setdefault(
     "MED13_DEV_JWT_SECRET",
     "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz",
 )
+
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(type_, compiler, **kw):
+    return "JSON"
+
+
+@compiles(UUID, "sqlite")
+def compile_uuid_sqlite(type_, compiler, **kw):
+    return "VARCHAR(36)"
 
 
 # Configure pytest-asyncio to use auto mode
@@ -83,7 +98,7 @@ def _apply_test_environment(existing_db_url: str) -> None:
     use_postgres = existing_db_url.startswith("postgresql")
     if not use_postgres:
         os.environ["DATABASE_URL"] = TEST_DATABASE_URL
-        os.environ["ASYNC_DATABASE_URL"] = to_async_database_url(TEST_DATABASE_URL)
+        os.environ["ASYNC_DATABASE_URL"] = TEST_ASYNC_DATABASE_URL
     elif not os.environ.get("ASYNC_DATABASE_URL"):
         os.environ["ASYNC_DATABASE_URL"] = to_async_database_url(existing_db_url)
 
@@ -141,7 +156,10 @@ def _propagate_session_local(session_module: ModuleType) -> None:
         "tests.e2e.test_auth_regression",
     ):
         if module_name not in sys.modules:
-            __import__(module_name)
+            try:
+                __import__(module_name)
+            except ImportError:
+                continue
         module = sys.modules.get(module_name)
         if module:
             module.SessionLocal = session_module.SessionLocal
@@ -249,7 +267,7 @@ def sample_provenance():
     """Provide sample provenance data for testing."""
     from datetime import UTC, datetime
 
-    from src.models.value_objects.provenance import DataSource, Provenance
+    from src.domain.value_objects.provenance import DataSource, Provenance
 
     return Provenance(
         source=DataSource.CLINVAR,

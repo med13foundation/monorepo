@@ -45,9 +45,9 @@ class UsageLimits:
     @classmethod
     def from_environment(cls) -> UsageLimits:
         """Create usage limits from environment variables."""
-        cost_raw = os.getenv("FLUJO_USAGE_COST_LIMIT")
-        turns_raw = os.getenv("FLUJO_USAGE_MAX_TURNS")
-        tokens_raw = os.getenv("FLUJO_USAGE_MAX_TOKENS")
+        cost_raw = os.getenv("ARTANA_USAGE_COST_LIMIT")
+        turns_raw = os.getenv("ARTANA_USAGE_MAX_TURNS")
+        tokens_raw = os.getenv("ARTANA_USAGE_MAX_TOKENS")
 
         return cls(
             total_cost_usd=float(cost_raw) if cost_raw else 1.0,
@@ -93,10 +93,10 @@ class ShadowEvalConfig:
     @classmethod
     def from_environment(cls) -> ShadowEvalConfig:
         """Create shadow eval config from environment variables."""
-        enabled = os.getenv("FLUJO_SHADOW_EVAL_ENABLED", "0") == "1"
-        sink = os.getenv("FLUJO_SHADOW_EVAL_SINK", "database")
-        sample_rate_raw = os.getenv("FLUJO_SHADOW_EVAL_SAMPLE_RATE", "0.1")
-        judge_model = os.getenv("FLUJO_SHADOW_EVAL_JUDGE_MODEL", "")
+        enabled = os.getenv("ARTANA_SHADOW_EVAL_ENABLED", "0") == "1"
+        sink = os.getenv("ARTANA_SHADOW_EVAL_SINK", "database")
+        sample_rate_raw = os.getenv("ARTANA_SHADOW_EVAL_SAMPLE_RATE", "0.1")
+        judge_model = os.getenv("ARTANA_SHADOW_EVAL_JUDGE_MODEL", "")
 
         # If no env var, use registry default
         if not judge_model:
@@ -135,32 +135,32 @@ class GovernanceConfig:
         Create governance config from environment variables.
 
         Environment variables:
-        - FLUJO_GOVERNANCE_TOOL_ALLOWLIST: Comma-separated tool IDs
-        - FLUJO_GOVERNANCE_PII_SCRUB: Enable PII scrubbing (1/0)
-        - FLUJO_GOVERNANCE_PII_STRONG: Enable strong PII mode (1/0)
-        - FLUJO_GOVERNANCE_COST_LIMIT: Max cost in USD
-        - FLUJO_GOVERNANCE_CONFIDENCE_THRESHOLD: Min confidence for auto-approval
-        - FLUJO_GOVERNANCE_HITL_THRESHOLD: Min confidence before HITL escalation
-        - FLUJO_GOVERNANCE_REQUIRE_EVIDENCE: Require evidence for auto-approval (1/0)
+        - ARTANA_GOVERNANCE_TOOL_ALLOWLIST: Comma-separated tool IDs
+        - ARTANA_GOVERNANCE_PII_SCRUB: Enable PII scrubbing (1/0)
+        - ARTANA_GOVERNANCE_PII_STRONG: Enable strong PII mode (1/0)
+        - ARTANA_GOVERNANCE_COST_LIMIT: Max cost in USD
+        - ARTANA_GOVERNANCE_CONFIDENCE_THRESHOLD: Min confidence for auto-approval
+        - ARTANA_GOVERNANCE_HITL_THRESHOLD: Min confidence before HITL escalation
+        - ARTANA_GOVERNANCE_REQUIRE_EVIDENCE: Require evidence for auto-approval (1/0)
         """
-        allowlist_raw = os.getenv("FLUJO_GOVERNANCE_TOOL_ALLOWLIST", "")
+        allowlist_raw = os.getenv("ARTANA_GOVERNANCE_TOOL_ALLOWLIST", "")
         allowlist = frozenset(
             tool.strip() for tool in allowlist_raw.split(",") if tool.strip()
         )
 
-        pii_scrub = os.getenv("FLUJO_GOVERNANCE_PII_SCRUB", "0") == "1"
-        pii_strong = os.getenv("FLUJO_GOVERNANCE_PII_STRONG", "0") == "1"
+        pii_scrub = os.getenv("ARTANA_GOVERNANCE_PII_SCRUB", "0") == "1"
+        pii_strong = os.getenv("ARTANA_GOVERNANCE_PII_STRONG", "0") == "1"
 
-        cost_limit_raw = os.getenv("FLUJO_GOVERNANCE_COST_LIMIT")
+        cost_limit_raw = os.getenv("ARTANA_GOVERNANCE_COST_LIMIT")
         cost_limit = float(cost_limit_raw) if cost_limit_raw else None
 
-        threshold_raw = os.getenv("FLUJO_GOVERNANCE_CONFIDENCE_THRESHOLD", "0.85")
+        threshold_raw = os.getenv("ARTANA_GOVERNANCE_CONFIDENCE_THRESHOLD", "0.85")
         threshold = float(threshold_raw)
 
-        hitl_raw = os.getenv("FLUJO_GOVERNANCE_HITL_THRESHOLD", "0.5")
+        hitl_raw = os.getenv("ARTANA_GOVERNANCE_HITL_THRESHOLD", "0.5")
         hitl_threshold = float(hitl_raw)
 
-        require_evidence = os.getenv("FLUJO_GOVERNANCE_REQUIRE_EVIDENCE", "1") == "1"
+        require_evidence = os.getenv("ARTANA_GOVERNANCE_REQUIRE_EVIDENCE", "1") == "1"
 
         return cls(
             tool_allowlist=allowlist,

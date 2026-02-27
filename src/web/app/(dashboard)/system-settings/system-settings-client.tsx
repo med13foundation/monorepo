@@ -54,7 +54,6 @@ import { DataSourceAvailabilitySection } from '@/components/system-settings/Data
 import { MaintenanceModePanel } from '@/components/system-settings/MaintenanceModePanel'
 import { SpaceSourcePermissionsManager } from '@/components/system-settings/SpaceSourcePermissionsManager'
 import { StorageConfigurationManager } from '@/components/system-settings/StorageConfigurationManager'
-import { MechanismManagementSection } from '@/components/system-settings/MechanismManagementSection'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useRouter } from 'next/navigation'
 import type { StorageConfigurationListResponse, StorageOverviewResponse } from '@/types/storage'
@@ -62,8 +61,6 @@ import type { MaintenanceModeResponse } from '@/types/system-status'
 import type { SourceCatalogEntry } from '@/lib/types/data-discovery'
 import type { DataSourceAvailability } from '@/lib/api/data-source-activation'
 import type { ResearchSpace } from '@/types/research-space'
-import type { PaginatedResponse } from '@/types/generated'
-import type { Mechanism } from '@/types/mechanisms'
 
 interface SystemSettingsClientProps {
   initialParams: UserListParams
@@ -75,7 +72,6 @@ interface SystemSettingsClientProps {
   catalogEntries: SourceCatalogEntry[]
   availabilitySummaries: DataSourceAvailability[]
   spaces: ResearchSpace[]
-  mechanisms: PaginatedResponse<Mechanism> | null
   currentUserId: string
   isAdmin: boolean
 }
@@ -135,7 +131,6 @@ export default function SystemSettingsClient({
   catalogEntries,
   availabilitySummaries,
   spaces,
-  mechanisms,
   currentUserId,
   isAdmin,
 }: SystemSettingsClientProps) {
@@ -298,7 +293,6 @@ export default function SystemSettingsClient({
         <TabsList>
           <TabsTrigger value="users">User Management</TabsTrigger>
           <TabsTrigger value="permissions">Source Permissions</TabsTrigger>
-          <TabsTrigger value="mechanisms">Mechanisms</TabsTrigger>
           <TabsTrigger value="storage">Storage</TabsTrigger>
           <TabsTrigger value="maintenance">Maintenance</TabsTrigger>
         </TabsList>
@@ -536,9 +530,6 @@ export default function SystemSettingsClient({
         availabilitySummaries={availabilitySummaries}
         spaces={spaces}
       />
-    </TabsContent>
-    <TabsContent value="mechanisms" className="space-y-6">
-      <MechanismManagementSection mechanisms={mechanisms} />
     </TabsContent>
     <TabsContent value="storage" className="space-y-6">
       <StorageConfigurationManager

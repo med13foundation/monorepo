@@ -1,15 +1,46 @@
 """
 Port adapter implementations for AI agents.
 
-Adapters implement the domain port interfaces using Flujo
-as the underlying agent execution framework.
+Adapters implement the domain port interfaces using the configured
+AI orchestration runtime.
 
 Available Adapters:
-    FlujoQueryAgentAdapter: Implements QueryAgentPort for query generation
+    ArtanaEntityRecognitionAdapter: Implements EntityRecognitionPort
+    ArtanaExtractionAdapter: Implements ExtractionAgentPort
+    ArtanaMappingJudgeAdapter: Implements MappingJudgePort for mapper disambiguation
+    ArtanaQueryAgentAdapter: Implements QueryAgentPort for query generation
 """
 
-from src.infrastructure.llm.adapters.query_agent_adapter import FlujoQueryAgentAdapter
+from src.infrastructure.llm.adapters.content_enrichment_agent_adapter import (
+    ArtanaContentEnrichmentAdapter,
+)
+from src.infrastructure.llm.adapters.entity_recognition_agent_adapter import (
+    ArtanaEntityRecognitionAdapter,
+)
+from src.infrastructure.llm.adapters.extraction_agent_adapter import (
+    ArtanaExtractionAdapter,
+)
+from src.infrastructure.llm.adapters.extraction_policy_agent_adapter import (
+    ArtanaExtractionPolicyAdapter,
+)
+from src.infrastructure.llm.adapters.graph_connection_agent_adapter import (
+    ArtanaGraphConnectionAdapter,
+)
+from src.infrastructure.llm.adapters.graph_search_agent_adapter import (
+    ArtanaGraphSearchAdapter,
+)
+from src.infrastructure.llm.adapters.mapping_judge_agent_adapter import (
+    ArtanaMappingJudgeAdapter,
+)
+from src.infrastructure.llm.adapters.query_agent_adapter import ArtanaQueryAgentAdapter
 
 __all__ = [
-    "FlujoQueryAgentAdapter",
+    "ArtanaContentEnrichmentAdapter",
+    "ArtanaEntityRecognitionAdapter",
+    "ArtanaExtractionAdapter",
+    "ArtanaExtractionPolicyAdapter",
+    "ArtanaGraphConnectionAdapter",
+    "ArtanaGraphSearchAdapter",
+    "ArtanaMappingJudgeAdapter",
+    "ArtanaQueryAgentAdapter",
 ]

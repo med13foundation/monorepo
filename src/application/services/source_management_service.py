@@ -13,6 +13,7 @@ from src.domain.entities.source_template import SourceTemplate
 from src.domain.entities.user_data_source import (
     IngestionSchedule,
     QualityMetrics,
+    ScheduleFrequency,
     SourceConfiguration,
     SourceStatus,
     SourceType,
@@ -54,6 +55,7 @@ class CreateSourceRequest(BaseModel):
     )
     tags: list[str] = Field(default_factory=list)
     research_space_id: UUID | None = None
+    ingestion_schedule: IngestionSchedule | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -153,6 +155,16 @@ class SourceManagementService:
             source_type=request.source_type,
             template_id=request.template_id,
             configuration=configuration,
+            ingestion_schedule=(
+                request.ingestion_schedule
+                if request.ingestion_schedule is not None
+                else IngestionSchedule(
+                    enabled=False,
+                    frequency=ScheduleFrequency.MANUAL,
+                    start_time=None,
+                    timezone="UTC",
+                )
+            ),
             tags=request.tags,
             last_ingested_at=None,
         )
@@ -180,7 +192,7 @@ class SourceManagementService:
     ) -> list[UserDataSource]:
         return self._source_repository.find_by_owner(owner_id, skip, limit)
 
-    def update_source(
+    def update_source(  # noqa: C901 - explicit field-by-field updates keep behavior clear
         self,
         source_id: UUID,
         request: UpdateSourceRequest,
@@ -189,6 +201,15 @@ class SourceManagementService:
         source = self._source_repository.find_by_id(source_id)
         if not source or (owner_id is not None and source.owner_id != owner_id):
             return None
+
+        if request.status == SourceStatus.ACTIVE:
+            effective_schedule = request.ingestion_schedule or source.ingestion_schedule
+            if not effective_schedule.requires_scheduler:
+                msg = (
+                    "Active sources require an enabled ingestion schedule "
+                    "with a non-manual frequency"
+                )
+                raise ValueError(msg)
 
         # Apply updates
         updated_source = source
@@ -249,6 +270,12 @@ class SourceManagementService:
         source = self._source_repository.find_by_id(source_id)
         if not source or source.owner_id != owner_id:
             return None
+        if not source.ingestion_schedule.requires_scheduler:
+            msg = (
+                "Active sources require an enabled ingestion schedule "
+                "with a non-manual frequency"
+            )
+            raise ValueError(msg)
 
         previous_status = source.status
         activated_source = source.update_status(SourceStatus.ACTIVE)

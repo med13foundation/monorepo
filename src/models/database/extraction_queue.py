@@ -40,13 +40,33 @@ class ExtractionQueueItemModel(Base):
         primary_key=True,
     )
 
-    publication_id: Mapped[int] = mapped_column(
+    publication_id: Mapped[int | None] = mapped_column(
         ForeignKey("publications.id"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     pubmed_id: Mapped[str | None] = mapped_column(
         String(20),
+        nullable=True,
+        index=True,
+    )
+    source_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        index=True,
+    )
+    source_record_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+    raw_storage_key: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+        index=True,
+    )
+    payload_ref: Mapped[str | None] = mapped_column(
+        String(500),
         nullable=True,
         index=True,
     )
@@ -103,10 +123,10 @@ class ExtractionQueueItemModel(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "publication_id",
             "source_id",
+            "source_record_id",
             "extraction_version",
-            name="uq_extraction_queue_pub_source_version",
+            name="uq_extraction_queue_source_record_version",
         ),
     )
 

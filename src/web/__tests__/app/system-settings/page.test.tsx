@@ -5,7 +5,6 @@ import { fetchUsers, fetchUserStatistics } from '@/lib/api/users'
 import { fetchStorageConfigurations, fetchStorageOverview } from '@/lib/api/storage'
 import { fetchMaintenanceState } from '@/lib/api/system-status'
 import { fetchResearchSpaces } from '@/lib/api/research-spaces'
-import { fetchMechanisms } from '@/lib/api/mechanisms'
 import {
   fetchAdminCatalogEntries,
   fetchCatalogAvailabilitySummaries,
@@ -35,9 +34,6 @@ jest.mock('@/lib/api/system-status', () => ({
 }))
 jest.mock('@/lib/api/research-spaces', () => ({
   fetchResearchSpaces: jest.fn(),
-}))
-jest.mock('@/lib/api/mechanisms', () => ({
-  fetchMechanisms: jest.fn(),
 }))
 jest.mock('@/lib/api/data-source-activation', () => ({
   fetchAdminCatalogEntries: jest.fn(),
@@ -143,15 +139,6 @@ describe('SystemSettingsPage (server)', () => {
       skip: 0,
       limit: 100,
     })
-    ;(fetchMechanisms as jest.Mock).mockResolvedValue({
-      items: [],
-      total: 0,
-      page: 1,
-      per_page: 50,
-      total_pages: 1,
-      has_next: false,
-      has_prev: false,
-    })
     redirectMock.mockImplementation(() => undefined)
 
     const result = (await SystemSettingsPage()) as ReactElement
@@ -168,7 +155,6 @@ describe('SystemSettingsPage (server)', () => {
     expect(fetchAdminCatalogEntries).toHaveBeenCalledWith('admin-token')
     expect(fetchCatalogAvailabilitySummaries).toHaveBeenCalledWith('admin-token')
     expect(fetchResearchSpaces).toHaveBeenCalledWith({ limit: 100 }, 'admin-token')
-    expect(fetchMechanisms).toHaveBeenCalledWith({ page: 1, per_page: 50 }, 'admin-token')
     expect(result).toBeTruthy()
   })
 })

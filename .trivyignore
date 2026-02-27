@@ -1,0 +1,4 @@
+# Tracked dependency advisory under evaluation.
+# Remove this ignore once the affected dependency chain is upgraded to
+# a version that no longer reports this CVE.
+CVE-2026-25580

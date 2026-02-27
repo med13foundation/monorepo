@@ -6,7 +6,6 @@ use cases while preserving strong typing.
 """
 
 from src.domain.entities.publication import Publication, PublicationType
-from src.domain.repositories.evidence_repository import EvidenceRepository
 from src.domain.repositories.publication_repository import PublicationRepository
 from src.domain.value_objects.identifiers import PublicationIdentifier
 from src.type_definitions.common import (
@@ -27,7 +26,6 @@ class PublicationApplicationService:
     def __init__(
         self,
         publication_repository: PublicationRepository,
-        evidence_repository: EvidenceRepository | None = None,
     ):
         """
         Initialize the publication application service.
@@ -36,7 +34,6 @@ class PublicationApplicationService:
             publication_repository: Domain repository for publications
         """
         self._publication_repository = publication_repository
-        self._evidence_repository = evidence_repository
 
     def create_publication(  # noqa: PLR0913 - explicit domain fields
         self,
@@ -185,25 +182,6 @@ class PublicationApplicationService:
     def find_recent_publications(self, days: int = 30) -> list[Publication]:
         """Find publications from the last N days."""
         return self._publication_repository.find_recent_publications(days)
-
-    def get_publication_with_evidence(
-        self,
-        publication_id: int,
-    ) -> Publication | None:
-        """Fetch a publication along with associated evidence records."""
-        publication = self._publication_repository.get_by_id(publication_id)
-        if publication is None:
-            return None
-
-        if self._evidence_repository is None:
-            return publication
-
-        evidence_records = self._evidence_repository.find_by_publication(
-            publication_id,
-        )
-        for record in evidence_records:
-            publication.add_evidence(record)
-        return publication
 
     def validate_publication_exists(self, publication_id: int) -> bool:
         """

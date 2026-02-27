@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, Boolean, Float, Integer, String, Text
 from sqlalchemy import Enum as SQLEnum
@@ -11,9 +10,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
 from .base import Base
-
-if TYPE_CHECKING:
-    from .user_data_source import UserDataSourceModel
 
 # SQLAlchemy model for reusable data source templates.
 
@@ -37,6 +33,8 @@ class SourceTypeEnum(str, Enum):
     API = "api"
     DATABASE = "database"
     WEB_SCRAPING = "web_scraping"
+    PUBMED = "pubmed"
+    CLINVAR = "clinvar"
 
 
 class SourceTemplateModel(Base):
@@ -64,15 +62,26 @@ class SourceTemplateModel(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     category: Mapped[TemplateCategoryEnum] = mapped_column(
-        SQLEnum(TemplateCategoryEnum),
+        SQLEnum(
+            TemplateCategoryEnum,
+            name="templatecategoryenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         default=TemplateCategoryEnum.OTHER,
+        server_default=TemplateCategoryEnum.OTHER.value,
         index=True,
     )
 
     # Template definition
     source_type: Mapped[SourceTypeEnum] = mapped_column(
-        SQLEnum(SourceTypeEnum),
+        SQLEnum(
+            SourceTypeEnum,
+            name="sourcetypeenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         index=True,
     )
@@ -130,7 +139,7 @@ class SourceTemplateModel(Base):
     )
 
     # Relationships
-    sources: Mapped[list[UserDataSourceModel]] = relationship(
+    sources = relationship(
         "UserDataSourceModel",
         back_populates="template",
     )

@@ -16,7 +16,11 @@ from src.domain.entities.user_data_source import (
     SourceType,
     UserDataSource,
 )
-from src.models.database import UserDataSourceModel
+from src.models.database.user_data_source import (
+    SourceStatusEnum,
+    SourceTypeEnum,
+    UserDataSourceModel,
+)
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -56,37 +60,38 @@ class UserDataSourceMapper:
         Returns:
             The corresponding UserDataSource domain entity
         """
-        # Timestamps are handled by SQLAlchemy as datetime objects
-        created_at = model.created_at
-        updated_at = model.updated_at
-        last_ingested_at = _parse_datetime(model.last_ingested_at)
-
-        # Build configuration
-        configuration = SourceConfiguration.model_validate(model.configuration)
-
-        ingestion_schedule = IngestionSchedule.model_validate(
-            model.ingestion_schedule,
+        source_type_raw = (
+            model.source_type.value
+            if isinstance(model.source_type, SourceTypeEnum)
+            else str(model.source_type)
+        )
+        status_raw = (
+            model.status.value
+            if isinstance(model.status, SourceStatusEnum)
+            else str(model.status)
         )
 
-        quality_metrics = QualityMetrics.model_validate(model.quality_metrics)
-
         return UserDataSource(
-            id=UUID(model.id),
-            owner_id=UUID(model.owner_id),
+            id=UUID(str(model.id)),
+            owner_id=UUID(str(model.owner_id)),
             research_space_id=(
-                UUID(model.research_space_id) if model.research_space_id else None
+                UUID(str(model.research_space_id))
+                if model.research_space_id is not None
+                else None
             ),
             name=model.name,
             description=model.description,
-            source_type=SourceType(model.source_type),
-            template_id=UUID(model.template_id) if model.template_id else None,
-            configuration=configuration,
-            status=SourceStatus(model.status),
-            ingestion_schedule=ingestion_schedule,
-            quality_metrics=quality_metrics,
-            created_at=created_at,
-            updated_at=updated_at,
-            last_ingested_at=last_ingested_at,
+            source_type=SourceType(source_type_raw),
+            template_id=UUID(str(model.template_id)) if model.template_id else None,
+            configuration=SourceConfiguration.model_validate(model.configuration or {}),
+            status=SourceStatus(status_raw),
+            ingestion_schedule=IngestionSchedule.model_validate(
+                model.ingestion_schedule or {},
+            ),
+            quality_metrics=QualityMetrics.model_validate(model.quality_metrics or {}),
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+            last_ingested_at=_parse_datetime(model.last_ingested_at),
             tags=model.tags or [],
             version=model.version,
         )
@@ -106,17 +111,19 @@ class UserDataSourceMapper:
             id=str(entity.id),
             owner_id=str(entity.owner_id),
             research_space_id=(
-                str(entity.research_space_id) if entity.research_space_id else None
+                str(entity.research_space_id)
+                if entity.research_space_id is not None
+                else None
             ),
             name=entity.name,
             description=entity.description,
-            source_type=entity.source_type.value,
+            source_type=SourceTypeEnum(entity.source_type.value),
             template_id=str(entity.template_id) if entity.template_id else None,
-            configuration=entity.configuration.model_dump(),
-            status=entity.status.value,
-            ingestion_schedule=entity.ingestion_schedule.model_dump(),
-            quality_metrics=entity.quality_metrics.model_dump(),
+            configuration=entity.configuration.model_dump(mode="json"),
+            status=SourceStatusEnum(entity.status.value),
+            ingestion_schedule=entity.ingestion_schedule.model_dump(mode="json"),
+            quality_metrics=entity.quality_metrics.model_dump(mode="json"),
             last_ingested_at=_format_datetime(entity.last_ingested_at),
-            tags=entity.tags,
+            tags=list(entity.tags),
             version=entity.version,
         )

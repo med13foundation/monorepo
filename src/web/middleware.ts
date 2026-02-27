@@ -29,12 +29,11 @@ export const config = {
     /*
      * Match all request paths except for the ones starting with:
      * - api/auth (NextAuth.js routes)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
+     * - _next/* (Next.js internals: static, image, HMR, etc.)
      * - favicon.ico (favicon file)
      * - auth/* (login, register, forgot-password pages)
      * - e2e/* (Playwright-only routes)
      */
-    "/((?!api/auth|auth/|_next/static|_next/image|favicon.ico|e2e/).*)",
+    "/((?!api/auth|auth/|_next/|favicon.ico|e2e/).*)",
   ],
 }

@@ -19,13 +19,20 @@ class AiAgentConfig(BaseModel):
         default="",
         description="Custom instructions to steer the agent's behavior",
     )
+    query_agent_source_type: str = Field(
+        default="pubmed",
+        description="Source type passed to the query-generation agent.",
+    )
     use_research_space_context: bool = Field(
         default=True,
         description="Whether to use the research space description as context",
     )
     model_id: str | None = Field(
         default=None,
-        description="Override model ID for this source (None = use system default)",
+        description=(
+            "Optional per-source model override; applied only when runtime "
+            "model overrides are enabled in artana.toml."
+        ),
     )
 
 
@@ -57,11 +64,23 @@ class PubMedQueryConfig(BaseModel):
         le=10000,
         description="Maximum number of articles to retrieve per run",
     )
+    open_access_only: bool = Field(
+        default=True,
+        description=(
+            "When true, enforce PubMed open-access/full-text filters at query time."
+        ),
+    )
     relevance_threshold: int = Field(
         default=5,
         ge=0,
         le=10,
         description="Relevance score threshold for filtering articles",
+    )
+    pinned_pubmed_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional strict PubMed ID filter used for deterministic smoke tests."
+        ),
     )
     agent_config: AiAgentConfig = Field(
         default_factory=AiAgentConfig,
@@ -84,6 +103,27 @@ class PubMedQueryConfig(BaseModel):
     def validate_date_range(cls, value: str | None) -> str | None:
         """Simple passthrough; ordering enforced in model validator."""
         return value
+
+    @field_validator("pinned_pubmed_id")
+    @classmethod
+    def validate_pinned_pubmed_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if not normalized.isdigit():
+            msg = "pinned_pubmed_id must be digits only"
+            raise ValueError(msg)
+        return normalized
+
+    @field_validator("open_access_only")
+    @classmethod
+    def enforce_open_access_only(cls, value: object) -> bool:
+        if value is not True:
+            msg = "PubMed sources must enforce open_access_only=true"
+            raise ValueError(msg)
+        return True
 
     @model_validator(mode="after")
     def ensure_date_order(self) -> PubMedQueryConfig:

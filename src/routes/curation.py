@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from src.application.curation import (
     ApprovalService,
     CommentService,
-    CurationDetailService,
     ReviewQuery,
     ReviewQueueItem,
     ReviewService,
@@ -21,9 +20,6 @@ from src.database.session import get_session
 from src.domain.entities.user import User
 from src.domain.value_objects.permission import Permission
 from src.infrastructure.dependency_injection.container import container
-from src.infrastructure.dependency_injection.dependencies import (
-    get_legacy_dependency_container,
-)
 from src.infrastructure.observability.request_context import get_audit_context
 from src.routes.auth import get_current_active_user
 from src.type_definitions.common import AuditContext, JSONObject, JSONValue
@@ -88,15 +84,6 @@ def _approval_service() -> ApprovalService:
 
 def _comment_service() -> CommentService:
     return CommentService(SqlAlchemyAuditRepository())
-
-
-def _curation_detail_service(
-    db: Session = Depends(get_session),
-) -> CurationDetailService:
-    # Get unified container with legacy support
-
-    container = get_legacy_dependency_container()
-    return container.create_curation_detail_service(db)
 
 
 _audit_trail_service = AuditTrailService(SqlAlchemyAuditRepository())
@@ -258,7 +245,6 @@ async def comment(
 async def get_curated_detail(
     entity_type: str,
     entity_id: str,
-    service: CurationDetailService = Depends(_curation_detail_service),
     current_user: User = Depends(get_current_active_user),
     authz_service: AuthorizationService = Depends(container.get_authorization_service),
 ) -> JSONObject:
@@ -273,14 +259,9 @@ async def get_curated_detail(
         Permission.CURATION_REVIEW,
         authz_service,
     )
-    try:
-        detail = service.get_detail(entity_type, entity_id)
-        return detail.to_serializable()
-    except ValueError as exc:
-        message = str(exc)
-        status_code = (
-            status.HTTP_404_NOT_FOUND
-            if "not found" in message.lower()
-            else status.HTTP_400_BAD_REQUEST
-        )
-        raise HTTPException(status_code=status_code, detail=message) from exc
+    # Legacy curation detail depends on variant/evidence/phenotype services
+    # that have been replaced by kernel. Pending kernel-native curation rewrite.
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Curation detail service is being migrated to kernel architecture.",
+    )

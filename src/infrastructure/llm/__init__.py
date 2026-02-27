@@ -1,75 +1,146 @@
-"""
-LLM infrastructure layer for AI agents.
+"""LLM infrastructure layer for AI runtime adapters and configuration."""
 
-Provides Flujo-based implementations for AI agent operations
-following contract-first, evidence-based patterns.
+from __future__ import annotations
 
-Module Organization:
-- config/: Configuration management (flujo_config, governance, model_registry)
-- factories/: Agent factories for creating Flujo agents
-- pipelines/: Pipeline definitions with governance patterns
-- adapters/: Port adapter implementations
-- state/: State backend and lifecycle management
-- skills/: Skill registry for bounded capabilities
-- prompts/: Version-controlled system prompts
-"""
-
-from src.infrastructure.llm.adapters.query_agent_adapter import FlujoQueryAgentAdapter
-from src.infrastructure.llm.config.flujo_config import resolve_flujo_state_uri
-from src.infrastructure.llm.config.governance import GovernanceConfig
-from src.infrastructure.llm.config.model_registry import (
-    FlujoModelRegistry,
-    ModelRegistry,
-    get_model_registry,
-)
-from src.infrastructure.llm.factories.query_agent_factory import (
-    QueryAgentFactory,
-    create_pubmed_query_agent,
-)
-from src.infrastructure.llm.pipelines.query_pipelines.pubmed_pipeline import (
-    create_pubmed_query_pipeline,
-)
-from src.infrastructure.llm.skills.registry import (
-    SkillRegistry,
-    get_skill_registry,
-    register_all_skills,
-)
-from src.infrastructure.llm.state.backend_manager import (
-    StateBackendManager,
-    get_state_backend,
-)
-from src.infrastructure.llm.state.flujo_state_repository import (
-    SqlAlchemyFlujoStateRepository,
-)
-from src.infrastructure.llm.state.lifecycle import (
-    FlujoLifecycleManager,
-    flujo_lifespan,
-    get_lifecycle_manager,
-)
+from importlib import import_module
 
 __all__ = [
     # Adapters
-    "FlujoQueryAgentAdapter",
+    "ArtanaContentEnrichmentAdapter",
+    "ArtanaEntityRecognitionAdapter",
+    "ArtanaExtractionAdapter",
+    "ArtanaExtractionPolicyAdapter",
+    "ArtanaGraphConnectionAdapter",
+    "ArtanaGraphSearchAdapter",
+    "ArtanaMappingJudgeAdapter",
+    "ArtanaQueryAgentAdapter",
     # Config
-    "FlujoModelRegistry",
+    "ArtanaModelRegistry",
     "GovernanceConfig",
     "ModelRegistry",
     "get_model_registry",
-    "resolve_flujo_state_uri",
-    # Factories
-    "create_pubmed_query_agent",
-    "QueryAgentFactory",
-    # Pipelines
-    "create_pubmed_query_pipeline",
+    "resolve_artana_state_uri",
     # Skills
+    "build_content_enrichment_tools",
+    "build_extraction_validation_tools",
+    "build_entity_recognition_dictionary_tools",
+    "build_graph_connection_tools",
+    "build_graph_search_tools",
     "get_skill_registry",
     "register_all_skills",
     "SkillRegistry",
-    # State
-    "flujo_lifespan",
-    "FlujoLifecycleManager",
-    "get_lifecycle_manager",
-    "get_state_backend",
-    "SqlAlchemyFlujoStateRepository",
-    "StateBackendManager",
+    # State inspection
+    "ArtanaKernelRunProgressRepository",
+    "SqlAlchemyAgentRunStateRepository",
 ]
+
+_EXPORT_MAP: dict[str, tuple[str, str]] = {
+    "ArtanaContentEnrichmentAdapter": (
+        "src.infrastructure.llm.adapters.content_enrichment_agent_adapter",
+        "ArtanaContentEnrichmentAdapter",
+    ),
+    "ArtanaEntityRecognitionAdapter": (
+        "src.infrastructure.llm.adapters.entity_recognition_agent_adapter",
+        "ArtanaEntityRecognitionAdapter",
+    ),
+    "ArtanaExtractionAdapter": (
+        "src.infrastructure.llm.adapters.extraction_agent_adapter",
+        "ArtanaExtractionAdapter",
+    ),
+    "ArtanaExtractionPolicyAdapter": (
+        "src.infrastructure.llm.adapters.extraction_policy_agent_adapter",
+        "ArtanaExtractionPolicyAdapter",
+    ),
+    "ArtanaGraphConnectionAdapter": (
+        "src.infrastructure.llm.adapters.graph_connection_agent_adapter",
+        "ArtanaGraphConnectionAdapter",
+    ),
+    "ArtanaGraphSearchAdapter": (
+        "src.infrastructure.llm.adapters.graph_search_agent_adapter",
+        "ArtanaGraphSearchAdapter",
+    ),
+    "ArtanaMappingJudgeAdapter": (
+        "src.infrastructure.llm.adapters.mapping_judge_agent_adapter",
+        "ArtanaMappingJudgeAdapter",
+    ),
+    "ArtanaQueryAgentAdapter": (
+        "src.infrastructure.llm.adapters.query_agent_adapter",
+        "ArtanaQueryAgentAdapter",
+    ),
+    "ArtanaModelRegistry": (
+        "src.infrastructure.llm.config.model_registry",
+        "ArtanaModelRegistry",
+    ),
+    "GovernanceConfig": (
+        "src.infrastructure.llm.config.governance",
+        "GovernanceConfig",
+    ),
+    "ModelRegistry": (
+        "src.infrastructure.llm.config.model_registry",
+        "ModelRegistry",
+    ),
+    "get_model_registry": (
+        "src.infrastructure.llm.config.model_registry",
+        "get_model_registry",
+    ),
+    "resolve_artana_state_uri": (
+        "src.infrastructure.llm.config.artana_config",
+        "resolve_artana_state_uri",
+    ),
+    "build_content_enrichment_tools": (
+        "src.infrastructure.llm.skills.registry",
+        "build_content_enrichment_tools",
+    ),
+    "build_extraction_validation_tools": (
+        "src.infrastructure.llm.skills.registry",
+        "build_extraction_validation_tools",
+    ),
+    "build_entity_recognition_dictionary_tools": (
+        "src.infrastructure.llm.skills.registry",
+        "build_entity_recognition_dictionary_tools",
+    ),
+    "build_graph_connection_tools": (
+        "src.infrastructure.llm.skills.registry",
+        "build_graph_connection_tools",
+    ),
+    "build_graph_search_tools": (
+        "src.infrastructure.llm.skills.registry",
+        "build_graph_search_tools",
+    ),
+    "get_skill_registry": (
+        "src.infrastructure.llm.skills.registry",
+        "get_skill_registry",
+    ),
+    "register_all_skills": (
+        "src.infrastructure.llm.skills.registry",
+        "register_all_skills",
+    ),
+    "SkillRegistry": (
+        "src.infrastructure.llm.skills.registry",
+        "SkillRegistry",
+    ),
+    "ArtanaKernelRunProgressRepository": (
+        "src.infrastructure.llm.state.run_progress_repository",
+        "ArtanaKernelRunProgressRepository",
+    ),
+    "SqlAlchemyAgentRunStateRepository": (
+        "src.infrastructure.llm.state.agent_run_state_repository",
+        "SqlAlchemyAgentRunStateRepository",
+    ),
+}
+
+
+def __getattr__(name: str) -> object:
+    target = _EXPORT_MAP.get(name)
+    if target is None:
+        msg = f"module {__name__!r} has no attribute {name!r}"
+        raise AttributeError(msg)
+    module_name, attribute_name = target
+    module = import_module(module_name)
+    value = getattr(module, attribute_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

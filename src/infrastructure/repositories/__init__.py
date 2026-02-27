@@ -1,30 +1,32 @@
-from .data_discovery_repository_impl import (
+"""Repository adapters for infrastructure layer."""
+
+from .core import (
+    SqlAlchemyDataSourceActivationRepository,
+    SqlAlchemyExtractionQueueRepository,
+    SqlAlchemyIngestionJobRepository,
+    SqlAlchemyIngestionSchedulerJobRepository,
+    SqlAlchemyIngestionSourceLockRepository,
+    SqlAlchemyResearchSpaceRepository,
+    SqlAlchemySessionRepository,
+    SqlAlchemySourceDocumentRepository,
+    SqlAlchemySourceRecordLedgerRepository,
+    SqlAlchemySourceSyncStateRepository,
+    SqlAlchemySourceTemplateRepository,
+    SqlAlchemyStorageConfigurationRepository,
+    SqlAlchemyStorageOperationRepository,
+    SqlAlchemySystemStatusRepository,
+    SqlAlchemyUserDataSourceRepository,
+    SqlAlchemyUserRepository,
+)
+from .data_discovery import (
     SQLAlchemyDataDiscoverySessionRepository,
     SQLAlchemyDiscoveryPresetRepository,
     SQLAlchemyDiscoverySearchJobRepository,
     SQLAlchemyQueryTestResultRepository,
     SQLAlchemySourceCatalogRepository,
 )
-from .data_source_activation_repository import SqlAlchemyDataSourceActivationRepository
-from .evidence_repository import SqlAlchemyEvidenceRepository
-from .extraction_queue_repository import SqlAlchemyExtractionQueueRepository
-from .gene_repository import SqlAlchemyGeneRepository
-from .ingestion_job_repository import SqlAlchemyIngestionJobRepository
-from .mechanism_repository import SqlAlchemyMechanismRepository
-from .phenotype_repository import SqlAlchemyPhenotypeRepository
 from .publication_extraction_repository import SqlAlchemyPublicationExtractionRepository
 from .publication_repository import SqlAlchemyPublicationRepository
-from .research_space_repository import SqlAlchemyResearchSpaceRepository
-from .source_template_repository import SqlAlchemySourceTemplateRepository
-from .sqlalchemy_session_repository import SqlAlchemySessionRepository
-from .sqlalchemy_user_repository import SqlAlchemyUserRepository
-from .storage_repository import (
-    SqlAlchemyStorageConfigurationRepository,
-    SqlAlchemyStorageOperationRepository,
-)
-from .system_status_repository import SqlAlchemySystemStatusRepository
-from .user_data_source_repository import SqlAlchemyUserDataSourceRepository
-from .variant_repository import SqlAlchemyVariantRepository
 
 __all__ = [
     "SQLAlchemyDataDiscoverySessionRepository",
@@ -33,15 +35,16 @@ __all__ = [
     "SQLAlchemyQueryTestResultRepository",
     "SQLAlchemySourceCatalogRepository",
     "SqlAlchemyDataSourceActivationRepository",
-    "SqlAlchemyEvidenceRepository",
     "SqlAlchemyExtractionQueueRepository",
-    "SqlAlchemyGeneRepository",
     "SqlAlchemyIngestionJobRepository",
-    "SqlAlchemyMechanismRepository",
-    "SqlAlchemyPhenotypeRepository",
+    "SqlAlchemyIngestionSchedulerJobRepository",
+    "SqlAlchemyIngestionSourceLockRepository",
     "SqlAlchemyPublicationExtractionRepository",
     "SqlAlchemyPublicationRepository",
     "SqlAlchemyResearchSpaceRepository",
+    "SqlAlchemySourceDocumentRepository",
+    "SqlAlchemySourceRecordLedgerRepository",
+    "SqlAlchemySourceSyncStateRepository",
     "SqlAlchemySourceTemplateRepository",
     "SqlAlchemySessionRepository",
     "SqlAlchemyStorageConfigurationRepository",
@@ -49,5 +52,4 @@ __all__ = [
     "SqlAlchemySystemStatusRepository",
     "SqlAlchemyUserDataSourceRepository",
     "SqlAlchemyUserRepository",
-    "SqlAlchemyVariantRepository",
 ]

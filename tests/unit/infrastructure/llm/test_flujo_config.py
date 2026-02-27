@@ -1,4 +1,4 @@
-"""Tests for Flujo configuration helpers."""
+"""Tests for Artana configuration helpers."""
 
 from __future__ import annotations
 
@@ -6,10 +6,12 @@ import os
 from unittest.mock import patch
 from urllib.parse import parse_qsl, urlsplit
 
-from src.infrastructure.llm.config.flujo_config import (
-    _add_flujo_schema,
+import pytest
+
+from src.infrastructure.llm.config.artana_config import (
+    _add_artana_schema,
     _normalize_postgres_dsn,
-    resolve_flujo_state_uri,
+    resolve_artana_state_uri,
 )
 
 
@@ -21,52 +23,58 @@ def _get_query_param(url: str, key: str) -> str | None:
     return None
 
 
-class TestResolveFlujoUri:
-    """Tests for resolve_flujo_state_uri."""
+class TestResolveArtanaUri:
+    """Tests for resolve_artana_state_uri."""
 
     def test_explicit_uri_takes_precedence(self) -> None:
-        """FLUJO_STATE_URI should override derived URL."""
-        with patch.dict(os.environ, {"FLUJO_STATE_URI": "postgresql://custom"}):
-            assert resolve_flujo_state_uri() == "postgresql://custom"
+        """ARTANA_STATE_URI should override derived URL."""
+        with patch.dict(os.environ, {"ARTANA_STATE_URI": "postgresql://custom"}):
+            assert resolve_artana_state_uri() == "postgresql://custom"
 
-    def test_sqlite_returns_file_based(self) -> None:
-        """SQLite DATABASE_URL should return SQLite Flujo state."""
-        with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///test.db"}, clear=True):
-            result = resolve_flujo_state_uri()
-            assert result == "sqlite:///flujo_state.db"
+    def test_sqlite_database_url_is_rejected(self) -> None:
+        """SQLite DATABASE_URL should be rejected by Postgres-only config."""
+        with (
+            patch.dict(
+                os.environ,
+                {"DATABASE_URL": "sqlite:///test.db", "TESTING": "true"},
+                clear=True,
+            ),
+            pytest.raises(RuntimeError, match="requires a PostgreSQL"),
+        ):
+            resolve_artana_state_uri()
 
     def test_postgres_adds_schema(self) -> None:
-        """PostgreSQL should have flujo schema added."""
+        """PostgreSQL should have artana schema added."""
         with patch.dict(
             os.environ,
             {"DATABASE_URL": "postgresql://user:pass@host:5432/db"},
             clear=True,
         ):
-            result = resolve_flujo_state_uri()
+            result = resolve_artana_state_uri()
             options = _get_query_param(result, "options")
             assert options is not None
-            assert "search_path=flujo,public" in options
+            assert "search_path=artana,public" in options
 
 
-class TestAddFlujoSchema:
-    """Tests for _add_flujo_schema helper."""
+class TestAddArtanaSchema:
+    """Tests for _add_artana_schema helper."""
 
     def test_adds_options_to_clean_url(self) -> None:
         """Schema option should be added to URL without options."""
         url = "postgresql://user:pass@host:5432/db"
-        result = _add_flujo_schema(url)
+        result = _add_artana_schema(url)
         options = _get_query_param(result, "options")
         assert options is not None
-        assert "search_path=flujo,public" in options
+        assert "search_path=artana,public" in options
 
     def test_preserves_existing_query_params(self) -> None:
         """Existing query params should be preserved."""
         url = "postgresql://user:pass@host:5432/db?sslmode=require"
-        result = _add_flujo_schema(url)
+        result = _add_artana_schema(url)
         assert _get_query_param(result, "sslmode") == "require"
         options = _get_query_param(result, "options")
         assert options is not None
-        assert "search_path=flujo,public" in options
+        assert "search_path=artana,public" in options
 
     def test_normalizes_sqlalchemy_driver(self) -> None:
         """SQLAlchemy driver schemes should be normalized for asyncpg."""

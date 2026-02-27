@@ -16,7 +16,7 @@ from types import TracebackType
 
 import httpx
 
-from src.models.value_objects import DataSource, Provenance
+from src.domain.value_objects import DataSource, Provenance
 from src.type_definitions.common import JSONObject, JSONPrimitive, JSONValue, RawRecord
 
 
@@ -185,7 +185,7 @@ class BaseIngestor(ABC):
             source_url=self.base_url,
             acquired_at=start_time,
             acquired_by="MED13-Resource-Library",
-            processing_steps=[f"Ingested from {self.source_name}"],
+            processing_steps=(f"Ingested from {self.source_name}",),
             validation_status="pending",
             quality_score=1.0,
         )

@@ -2,7 +2,7 @@ import os
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete, text
+from sqlalchemy import delete
 
 from src.database.session import SessionLocal, engine
 from src.domain.entities.user import UserRole, UserStatus
@@ -12,6 +12,7 @@ from src.main import create_app
 from src.middleware import jwt_auth as jwt_auth_module
 from src.models.database.base import Base
 from src.models.database.user import UserModel
+from tests.db_reset import reset_database
 
 TEST_ADMIN_PASSWORD = os.getenv("MED13_E2E_ADMIN_PASSWORD", "StrongPass!123")
 
@@ -94,16 +95,7 @@ async def test_curation_submit_list_approve_comment() -> None:
             transport=transport,
             base_url="http://testserver",
         ) as client:
-            # Ensure tables exist for the test
-            with engine.begin() as connection:
-                if connection.dialect.name == "postgresql":
-                    connection.execute(
-                        text(
-                            "DROP TYPE IF EXISTS data_source_permission_level CASCADE",
-                        ),
-                    )
-            Base.metadata.drop_all(engine)
-            Base.metadata.create_all(engine)
+            reset_database(engine, Base.metadata)
             headers = await _get_auth_headers(client)
 
             # Submit a record for review

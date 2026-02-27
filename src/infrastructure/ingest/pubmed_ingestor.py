@@ -6,23 +6,54 @@ Fetches scientific literature and publication data from PubMed.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from defusedxml import ElementTree
-
 from .base_ingestor import BaseIngestor
+from .pubmed_record_parser_mixin import PubMedRecordParserMixin
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from xml.etree.ElementTree import Element  # nosec B405
-
     from src.type_definitions.common import JSONValue, RawRecord
 
-# Relevance threshold constant
-RELEVANCE_THRESHOLD: int = 5
+
+@dataclass(frozen=True)
+class PubMedSearchPage:
+    """Search-stage page metadata returned by ESearch."""
+
+    article_ids: list[str]
+    total_count: int
+    retstart: int
+    retmax: int
+
+    @property
+    def returned_count(self) -> int:
+        """Number of IDs returned in this page."""
+        return len(self.article_ids)
 
 
-class PubMedIngestor(BaseIngestor):
+@dataclass(frozen=True)
+class PubMedFetchPage:
+    """Fetch-stage result including records and cursor metadata."""
+
+    records: list[RawRecord]
+    total_count: int
+    retstart: int
+    retmax: int
+    returned_count: int
+
+    @property
+    def next_retstart(self) -> int:
+        """Cursor offset for the next page."""
+        return self.retstart + self.returned_count
+
+    @property
+    def has_more(self) -> bool:
+        """Whether additional pages are available."""
+        return self.next_retstart < self.total_count
+
+
+class PubMedIngestor(BaseIngestor, PubMedRecordParserMixin):
     """
     PubMed API client for fetching scientific literature data.
 
@@ -50,6 +81,25 @@ class PubMedIngestor(BaseIngestor):
         Returns:
             List of PubMed article records
         """
+        page = await self.fetch_page(**kwargs)
+        return page.records
+
+    async def fetch_page(self, **kwargs: JSONValue) -> PubMedFetchPage:
+        """Fetch one PubMed page with explicit cursor metadata."""
+        pinned_pubmed_id_raw = kwargs.get("pinned_pubmed_id")
+        if isinstance(pinned_pubmed_id_raw, str) and pinned_pubmed_id_raw.strip():
+            pinned_pubmed_id = pinned_pubmed_id_raw.strip()
+            records = await self._fetch_article_details([pinned_pubmed_id])
+            retmax = max(self._coerce_int(kwargs.get("max_results"), 1), 1)
+            total_count = 1 if records else 0
+            return PubMedFetchPage(
+                records=records,
+                total_count=total_count,
+                retstart=0,
+                retmax=retmax,
+                returned_count=len(records),
+            )
+
         # Step 1: Search for publications
         query_value = kwargs.get("query")
         query = query_value if isinstance(query_value, str) else "MED13"
@@ -57,9 +107,16 @@ class PubMedIngestor(BaseIngestor):
         search_kwargs = dict(kwargs)
         search_kwargs.pop("query", None)
 
-        article_ids = await self._search_publications(query, **search_kwargs)
+        search_page = await self._search_publications(query, **search_kwargs)
+        article_ids = list(search_page.article_ids)
         if not article_ids:
-            return []
+            return PubMedFetchPage(
+                records=[],
+                total_count=search_page.total_count,
+                retstart=search_page.retstart,
+                retmax=search_page.retmax,
+                returned_count=0,
+            )
 
         # Step 2: Fetch detailed records in batches
         all_records: list[RawRecord] = []
@@ -73,9 +130,19 @@ class PubMedIngestor(BaseIngestor):
             # Small delay between batches
             await asyncio.sleep(0.1)
 
-        return all_records
+        return PubMedFetchPage(
+            records=all_records,
+            total_count=search_page.total_count,
+            retstart=search_page.retstart,
+            retmax=search_page.retmax,
+            returned_count=search_page.returned_count,
+        )
 
-    async def _search_publications(self, query: str, **kwargs: JSONValue) -> list[str]:
+    async def _search_publications(
+        self,
+        query: str,
+        **kwargs: JSONValue,
+    ) -> PubMedSearchPage:
         """
         Search PubMed for publications matching the query.
 
@@ -102,17 +169,25 @@ class PubMedIngestor(BaseIngestor):
             if pub_types:
                 query_terms.append(f"({pub_types})")
 
+        if self._coerce_bool(kwargs.get("open_access_only"), default=True):
+            query_terms.append(
+                '("open access"[filter] OR "loattrfree full text"[sb])',
+            )
+
         full_query = " AND ".join(f"({term})" for term in query_terms)
 
         # Use ESearch to find relevant records
         mindate_value = kwargs.get("mindate")
         maxdate_value = kwargs.get("maxdate")
 
+        retstart = max(self._coerce_int(kwargs.get("retstart"), 0), 0)
+        retmax = max(self._coerce_int(kwargs.get("max_results"), 500), 1)
         params: dict[str, str | int | float | bool | None] = {
             "db": "pubmed",
             "term": full_query,
             "retmode": "json",
-            "retmax": self._coerce_int(kwargs.get("max_results"), 500),
+            "retstart": retstart,
+            "retmax": retmax,
             "sort": "relevance",
             "datetype": "pdat",
             "mindate": mindate_value if isinstance(mindate_value, str) else None,
@@ -125,11 +200,29 @@ class PubMedIngestor(BaseIngestor):
         # Extract article IDs from search results
         esearch_section = data.get("esearchresult")
         if not isinstance(esearch_section, dict):
-            return []
+            return PubMedSearchPage(
+                article_ids=[],
+                total_count=0,
+                retstart=retstart,
+                retmax=retmax,
+            )
+        response_total_count = self._coerce_int(esearch_section.get("count"), 0)
+        response_retstart = self._coerce_int(esearch_section.get("retstart"), retstart)
+        response_retmax = self._coerce_int(esearch_section.get("retmax"), retmax)
         id_list = esearch_section.get("idlist", [])
         if not isinstance(id_list, list):
-            return []
-        return [str(aid) for aid in id_list]
+            return PubMedSearchPage(
+                article_ids=[],
+                total_count=response_total_count,
+                retstart=response_retstart,
+                retmax=response_retmax,
+            )
+        return PubMedSearchPage(
+            article_ids=[str(aid) for aid in id_list],
+            total_count=response_total_count,
+            retstart=response_retstart,
+            retmax=response_retmax,
+        )
 
     async def _fetch_article_details(
         self,
@@ -174,225 +267,6 @@ class PubMedIngestor(BaseIngestor):
             )
 
         return records
-
-    def _parse_pubmed_xml(self, xml_content: str) -> list[RawRecord]:
-        """
-        Parse PubMed XML response into structured data.
-
-        Args:
-            xml_content: Raw XML response
-
-        Returns:
-            List of parsed article records
-        """
-        try:
-            root = ElementTree.fromstring(xml_content)
-            records: list[RawRecord] = []
-
-            # PubMed XML structure: MedlineCitation elements
-            for citation in root.findall(".//MedlineCitation"):
-                record = self._parse_single_citation(citation)
-                if record:
-                    records.append(record)
-
-        except Exception as e:  # noqa: BLE001
-            # Return error record for debugging
-            return [
-                {
-                    "parsing_error": str(e),
-                    "raw_xml": xml_content[:1000],  # First 1000 chars for debugging
-                },
-            ]
-        else:
-            return records
-
-    def _parse_single_citation(self, citation: Element) -> RawRecord | None:
-        """
-        Parse a single MedlineCitation element.
-
-        Args:
-            citation: XML element containing citation data
-
-        Returns:
-            Parsed article record
-        """
-        try:
-            # Extract PMID
-            pmid_elem = citation.find(".//PMID")
-            pmid = pmid_elem.text if pmid_elem is not None else None
-
-            if not pmid:
-                return None
-
-            # Extract basic metadata
-            record: RawRecord = {
-                "pubmed_id": pmid,
-                "title": self._extract_text(citation, ".//ArticleTitle"),
-                "abstract": self._extract_text(citation, ".//AbstractText"),
-                "journal": self._extract_journal_info(citation),
-                "authors": self._extract_authors(citation),
-                "publication_date": self._extract_publication_date(citation),
-                "publication_types": self._extract_publication_types(citation),
-                "keywords": self._extract_keywords(citation),
-                "doi": self._extract_doi(citation),
-                "pmc_id": self._extract_pmc_id(citation),
-            }
-
-            # Extract MED13-specific information
-            record["med13_relevance"] = self._assess_med13_relevance(record)
-
-        except Exception:  # noqa: BLE001
-            return None
-        else:
-            return record
-
-    def _extract_text(self, element: Element, xpath: str) -> str | None:
-        """Extract text content from XML element."""
-        elem = element.find(xpath)
-        return elem.text.strip() if elem is not None and elem.text else None
-
-    def _extract_journal_info(
-        self,
-        citation: Element,
-    ) -> dict[str, str | None] | None:
-        """Extract journal information."""
-        journal_elem = citation.find(".//Journal")
-        if journal_elem is None:
-            return None
-
-        return {
-            "title": self._extract_text(journal_elem, ".//Title"),
-            "iso_abbreviation": self._extract_text(journal_elem, ".//ISOAbbreviation"),
-            "issn": self._extract_text(journal_elem, ".//ISSN"),
-        }
-
-    def _extract_authors(self, citation: Element) -> list[dict[str, str | None]]:
-        """Extract author information."""
-        authors: list[dict[str, str | None]] = []
-        for author_elem in citation.findall(".//Author"):
-            author = {
-                "last_name": self._extract_text(author_elem, ".//LastName"),
-                "first_name": self._extract_text(author_elem, ".//ForeName"),
-                "initials": self._extract_text(author_elem, ".//Initials"),
-                "affiliation": self._extract_text(
-                    author_elem,
-                    ".//AffiliationInfo/Affiliation",
-                ),
-            }
-            if author["last_name"]:  # Only include if we have at least a last name
-                authors.append(author)
-
-        return authors
-
-    def _extract_publication_date(self, citation: Element) -> str | None:
-        """Extract publication date."""
-        # Try different date fields in order of preference
-        date_fields = [
-            ".//PubDate",
-            ".//Article/Journal/JournalIssue/PubDate",
-        ]
-
-        for xpath in date_fields:
-            date_elem = citation.find(xpath)
-            if date_elem is not None:
-                # Extract year, month, day
-                year = self._extract_text(date_elem, ".//Year")
-                month = self._extract_text(date_elem, ".//Month")
-                day = self._extract_text(date_elem, ".//Day")
-
-                if year:
-                    date_parts = [year]
-                    if month:
-                        date_parts.append(month)
-                    if day:
-                        date_parts.append(day)
-                    return "-".join(date_parts)
-
-        return None
-
-    def _extract_publication_types(self, citation: Element) -> list[str]:
-        """Extract publication types."""
-        return [
-            type_elem.text.strip()
-            for type_elem in citation.findall(".//PublicationType")
-            if type_elem.text
-        ]
-
-    def _extract_keywords(self, citation: Element) -> list[str]:
-        """Extract keywords."""
-        return [
-            kw_elem.text.strip()
-            for kw_elem in citation.findall(".//Keyword")
-            if kw_elem.text
-        ]
-
-    def _extract_doi(self, citation: Element) -> str | None:
-        """Extract DOI if available."""
-        # DOI is typically in ArticleId elements
-        for id_elem in citation.findall(".//ArticleId"):
-            id_type = id_elem.get("IdType")
-            if id_type == "doi" and id_elem.text:
-                return id_elem.text.strip()
-        return None
-
-    def _extract_pmc_id(self, citation: Element) -> str | None:
-        """Extract PMC ID if available."""
-        for id_elem in citation.findall(".//ArticleId"):
-            id_type = id_elem.get("IdType")
-            if id_type == "pmc" and id_elem.text:
-                return id_elem.text.strip()
-        return None
-
-    def _assess_med13_relevance(self, record: RawRecord) -> RawRecord:
-        """
-        Assess how relevant this publication is to MED13 research.
-
-        Args:
-            record: Parsed publication record
-
-        Returns:
-            Relevance assessment
-        """
-        relevance_score = 0
-        reasons = []
-
-        # Check title for MED13 mentions
-        title_value = record.get("title") or ""
-        title = (
-            title_value.lower()
-            if isinstance(title_value, str)
-            else str(title_value).lower()
-        )
-        if "med13" in title:
-            relevance_score += 10
-            reasons.append("MED13 in title")
-
-        # Check abstract for MED13 mentions
-        abstract_value = record.get("abstract") or ""
-        abstract = (
-            abstract_value.lower()
-            if isinstance(abstract_value, str)
-            else str(abstract_value).lower()
-        )
-        if "med13" in abstract:
-            relevance_score += 5
-            reasons.append("MED13 in abstract")
-
-        # Check keywords
-        keywords: list[str] = []
-        keywords_raw = record.get("keywords")
-        if isinstance(keywords_raw, list):
-            keywords = [kw.lower() for kw in keywords_raw if isinstance(kw, str)]
-        med13_keywords = [kw for kw in keywords if "med13" in kw]
-        if med13_keywords:
-            relevance_score += 3
-            reasons.append(f"MED13 keywords: {', '.join(med13_keywords)}")
-
-        return {
-            "score": relevance_score,
-            "reasons": reasons,
-            "is_relevant": relevance_score >= RELEVANCE_THRESHOLD,
-        }
 
     async def fetch_med13_publications(self, **kwargs: JSONValue) -> list[RawRecord]:
         """
@@ -447,4 +321,19 @@ class PubMedIngestor(BaseIngestor):
             return int(value)
         if isinstance(value, str) and value.isdigit():
             return int(value)
+        return default
+
+    @staticmethod
+    def _coerce_bool(value: JSONValue | None, *, default: bool) -> bool:
+        """Convert JSON value to bool."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
         return default

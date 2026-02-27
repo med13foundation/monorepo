@@ -12,7 +12,6 @@ import {
 import { fetchStorageConfigurations, fetchStorageOverview } from '@/lib/api/storage'
 import { fetchMaintenanceState } from '@/lib/api/system-status'
 import { fetchResearchSpaces } from '@/lib/api/research-spaces'
-import { fetchMechanisms } from '@/lib/api/mechanisms'
 import {
   fetchAdminCatalogEntries,
   fetchCatalogAvailabilitySummaries,
@@ -23,8 +22,6 @@ import type { StorageConfigurationListResponse, StorageOverviewResponse } from '
 import type { MaintenanceModeResponse } from '@/types/system-status'
 import type { SourceCatalogEntry } from '@/lib/types/data-discovery'
 import type { ResearchSpace } from '@/types/research-space'
-import type { PaginatedResponse } from '@/types/generated'
-import type { Mechanism } from '@/types/mechanisms'
 
 type AdminSession = Session & {
   user?: Session['user'] & {
@@ -75,7 +72,6 @@ export default async function SystemSettingsPage() {
   let catalogEntries: SourceCatalogEntry[] = []
   let availabilitySummaries: DataSourceAvailability[] = []
   let spaces: ResearchSpace[] = []
-  let mechanisms: PaginatedResponse<Mechanism> | null = null
 
   try {
     users = await fetchUsers(INITIAL_USER_PARAMS, token)
@@ -119,12 +115,6 @@ export default async function SystemSettingsPage() {
     console.error('[SystemSettingsPage] Failed to fetch research spaces:', error)
   }
 
-  try {
-    mechanisms = await fetchMechanisms({ page: 1, per_page: 50 }, token)
-  } catch (error) {
-    console.error('[SystemSettingsPage] Failed to fetch mechanisms:', error)
-  }
-
   return (
     <SystemSettingsClient
       initialParams={INITIAL_USER_PARAMS}
@@ -136,7 +126,6 @@ export default async function SystemSettingsPage() {
       catalogEntries={catalogEntries}
       availabilitySummaries={availabilitySummaries}
       spaces={spaces}
-      mechanisms={mechanisms}
       currentUserId={session.user?.id ?? ''}
       isAdmin={session.user?.role === 'admin'}
     />

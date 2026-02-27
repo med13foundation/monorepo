@@ -1,0 +1,1312 @@
+"""Application service for Tier-3 entity recognition orchestration."""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Literal
+
+from src.application.agents.services._entity_recognition_bootstrap_helpers import (
+    _EntityRecognitionBootstrapHelpers,
+)
+from src.application.agents.services._entity_recognition_metadata_helpers import (
+    _EntityRecognitionMetadataHelpers,
+)
+from src.application.agents.services._entity_recognition_runtime_helpers import (
+    _EntityRecognitionRuntimeHelpers,
+)
+from src.application.agents.services.governance_service import (
+    GovernanceDecision,
+    GovernanceService,
+)
+from src.domain.agents.contexts.entity_recognition_context import (
+    EntityRecognitionContext,
+)
+from src.domain.entities.source_document import (
+    DocumentExtractionStatus,
+    SourceDocument,
+)
+from src.type_definitions.ingestion import RawRecord
+from src.type_definitions.json_utils import to_json_value
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from src.application.agents.services.extraction_service import (
+        ExtractionService,
+    )
+    from src.application.services.ports.ingestion_pipeline_port import (
+        IngestionPipelinePort,
+    )
+    from src.domain.agents.contracts.entity_recognition import EntityRecognitionContract
+    from src.domain.agents.ports.entity_recognition_port import EntityRecognitionPort
+    from src.domain.ports.dictionary_port import DictionaryPort
+    from src.domain.repositories.research_space_repository import (
+        ResearchSpaceRepository,
+    )
+    from src.domain.repositories.source_document_repository import (
+        SourceDocumentRepository,
+    )
+    from src.type_definitions.common import JSONObject, ResearchSpaceSettings
+
+logger = logging.getLogger(__name__)
+
+_AGENT_CREATED_BY = "agent:entity_recognition"
+
+
+@dataclass(frozen=True)
+class EntityRecognitionServiceDependencies:
+    """Dependencies required by the entity-recognition orchestration service."""
+
+    entity_recognition_agent: EntityRecognitionPort
+    source_document_repository: SourceDocumentRepository
+    ingestion_pipeline: IngestionPipelinePort
+    dictionary_service: DictionaryPort
+    extraction_service: ExtractionService | None = None
+    governance_service: GovernanceService | None = None
+    research_space_repository: ResearchSpaceRepository | None = None
+
+
+@dataclass(frozen=True)
+class EntityRecognitionDocumentOutcome:
+    """Outcome of processing a single source document."""
+
+    document_id: UUID
+    status: Literal["extracted", "failed", "skipped"]
+    reason: str
+    review_required: bool
+    shadow_mode: bool
+    wrote_to_kernel: bool
+    run_id: str | None = None
+    dictionary_variables_created: int = 0
+    dictionary_synonyms_created: int = 0
+    dictionary_entity_types_created: int = 0
+    ingestion_entities_created: int = 0
+    ingestion_observations_created: int = 0
+    seed_entity_ids: tuple[str, ...] = ()
+    graph_fallback_relation_payloads: tuple[JSONObject, ...] = ()
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EntityRecognitionRunSummary:
+    """Batch summary for processing pending source documents."""
+
+    requested: int
+    processed: int
+    extracted: int
+    failed: int
+    skipped: int
+    review_required: int
+    shadow_runs: int
+    dictionary_variables_created: int
+    dictionary_synonyms_created: int
+    dictionary_entity_types_created: int
+    ingestion_entities_created: int
+    ingestion_observations_created: int
+    derived_graph_seed_entity_ids: tuple[str, ...]
+    errors: tuple[str, ...]
+    started_at: datetime
+    completed_at: datetime
+    derived_graph_fallback_relation_payloads: tuple[JSONObject, ...] = ()
+
+
+class EntityRecognitionService(
+    _EntityRecognitionRuntimeHelpers,
+    _EntityRecognitionBootstrapHelpers,
+    _EntityRecognitionMetadataHelpers,
+):
+    """Coordinate Document Store -> Entity Agent -> Governance -> Kernel ingestion."""
+
+    def __init__(
+        self,
+        dependencies: EntityRecognitionServiceDependencies,
+        *,
+        default_shadow_mode: bool = True,
+        agent_created_by: str = _AGENT_CREATED_BY,
+    ) -> None:
+        self._agent = dependencies.entity_recognition_agent
+        self._source_documents = dependencies.source_document_repository
+        self._ingestion_pipeline = dependencies.ingestion_pipeline
+        self._dictionary = dependencies.dictionary_service
+        self._extraction_service = dependencies.extraction_service
+        self._governance = dependencies.governance_service or GovernanceService()
+        self._research_spaces = dependencies.research_space_repository
+        self._default_shadow_mode = default_shadow_mode
+        normalized_created_by = agent_created_by.strip()
+        self._agent_created_by = normalized_created_by or _AGENT_CREATED_BY
+
+    async def process_pending_documents(  # noqa: PLR0913
+        self,
+        *,
+        limit: int = 25,
+        source_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        research_space_id: UUID | None = None,
+        source_type: str | None = None,
+        model_id: str | None = None,
+        shadow_mode: bool | None = None,
+        pipeline_run_id: str | None = None,
+    ) -> EntityRecognitionRunSummary:
+        """Process pending extraction documents through entity recognition."""
+        started_at = datetime.now(UTC)
+        requested_limit = max(limit, 1)
+        fetch_limit = requested_limit
+        if ingestion_job_id is not None:
+            fetch_limit = max(requested_limit * 20, 200)
+        pending_documents = self._source_documents.list_pending_extraction(
+            limit=fetch_limit,
+            source_id=source_id,
+            research_space_id=research_space_id,
+        )
+        normalized_source_type = (
+            source_type.strip().lower() if isinstance(source_type, str) else None
+        )
+        if normalized_source_type:
+            pending_documents = [
+                document
+                for document in pending_documents
+                if document.source_type.value.strip().lower() == normalized_source_type
+            ]
+        if ingestion_job_id is not None:
+            pending_documents = [
+                document
+                for document in pending_documents
+                if document.ingestion_job_id == ingestion_job_id
+            ]
+        pending_documents = sorted(
+            pending_documents,
+            key=lambda document: document.created_at,
+            reverse=True,
+        )[:requested_limit]
+
+        outcomes: list[EntityRecognitionDocumentOutcome] = []
+        for document in pending_documents:
+            outcome = await self._process_document_entity(
+                document=document,
+                model_id=model_id,
+                shadow_mode=shadow_mode,
+                force=False,
+                pipeline_run_id=pipeline_run_id,
+            )
+            outcomes.append(outcome)
+
+        completed_at = datetime.now(UTC)
+        return self._build_run_summary(
+            outcomes=outcomes,
+            requested=len(pending_documents),
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+
+    async def process_document(
+        self,
+        *,
+        document_id: UUID,
+        model_id: str | None = None,
+        shadow_mode: bool | None = None,
+        force: bool = False,
+    ) -> EntityRecognitionDocumentOutcome:
+        """Process a single source document by id."""
+        document = self._source_documents.get_by_id(document_id)
+        if document is None:
+            message = f"Source document not found: {document_id}"
+            raise LookupError(message)
+        return await self._process_document_entity(
+            document=document,
+            model_id=model_id,
+            shadow_mode=shadow_mode,
+            force=force,
+            pipeline_run_id=None,
+        )
+
+    async def close(self) -> None:
+        """Release resources held by the underlying entity-recognition adapter."""
+        await self._agent.close()
+        if self._extraction_service is not None:
+            await self._extraction_service.close()
+
+    async def _process_document_entity(  # noqa: C901, PLR0911
+        self,
+        *,
+        document: SourceDocument,
+        model_id: str | None,
+        shadow_mode: bool | None,
+        force: bool,
+        pipeline_run_id: str | None,
+    ) -> EntityRecognitionDocumentOutcome:
+        if not force and document.extraction_status != DocumentExtractionStatus.PENDING:
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="skipped",
+                reason=f"document_status={document.extraction_status.value}",
+                review_required=False,
+                shadow_mode=False,
+                wrote_to_kernel=False,
+            )
+
+        raw_record = self._extract_raw_record(document)
+        if not raw_record:
+            failure_reason = "missing_raw_record_metadata"
+            self._persist_failed_document(
+                document=document,
+                run_id=None,
+                metadata_patch={"entity_recognition_error": failure_reason},
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=failure_reason,
+                review_required=False,
+                shadow_mode=False,
+                wrote_to_kernel=False,
+                errors=(failure_reason,),
+            )
+
+        research_space_settings = self._resolve_research_space_settings(document)
+        requested_shadow_mode = self._resolve_shadow_mode(
+            override=shadow_mode,
+            settings=research_space_settings,
+        )
+        context = EntityRecognitionContext(
+            document_id=str(document.id),
+            source_type=document.source_type.value,
+            research_space_id=(
+                str(document.research_space_id) if document.research_space_id else None
+            ),
+            research_space_settings=research_space_settings,
+            raw_record=raw_record,
+            shadow_mode=requested_shadow_mode,
+        )
+
+        in_progress = document.mark_extraction_in_progress(started_at=datetime.now(UTC))
+        document = self._source_documents.upsert(
+            in_progress.model_copy(
+                update={
+                    "metadata": self._merge_metadata(
+                        in_progress.metadata,
+                        {
+                            "entity_recognition_started_at": datetime.now(
+                                UTC,
+                            ).isoformat(),
+                            "entity_recognition_shadow_mode": requested_shadow_mode,
+                            "pipeline_run_id": pipeline_run_id,
+                        },
+                    ),
+                },
+            ),
+        )
+
+        try:
+            contract = await self._agent.recognize(context, model_id=model_id)
+        except Exception as exc:  # noqa: BLE001 - surfaced via metadata/outcome
+            logger.exception(
+                "Entity recognition failed for document=%s",
+                document.id,
+            )
+            failure_reason = "agent_execution_failed"
+            self._persist_failed_document(
+                document=document,
+                run_id=None,
+                metadata_patch={
+                    "entity_recognition_error": str(exc),
+                    "entity_recognition_failure_reason": failure_reason,
+                },
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=failure_reason,
+                review_required=False,
+                shadow_mode=requested_shadow_mode,
+                wrote_to_kernel=False,
+                errors=(str(exc),),
+            )
+
+        run_id = self._resolve_run_id(contract)
+        governance = self._governance.evaluate(
+            confidence_score=contract.confidence_score,
+            evidence_count=len(contract.evidence),
+            decision=self._resolve_governance_decision(contract),
+            requested_shadow_mode=requested_shadow_mode,
+            research_space_settings=research_space_settings,
+        )
+
+        if governance.shadow_mode:
+            self._persist_extracted_document(
+                document=document,
+                run_id=run_id,
+                metadata_patch=self._build_outcome_metadata(
+                    contract=contract,
+                    governance=governance,
+                    run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
+                    wrote_to_kernel=False,
+                    dictionary_variables_created=0,
+                    dictionary_synonyms_created=0,
+                    dictionary_entity_types_created=0,
+                    ingestion_result=None,
+                ),
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="extracted",
+                reason="shadow_mode_enabled",
+                review_required=False,
+                shadow_mode=True,
+                wrote_to_kernel=False,
+                run_id=run_id,
+            )
+
+        if not governance.allow_write:
+            failure_reason = governance.reason
+            if (
+                failure_reason == "agent_requested_escalation"
+                and self._extraction_service is not None
+                and document.research_space_id is not None
+            ):
+                (
+                    bootstrap_variables_created,
+                    bootstrap_entity_types_created,
+                ) = self._ensure_domain_bootstrap(
+                    source_type=document.source_type.value,
+                    source_ref=f"source_document:{document.id}",
+                    research_space_settings=research_space_settings,
+                )
+                return await self._process_document_with_extraction(
+                    document=document,
+                    contract=contract,
+                    governance=governance,
+                    run_id=run_id,
+                    document_run_id=run_id,
+                    model_id=model_id,
+                    requested_shadow_mode=requested_shadow_mode,
+                    research_space_settings=research_space_settings,
+                    dictionary_variables_created=bootstrap_variables_created,
+                    dictionary_synonyms_created=0,
+                    dictionary_entity_types_created=bootstrap_entity_types_created,
+                    pipeline_run_id=pipeline_run_id,
+                )
+            self._persist_failed_document(
+                document=document,
+                run_id=run_id,
+                metadata_patch=self._build_outcome_metadata(
+                    contract=contract,
+                    governance=governance,
+                    run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
+                    wrote_to_kernel=False,
+                    dictionary_variables_created=0,
+                    dictionary_synonyms_created=0,
+                    dictionary_entity_types_created=0,
+                    ingestion_result=None,
+                ),
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=failure_reason,
+                review_required=governance.requires_review,
+                shadow_mode=False,
+                wrote_to_kernel=False,
+                run_id=run_id,
+                errors=(failure_reason,),
+            )
+
+        if document.research_space_id is None:
+            failure_reason = "missing_research_space_id"
+            self._persist_failed_document(
+                document=document,
+                run_id=run_id,
+                metadata_patch={
+                    "entity_recognition_failure_reason": failure_reason,
+                    "entity_recognition_run_id": run_id,
+                    "pipeline_run_id": pipeline_run_id,
+                },
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=failure_reason,
+                review_required=False,
+                shadow_mode=False,
+                wrote_to_kernel=False,
+                run_id=run_id,
+                errors=(failure_reason,),
+            )
+
+        try:
+            (
+                dictionary_variables_created,
+                dictionary_synonyms_created,
+                dictionary_entity_types_created,
+            ) = self._apply_dictionary_mutations(
+                contract=contract,
+                raw_record=raw_record,
+                source_type=document.source_type.value,
+                source_ref=f"source_document:{document.id}",
+                research_space_settings=research_space_settings,
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced via metadata/outcome
+            logger.exception(
+                "Dictionary mutation failed for document=%s",
+                document.id,
+            )
+            failure_reason = "dictionary_mutation_failed"
+            self._persist_failed_document(
+                document=document,
+                run_id=run_id,
+                metadata_patch={
+                    "entity_recognition_failure_reason": failure_reason,
+                    "entity_recognition_error": str(exc),
+                    "entity_recognition_run_id": run_id,
+                    "pipeline_run_id": pipeline_run_id,
+                },
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=failure_reason,
+                review_required=False,
+                shadow_mode=False,
+                wrote_to_kernel=False,
+                run_id=run_id,
+                errors=(str(exc),),
+            )
+
+        if self._extraction_service is not None:
+            return await self._process_document_with_extraction(
+                document=document,
+                contract=contract,
+                governance=governance,
+                run_id=run_id,
+                document_run_id=run_id,
+                model_id=model_id,
+                requested_shadow_mode=requested_shadow_mode,
+                research_space_settings=research_space_settings,
+                dictionary_variables_created=dictionary_variables_created,
+                dictionary_synonyms_created=dictionary_synonyms_created,
+                dictionary_entity_types_created=dictionary_entity_types_created,
+                pipeline_run_id=pipeline_run_id,
+            )
+
+        pipeline_records = self._build_pipeline_records(
+            contract=contract,
+            document=document,
+            raw_record=raw_record,
+            run_id=run_id,
+        )
+        if not pipeline_records:
+            failure_reason = "no_pipeline_payloads"
+            self._persist_failed_document(
+                document=document,
+                run_id=run_id,
+                metadata_patch={
+                    "entity_recognition_failure_reason": failure_reason,
+                    "entity_recognition_run_id": run_id,
+                    "pipeline_run_id": pipeline_run_id,
+                },
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=failure_reason,
+                review_required=False,
+                shadow_mode=False,
+                wrote_to_kernel=False,
+                run_id=run_id,
+                dictionary_variables_created=dictionary_variables_created,
+                dictionary_synonyms_created=dictionary_synonyms_created,
+                dictionary_entity_types_created=dictionary_entity_types_created,
+                errors=(failure_reason,),
+            )
+
+        ingestion_result = self._ingestion_pipeline.run(
+            pipeline_records,
+            str(document.research_space_id),
+        )
+        if not ingestion_result.success:
+            failure_reason = "kernel_ingestion_failed"
+            self._persist_failed_document(
+                document=document,
+                run_id=run_id,
+                metadata_patch=self._build_outcome_metadata(
+                    contract=contract,
+                    governance=governance,
+                    run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
+                    wrote_to_kernel=False,
+                    dictionary_variables_created=dictionary_variables_created,
+                    dictionary_synonyms_created=dictionary_synonyms_created,
+                    dictionary_entity_types_created=dictionary_entity_types_created,
+                    ingestion_result=ingestion_result,
+                ),
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=failure_reason,
+                review_required=False,
+                shadow_mode=False,
+                wrote_to_kernel=False,
+                run_id=run_id,
+                dictionary_variables_created=dictionary_variables_created,
+                dictionary_synonyms_created=dictionary_synonyms_created,
+                dictionary_entity_types_created=dictionary_entity_types_created,
+                ingestion_entities_created=ingestion_result.entities_created,
+                ingestion_observations_created=ingestion_result.observations_created,
+                seed_entity_ids=self._normalize_seed_entity_ids(
+                    ingestion_result.entity_ids_touched,
+                ),
+                errors=tuple(ingestion_result.errors),
+            )
+
+        self._persist_extracted_document(
+            document=document,
+            run_id=run_id,
+            metadata_patch=self._build_outcome_metadata(
+                contract=contract,
+                governance=governance,
+                run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
+                wrote_to_kernel=True,
+                dictionary_variables_created=dictionary_variables_created,
+                dictionary_synonyms_created=dictionary_synonyms_created,
+                dictionary_entity_types_created=dictionary_entity_types_created,
+                ingestion_result=ingestion_result,
+            ),
+        )
+        return EntityRecognitionDocumentOutcome(
+            document_id=document.id,
+            status="extracted",
+            reason="processed",
+            review_required=False,
+            shadow_mode=False,
+            wrote_to_kernel=True,
+            run_id=run_id,
+            dictionary_variables_created=dictionary_variables_created,
+            dictionary_synonyms_created=dictionary_synonyms_created,
+            dictionary_entity_types_created=dictionary_entity_types_created,
+            ingestion_entities_created=ingestion_result.entities_created,
+            ingestion_observations_created=ingestion_result.observations_created,
+            seed_entity_ids=self._normalize_seed_entity_ids(
+                ingestion_result.entity_ids_touched,
+            ),
+            errors=tuple(ingestion_result.errors),
+        )
+
+    def _resolve_research_space_settings(  # noqa: C901, PLR0912, PLR0915
+        self,
+        document: SourceDocument,
+    ) -> ResearchSpaceSettings:
+        if self._research_spaces is None or document.research_space_id is None:
+            return {}
+        space = self._research_spaces.find_by_id(document.research_space_id)
+        if space is None:
+            return {}
+        raw_settings = space.settings
+        settings: ResearchSpaceSettings = {}
+
+        auto_approve = raw_settings.get("auto_approve")
+        if isinstance(auto_approve, bool):
+            settings["auto_approve"] = auto_approve
+
+        require_review = raw_settings.get("require_review")
+        if isinstance(require_review, bool):
+            settings["require_review"] = require_review
+
+        review_threshold = raw_settings.get("review_threshold")
+        if isinstance(review_threshold, float | int):
+            normalized = max(0.0, min(float(review_threshold), 1.0))
+            settings["review_threshold"] = normalized
+
+        relation_default_review_threshold = raw_settings.get(
+            "relation_default_review_threshold",
+        )
+        if isinstance(relation_default_review_threshold, float | int):
+            settings["relation_default_review_threshold"] = max(
+                0.0,
+                min(float(relation_default_review_threshold), 1.0),
+            )
+
+        raw_relation_review_thresholds = raw_settings.get("relation_review_thresholds")
+        if isinstance(raw_relation_review_thresholds, dict):
+            relation_review_thresholds: dict[str, float] = {}
+            for (
+                raw_relation_type,
+                raw_threshold,
+            ) in raw_relation_review_thresholds.items():
+                if not isinstance(raw_relation_type, str):
+                    continue
+                normalized_relation_type = raw_relation_type.strip().upper()
+                if not normalized_relation_type:
+                    continue
+                if isinstance(raw_threshold, float | int):
+                    relation_review_thresholds[normalized_relation_type] = max(
+                        0.0,
+                        min(float(raw_threshold), 1.0),
+                    )
+            if relation_review_thresholds:
+                settings["relation_review_thresholds"] = relation_review_thresholds
+
+        relation_governance_mode = raw_settings.get("relation_governance_mode")
+        if isinstance(relation_governance_mode, str):
+            normalized_mode = relation_governance_mode.strip().upper()
+            if normalized_mode == "HUMAN_IN_LOOP":
+                settings["relation_governance_mode"] = "HUMAN_IN_LOOP"
+            elif normalized_mode == "FULL_AUTO":
+                settings["relation_governance_mode"] = "FULL_AUTO"
+
+        creation_policy = raw_settings.get("dictionary_agent_creation_policy")
+        if isinstance(creation_policy, str):
+            normalized_policy = creation_policy.strip().upper()
+            if normalized_policy == "ACTIVE":
+                settings["dictionary_agent_creation_policy"] = "ACTIVE"
+            elif normalized_policy == "PENDING_REVIEW":
+                settings["dictionary_agent_creation_policy"] = "PENDING_REVIEW"
+
+        raw_custom = raw_settings.get("custom")
+        if isinstance(raw_custom, dict):
+            custom: dict[str, str | int | float | bool | None] = {}
+            for key, value in raw_custom.items():
+                if isinstance(value, str | int | float | bool) or value is None:
+                    custom[str(key)] = value
+            if custom:
+                settings["custom"] = custom
+
+        return settings
+
+    def _resolve_shadow_mode(
+        self,
+        *,
+        override: bool | None,
+        settings: ResearchSpaceSettings,
+    ) -> bool:
+        if isinstance(override, bool):
+            return override
+
+        custom = settings.get("custom")
+        if isinstance(custom, dict):
+            explicit = custom.get("entity_recognition_shadow_mode")
+            if isinstance(explicit, bool):
+                return explicit
+
+        return self._default_shadow_mode
+
+    @staticmethod
+    def _extract_raw_record(document: SourceDocument) -> JSONObject:
+        raw_record = document.metadata.get("raw_record")
+        if not isinstance(raw_record, dict):
+            return {}
+        return {str(key): to_json_value(value) for key, value in raw_record.items()}
+
+    def _apply_dictionary_mutations(  # noqa: C901, PLR0912, PLR0913
+        self,
+        *,
+        contract: EntityRecognitionContract,
+        raw_record: JSONObject,
+        source_type: str,
+        source_ref: str,
+        research_space_settings: ResearchSpaceSettings,
+    ) -> tuple[int, int, int]:
+        (
+            bootstrap_variables_created,
+            bootstrap_entity_types_created,
+        ) = self._ensure_domain_bootstrap(
+            source_type=source_type,
+            source_ref=source_ref,
+            research_space_settings=research_space_settings,
+        )
+
+        if (
+            contract.decision == "generated"
+            and isinstance(contract.agent_run_id, str)
+            and contract.agent_run_id.strip()
+        ):
+            (
+                reconciled_variables,
+                reconciled_synonyms,
+                reconciled_entity_types,
+            ) = self._reconcile_agent_dictionary_mutations(contract)
+            return (
+                reconciled_variables + bootstrap_variables_created,
+                reconciled_synonyms,
+                reconciled_entity_types + bootstrap_entity_types_created,
+            )
+
+        domain_context = self._infer_domain_context(source_type)
+        created_entity_types = bootstrap_entity_types_created
+        for entity in contract.recognized_entities:
+            entity_type_id = self._normalize_identifier(
+                entity.entity_type,
+                prefix="ENTITY",
+                max_length=64,
+            )
+            if self._dictionary.get_entity_type(entity_type_id) is not None:
+                continue
+            self._dictionary.create_entity_type(
+                entity_type=entity_type_id,
+                display_name=self._to_display_name(entity_type_id),
+                description=(
+                    f"Autogenerated entity type from {source_type} "
+                    "entity-recognition run"
+                ),
+                domain_context=domain_context,
+                created_by=self._agent_created_by,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
+            created_entity_types += 1
+
+        created_variables = bootstrap_variables_created
+        created_synonyms = 0
+        for observation in contract.recognized_observations:
+            field_name = observation.field_name.strip()
+            if not field_name:
+                continue
+
+            matched_variable = self._dictionary.resolve_synonym(field_name)
+            variable_id = self._resolve_variable_id(
+                explicit_variable_id=observation.variable_id,
+                field_name=field_name,
+            )
+            resolved_variable = matched_variable
+            if matched_variable is not None:
+                if matched_variable.id != variable_id:
+                    logger.info(
+                        "Remapped observation field '%s' to existing variable '%s' "
+                        "(ignored candidate '%s')",
+                        field_name,
+                        matched_variable.id,
+                        variable_id,
+                    )
+            else:
+                resolved_variable = self._dictionary.get_variable(variable_id)
+                if resolved_variable is None:
+                    resolved_variable = self._dictionary.create_variable(
+                        variable_id=variable_id,
+                        canonical_name=self._to_canonical_name(field_name),
+                        display_name=self._to_display_name(field_name),
+                        data_type=self._infer_data_type(observation.value),
+                        domain_context=domain_context,
+                        sensitivity="INTERNAL",
+                        description=(
+                            f"Autogenerated variable from {source_type} "
+                            f"field '{field_name}'"
+                        ),
+                        created_by=self._agent_created_by,
+                        source_ref=source_ref,
+                        research_space_settings=research_space_settings,
+                    )
+                    created_variables += 1
+            if resolved_variable is None:
+                continue
+            self._dictionary.create_synonym(
+                variable_id=resolved_variable.id,
+                synonym=field_name,
+                source=source_type.lower(),
+                created_by=self._agent_created_by,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
+            created_synonyms += 1
+
+        if not contract.recognized_observations and raw_record:
+            for raw_field, raw_value in raw_record.items():
+                if self._dictionary.resolve_synonym(raw_field) is not None:
+                    continue
+                variable_id = self._resolve_variable_id(
+                    explicit_variable_id=None,
+                    field_name=raw_field,
+                )
+                existing_variable = self._dictionary.get_variable(variable_id)
+                if existing_variable is None:
+                    existing_variable = self._dictionary.create_variable(
+                        variable_id=variable_id,
+                        canonical_name=self._to_canonical_name(raw_field),
+                        display_name=self._to_display_name(raw_field),
+                        data_type=self._infer_data_type(raw_value),
+                        domain_context=domain_context,
+                        sensitivity="INTERNAL",
+                        description=(
+                            f"Autogenerated fallback variable from {source_type} "
+                            f"field '{raw_field}'"
+                        ),
+                        created_by=self._agent_created_by,
+                        source_ref=source_ref,
+                        research_space_settings=research_space_settings,
+                    )
+                    created_variables += 1
+                self._dictionary.create_synonym(
+                    variable_id=existing_variable.id,
+                    synonym=raw_field,
+                    source=source_type.lower(),
+                    created_by=self._agent_created_by,
+                    source_ref=source_ref,
+                    research_space_settings=research_space_settings,
+                )
+                created_synonyms += 1
+
+        return created_variables, created_synonyms, created_entity_types
+
+    def _reconcile_agent_dictionary_mutations(
+        self,
+        contract: EntityRecognitionContract,
+    ) -> tuple[int, int, int]:
+        """
+        Reconcile dictionary mutations already applied by the agent tool loop.
+
+        When an agent run id is present we treat dictionary writes as in-agent
+        side effects and avoid duplicating them in post-hoc service logic.
+        """
+        created_variables = 0
+        for variable_id in set(contract.created_definitions):
+            if self._dictionary.get_variable(variable_id) is not None:
+                created_variables += 1
+
+        created_synonyms = 0
+        for synonym in set(contract.created_synonyms):
+            if self._dictionary.resolve_synonym(synonym) is not None:
+                created_synonyms += 1
+
+        created_entity_types = 0
+        for entity_type_id in set(contract.created_entity_types):
+            if self._dictionary.get_entity_type(entity_type_id) is not None:
+                created_entity_types += 1
+
+        return created_variables, created_synonyms, created_entity_types
+
+    async def _process_document_with_extraction(  # noqa: PLR0913
+        self,
+        *,
+        document: SourceDocument,
+        contract: EntityRecognitionContract,
+        governance: GovernanceDecision,
+        run_id: str | None,
+        document_run_id: str | None,
+        model_id: str | None,
+        requested_shadow_mode: bool,
+        research_space_settings: ResearchSpaceSettings,
+        dictionary_variables_created: int,
+        dictionary_synonyms_created: int,
+        dictionary_entity_types_created: int,
+        pipeline_run_id: str | None,
+    ) -> EntityRecognitionDocumentOutcome:
+        if self._extraction_service is None:
+            msg = "Extraction service is not configured"
+            raise RuntimeError(msg)
+
+        try:
+            extraction_outcome = (
+                await self._extraction_service.extract_from_entity_recognition(
+                    document=document,
+                    recognition_contract=contract,
+                    research_space_settings=research_space_settings,
+                    model_id=model_id,
+                    shadow_mode=requested_shadow_mode,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced via metadata/outcome
+            logger.exception(
+                "Extraction stage failed for document=%s",
+                document.id,
+            )
+            failure_reason = "extraction_stage_failed"
+            metadata_patch = self._build_outcome_metadata(
+                contract=contract,
+                governance=governance,
+                run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
+                wrote_to_kernel=False,
+                dictionary_variables_created=dictionary_variables_created,
+                dictionary_synonyms_created=dictionary_synonyms_created,
+                dictionary_entity_types_created=dictionary_entity_types_created,
+                ingestion_result=None,
+            )
+            metadata_patch["extraction_stage_error"] = str(exc)
+            metadata_patch["extraction_stage_failure_reason"] = failure_reason
+            self._persist_failed_document(
+                document=document,
+                run_id=document_run_id,
+                metadata_patch=metadata_patch,
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=failure_reason,
+                review_required=governance.requires_review,
+                shadow_mode=False,
+                wrote_to_kernel=False,
+                run_id=run_id,
+                dictionary_variables_created=dictionary_variables_created,
+                dictionary_synonyms_created=dictionary_synonyms_created,
+                dictionary_entity_types_created=dictionary_entity_types_created,
+                errors=(str(exc),),
+            )
+
+        extraction_run_id = (
+            extraction_outcome.run_id.strip()
+            if isinstance(extraction_outcome.run_id, str)
+            and extraction_outcome.run_id.strip()
+            else document_run_id
+        )
+        graph_fallback_relation_payloads = self._build_graph_fallback_relation_payloads(
+            seed_entity_ids=extraction_outcome.seed_entity_ids,
+            rejected_relation_details=extraction_outcome.rejected_relation_details,
+        )
+        metadata_patch = self._build_outcome_metadata(
+            contract=contract,
+            governance=governance,
+            run_id=run_id,
+            pipeline_run_id=pipeline_run_id,
+            wrote_to_kernel=extraction_outcome.wrote_to_kernel,
+            dictionary_variables_created=dictionary_variables_created,
+            dictionary_synonyms_created=dictionary_synonyms_created,
+            dictionary_entity_types_created=dictionary_entity_types_created,
+            ingestion_result=None,
+        )
+        metadata_patch = self._merge_metadata(
+            metadata_patch,
+            self._build_extraction_metadata(extraction_outcome),
+        )
+
+        review_required = (
+            governance.requires_review or extraction_outcome.review_required
+        )
+        if extraction_outcome.status == "failed":
+            self._persist_failed_document(
+                document=document,
+                run_id=extraction_run_id,
+                metadata_patch=metadata_patch,
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=extraction_outcome.reason,
+                review_required=review_required,
+                shadow_mode=extraction_outcome.shadow_mode,
+                wrote_to_kernel=False,
+                run_id=run_id,
+                dictionary_variables_created=dictionary_variables_created,
+                dictionary_synonyms_created=dictionary_synonyms_created,
+                dictionary_entity_types_created=dictionary_entity_types_created,
+                ingestion_entities_created=(
+                    extraction_outcome.ingestion_entities_created
+                ),
+                ingestion_observations_created=(
+                    extraction_outcome.ingestion_observations_created
+                ),
+                seed_entity_ids=extraction_outcome.seed_entity_ids,
+                graph_fallback_relation_payloads=graph_fallback_relation_payloads,
+                errors=extraction_outcome.errors,
+            )
+
+        self._persist_extracted_document(
+            document=document,
+            run_id=extraction_run_id,
+            metadata_patch=metadata_patch,
+        )
+        return EntityRecognitionDocumentOutcome(
+            document_id=document.id,
+            status="extracted",
+            reason=extraction_outcome.reason,
+            review_required=review_required,
+            shadow_mode=extraction_outcome.shadow_mode,
+            wrote_to_kernel=extraction_outcome.wrote_to_kernel,
+            run_id=run_id,
+            dictionary_variables_created=dictionary_variables_created,
+            dictionary_synonyms_created=dictionary_synonyms_created,
+            dictionary_entity_types_created=dictionary_entity_types_created,
+            ingestion_entities_created=extraction_outcome.ingestion_entities_created,
+            ingestion_observations_created=(
+                extraction_outcome.ingestion_observations_created
+            ),
+            seed_entity_ids=extraction_outcome.seed_entity_ids,
+            graph_fallback_relation_payloads=graph_fallback_relation_payloads,
+            errors=extraction_outcome.errors,
+        )
+
+    def _build_pipeline_records(
+        self,
+        *,
+        contract: EntityRecognitionContract,
+        document: SourceDocument,
+        raw_record: JSONObject,
+        run_id: str | None,
+    ) -> list[RawRecord]:
+        payloads = contract.pipeline_payloads or [raw_record]
+        records: list[RawRecord] = []
+        for index, payload in enumerate(payloads):
+            source_record_id = (
+                document.external_record_id
+                if index == 0
+                else f"{document.external_record_id}:{index}"
+            )
+            metadata: JSONObject = {
+                "type": document.source_type.value,
+                "entity_type": contract.primary_entity_type,
+                "source_document_id": str(document.id),
+                "source_record_id": source_record_id,
+                "agent_decision": contract.decision,
+            }
+            if run_id:
+                metadata["entity_recognition_run_id"] = run_id
+
+            normalized_payload: JSONObject = {
+                str(key): to_json_value(value) for key, value in payload.items()
+            }
+            records.append(
+                RawRecord(
+                    source_id=source_record_id,
+                    data=normalized_payload,
+                    metadata=metadata,
+                ),
+            )
+        return records
+
+    @staticmethod
+    def _build_run_summary(  # noqa: C901
+        *,
+        outcomes: list[EntityRecognitionDocumentOutcome],
+        requested: int,
+        started_at: datetime,
+        completed_at: datetime,
+    ) -> EntityRecognitionRunSummary:
+        extracted = sum(1 for outcome in outcomes if outcome.status == "extracted")
+        failed = sum(1 for outcome in outcomes if outcome.status == "failed")
+        skipped = sum(1 for outcome in outcomes if outcome.status == "skipped")
+        review_required = sum(1 for outcome in outcomes if outcome.review_required)
+        shadow_runs = sum(1 for outcome in outcomes if outcome.shadow_mode)
+
+        dictionary_variables_created = sum(
+            outcome.dictionary_variables_created for outcome in outcomes
+        )
+        dictionary_synonyms_created = sum(
+            outcome.dictionary_synonyms_created for outcome in outcomes
+        )
+        dictionary_entity_types_created = sum(
+            outcome.dictionary_entity_types_created for outcome in outcomes
+        )
+        ingestion_entities_created = sum(
+            outcome.ingestion_entities_created for outcome in outcomes
+        )
+        ingestion_observations_created = sum(
+            outcome.ingestion_observations_created for outcome in outcomes
+        )
+
+        errors: list[str] = []
+        for outcome in outcomes:
+            errors.extend(outcome.errors)
+        derived_graph_seed_entity_ids: list[str] = []
+        derived_graph_fallback_relation_payloads: list[JSONObject] = []
+        fallback_relation_keys: set[tuple[str, str, str, str]] = set()
+        fallback_seed_ids: list[str] = []
+        for outcome in outcomes:
+            for raw_payload in outcome.graph_fallback_relation_payloads:
+                seed_value = raw_payload.get("seed_entity_id")
+                source_value = raw_payload.get("source_id")
+                relation_value = raw_payload.get("relation_type")
+                target_value = raw_payload.get("target_id")
+                if (
+                    not isinstance(
+                        seed_value,
+                        str,
+                    )
+                    or not isinstance(
+                        source_value,
+                        str,
+                    )
+                    or not isinstance(
+                        relation_value,
+                        str,
+                    )
+                    or not isinstance(
+                        target_value,
+                        str,
+                    )
+                ):
+                    continue
+                normalized_seed = seed_value.strip()
+                normalized_source = source_value.strip()
+                normalized_relation = relation_value.strip().upper()
+                normalized_target = target_value.strip()
+                if (
+                    not normalized_seed
+                    or not normalized_source
+                    or not normalized_relation
+                    or not normalized_target
+                ):
+                    continue
+                relation_key = (
+                    normalized_seed,
+                    normalized_source,
+                    normalized_relation,
+                    normalized_target,
+                )
+                if relation_key in fallback_relation_keys:
+                    continue
+                fallback_relation_keys.add(relation_key)
+                normalized_payload: JSONObject = {
+                    str(key): to_json_value(value) for key, value in raw_payload.items()
+                }
+                derived_graph_fallback_relation_payloads.append(normalized_payload)
+                if normalized_seed not in fallback_seed_ids:
+                    fallback_seed_ids.append(normalized_seed)
+
+        for seed_entity_id in fallback_seed_ids:
+            if seed_entity_id in derived_graph_seed_entity_ids:
+                continue
+            derived_graph_seed_entity_ids.append(seed_entity_id)
+
+        for outcome in outcomes:
+            for seed_entity_id in outcome.seed_entity_ids:
+                if seed_entity_id in derived_graph_seed_entity_ids:
+                    continue
+                derived_graph_seed_entity_ids.append(seed_entity_id)
+
+        return EntityRecognitionRunSummary(
+            requested=requested,
+            processed=len(outcomes),
+            extracted=extracted,
+            failed=failed,
+            skipped=skipped,
+            review_required=review_required,
+            shadow_runs=shadow_runs,
+            dictionary_variables_created=dictionary_variables_created,
+            dictionary_synonyms_created=dictionary_synonyms_created,
+            dictionary_entity_types_created=dictionary_entity_types_created,
+            ingestion_entities_created=ingestion_entities_created,
+            ingestion_observations_created=ingestion_observations_created,
+            derived_graph_seed_entity_ids=tuple(derived_graph_seed_entity_ids),
+            derived_graph_fallback_relation_payloads=tuple(
+                derived_graph_fallback_relation_payloads,
+            ),
+            errors=tuple(errors),
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+
+    @classmethod
+    def _build_graph_fallback_relation_payloads(  # noqa: C901, PLR0912, PLR0915
+        cls,
+        *,
+        seed_entity_ids: tuple[str, ...],
+        rejected_relation_details: tuple[JSONObject, ...],
+    ) -> tuple[JSONObject, ...]:
+        fallback_payloads: list[JSONObject] = []
+        seen_keys: set[tuple[str, str, str, str]] = set()
+
+        known_seed_ids: list[str] = []
+        for seed_entity_id in seed_entity_ids:
+            normalized_seed = seed_entity_id.strip()
+            if not normalized_seed:
+                continue
+            if cls._try_parse_uuid(normalized_seed) is None:
+                continue
+            if normalized_seed in known_seed_ids:
+                continue
+            known_seed_ids.append(normalized_seed)
+
+        for detail in rejected_relation_details:
+            payload_value = detail.get("payload")
+            if not isinstance(payload_value, dict):
+                continue
+            source_value = payload_value.get("source_entity_id")
+            target_value = payload_value.get("target_entity_id")
+            relation_value = payload_value.get("relation_type")
+            if (
+                not isinstance(source_value, str)
+                or not isinstance(target_value, str)
+                or not isinstance(relation_value, str)
+            ):
+                continue
+            normalized_source = source_value.strip()
+            normalized_target = target_value.strip()
+            normalized_relation = relation_value.strip().upper()
+            if (
+                not normalized_source
+                or not normalized_target
+                or not normalized_relation
+                or normalized_source == normalized_target
+            ):
+                continue
+            if cls._try_parse_uuid(normalized_source) is None:
+                continue
+            if cls._try_parse_uuid(normalized_target) is None:
+                continue
+
+            reason_value = detail.get("reason")
+            normalized_reason = (
+                reason_value.strip()
+                if isinstance(reason_value, str) and reason_value.strip()
+                else "rejected_relation_candidate"
+            )
+            validation_state_value = payload_value.get("validation_state")
+            normalized_validation_state = (
+                validation_state_value.strip().upper()
+                if isinstance(validation_state_value, str)
+                and validation_state_value.strip()
+                else "UNDEFINED"
+            )
+
+            confidence_value = payload_value.get("confidence")
+            if isinstance(confidence_value, bool):
+                normalized_confidence = 0.35
+            elif isinstance(confidence_value, float | int):
+                normalized_confidence = max(
+                    0.05,
+                    min(float(confidence_value), 0.49),
+                )
+            else:
+                normalized_confidence = 0.35
+
+            evidence_summary = (
+                "Promoted from extraction relation candidate "
+                f"({normalized_validation_state}:{normalized_reason}) for graph "
+                "fallback review."
+            )
+
+            endpoint_seed_ids: list[str] = []
+            for endpoint_seed in (normalized_source, normalized_target):
+                if endpoint_seed not in endpoint_seed_ids:
+                    endpoint_seed_ids.append(endpoint_seed)
+            for known_seed_id in known_seed_ids:
+                if known_seed_id in endpoint_seed_ids:
+                    continue
+                if known_seed_id not in {normalized_source, normalized_target}:
+                    continue
+                endpoint_seed_ids.append(known_seed_id)
+
+            for endpoint_seed in endpoint_seed_ids:
+                relation_key = (
+                    endpoint_seed,
+                    normalized_source,
+                    normalized_relation,
+                    normalized_target,
+                )
+                if relation_key in seen_keys:
+                    continue
+                seen_keys.add(relation_key)
+                fallback_payloads.append(
+                    {
+                        "seed_entity_id": endpoint_seed,
+                        "source_id": normalized_source,
+                        "relation_type": normalized_relation,
+                        "target_id": normalized_target,
+                        "confidence": normalized_confidence,
+                        "reason": normalized_reason,
+                        "validation_state": normalized_validation_state,
+                        "evidence_summary": evidence_summary,
+                    },
+                )
+
+        return tuple(fallback_payloads)
+
+
+__all__ = [
+    "EntityRecognitionDocumentOutcome",
+    "EntityRecognitionRunSummary",
+    "EntityRecognitionService",
+    "EntityRecognitionServiceDependencies",
+]

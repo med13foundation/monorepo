@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from src.application.packaging.provenance.tracker import ProvenanceTracker
-from src.models.value_objects.provenance import DataSource, Provenance
+from src.domain.value_objects.provenance import DataSource, Provenance
 
 if TYPE_CHECKING:
     from pathlib import Path
