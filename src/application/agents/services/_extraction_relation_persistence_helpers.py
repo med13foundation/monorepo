@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from src.application.agents.services._extraction_relation_canonicalization_helpers import (
+    _ExtractionRelationCanonicalizationHelpers,
+)
 from src.application.agents.services._extraction_relation_full_auto_helpers import (
     _ExtractionRelationFullAutoHelpers,
 )
@@ -46,6 +51,9 @@ if TYPE_CHECKING:
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
 _LOW_CONFIDENCE_REVIEW_THRESHOLD = 0.6
+_PER_CANDIDATE_LOG_THRESHOLD = 25
+_PER_CANDIDATE_LOG_INTERVAL = 10
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -93,6 +101,7 @@ class _PersistCandidatesResult:
 
 
 class _ExtractionRelationPersistenceHelpers(
+    _ExtractionRelationCanonicalizationHelpers,
     _ExtractionRelationFullAutoHelpers,
     _RelationEndpointEntityResolutionHelpers,
     _ExtractionRelationPolicyHelpers,
@@ -112,6 +121,8 @@ class _ExtractionRelationPersistenceHelpers(
         publication_entity_ids: tuple[str, ...],
         model_id: str | None,
     ) -> RelationPersistenceResult:
+        started_at = datetime.now(UTC)
+        run_id = normalize_run_id(contract.agent_run_id)
         if document.research_space_id is None:
             return RelationPersistenceResult(
                 errors=("relation_persistence_missing_research_space_id",),
@@ -127,17 +138,49 @@ class _ExtractionRelationPersistenceHelpers(
                 errors=("relation_persistence_unavailable",),
             )
 
+        logger.info(
+            "Extraction relation persistence helper started",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "research_space_id": research_space_id,
+                "relation_candidates_input_count": len(contract.relations),
+                "publication_entity_ids_count": len(publication_entity_ids),
+                "relation_governance_mode": relation_governance_mode,
+            },
+        )
+
         publication_entity_id = (
             publication_entity_ids[0] if publication_entity_ids else None
         )
+        candidate_build_started_at = datetime.now(UTC)
         candidate_build = self._build_relation_candidates(
             research_space_id=research_space_id,
             relations=contract.relations,
             publication_entity_id=publication_entity_id,
         )
+        logger.info(
+            "Extraction relation candidates built",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - candidate_build_started_at).total_seconds()
+                    * 1000,
+                ),
+                "candidates_count": len(candidate_build.candidates),
+                "invalid_components_count": candidate_build.invalid_components_count,
+                "endpoint_resolution_failed_count": (
+                    candidate_build.endpoint_resolution_failed_count
+                ),
+                "self_loop_count": candidate_build.self_loop_count,
+                "error_count": len(candidate_build.errors),
+            },
+        )
         unknown_patterns = self._build_unknown_relation_patterns(
             candidate_build.candidates,
         )
+        policy_step_started_at = datetime.now(UTC)
         policy_step = await self._run_policy_step(
             research_space_id=research_space_id,
             document=document,
@@ -145,6 +188,20 @@ class _ExtractionRelationPersistenceHelpers(
             unknown_patterns=unknown_patterns,
             model_id=model_id,
         )
+        logger.info(
+            "Extraction relation policy step finished",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - policy_step_started_at).total_seconds() * 1000,
+                ),
+                "unknown_patterns_count": len(unknown_patterns),
+                "policy_contract_present": policy_step.contract is not None,
+                "error_count": len(policy_step.errors),
+            },
+        )
+        proposal_store_started_at = datetime.now(UTC)
         proposal_count, proposal_errors = self._store_policy_constraint_proposals(
             research_space_id=research_space_id,
             document=document,
@@ -158,12 +215,49 @@ class _ExtractionRelationPersistenceHelpers(
             ),
             relation_governance_mode=relation_governance_mode,
         )
+        logger.info(
+            "Extraction relation policy proposals stored",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - proposal_store_started_at).total_seconds()
+                    * 1000,
+                ),
+                "proposal_count": proposal_count,
+                "error_count": len(proposal_errors),
+            },
+        )
+        persist_candidates_started_at = datetime.now(UTC)
         persist_result = self._persist_relation_candidates(
             document=document,
-            run_id=normalize_run_id(contract.agent_run_id),
+            run_id=run_id,
             candidates=candidate_build.candidates,
             policy_contract=policy_step.contract,
             relation_governance_mode=relation_governance_mode,
+        )
+        logger.info(
+            "Extraction relation candidates persisted",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - persist_candidates_started_at).total_seconds()
+                    * 1000,
+                ),
+                "persisted_relations_count": persist_result.persisted_relations_count,
+                "pending_review_relations_count": (
+                    persist_result.pending_review_relations_count
+                ),
+                "relation_claims_count": persist_result.relation_claims_count,
+                "non_persistable_claims_count": (
+                    persist_result.non_persistable_claims_count
+                ),
+                "forbidden_relations_count": persist_result.forbidden_relations_count,
+                "undefined_relations_count": persist_result.undefined_relations_count,
+                "persistence_failed_count": persist_result.persistence_failed_count,
+                "error_count": len(persist_result.errors),
+            },
         )
         emit_claim_first_extraction_metrics(
             research_space_id=research_space_id,
@@ -175,6 +269,28 @@ class _ExtractionRelationPersistenceHelpers(
                 persist_result.relation_claims_queued_for_review_count
             ),
             research_space_settings=research_space_settings,
+        )
+        logger.info(
+            "Extraction relation persistence helper finished",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                ),
+                "relation_candidates_input_count": len(contract.relations),
+                "relation_claims_count": persist_result.relation_claims_count,
+                "persisted_relations_count": persist_result.persisted_relations_count,
+                "non_persistable_claims_count": (
+                    persist_result.non_persistable_claims_count
+                ),
+                "total_error_count": len(
+                    candidate_build.errors
+                    + policy_step.errors
+                    + proposal_errors
+                    + persist_result.errors,
+                ),
+            },
         )
         return RelationPersistenceResult(
             persisted_relations_count=persist_result.persisted_relations_count,
@@ -436,6 +552,7 @@ class _ExtractionRelationPersistenceHelpers(
             return _PersistCandidatesResult(
                 errors=("relation_persistence_unavailable",),
             )
+        started_at = datetime.now(UTC)
 
         persisted_count = 0
         pending_count = 0
@@ -456,8 +573,40 @@ class _ExtractionRelationPersistenceHelpers(
             if document.research_space_id is not None
             else ""
         )
+        total_candidates = len(candidates)
+        logger.info(
+            "Persist relation candidates started",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "research_space_id": research_space_id,
+                "candidate_count": total_candidates,
+                "relation_governance_mode": relation_governance_mode,
+            },
+        )
 
-        for candidate in candidates:
+        for index, candidate in enumerate(candidates, start=1):
+            should_log_candidate = (
+                total_candidates <= _PER_CANDIDATE_LOG_THRESHOLD
+                or index in {1, total_candidates}
+                or index % _PER_CANDIDATE_LOG_INTERVAL == 0
+            )
+            if should_log_candidate:
+                logger.info(
+                    "Persist relation candidate started",
+                    extra={
+                        "document_id": str(document.id),
+                        "run_id": run_id,
+                        "candidate_index": index,
+                        "candidate_total": total_candidates,
+                        "source_type": candidate.source_type,
+                        "relation_type": candidate.relation_type,
+                        "target_type": candidate.target_type,
+                        "validation_state": candidate.validation_state,
+                        "persistability": candidate.persistability,
+                        "confidence": candidate.confidence,
+                    },
+                )
             proposal_key = (
                 candidate.source_type,
                 candidate.relation_type,
@@ -465,6 +614,63 @@ class _ExtractionRelationPersistenceHelpers(
             )
             mapping_proposal = mapping_lookup.get(proposal_key)
             effective_candidate = candidate
+            canonicalization_metadata: JSONObject | None = None
+
+            if effective_candidate.persistability == "PERSISTABLE":
+                canonicalization_started_at = datetime.now(UTC)
+                if should_log_candidate:
+                    logger.info(
+                        "Persist relation candidate canonicalization started",
+                        extra={
+                            "document_id": str(document.id),
+                            "run_id": run_id,
+                            "candidate_index": index,
+                            "candidate_total": total_candidates,
+                            "source_type": effective_candidate.source_type,
+                            "relation_type": effective_candidate.relation_type,
+                            "target_type": effective_candidate.target_type,
+                        },
+                    )
+                (
+                    effective_candidate,
+                    canonicalization_metadata,
+                ) = self._canonicalize_relation_candidate(
+                    candidate=effective_candidate,
+                    mapping_proposal=mapping_proposal,
+                    document=document,
+                )
+                validation_state, validation_reason = (
+                    self._resolve_relation_validation_state(
+                        source_type=effective_candidate.source_type,
+                        relation_type=effective_candidate.relation_type,
+                        target_type=effective_candidate.target_type,
+                    )
+                )
+                effective_candidate = replace(
+                    effective_candidate,
+                    validation_state=validation_state,
+                    validation_reason=validation_reason,
+                )
+                if should_log_candidate:
+                    logger.info(
+                        "Persist relation candidate canonicalization finished",
+                        extra={
+                            "document_id": str(document.id),
+                            "run_id": run_id,
+                            "candidate_index": index,
+                            "candidate_total": total_candidates,
+                            "duration_ms": int(
+                                (
+                                    datetime.now(UTC) - canonicalization_started_at
+                                ).total_seconds()
+                                * 1000,
+                            ),
+                            "validation_state": effective_candidate.validation_state,
+                            "persistability": effective_candidate.persistability,
+                            "relation_type": effective_candidate.relation_type,
+                        },
+                    )
+
             if (
                 effective_candidate.validation_state == "UNDEFINED"
                 and relation_governance_mode == "FULL_AUTO"
@@ -476,6 +682,8 @@ class _ExtractionRelationPersistenceHelpers(
                 )
 
             payload = candidate_payload(effective_candidate)
+            if canonicalization_metadata:
+                payload["canonicalization"] = canonicalization_metadata
             claim_id: str | None = None
             if self._relation_claims is not None:
                 try:
@@ -505,6 +713,17 @@ class _ExtractionRelationPersistenceHelpers(
                             f"{effective_candidate.relation_type}:{exc!s}"
                         ),
                     )
+                    if should_log_candidate:
+                        logger.warning(
+                            "Persist relation candidate claim creation failed",
+                            extra={
+                                "document_id": str(document.id),
+                                "run_id": run_id,
+                                "candidate_index": index,
+                                "candidate_total": total_candidates,
+                                "relation_type": effective_candidate.relation_type,
+                            },
+                        )
 
             if effective_candidate.validation_state == "FORBIDDEN":
                 forbidden_count += 1
@@ -523,6 +742,18 @@ class _ExtractionRelationPersistenceHelpers(
                         ),
                     )
                     relation_claims_queued_for_review_count += 1
+                if should_log_candidate:
+                    logger.info(
+                        "Persist relation candidate completed as non-persistable",
+                        extra={
+                            "document_id": str(document.id),
+                            "run_id": run_id,
+                            "candidate_index": index,
+                            "candidate_total": total_candidates,
+                            "validation_state": effective_candidate.validation_state,
+                            "claim_id": claim_id,
+                        },
+                    )
                 continue
 
             if (
@@ -539,6 +770,18 @@ class _ExtractionRelationPersistenceHelpers(
                     )
                     relation_claims_queued_for_review_count += 1
                 errors.append("relation_persistence_missing_endpoint_entity_id")
+                if should_log_candidate:
+                    logger.warning(
+                        "Persist relation candidate missing endpoint entity id",
+                        extra={
+                            "document_id": str(document.id),
+                            "run_id": run_id,
+                            "candidate_index": index,
+                            "candidate_total": total_candidates,
+                            "validation_state": effective_candidate.validation_state,
+                            "claim_id": claim_id,
+                        },
+                    )
                 continue
 
             try:
@@ -584,6 +827,19 @@ class _ExtractionRelationPersistenceHelpers(
                     ),
                 )
                 persistence_failed_count += 1
+                if should_log_candidate:
+                    logger.warning(
+                        "Persist relation candidate relation write failed",
+                        extra={
+                            "document_id": str(document.id),
+                            "run_id": run_id,
+                            "candidate_index": index,
+                            "candidate_total": total_candidates,
+                            "relation_type": effective_candidate.relation_type,
+                            "source_entity_id": effective_candidate.source_entity_id,
+                            "target_entity_id": effective_candidate.target_entity_id,
+                        },
+                    )
                 continue
 
             self._enqueue_review_item(
@@ -594,7 +850,43 @@ class _ExtractionRelationPersistenceHelpers(
                     candidate=effective_candidate,
                 ),
             )
+            if should_log_candidate:
+                logger.info(
+                    "Persist relation candidate completed as persisted relation",
+                    extra={
+                        "document_id": str(document.id),
+                        "run_id": run_id,
+                        "candidate_index": index,
+                        "candidate_total": total_candidates,
+                        "relation_id": str(created_relation.id),
+                        "claim_id": claim_id,
+                        "validation_state": effective_candidate.validation_state,
+                        "relation_type": effective_candidate.relation_type,
+                    },
+                )
 
+        logger.info(
+            "Persist relation candidates finished",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                ),
+                "candidate_count": total_candidates,
+                "persisted_relations_count": persisted_count,
+                "pending_review_relations_count": pending_count,
+                "relation_claims_count": relation_claims_count,
+                "relation_claims_queued_for_review_count": (
+                    relation_claims_queued_for_review_count
+                ),
+                "non_persistable_claims_count": non_persistable_claims_count,
+                "forbidden_relations_count": forbidden_count,
+                "undefined_relations_count": undefined_count,
+                "persistence_failed_count": persistence_failed_count,
+                "error_count": len(errors),
+            },
+        )
         return _PersistCandidatesResult(
             persisted_relations_count=persisted_count,
             pending_review_relations_count=pending_count,

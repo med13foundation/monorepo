@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from src.application.agents.services._extraction_chunking_helpers import (
@@ -30,8 +31,33 @@ async def extract_contract_with_optional_chunking(
     context: ExtractionContext,
     model_id: str | None,
 ) -> tuple[ExtractionContract, ChunkedExtractionSummary]:
+    started_at = datetime.now(UTC)
+    logger.info(
+        "Extraction chunk execution started",
+        extra={
+            "document_id": context.document_id,
+            "source_type": context.source_type,
+            "model_id": model_id,
+        },
+    )
     if not should_use_full_text_chunking(context):
+        single_started_at = datetime.now(UTC)
         contract = await agent.extract(context, model_id=model_id)
+        logger.info(
+            "Extraction chunk execution finished in single mode",
+            extra={
+                "document_id": context.document_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                ),
+                "single_call_duration_ms": int(
+                    (datetime.now(UTC) - single_started_at).total_seconds() * 1000,
+                ),
+                "decision": contract.decision,
+                "relations_count": len(contract.relations),
+                "observations_count": len(contract.observations),
+            },
+        )
         return (
             contract,
             ChunkedExtractionSummary(
@@ -44,7 +70,23 @@ async def extract_contract_with_optional_chunking(
 
     chunks = build_full_text_chunks(context)
     if not chunks:
+        single_started_at = datetime.now(UTC)
         contract = await agent.extract(context, model_id=model_id)
+        logger.info(
+            "Extraction chunk execution fell back to single mode (no chunks built)",
+            extra={
+                "document_id": context.document_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                ),
+                "single_call_duration_ms": int(
+                    (datetime.now(UTC) - single_started_at).total_seconds() * 1000,
+                ),
+                "decision": contract.decision,
+                "relations_count": len(contract.relations),
+                "observations_count": len(contract.observations),
+            },
+        )
         return (
             contract,
             ChunkedExtractionSummary(
@@ -55,10 +97,30 @@ async def extract_contract_with_optional_chunking(
             ),
         )
 
+    logger.info(
+        "Extraction chunk execution entering chunked mode",
+        extra={
+            "document_id": context.document_id,
+            "chunk_count": len(chunks),
+            "model_id": model_id,
+        },
+    )
     chunk_contracts: list[ExtractionContract] = []
     failed_chunk_payloads: list[JSONObject] = []
     for chunk in chunks:
         chunk_context = build_chunk_context(base_context=context, chunk=chunk)
+        chunk_started_at = datetime.now(UTC)
+        logger.info(
+            "Chunked extraction chunk started",
+            extra={
+                "document_id": context.document_id,
+                "chunk_index": chunk.index + 1,
+                "chunk_total": chunk.total,
+                "start_char": chunk.start_char,
+                "end_char": chunk.end_char,
+                "model_id": model_id,
+            },
+        )
         try:
             chunk_contract = await agent.extract(
                 chunk_context,
@@ -84,6 +146,18 @@ async def extract_contract_with_optional_chunking(
                 model_id or "default",
                 exc,
                 exc_info=True,
+            )
+            logger.warning(
+                "Chunked extraction chunk failed",
+                extra={
+                    "document_id": context.document_id,
+                    "chunk_index": chunk.index + 1,
+                    "chunk_total": chunk.total,
+                    "duration_ms": int(
+                        (datetime.now(UTC) - chunk_started_at).total_seconds() * 1000,
+                    ),
+                    "error_class": type(exc).__name__,
+                },
             )
             failed_chunk_payloads.append(
                 {
@@ -111,6 +185,18 @@ async def extract_contract_with_optional_chunking(
                 failure_reason,
                 model_id or "default",
             )
+            logger.warning(
+                "Chunked extraction chunk escalated as failure",
+                extra={
+                    "document_id": context.document_id,
+                    "chunk_index": chunk.index + 1,
+                    "chunk_total": chunk.total,
+                    "duration_ms": int(
+                        (datetime.now(UTC) - chunk_started_at).total_seconds() * 1000,
+                    ),
+                    "failure_reason": failure_reason,
+                },
+            )
             failed_chunk_payloads.append(
                 {
                     "chunk_index": chunk.index,
@@ -123,14 +209,56 @@ async def extract_contract_with_optional_chunking(
             )
             continue
         chunk_contracts.append(chunk_contract)
+        logger.info(
+            "Chunked extraction chunk finished",
+            extra={
+                "document_id": context.document_id,
+                "chunk_index": chunk.index + 1,
+                "chunk_total": chunk.total,
+                "duration_ms": int(
+                    (datetime.now(UTC) - chunk_started_at).total_seconds() * 1000,
+                ),
+                "decision": chunk_contract.decision,
+                "relations_count": len(chunk_contract.relations),
+                "observations_count": len(chunk_contract.observations),
+                "rejected_facts_count": len(chunk_contract.rejected_facts),
+            },
+        )
 
     if not chunk_contracts:
+        fallback_started_at = datetime.now(UTC)
+        logger.warning(
+            "Chunked extraction produced no successful chunks; running single-call fallback",
+            extra={
+                "document_id": context.document_id,
+                "failed_chunk_count": len(failed_chunk_payloads),
+                "chunk_count": len(chunks),
+                "model_id": model_id,
+            },
+        )
         fallback_contract = await agent.extract(context, model_id=model_id)
         if failed_chunk_payloads:
             append_chunk_failure_rejections(
                 contract=fallback_contract,
                 failure_payloads=failed_chunk_payloads,
             )
+        logger.info(
+            "Extraction chunk execution finished in chunked fallback mode",
+            extra={
+                "document_id": context.document_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                ),
+                "fallback_call_duration_ms": int(
+                    (datetime.now(UTC) - fallback_started_at).total_seconds() * 1000,
+                ),
+                "chunk_count": len(chunks),
+                "failed_chunk_count": len(failed_chunk_payloads),
+                "decision": fallback_contract.decision,
+                "relations_count": len(fallback_contract.relations),
+                "observations_count": len(fallback_contract.observations),
+            },
+        )
         return (
             fallback_contract,
             ChunkedExtractionSummary(
@@ -150,6 +278,20 @@ async def extract_contract_with_optional_chunking(
             contract=merged_contract,
             failure_payloads=failed_chunk_payloads,
         )
+    logger.info(
+        "Extraction chunk execution finished in chunked mode",
+        extra={
+            "document_id": context.document_id,
+            "duration_ms": int((datetime.now(UTC) - started_at).total_seconds() * 1000),
+            "chunk_count": len(chunks),
+            "successful_chunk_count": len(chunk_contracts),
+            "failed_chunk_count": len(failed_chunk_payloads),
+            "decision": merged_contract.decision,
+            "relations_count": len(merged_contract.relations),
+            "observations_count": len(merged_contract.observations),
+            "rejected_facts_count": len(merged_contract.rejected_facts),
+        },
+    )
     return (
         merged_contract,
         ChunkedExtractionSummary(

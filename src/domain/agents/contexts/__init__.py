@@ -20,6 +20,9 @@ from src.domain.agents.contexts.graph_connection_context import (
     GraphConnectionContext,
 )
 from src.domain.agents.contexts.graph_search_context import GraphSearchContext
+from src.domain.agents.contexts.pubmed_relevance_context import (
+    PubMedRelevanceContext,
+)
 from src.domain.agents.contexts.query_context import QueryGenerationContext
 
 __all__ = [
@@ -30,5 +33,6 @@ __all__ = [
     "ExtractionPolicyContext",
     "GraphConnectionContext",
     "GraphSearchContext",
+    "PubMedRelevanceContext",
     "QueryGenerationContext",
 ]

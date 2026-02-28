@@ -44,8 +44,8 @@
     },
     {
       "path": "src/application/agents/services/entity_recognition_service.py",
-      "max_lines": 1350,
-      "reason": "Entity recognition orchestration now includes graph-fallback and review-queue integration; split remains planned after contract and queue interfaces stabilize.",
+      "max_lines": 1750,
+      "reason": "Entity recognition orchestration expanded with claim-first persistence and review-queue coordination; split remains planned after relation persistence helpers are finalized.",
       "expires_on": "2026-12-31"
     },
     {
@@ -106,6 +106,14 @@
       "class_name": "DictionaryManagementService",
       "max_methods": 50,
       "reason": "Service-level orchestration remains centralized while semantic layer interfaces are still evolving.",
+      "expires_on": "2026-12-31"
+    }
+  ],
+  "import_count": [
+    {
+      "path": "src/infrastructure/llm/adapters/dictionary_search_harness_adapter.py",
+      "max_imports": 24,
+      "reason": "Harness remains intentionally centralized while staged search strategy and mapping-judge interaction contracts stabilize.",
       "expires_on": "2026-12-31"
     }
   ]

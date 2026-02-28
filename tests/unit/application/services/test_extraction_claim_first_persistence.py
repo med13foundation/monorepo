@@ -21,7 +21,14 @@ from src.domain.agents.contracts.extraction import (
     ExtractedRelation,
     ExtractionContract,
 )
+from src.domain.agents.contracts.extraction_policy import (
+    ExtractionPolicyContract,
+    RelationTypeMappingProposal,
+)
 from src.domain.agents.ports.extraction_agent_port import ExtractionAgentPort
+from src.domain.agents.ports.extraction_policy_agent_port import (
+    ExtractionPolicyAgentPort,
+)
 from src.domain.entities.source_document import (
     DocumentExtractionStatus,
     DocumentFormat,
@@ -48,8 +55,14 @@ from src.models.database.user_data_source import (
 from src.type_definitions.ingestion import IngestResult
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from src.domain.agents.contexts.extraction_context import ExtractionContext
+    from src.domain.agents.contexts.extraction_policy_context import (
+        ExtractionPolicyContext,
+    )
     from src.domain.entities.kernel.dictionary import DictionarySearchResult
+    from src.type_definitions.ingestion import RawRecord
 
 
 class _DeterministicHarness(DictionarySearchHarnessPort):
@@ -96,10 +109,29 @@ class _FixedExtractionAgent(ExtractionAgentPort):
         return None
 
 
+class _FixedPolicyAgent(ExtractionPolicyAgentPort):
+    """Returns one predefined extraction-policy contract."""
+
+    def __init__(self, contract: ExtractionPolicyContract) -> None:
+        self._contract = contract
+
+    async def propose(
+        self,
+        context: ExtractionPolicyContext,
+        *,
+        model_id: str | None = None,
+    ) -> ExtractionPolicyContract:
+        del context, model_id
+        return self._contract
+
+    async def close(self) -> None:
+        return None
+
+
 class _NoopIngestionPipeline:
     """No-op ingestion pipeline used for extraction relation tests."""
 
-    def run(self, records, research_space_id: str) -> IngestResult:
+    def run(self, records: list[RawRecord], research_space_id: str) -> IngestResult:
         del records, research_space_id
         return IngestResult(success=True, entities_created=0, observations_created=0)
 
@@ -159,7 +191,7 @@ def _build_recognition_contract(document_id: str) -> EntityRecognitionContract:
 @pytest.mark.database
 @pytest.mark.asyncio
 async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
-    db_session,
+    db_session: Session,
 ) -> None:
     db_session.add(
         DictionaryDomainContextModel(
@@ -432,3 +464,208 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
     assert len(queued_relations) == 3
     assert all(item[2] == str(space.id) for item in queued_relation_claims)
     assert any(item[3] == "high" for item in queued_relation_claims)
+
+
+@pytest.mark.database
+@pytest.mark.asyncio
+async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
+    db_session: Session,
+) -> None:
+    db_session.add(
+        DictionaryDomainContextModel(
+            id="clinical_canonicalization",
+            display_name="Clinical",
+            description="Clinical domain for canonicalization unit tests",
+        ),
+    )
+    db_session.flush()
+
+    user = UserModel(
+        email=f"canonicalization-{uuid4().hex}@example.com",
+        username=f"canonicalization-{uuid4().hex}",
+        full_name="Canonicalization Tester",
+        hashed_password="hashed",
+        role=UserRole.RESEARCHER,
+        status=UserStatus.ACTIVE,
+    )
+    db_session.add(user)
+    db_session.flush()
+
+    space = ResearchSpaceModel(
+        slug=f"canonicalization-space-{uuid4().hex[:12]}",
+        name="Canonicalization Test Space",
+        description="Unit test space for relation canonicalization persistence.",
+        owner_id=user.id,
+        status="active",
+    )
+    db_session.add(space)
+    db_session.flush()
+
+    source = UserDataSourceModel(
+        id=str(uuid4()),
+        owner_id=str(user.id),
+        research_space_id=str(space.id),
+        name="Canonicalization Source",
+        description="Source for relation canonicalization tests",
+        source_type=SourceTypeEnum.PUBMED,
+        configuration={"query": "CNOT1"},
+        status=SourceStatusEnum.ACTIVE,
+        ingestion_schedule={},
+        quality_metrics={},
+        tags=[],
+        version="1.0",
+    )
+    db_session.add(source)
+    db_session.flush()
+
+    dictionary_repo = SqlAlchemyDictionaryRepository(db_session)
+    dictionary_service = DictionaryManagementService(
+        dictionary_repo=dictionary_repo,
+        dictionary_search_harness=_DeterministicHarness(dictionary_repo),
+        embedding_provider=None,
+    )
+    dictionary_service.create_entity_type(
+        entity_type="GENE",
+        display_name="Gene",
+        description="Gene entity type",
+        domain_context="clinical_canonicalization",
+        created_by="manual:test",
+        source_ref="tests:canonicalization",
+    )
+    dictionary_service.create_relation_type(
+        relation_type="GENETIC_INTERACTION_IMPAIRMENT",
+        display_name="Genetic interaction impairment",
+        description="A gene perturbation impairs interaction with another gene.",
+        domain_context="clinical_canonicalization",
+        created_by="manual:test",
+        source_ref="tests:canonicalization",
+    )
+
+    entity_repo = SqlAlchemyKernelEntityRepository(db_session)
+    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
+    claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    _ = entity_repo.create(
+        research_space_id=str(space.id),
+        entity_type="GENE",
+        display_label="CNOT1",
+        metadata={},
+    )
+    _ = entity_repo.create(
+        research_space_id=str(space.id),
+        entity_type="GENE",
+        display_label="DYRK1A",
+        metadata={},
+    )
+
+    extraction_contract = ExtractionContract(
+        decision="generated",
+        confidence_score=0.92,
+        rationale="Exercise policy mapping canonicalization in HUMAN_IN_LOOP mode.",
+        evidence=[
+            EvidenceItem(
+                source_type="db",
+                locator="tests:canonicalization",
+                excerpt="Deterministic mapped relation",
+                relevance=0.9,
+            ),
+        ],
+        source_type="pubmed",
+        document_id="canonicalization-doc",
+        observations=[],
+        relations=[
+            ExtractedRelation(
+                source_type="GENE",
+                relation_type="GENETIC_INTERACTION",
+                target_type="GENE",
+                source_label="CNOT1",
+                target_label="DYRK1A",
+                confidence=0.91,
+            ),
+        ],
+        rejected_facts=[],
+        pipeline_payloads=[],
+        shadow_mode=False,
+        agent_run_id="canonicalization-extraction-run",
+    )
+    policy_contract = ExtractionPolicyContract(
+        decision="generated",
+        confidence_score=0.88,
+        rationale="Map generic interaction into canonical impairment relation type.",
+        evidence=[
+            EvidenceItem(
+                source_type="db",
+                locator="tests:canonicalization:policy",
+                excerpt="Observed relation type should map to canonical dictionary type.",
+                relevance=0.8,
+            ),
+        ],
+        source_type="pubmed",
+        document_id="canonicalization-doc",
+        unknown_patterns=[],
+        relation_constraint_proposals=[],
+        relation_type_mapping_proposals=[
+            RelationTypeMappingProposal(
+                source_type="GENE",
+                observed_relation_type="GENETIC_INTERACTION",
+                target_type="GENE",
+                mapped_relation_type="GENETIC_INTERACTION_IMPAIRMENT",
+                confidence=0.95,
+                rationale="Prefer specific impairment interaction label.",
+            ),
+        ],
+        agent_run_id="canonicalization-policy-run",
+    )
+
+    service = ExtractionService(
+        dependencies=ExtractionServiceDependencies(
+            extraction_agent=_FixedExtractionAgent(extraction_contract),
+            extraction_policy_agent=_FixedPolicyAgent(policy_contract),
+            ingestion_pipeline=_NoopIngestionPipeline(),
+            relation_repository=relation_repo,
+            relation_claim_repository=claim_repo,
+            entity_repository=entity_repo,
+            dictionary_service=dictionary_service,
+            review_queue_submitter=lambda *_: None,
+        ),
+    )
+
+    document = _build_document(
+        source_id=str(source.id),
+        research_space_id=str(space.id),
+    )
+    recognition_contract = _build_recognition_contract(str(document.id))
+
+    outcome = await service.extract_from_entity_recognition(
+        document=document,
+        recognition_contract=recognition_contract,
+        research_space_settings={"relation_governance_mode": "HUMAN_IN_LOOP"},
+    )
+    db_session.commit()
+
+    assert outcome.status == "extracted"
+    assert outcome.persisted_relations_count == 1
+    assert outcome.undefined_relations_count == 1
+
+    persisted_relations = relation_repo.find_by_research_space(
+        str(space.id),
+        limit=10,
+        offset=0,
+    )
+    assert len(persisted_relations) == 1
+    assert persisted_relations[0].relation_type == "GENETIC_INTERACTION_IMPAIRMENT"
+    assert persisted_relations[0].curation_status == "DRAFT"
+
+    claims = claim_repo.find_by_research_space(str(space.id), limit=10, offset=0)
+    assert len(claims) == 1
+    claim = claims[0]
+    assert claim.relation_type == "GENETIC_INTERACTION_IMPAIRMENT"
+    canonicalization_metadata = claim.metadata_payload.get("canonicalization")
+    assert isinstance(canonicalization_metadata, dict)
+    assert canonicalization_metadata.get("strategy") == "policy_mapping_proposal"
+    assert (
+        canonicalization_metadata.get("observed_relation_type") == "GENETIC_INTERACTION"
+    )
+    assert (
+        canonicalization_metadata.get("canonical_relation_type")
+        == "GENETIC_INTERACTION_IMPAIRMENT"
+    )

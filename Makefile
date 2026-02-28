@@ -323,23 +323,27 @@ run-all-postgres: ## Restart Postgres, run migrations, seed admin, start backend
 	@$(MAKE) -s postgres-migrate SUPPRESS_VENV_WARNING=1
 	@$(MAKE) -s init-artana-schema SUPPRESS_VENV_WARNING=1
 	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin SUPPRESS_VENV_WARNING=1)
-	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s start-local SKIP_SETUP_POSTGRES=1 SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
 	@echo "Backend running in background. Starting Next.js..."
 	@$(MAKE) -s web-clean
-	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s start-web SKIP_SETUP_POSTGRES=1 SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
 	@echo "All services running. FastAPI logs: $(BACKEND_LOG) | Next.js logs: $(WEB_LOG)"
 
 dev-postgres: ## Start Postgres (if needed) + services for local development
 	$(call check_venv)
 	@$(MAKE) -s setup-postgres
 	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin SUPPRESS_VENV_WARNING=1)
-	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s start-local SKIP_SETUP_POSTGRES=1 SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
 	@echo "Backend running in background. Starting Next.js..."
-	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s start-web SKIP_SETUP_POSTGRES=1 SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
 	@echo "All services running. FastAPI logs: $(BACKEND_LOG) | Next.js logs: $(WEB_LOG)"
 start-local: ## Run FastAPI backend in the background (logs/backend.log)
 	$(call check_venv)
-	@$(MAKE) -s setup-postgres
+ifneq ($(SKIP_SETUP_POSTGRES),1)
+	@$(MAKE) -s setup-postgres SUPPRESS_VENV_WARNING=1
+else
+	@$(MAKE) -s postgres-wait SUPPRESS_VENV_WARNING=1
+endif
 	@mkdir -p $(dir $(BACKEND_LOG))
 	@if lsof -ti tcp:8080 >/dev/null 2>&1; then \
 		echo "Port 8080 already in use. Run 'make stop-local' or free the port before starting in background."; \
@@ -395,7 +399,11 @@ run-web-postgres: ## Run the Next.js admin interface with Postgres env vars load
 
 start-web: ## Run Next.js admin interface in the background (logs/web.log)
 	$(call check_venv)
-	@$(MAKE) -s setup-postgres
+ifneq ($(SKIP_SETUP_POSTGRES),1)
+	@$(MAKE) -s setup-postgres SUPPRESS_VENV_WARNING=1
+else
+	@$(MAKE) -s postgres-wait SUPPRESS_VENV_WARNING=1
+endif
 	$(call ensure_web_deps)
 	@mkdir -p $(dir $(WEB_LOG))
 	@if lsof -ti tcp:3000 >/dev/null 2>&1; then \
@@ -631,10 +639,10 @@ init-artana-schema: ## Initialize the artana schema in Postgres
 	$(call run_with_postgres_env,$(USE_PYTHON) scripts/init_artana_schema.py)
 
 setup-postgres: ## Full PostgreSQL setup including artana schema
-	@$(MAKE) -s docker-postgres-up
-	@$(MAKE) -s postgres-wait
-	@$(MAKE) -s postgres-migrate
-	@$(MAKE) -s init-artana-schema
+	@$(MAKE) -s docker-postgres-up SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s postgres-wait SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s postgres-migrate SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s init-artana-schema SUPPRESS_VENV_WARNING=1
 	@echo "PostgreSQL setup complete with artana schema."
 
 # Database

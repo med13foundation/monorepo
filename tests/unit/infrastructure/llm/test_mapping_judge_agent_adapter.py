@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import threading
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -132,7 +134,7 @@ def test_judge_returns_normalized_match_and_run_id() -> None:
     context = _build_context()
     with (
         patch.dict(os.environ, {"OPENAI_API_KEY": "test-openai-key"}, clear=True),
-        _build_adapter() as (adapter, client, _, _),
+        _build_adapter() as (adapter, client, kernel, model_port),
     ):
         contract = adapter.judge(context)
 
@@ -144,6 +146,8 @@ def test_judge_returns_normalized_match_and_run_id() -> None:
     assert contract.agent_run_id is not None
     assert contract.agent_run_id.startswith("mapping_judge:")
     client.step.assert_awaited_once()
+    kernel.close.assert_awaited_once()
+    model_port.aclose.assert_awaited_once()
 
 
 def test_judge_invalid_selected_id_converts_to_no_match() -> None:
@@ -171,8 +175,158 @@ def test_judge_invalid_selected_id_converts_to_no_match() -> None:
         adapter.judge(context)
 
 
-def test_close_closes_kernel_and_model_port() -> None:
+def test_close_is_noop_when_runtime_is_scoped_per_judge_call() -> None:
     with _build_adapter() as (adapter, _, kernel, model_port):
         adapter.close()
-    kernel.close.assert_awaited_once()
-    model_port.aclose.assert_awaited_once()
+    kernel.close.assert_not_awaited()
+    model_port.aclose.assert_not_awaited()
+
+
+def test_judge_creates_runtime_per_call() -> None:
+    context = _build_context()
+    registry = _build_registry()
+    governance = MagicMock()
+    governance.usage_limits.total_cost_usd = 1.0
+    governance.usage_limits.max_turns = 5
+    governance.usage_limits.max_tokens = 1024
+
+    first_client = MagicMock()
+    first_client.step = AsyncMock(
+        return_value=SimpleNamespace(
+            output=MappingJudgeContract(
+                decision="matched",
+                selected_variable_id="VAR_CARDIOMEGALY_MARKER",
+                candidate_count=1,
+                selection_rationale="test",
+                selected_candidate=None,
+                confidence_score=0.8,
+                rationale="test",
+                evidence=[],
+                agent_run_id=None,
+            ),
+        ),
+    )
+    second_client = MagicMock()
+    second_client.step = AsyncMock(
+        return_value=SimpleNamespace(
+            output=MappingJudgeContract(
+                decision="matched",
+                selected_variable_id="VAR_CARDIOMEGALY_MARKER",
+                candidate_count=1,
+                selection_rationale="test",
+                selected_candidate=None,
+                confidence_score=0.8,
+                rationale="test",
+                evidence=[],
+                agent_run_id=None,
+            ),
+        ),
+    )
+    first_kernel = MagicMock()
+    first_kernel.close = AsyncMock()
+    second_kernel = MagicMock()
+    second_kernel.close = AsyncMock()
+    first_model_port = MagicMock()
+    first_model_port.aclose = AsyncMock()
+    second_model_port = MagicMock()
+    second_model_port.aclose = AsyncMock()
+
+    with (
+        patch.dict(os.environ, {"OPENAI_API_KEY": "test-openai-key"}, clear=True),
+        patch(f"{_ADAPTER_MODULE}._ARTANA_IMPORT_ERROR", None),
+        patch(f"{_ADAPTER_MODULE}.get_model_registry", return_value=registry),
+        patch(
+            f"{_ADAPTER_MODULE}.GovernanceConfig.from_environment",
+            return_value=governance,
+        ),
+        patch.object(ArtanaMappingJudgeAdapter, "_create_store", return_value=object()),
+        patch.object(
+            ArtanaMappingJudgeAdapter,
+            "_create_tenant",
+            return_value=object(),
+        ),
+        patch(
+            f"{_ADAPTER_MODULE}._OpenAIChatModelPort",
+            side_effect=[first_model_port, second_model_port],
+        ),
+        patch(
+            f"{_ADAPTER_MODULE}.ArtanaKernel",
+            side_effect=[first_kernel, second_kernel],
+            create=True,
+        ) as kernel_constructor,
+        patch(
+            f"{_ADAPTER_MODULE}.SingleStepModelClient",
+            side_effect=[first_client, second_client],
+            create=True,
+        ),
+    ):
+        adapter = ArtanaMappingJudgeAdapter()
+        first = adapter.judge(context)
+        second = adapter.judge(context)
+
+    assert first.decision == "matched"
+    assert second.decision == "matched"
+    assert kernel_constructor.call_count == 2
+    first_kernel.close.assert_awaited_once()
+    second_kernel.close.assert_awaited_once()
+    first_model_port.aclose.assert_awaited_once()
+    second_model_port.aclose.assert_awaited_once()
+
+
+def test_judge_creates_runtime_in_worker_thread_when_event_loop_is_active() -> None:
+    context = _build_context()
+    runtime_thread_ids: list[int] = []
+
+    with (
+        patch.dict(os.environ, {"OPENAI_API_KEY": "test-openai-key"}, clear=True),
+        _build_adapter() as (adapter, _, _, _),
+    ):
+        original_create_runtime = adapter._create_runtime
+
+        def _record_runtime_thread() -> tuple[object, object, object]:
+            runtime_thread_ids.append(threading.get_ident())
+            return original_create_runtime()
+
+        async def _invoke_judge() -> tuple[int, MappingJudgeContract]:
+            caller_thread_id = threading.get_ident()
+            contract = adapter.judge(context)
+            return caller_thread_id, contract
+
+        with patch.object(
+            adapter,
+            "_create_runtime",
+            side_effect=_record_runtime_thread,
+        ):
+            caller_thread_id, contract = asyncio.run(_invoke_judge())
+
+    assert contract.decision == "matched"
+    assert runtime_thread_ids
+    assert all(thread_id != caller_thread_id for thread_id in runtime_thread_ids)
+
+
+def test_run_contract_coroutine_times_out_when_bridge_thread_hangs() -> None:
+    async def _slow_contract() -> MappingJudgeContract:
+        await asyncio.sleep(0.1)
+        return MappingJudgeContract(
+            decision="no_match",
+            selected_variable_id=None,
+            candidate_count=0,
+            selection_rationale="timeout test",
+            selected_candidate=None,
+            confidence_score=0.0,
+            rationale="timeout test",
+            evidence=[],
+            agent_run_id=None,
+        )
+
+    async def _invoke_timeout() -> None:
+        with (
+            patch(
+                f"{_ADAPTER_MODULE}._THREAD_BRIDGE_TIMEOUT_SECONDS",
+                0.01,
+            ),
+            pytest.raises(TimeoutError, match="timed out"),
+        ):
+            ArtanaMappingJudgeAdapter._run_contract_coroutine(_slow_contract())
+
+    asyncio.run(_invoke_timeout())

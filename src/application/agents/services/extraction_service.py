@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from src.application.agents.services._extraction_chunk_execution_helpers import (
@@ -62,7 +63,12 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         shadow_mode: bool | None = None,
     ) -> ExtractionDocumentOutcome:
         """Run extraction for one recognized document and forward to kernel ingest."""
+        started_at = datetime.now(UTC)
         if document.research_space_id is None:
+            logger.warning(
+                "Extraction service skipped document without research space id",
+                extra={"document_id": str(document.id)},
+            )
             return ExtractionDocumentOutcome(
                 document_id=document.id,
                 status="failed",
@@ -73,6 +79,24 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 errors=("missing_research_space_id",),
             )
 
+        logger.info(
+            "Extraction service document started",
+            extra={
+                "document_id": str(document.id),
+                "source_type": document.source_type.value,
+                "research_space_id": str(document.research_space_id),
+                "requested_shadow_mode": shadow_mode,
+                "recognition_shadow_mode": recognition_contract.shadow_mode,
+                "recognized_entities_count": len(
+                    recognition_contract.recognized_entities,
+                ),
+                "recognized_observations_count": len(
+                    recognition_contract.recognized_observations,
+                ),
+                "recognition_run_id": recognition_contract.agent_run_id,
+                "model_id": model_id,
+            },
+        )
         raw_record = self._extract_raw_record(document)
         requested_shadow_mode = (
             shadow_mode
@@ -89,9 +113,38 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             recognized_observations=recognition_contract.recognized_observations,
             shadow_mode=requested_shadow_mode,
         )
+        contract_started_at = datetime.now(UTC)
+        logger.info(
+            "Extraction contract generation started",
+            extra={
+                "document_id": str(document.id),
+                "source_type": context.source_type,
+                "shadow_mode": requested_shadow_mode,
+                "model_id": model_id,
+            },
+        )
         contract, chunk_summary = await self._extract_contract_with_optional_chunking(
             context=context,
             model_id=model_id,
+        )
+        logger.info(
+            "Extraction contract generation finished",
+            extra={
+                "document_id": str(document.id),
+                "duration_ms": int(
+                    (datetime.now(UTC) - contract_started_at).total_seconds() * 1000,
+                ),
+                "contract_run_id": contract.agent_run_id,
+                "decision": contract.decision,
+                "confidence_score": contract.confidence_score,
+                "observations_count": len(contract.observations),
+                "relations_count": len(contract.relations),
+                "rejected_facts_count": len(contract.rejected_facts),
+                "chunk_mode": chunk_summary.mode,
+                "chunk_count": chunk_summary.chunk_count,
+                "chunk_successful": chunk_summary.successful_chunks,
+                "chunk_failed": chunk_summary.failed_chunks,
+            },
         )
         initial_funnel = build_initial_extraction_funnel(
             contract=contract,
@@ -106,12 +159,33 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             research_space_settings=research_space_settings,
             relation_types=self._resolve_relation_types(contract),
         )
+        logger.info(
+            "Extraction governance decision evaluated",
+            extra={
+                "document_id": str(document.id),
+                "allow_write": governance.allow_write,
+                "requires_review": governance.requires_review,
+                "shadow_mode": governance.shadow_mode,
+                "reason": governance.reason,
+                "run_id": run_id,
+            },
+        )
         if governance.requires_review:
             self._submit_review_item(
                 document=document,
                 reason=governance.reason,
             )
         if governance.shadow_mode:
+            logger.info(
+                "Extraction service completed in shadow mode",
+                extra={
+                    "document_id": str(document.id),
+                    "run_id": run_id,
+                    "duration_ms": int(
+                        (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                    ),
+                },
+            )
             return build_extraction_outcome(
                 document=document,
                 contract=contract,
@@ -122,6 +196,17 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 extraction_funnel=initial_funnel,
             )
         if not governance.allow_write:
+            logger.info(
+                "Extraction service blocked by governance",
+                extra={
+                    "document_id": str(document.id),
+                    "run_id": run_id,
+                    "reason": governance.reason,
+                    "duration_ms": int(
+                        (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                    ),
+                },
+            )
             return build_extraction_outcome(
                 document=document,
                 contract=contract,
@@ -140,7 +225,19 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             run_id=run_id,
             primary_entity_type=recognition_contract.primary_entity_type,
         )
+        logger.info(
+            "Extraction pipeline records built",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "record_count": len(pipeline_records),
+            },
+        )
         if not pipeline_records:
+            logger.warning(
+                "Extraction service produced no pipeline payloads",
+                extra={"document_id": str(document.id), "run_id": run_id},
+            )
             return build_extraction_outcome(
                 document=document,
                 contract=contract,
@@ -152,11 +249,43 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 errors=("no_pipeline_payloads",),
             )
 
+        ingestion_started_at = datetime.now(UTC)
+        logger.info(
+            "Extraction ingestion pipeline started",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "record_count": len(pipeline_records),
+            },
+        )
         ingestion_result = self._ingestion_pipeline.run(
             pipeline_records,
             str(document.research_space_id),
         )
+        logger.info(
+            "Extraction ingestion pipeline finished",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - ingestion_started_at).total_seconds() * 1000,
+                ),
+                "success": ingestion_result.success,
+                "entities_created": ingestion_result.entities_created,
+                "observations_created": ingestion_result.observations_created,
+                "entity_ids_touched": len(ingestion_result.entity_ids_touched),
+                "error_count": len(ingestion_result.errors),
+            },
+        )
         if not ingestion_result.success:
+            logger.warning(
+                "Extraction ingestion pipeline failed",
+                extra={
+                    "document_id": str(document.id),
+                    "run_id": run_id,
+                    "errors": tuple(ingestion_result.errors),
+                },
+            )
             return build_extraction_outcome(
                 document=document,
                 contract=contract,
@@ -173,6 +302,18 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 errors=tuple(ingestion_result.errors),
             )
 
+        relation_persistence_started_at = datetime.now(UTC)
+        logger.info(
+            "Extraction relation persistence started",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "relations_count": len(contract.relations),
+                "publication_entity_ids_count": len(
+                    ingestion_result.entity_ids_touched,
+                ),
+            },
+        )
         relation_persistence_result = await self._persist_extracted_relations(
             document=document,
             contract=contract,
@@ -180,11 +321,61 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             publication_entity_ids=tuple(ingestion_result.entity_ids_touched),
             model_id=model_id,
         )
+        logger.info(
+            "Extraction relation persistence finished",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (
+                        datetime.now(UTC) - relation_persistence_started_at
+                    ).total_seconds()
+                    * 1000,
+                ),
+                "persisted_relations_count": (
+                    relation_persistence_result.persisted_relations_count
+                ),
+                "pending_review_relations_count": (
+                    relation_persistence_result.pending_review_relations_count
+                ),
+                "relation_claims_count": relation_persistence_result.relation_claims_count,
+                "non_persistable_claims_count": (
+                    relation_persistence_result.non_persistable_claims_count
+                ),
+                "forbidden_relations_count": (
+                    relation_persistence_result.forbidden_relations_count
+                ),
+                "undefined_relations_count": (
+                    relation_persistence_result.undefined_relations_count
+                ),
+                "error_count": len(relation_persistence_result.errors),
+            },
+        )
         merged_funnel = merge_extraction_funnels(
             initial_funnel=initial_funnel,
             persistence_funnel=relation_persistence_result.funnel,
         )
 
+        logger.info(
+            "Extraction service document finished",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                ),
+                "ingestion_entities_created": ingestion_result.entities_created,
+                "ingestion_observations_created": ingestion_result.observations_created,
+                "persisted_relations_count": (
+                    relation_persistence_result.persisted_relations_count
+                ),
+                "pending_review_relations_count": (
+                    relation_persistence_result.pending_review_relations_count
+                ),
+                "error_count": len(ingestion_result.errors)
+                + len(relation_persistence_result.errors),
+            },
+        )
         return build_extraction_outcome(
             document=document,
             contract=contract,

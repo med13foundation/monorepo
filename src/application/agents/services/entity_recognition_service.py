@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
 from src.application.agents.services._entity_recognition_bootstrap_helpers import (
@@ -53,6 +55,43 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _AGENT_CREATED_BY = "agent:entity_recognition"
+_ENV_AGENT_TIMEOUT_SECONDS = "MED13_ENTITY_RECOGNITION_AGENT_TIMEOUT_SECONDS"
+_ENV_EXTRACTION_STAGE_TIMEOUT_SECONDS = (
+    "MED13_ENTITY_RECOGNITION_EXTRACTION_STAGE_TIMEOUT_SECONDS"
+)
+_ENV_STALE_IN_PROGRESS_SECONDS = "MED13_ENTITY_RECOGNITION_STALE_IN_PROGRESS_SECONDS"
+_DEFAULT_AGENT_TIMEOUT_SECONDS = 180.0
+_DEFAULT_EXTRACTION_STAGE_TIMEOUT_SECONDS = 300.0
+_DEFAULT_STALE_IN_PROGRESS_SECONDS = 900.0
+
+
+def _read_positive_timeout_seconds(
+    env_name: str,
+    *,
+    default_seconds: float,
+) -> float:
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        return default_seconds
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid timeout override in %s=%r; using default %.1fs",
+            env_name,
+            raw_value,
+            default_seconds,
+        )
+        return default_seconds
+    if parsed <= 0:
+        logger.warning(
+            "Non-positive timeout override in %s=%r; using default %.1fs",
+            env_name,
+            raw_value,
+            default_seconds,
+        )
+        return default_seconds
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -136,6 +175,18 @@ class EntityRecognitionService(
         self._default_shadow_mode = default_shadow_mode
         normalized_created_by = agent_created_by.strip()
         self._agent_created_by = normalized_created_by or _AGENT_CREATED_BY
+        self._agent_timeout_seconds = _read_positive_timeout_seconds(
+            _ENV_AGENT_TIMEOUT_SECONDS,
+            default_seconds=_DEFAULT_AGENT_TIMEOUT_SECONDS,
+        )
+        self._extraction_stage_timeout_seconds = _read_positive_timeout_seconds(
+            _ENV_EXTRACTION_STAGE_TIMEOUT_SECONDS,
+            default_seconds=_DEFAULT_EXTRACTION_STAGE_TIMEOUT_SECONDS,
+        )
+        self._stale_in_progress_seconds = _read_positive_timeout_seconds(
+            _ENV_STALE_IN_PROGRESS_SECONDS,
+            default_seconds=_DEFAULT_STALE_IN_PROGRESS_SECONDS,
+        )
 
     async def process_pending_documents(  # noqa: PLR0913
         self,
@@ -155,6 +206,55 @@ class EntityRecognitionService(
         fetch_limit = requested_limit
         if ingestion_job_id is not None:
             fetch_limit = max(requested_limit * 20, 200)
+        stale_cutoff = datetime.now(UTC) - timedelta(
+            seconds=self._stale_in_progress_seconds,
+        )
+        recovered_stale_documents = 0
+        try:
+            recovered_stale_documents = (
+                self._source_documents.recover_stale_in_progress_extraction(
+                    stale_before=stale_cutoff,
+                    source_id=source_id,
+                    research_space_id=research_space_id,
+                    ingestion_job_id=ingestion_job_id,
+                    limit=max(fetch_limit, 100),
+                )
+            )
+        except Exception:  # noqa: BLE001 - recovery should not block extraction
+            logger.exception(
+                "Entity recognition stale in-progress recovery sweep failed",
+                extra={
+                    "pipeline_run_id": pipeline_run_id,
+                    "source_id": str(source_id) if source_id is not None else None,
+                    "ingestion_job_id": (
+                        str(ingestion_job_id) if ingestion_job_id is not None else None
+                    ),
+                    "research_space_id": (
+                        str(research_space_id)
+                        if research_space_id is not None
+                        else None
+                    ),
+                    "stale_threshold_seconds": self._stale_in_progress_seconds,
+                },
+            )
+        if recovered_stale_documents > 0:
+            logger.warning(
+                "Entity recognition recovered stale in-progress documents",
+                extra={
+                    "pipeline_run_id": pipeline_run_id,
+                    "source_id": str(source_id) if source_id is not None else None,
+                    "ingestion_job_id": (
+                        str(ingestion_job_id) if ingestion_job_id is not None else None
+                    ),
+                    "research_space_id": (
+                        str(research_space_id)
+                        if research_space_id is not None
+                        else None
+                    ),
+                    "recovered_documents": recovered_stale_documents,
+                    "stale_threshold_seconds": self._stale_in_progress_seconds,
+                },
+            )
         pending_documents = self._source_documents.list_pending_extraction(
             limit=fetch_limit,
             source_id=source_id,
@@ -180,9 +280,45 @@ class EntityRecognitionService(
             key=lambda document: document.created_at,
             reverse=True,
         )[:requested_limit]
+        logger.info(
+            "Entity recognition batch started",
+            extra={
+                "pipeline_run_id": pipeline_run_id,
+                "source_id": str(source_id) if source_id is not None else None,
+                "ingestion_job_id": (
+                    str(ingestion_job_id) if ingestion_job_id is not None else None
+                ),
+                "research_space_id": (
+                    str(research_space_id) if research_space_id is not None else None
+                ),
+                "source_type": normalized_source_type,
+                "requested_limit": requested_limit,
+                "candidate_count": len(pending_documents),
+                "recovered_stale_documents": recovered_stale_documents,
+                "agent_timeout_seconds": self._agent_timeout_seconds,
+                "extraction_stage_timeout_seconds": (
+                    self._extraction_stage_timeout_seconds
+                ),
+                "stale_in_progress_seconds": self._stale_in_progress_seconds,
+            },
+        )
 
         outcomes: list[EntityRecognitionDocumentOutcome] = []
         for document in pending_documents:
+            logger.info(
+                "Entity recognition document started",
+                extra={
+                    "document_id": str(document.id),
+                    "pipeline_run_id": pipeline_run_id,
+                    "source_id": str(document.source_id),
+                    "ingestion_job_id": (
+                        str(document.ingestion_job_id)
+                        if document.ingestion_job_id is not None
+                        else None
+                    ),
+                    "external_record_id": document.external_record_id,
+                },
+            )
             outcome = await self._process_document_entity(
                 document=document,
                 model_id=model_id,
@@ -191,14 +327,45 @@ class EntityRecognitionService(
                 pipeline_run_id=pipeline_run_id,
             )
             outcomes.append(outcome)
+            logger.info(
+                "Entity recognition document finished",
+                extra={
+                    "document_id": str(document.id),
+                    "pipeline_run_id": pipeline_run_id,
+                    "status": outcome.status,
+                    "reason": outcome.reason,
+                    "shadow_mode": outcome.shadow_mode,
+                    "wrote_to_kernel": outcome.wrote_to_kernel,
+                    "run_id": outcome.run_id,
+                    "error_count": len(outcome.errors),
+                },
+            )
 
         completed_at = datetime.now(UTC)
-        return self._build_run_summary(
+        summary = self._build_run_summary(
             outcomes=outcomes,
             requested=len(pending_documents),
             started_at=started_at,
             completed_at=completed_at,
         )
+        logger.info(
+            "Entity recognition batch finished",
+            extra={
+                "pipeline_run_id": pipeline_run_id,
+                "requested": summary.requested,
+                "processed": summary.processed,
+                "extracted": summary.extracted,
+                "failed": summary.failed,
+                "skipped": summary.skipped,
+                "review_required": summary.review_required,
+                "shadow_runs": summary.shadow_runs,
+                "error_count": len(summary.errors),
+                "duration_ms": int(
+                    (completed_at - started_at).total_seconds() * 1000,
+                ),
+            },
+        )
+        return summary
 
     async def process_document(
         self,
@@ -227,7 +394,7 @@ class EntityRecognitionService(
         if self._extraction_service is not None:
             await self._extraction_service.close()
 
-    async def _process_document_entity(  # noqa: C901, PLR0911
+    async def _process_document_entity(  # noqa: C901, PLR0911, PLR0915
         self,
         *,
         document: SourceDocument,
@@ -237,6 +404,14 @@ class EntityRecognitionService(
         pipeline_run_id: str | None,
     ) -> EntityRecognitionDocumentOutcome:
         if not force and document.extraction_status != DocumentExtractionStatus.PENDING:
+            logger.info(
+                "Entity recognition document skipped due to extraction status",
+                extra={
+                    "document_id": str(document.id),
+                    "extraction_status": document.extraction_status.value,
+                    "pipeline_run_id": pipeline_run_id,
+                },
+            )
             return EntityRecognitionDocumentOutcome(
                 document_id=document.id,
                 status="skipped",
@@ -249,6 +424,13 @@ class EntityRecognitionService(
         raw_record = self._extract_raw_record(document)
         if not raw_record:
             failure_reason = "missing_raw_record_metadata"
+            logger.warning(
+                "Entity recognition document missing raw_record metadata",
+                extra={
+                    "document_id": str(document.id),
+                    "pipeline_run_id": pipeline_run_id,
+                },
+            )
             self._persist_failed_document(
                 document=document,
                 run_id=None,
@@ -280,6 +462,15 @@ class EntityRecognitionService(
             shadow_mode=requested_shadow_mode,
         )
 
+        logger.info(
+            "Entity recognition marking document in_progress",
+            extra={
+                "document_id": str(document.id),
+                "pipeline_run_id": pipeline_run_id,
+                "shadow_mode": requested_shadow_mode,
+                "source_type": document.source_type.value,
+            },
+        )
         in_progress = document.mark_extraction_in_progress(started_at=datetime.now(UTC))
         document = self._source_documents.upsert(
             in_progress.model_copy(
@@ -298,8 +489,66 @@ class EntityRecognitionService(
             ),
         )
 
+        agent_started_at = datetime.now(UTC)
+        logger.info(
+            "Entity recognition agent call started",
+            extra={
+                "document_id": str(document.id),
+                "pipeline_run_id": pipeline_run_id,
+                "source_type": document.source_type.value,
+                "model_id": model_id,
+                "timeout_seconds": self._agent_timeout_seconds,
+            },
+        )
         try:
-            contract = await self._agent.recognize(context, model_id=model_id)
+            contract = await asyncio.wait_for(
+                self._agent.recognize(context, model_id=model_id),
+                timeout=self._agent_timeout_seconds,
+            )
+            logger.info(
+                "Entity recognition agent call finished",
+                extra={
+                    "document_id": str(document.id),
+                    "pipeline_run_id": pipeline_run_id,
+                    "duration_ms": int(
+                        (datetime.now(UTC) - agent_started_at).total_seconds() * 1000,
+                    ),
+                    "decision": contract.decision,
+                    "confidence_score": contract.confidence_score,
+                },
+            )
+        except TimeoutError:
+            logger.exception(
+                "Entity recognition agent call timed out for document=%s after %.1fs",
+                document.id,
+                self._agent_timeout_seconds,
+            )
+            failure_reason = "agent_execution_timeout"
+            self._persist_failed_document(
+                document=document,
+                run_id=None,
+                metadata_patch={
+                    "entity_recognition_error": (
+                        "entity_recognition_agent_timeout:"
+                        f"{self._agent_timeout_seconds:.1f}s"
+                    ),
+                    "entity_recognition_failure_reason": failure_reason,
+                    "entity_recognition_timeout_seconds": self._agent_timeout_seconds,
+                    "pipeline_run_id": pipeline_run_id,
+                },
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=failure_reason,
+                review_required=False,
+                shadow_mode=requested_shadow_mode,
+                wrote_to_kernel=False,
+                errors=(
+                    "entity_recognition_agent_timeout:"
+                    f"{self._agent_timeout_seconds:.1f}s",
+                ),
+            )
         except Exception as exc:  # noqa: BLE001 - surfaced via metadata/outcome
             logger.exception(
                 "Entity recognition failed for document=%s",
@@ -897,15 +1146,89 @@ class EntityRecognitionService(
             msg = "Extraction service is not configured"
             raise RuntimeError(msg)
 
+        extraction_started_at = datetime.now(UTC)
+        logger.info(
+            "Entity recognition extraction handoff started",
+            extra={
+                "document_id": str(document.id),
+                "pipeline_run_id": pipeline_run_id,
+                "entity_run_id": run_id,
+                "model_id": model_id,
+                "timeout_seconds": self._extraction_stage_timeout_seconds,
+            },
+        )
         try:
-            extraction_outcome = (
-                await self._extraction_service.extract_from_entity_recognition(
+            extraction_outcome = await asyncio.wait_for(
+                self._extraction_service.extract_from_entity_recognition(
                     document=document,
                     recognition_contract=contract,
                     research_space_settings=research_space_settings,
                     model_id=model_id,
                     shadow_mode=requested_shadow_mode,
-                )
+                ),
+                timeout=self._extraction_stage_timeout_seconds,
+            )
+            logger.info(
+                "Entity recognition extraction handoff finished",
+                extra={
+                    "document_id": str(document.id),
+                    "pipeline_run_id": pipeline_run_id,
+                    "entity_run_id": run_id,
+                    "duration_ms": int(
+                        (datetime.now(UTC) - extraction_started_at).total_seconds()
+                        * 1000,
+                    ),
+                    "extraction_status": extraction_outcome.status,
+                    "extraction_reason": extraction_outcome.reason,
+                    "extraction_run_id": extraction_outcome.run_id,
+                },
+            )
+        except TimeoutError:
+            logger.exception(
+                "Extraction stage timed out for document=%s after %.1fs",
+                document.id,
+                self._extraction_stage_timeout_seconds,
+            )
+            failure_reason = "extraction_stage_timeout"
+            metadata_patch = self._build_outcome_metadata(
+                contract=contract,
+                governance=governance,
+                run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
+                wrote_to_kernel=False,
+                dictionary_variables_created=dictionary_variables_created,
+                dictionary_synonyms_created=dictionary_synonyms_created,
+                dictionary_entity_types_created=dictionary_entity_types_created,
+                ingestion_result=None,
+            )
+            metadata_patch["extraction_stage_error"] = (
+                "extraction_stage_timeout:"
+                f"{self._extraction_stage_timeout_seconds:.1f}s"
+            )
+            metadata_patch["extraction_stage_failure_reason"] = failure_reason
+            metadata_patch["extraction_stage_timeout_seconds"] = (
+                self._extraction_stage_timeout_seconds
+            )
+            self._persist_failed_document(
+                document=document,
+                run_id=document_run_id,
+                metadata_patch=metadata_patch,
+            )
+            return EntityRecognitionDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                reason=failure_reason,
+                review_required=governance.requires_review,
+                shadow_mode=False,
+                wrote_to_kernel=False,
+                run_id=run_id,
+                dictionary_variables_created=dictionary_variables_created,
+                dictionary_synonyms_created=dictionary_synonyms_created,
+                dictionary_entity_types_created=dictionary_entity_types_created,
+                errors=(
+                    "extraction_stage_timeout:"
+                    f"{self._extraction_stage_timeout_seconds:.1f}s",
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - surfaced via metadata/outcome
             logger.exception(

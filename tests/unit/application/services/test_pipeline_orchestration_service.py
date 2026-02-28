@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn
 from uuid import UUID, uuid4
@@ -177,6 +178,42 @@ class StubEntityRecognitionService:
         )
         if self._error is not None:
             raise self._error
+        return self._summary
+
+
+class SlowEntityRecognitionService(StubEntityRecognitionService):
+    def __init__(
+        self,
+        summary: StubExtractionSummary,
+        *,
+        delay_seconds: float,
+    ) -> None:
+        super().__init__(summary)
+        self._delay_seconds = delay_seconds
+
+    async def process_pending_documents(  # noqa: PLR0913
+        self,
+        *,
+        limit: int = 25,
+        source_id: UUID | None = None,
+        research_space_id: UUID | None = None,
+        source_type: str | None = None,
+        model_id: str | None = None,
+        shadow_mode: bool | None = None,
+        pipeline_run_id: str | None = None,
+    ) -> StubExtractionSummary:
+        self.calls.append(
+            {
+                "limit": limit,
+                "source_id": source_id,
+                "research_space_id": research_space_id,
+                "source_type": source_type,
+                "model_id": model_id,
+                "shadow_mode": shadow_mode,
+                "pipeline_run_id": pipeline_run_id,
+            },
+        )
+        await asyncio.sleep(self._delay_seconds)
         return self._summary
 
 
@@ -541,6 +578,51 @@ async def test_run_for_source_persists_failed_stage_checkpoint() -> None:
     enrichment_checkpoint = _coerce_json_object(checkpoints.get("enrichment"))
     assert enrichment_checkpoint.get("status") == "failed"
     assert isinstance(enrichment_checkpoint.get("error"), str)
+
+
+@pytest.mark.asyncio
+async def test_run_for_source_marks_failed_when_extraction_watchdog_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MED13_PIPELINE_EXTRACTION_STAGE_TIMEOUT_SECONDS", "0.01")
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    ingestion_service = StubIngestionSchedulingService(
+        StubIngestionSummary(source_id=source_id),
+    )
+    enrichment_service = StubContentEnrichmentService(StubEnrichmentSummary())
+    extraction_service = SlowEntityRecognitionService(
+        StubExtractionSummary(),
+        delay_seconds=0.05,
+    )
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=ingestion_service,
+            content_enrichment_service=enrichment_service,
+            entity_recognition_service=extraction_service,
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-extraction-watchdog-timeout",
+    )
+
+    assert summary.status == "failed"
+    assert summary.extraction_status == "failed"
+    assert any(
+        error.startswith("extraction:stage_timeout:") for error in summary.errors
+    )
+    job = repository.find_by_source(source_id)[0]
+    pipeline_run = _coerce_json_object(job.metadata.get("pipeline_run"))
+    checkpoints = _coerce_json_object(pipeline_run.get("checkpoints"))
+    extraction_checkpoint = _coerce_json_object(checkpoints.get("extraction"))
+    assert extraction_checkpoint.get("status") == "failed"
+    assert isinstance(extraction_checkpoint.get("error"), str)
 
 
 @pytest.mark.asyncio

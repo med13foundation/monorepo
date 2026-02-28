@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time
 from collections.abc import Coroutine  # noqa: TC003
 from dataclasses import dataclass
 from threading import Thread
@@ -38,6 +40,8 @@ if TYPE_CHECKING:
         DictionaryRepository,
     )
 
+logger = logging.getLogger(__name__)
+
 _ARTANA_IMPORT_ERROR: Exception | None = None
 
 try:
@@ -56,6 +60,7 @@ _JUDGE_AMBIGUITY_DELTA = 0.08
 _JUDGE_MAX_CANDIDATES = 5
 _JUDGE_MIN_CANDIDATES = 2
 _PROMPT_RESULT_PREVIEW_LIMIT = 8
+_THREAD_BRIDGE_TIMEOUT_SECONDS = 90.0
 
 
 class _PlannerContract(BaseModel):
@@ -118,9 +123,6 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
         self._governance = GovernanceConfig.from_environment()
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
-        self._model_port: OpenAIJSONSchemaModelPort | None = None
-        self._kernel: ArtanaKernel | None = None
-        self._client: SingleStepModelClient | None = None
 
     def search(
         self,
@@ -135,6 +137,18 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
         if not normalized_terms:
             return []
         normalized_dimensions = self._normalize_dimensions(dimensions)
+        logger.info(
+            "Dictionary search harness started",
+            extra={
+                "terms_count": len(normalized_terms),
+                "dimensions_count": (
+                    len(normalized_dimensions) if normalized_dimensions else 0
+                ),
+                "domain_context": domain_context,
+                "limit": limit,
+                "include_inactive": include_inactive,
+            },
+        )
         direct_hits = self._dictionary.search_dictionary(
             terms=normalized_terms,
             dimensions=normalized_dimensions,
@@ -144,8 +158,20 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
             include_inactive=include_inactive,
         )
         if self._has_deterministic_hits(direct_hits):
+            logger.info(
+                "Dictionary search harness short-circuited on deterministic hits",
+                extra={
+                    "result_count": len(direct_hits),
+                },
+            )
             return direct_hits
         if not self._has_openai_key():
+            logger.warning(
+                "Dictionary search harness skipped semantic stage; OPENAI_API_KEY is missing",
+                extra={
+                    "direct_result_count": len(direct_hits),
+                },
+            )
             return direct_hits
 
         run_id = self._create_run_id(
@@ -155,101 +181,108 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
             limit=limit,
             include_inactive=include_inactive,
         )
-        kernel, client = self._ensure_runtime()
 
-        async def workflow(ctx: WorkflowContext) -> _HarnessResult:
-            plan = await self._plan_strategy(
-                client=client,
-                run_id=ctx.run_id,
-                tenant=ctx.tenant,
-                planner_input=_PlannerInput(
-                    terms=normalized_terms,
-                    dimensions=normalized_dimensions,
-                    domain_context=domain_context,
-                    direct_hits=direct_hits,
-                ),
-            )
-            if plan.action == "stop":
+        async def execute_workflow() -> object:
+            kernel, client, model_port = self._create_runtime()
+
+            async def workflow(ctx: WorkflowContext) -> _HarnessResult:
+                plan = await self._plan_strategy(
+                    client=client,
+                    run_id=ctx.run_id,
+                    tenant=ctx.tenant,
+                    planner_input=_PlannerInput(
+                        terms=normalized_terms,
+                        dimensions=normalized_dimensions,
+                        domain_context=domain_context,
+                        direct_hits=direct_hits,
+                    ),
+                )
+                if plan.action == "stop":
+                    return _HarnessResult(
+                        results=self._apply_mapping_judge(
+                            terms=normalized_terms,
+                            dimensions=normalized_dimensions,
+                            domain_context=domain_context,
+                            results=direct_hits,
+                        ),
+                    )
+
+                tool_name = "dictionary_vector_search"
+                step_key = "dictionary.search.vector.original.v1"
+                vector_terms = normalized_terms
+                if plan.action == "vector_custom":
+                    normalized_custom_terms = self._normalize_terms(plan.custom_terms)
+                    if not normalized_custom_terms:
+                        msg = (
+                            "Planner selected vector_custom without valid custom_terms."
+                        )
+                        raise ValueError(msg)
+                    vector_terms = normalized_custom_terms
+                    tool_name = "dictionary_vector_custom_search"
+                    step_key = "dictionary.search.vector.custom.v1"
+
+                vector_result = await kernel.step_tool(
+                    run_id=ctx.run_id,
+                    tenant=ctx.tenant,
+                    tool_name=tool_name,
+                    arguments=_VectorSearchArgs(
+                        terms=vector_terms,
+                        dimensions=normalized_dimensions,
+                        domain_context=domain_context,
+                        limit=limit,
+                        include_inactive=include_inactive,
+                    ),
+                    step_key=step_key,
+                )
+                vector_hits = self._decode_results(vector_result.result_json)
                 return _HarnessResult(
                     results=self._apply_mapping_judge(
                         terms=normalized_terms,
                         dimensions=normalized_dimensions,
                         domain_context=domain_context,
-                        results=direct_hits,
+                        results=vector_hits,
                     ),
                 )
 
-            tool_name = "dictionary_vector_search"
-            step_key = "dictionary.search.vector.original.v1"
-            vector_terms = normalized_terms
-            if plan.action == "vector_custom":
-                normalized_custom_terms = self._normalize_terms(plan.custom_terms)
-                if not normalized_custom_terms:
-                    msg = "Planner selected vector_custom without valid custom_terms."
-                    raise ValueError(msg)
-                vector_terms = normalized_custom_terms
-                tool_name = "dictionary_vector_custom_search"
-                step_key = "dictionary.search.vector.custom.v1"
+            try:
+                return await kernel.run_workflow(
+                    run_id=run_id,
+                    tenant=self._create_tenant(),
+                    workflow=workflow,
+                )
+            finally:
+                await model_port.aclose()
+                await kernel.close()
 
-            vector_result = await kernel.step_tool(
-                run_id=ctx.run_id,
-                tenant=ctx.tenant,
-                tool_name=tool_name,
-                arguments=_VectorSearchArgs(
-                    terms=vector_terms,
-                    dimensions=normalized_dimensions,
-                    domain_context=domain_context,
-                    limit=limit,
-                    include_inactive=include_inactive,
-                ),
-                step_key=step_key,
-            )
-            vector_hits = self._decode_results(vector_result.result_json)
-            return _HarnessResult(
-                results=self._apply_mapping_judge(
-                    terms=normalized_terms,
-                    dimensions=normalized_dimensions,
-                    domain_context=domain_context,
-                    results=vector_hits,
-                ),
-            )
-
-        outcome = self._run_coroutine(
-            kernel.run_workflow(
-                run_id=run_id,
-                tenant=self._create_tenant(),
-                workflow=workflow,
-            ),
-        )
+        outcome = self._run_coroutine(execute_workflow())
         status = getattr(outcome, "status", None)
         output = getattr(outcome, "output", None)
         if status != "complete" or not isinstance(output, _HarnessResult):
             msg = f"Dictionary search harness did not complete for run_id={run_id}."
+            logger.error(
+                "Dictionary search harness failed to complete",
+                extra={
+                    "run_id": run_id,
+                    "status": status,
+                    "output_type": type(output).__name__,
+                },
+            )
             raise RuntimeError(msg)
+        logger.info(
+            "Dictionary search harness finished",
+            extra={
+                "run_id": run_id,
+                "result_count": len(output.results),
+            },
+        )
         return [DictionarySearchResult.model_validate(item) for item in output.results]
 
     def close(self) -> None:
-        if self._kernel is None or self._model_port is None:
-            return
-        self._run_void_coroutine(self._close_async())
+        return
 
-    async def _close_async(self) -> None:
-        model_port = self._model_port
-        kernel = self._kernel
-        self._model_port = None
-        self._kernel = None
-        self._client = None
-        if model_port is not None:
-            await model_port.aclose()
-        if kernel is not None:
-            await kernel.close()
-
-    def _ensure_runtime(self) -> tuple[ArtanaKernel, SingleStepModelClient]:
-        kernel = self._kernel
-        client = self._client
-        if kernel is not None and client is not None:
-            return kernel, client
-
+    def _create_runtime(
+        self,
+    ) -> tuple[ArtanaKernel, SingleStepModelClient, OpenAIJSONSchemaModelPort]:
         model_port = OpenAIJSONSchemaModelPort(
             timeout_seconds=self._resolve_timeout_seconds(self._default_model),
             schema_name_fallback="dictionary_search_plan",
@@ -259,11 +292,8 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
             model_port=model_port,
         )
         client = SingleStepModelClient(kernel=kernel)
-        self._model_port = model_port
-        self._kernel = kernel
-        self._client = client
         self._register_tools(kernel)
-        return kernel, client
+        return kernel, client, model_port
 
     def _register_tools(self, kernel: ArtanaKernel) -> None:
         @kernel.tool()
@@ -646,10 +676,14 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
         try:
             asyncio.get_running_loop()
         except RuntimeError:
+            logger.debug(
+                "Dictionary harness coroutine executing on direct event loop",
+            )
             return asyncio.run(coroutine)
 
         result_holder: list[object] = []
         error_holder: dict[str, BaseException | None] = {"error": None}
+        bridge_started_at = time.monotonic()
 
         def _target() -> None:
             try:
@@ -657,38 +691,40 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
             except BaseException as exc:  # noqa: BLE001
                 error_holder["error"] = exc
 
+        logger.debug(
+            "Dictionary harness coroutine executing via thread bridge",
+            extra={"timeout_seconds": _THREAD_BRIDGE_TIMEOUT_SECONDS},
+        )
         thread = Thread(target=_target, daemon=True)
         thread.start()
-        thread.join()
+        thread.join(timeout=_THREAD_BRIDGE_TIMEOUT_SECONDS)
+        if thread.is_alive():
+            msg = (
+                "Dictionary search coroutine bridge timed out while awaiting "
+                "async workflow completion."
+            )
+            logger.error(
+                "Dictionary harness coroutine bridge timed out",
+                extra={"timeout_seconds": _THREAD_BRIDGE_TIMEOUT_SECONDS},
+            )
+            raise TimeoutError(msg)
 
         if error_holder["error"] is not None:
+            logger.error(
+                "Dictionary harness coroutine bridge raised exception",
+                extra={"error_class": error_holder["error"].__class__.__name__},
+            )
             raise error_holder["error"]
         if not result_holder:
             msg = "Coroutine returned no result."
             raise RuntimeError(msg)
+        logger.debug(
+            "Dictionary harness coroutine bridge completed",
+            extra={
+                "duration_ms": int((time.monotonic() - bridge_started_at) * 1000),
+            },
+        )
         return result_holder[0]
-
-    @staticmethod
-    def _run_void_coroutine(coroutine: Coroutine[object, object, object]) -> None:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(coroutine)
-            return
-
-        error_holder: dict[str, BaseException | None] = {"error": None}
-
-        def _target() -> None:
-            try:
-                asyncio.run(coroutine)
-            except BaseException as exc:  # noqa: BLE001
-                error_holder["error"] = exc
-
-        thread = Thread(target=_target, daemon=True)
-        thread.start()
-        thread.join()
-        if error_holder["error"] is not None:
-            raise error_holder["error"]
 
 
 __all__ = ["ArtanaDictionarySearchHarnessAdapter"]

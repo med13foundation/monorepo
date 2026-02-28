@@ -36,6 +36,9 @@ from src.infrastructure.extraction import (
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
+from src.infrastructure.llm.adapters.pubmed_relevance_agent_adapter import (
+    ArtanaPubMedRelevanceAdapter,
+)
 from src.infrastructure.llm.adapters.query_agent_adapter import ArtanaQueryAgentAdapter
 from src.infrastructure.repositories import (
     SQLAlchemyDiscoverySearchJobRepository,
@@ -285,11 +288,14 @@ def build_ingestion_scheduling_service(  # noqa: PLR0915
 
     # Initialize Query Agent
     query_agent = ArtanaQueryAgentAdapter()
+    pubmed_relevance_agent = ArtanaPubMedRelevanceAdapter()
 
     pipeline = create_ingestion_pipeline(session)
 
     pubmed_service = PubMedIngestionService(
-        gateway=PubMedSourceGateway(),
+        gateway=PubMedSourceGateway(
+            relevance_agent=pubmed_relevance_agent,
+        ),
         pipeline=pipeline,
         dependencies=PubMedIngestionDependencies(
             publication_repository=publication_repository,

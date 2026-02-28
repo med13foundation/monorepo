@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from uuid import UUID  # noqa: TC003
+from typing import TYPE_CHECKING
 
 from src.domain.entities.source_document import SourceDocument  # noqa: TC001
+
+if TYPE_CHECKING:
+    from datetime import datetime
+    from uuid import UUID
 
 
 class SourceDocumentRepository(ABC):
@@ -54,6 +58,28 @@ class SourceDocumentRepository(ABC):
         research_space_id: UUID | None = None,
     ) -> list[SourceDocument]:
         """List documents waiting for extraction."""
+
+    def recover_stale_in_progress_extraction(
+        self,
+        *,
+        stale_before: datetime,
+        source_id: UUID | None = None,
+        research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        limit: int = 500,
+    ) -> int:
+        """
+        Recover stale extraction documents stuck in IN_PROGRESS.
+
+        Default implementation is a no-op so lightweight stubs do not need to
+        implement it unless recovery behavior is under test.
+        """
+        _ = stale_before
+        _ = source_id
+        _ = research_space_id
+        _ = ingestion_job_id
+        _ = limit
+        return 0
 
     @abstractmethod
     def delete_by_source(self, source_id: UUID) -> int:

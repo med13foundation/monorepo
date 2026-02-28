@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
@@ -43,6 +44,32 @@ from src.routes import (
     search_router,
     users_router,
 )
+
+_ENV_APP_LOG_LEVEL = "MED13_APP_LOG_LEVEL"
+_DEFAULT_APP_LOG_LEVEL = "INFO"
+
+
+def _resolve_logging_level() -> int:
+    configured = os.getenv(_ENV_APP_LOG_LEVEL, _DEFAULT_APP_LOG_LEVEL).strip().upper()
+    resolved = getattr(logging, configured, None)
+    if isinstance(resolved, int):
+        return resolved
+    return logging.INFO
+
+
+def _configure_application_logging() -> None:
+    """
+    Ensure application loggers emit INFO-level stage telemetry by default.
+
+    Uvicorn configures handlers; this only normalizes levels and falls back to a
+    basic handler when running outside uvicorn.
+    """
+    level = _resolve_logging_level()
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(level=level)
+    root_logger.setLevel(level)
+    logging.getLogger("src").setLevel(level)
 
 
 def _skip_startup_tasks() -> bool:
@@ -121,6 +148,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
 def create_app() -> FastAPI:
     """Instantiate the FastAPI application with middleware and routes."""
+    _configure_application_logging()
     app = FastAPI(
         title="MED13 Resource Library",
         version="0.1.0",

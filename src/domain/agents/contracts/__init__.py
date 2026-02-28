@@ -45,6 +45,7 @@ from src.domain.agents.contracts.graph_search import (
     GraphSearchContract,
     GraphSearchResultEntry,
 )
+from src.domain.agents.contracts.pubmed_relevance import PubMedRelevanceContract
 from src.domain.agents.contracts.query_generation import QueryGenerationContract
 
 __all__ = [
@@ -60,6 +61,7 @@ __all__ = [
     "GraphConnectionContract",
     "GraphSearchContract",
     "GraphSearchResultEntry",
+    "PubMedRelevanceContract",
     "EvidenceChainItem",
     "ProposedRelation",
     "QueryGenerationContract",

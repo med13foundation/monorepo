@@ -65,7 +65,10 @@ def create_ingestion_pipeline(
         from src.infrastructure.llm.adapters.mapping_judge_agent_adapter import (
             ArtanaMappingJudgeAdapter,
         )
+        from src.infrastructure.llm.config import resolve_artana_state_uri
 
+        # Validate state backend eagerly so factory fails fast when Artana cannot run.
+        resolve_artana_state_uri()
         active_mapping_judge_agent = ArtanaMappingJudgeAdapter()
 
     dictionary_repo = SqlAlchemyDictionaryRepository(session)

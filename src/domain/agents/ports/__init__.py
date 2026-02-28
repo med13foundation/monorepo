@@ -14,6 +14,7 @@ from src.domain.agents.ports.extraction_policy_agent_port import (
 from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
 from src.domain.agents.ports.graph_search_port import GraphSearchPort
 from src.domain.agents.ports.model_registry_port import ModelRegistryPort
+from src.domain.agents.ports.pubmed_relevance_port import PubMedRelevancePort
 from src.domain.agents.ports.query_agent_port import QueryAgentPort
 
 __all__ = [
@@ -24,5 +25,6 @@ __all__ = [
     "GraphConnectionPort",
     "GraphSearchPort",
     "ModelRegistryPort",
+    "PubMedRelevancePort",
     "QueryAgentPort",
 ]

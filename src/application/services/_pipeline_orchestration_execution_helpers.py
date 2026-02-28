@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -28,6 +31,42 @@ if TYPE_CHECKING:
         _PipelineExecutionSelf,
     )
     from src.domain.agents.contracts.graph_connection import ProposedRelation
+
+logger = logging.getLogger(__name__)
+
+_ENV_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS = (
+    "MED13_PIPELINE_EXTRACTION_STAGE_TIMEOUT_SECONDS"
+)
+_DEFAULT_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS = 900.0
+
+
+def _read_positive_timeout_seconds(
+    env_name: str,
+    *,
+    default_seconds: float,
+) -> float:
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        return default_seconds
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid timeout override in %s=%r; using default %.1fs",
+            env_name,
+            raw_value,
+            default_seconds,
+        )
+        return default_seconds
+    if parsed <= 0:
+        logger.warning(
+            "Non-positive timeout override in %s=%r; using default %.1fs",
+            env_name,
+            raw_value,
+            default_seconds,
+        )
+        return default_seconds
+    return parsed
 
 
 class _PipelineOrchestrationExecutionHelpers(
@@ -59,6 +98,23 @@ class _PipelineOrchestrationExecutionHelpers(
         normalized_run_id = self._resolve_run_id(run_id)
         normalized_resume_stage = self._resolve_resume_stage(resume_from_stage)
         errors: list[str] = []
+        logger.info(
+            "Pipeline run started",
+            extra={
+                "run_id": normalized_run_id,
+                "source_id": str(source_id),
+                "research_space_id": str(research_space_id),
+                "resume_from_stage": normalized_resume_stage,
+                "source_type": source_type,
+                "enrichment_limit": enrichment_limit,
+                "extraction_limit": extraction_limit,
+                "graph_max_depth": graph_max_depth,
+                "graph_relation_types": graph_relation_types,
+                "graph_seed_entity_ids_count": (
+                    len(graph_seed_entity_ids) if graph_seed_entity_ids else 0
+                ),
+            },
+        )
 
         ingestion_status: PipelineStageStatus = "skipped"
         enrichment_status: PipelineStageStatus = "skipped"
@@ -128,6 +184,15 @@ class _PipelineOrchestrationExecutionHelpers(
         )
 
         if should_run_ingestion and not run_cancelled:
+            ingestion_started_at = datetime.now(UTC)
+            logger.info(
+                "Pipeline stage started",
+                extra={
+                    "run_id": normalized_run_id,
+                    "source_id": str(source_id),
+                    "stage": "ingestion",
+                },
+            )
             try:
                 try:
                     ingestion_summary = await self._ingestion.trigger_ingestion(
@@ -173,10 +238,40 @@ class _PipelineOrchestrationExecutionHelpers(
                     ingestion_service=self._ingestion,
                     source_id=source_id,
                 )
+                if active_ingestion_job_id is None:
+                    logger.warning(
+                        "Pipeline ingestion completed but no ingestion job id was resolved",
+                        extra={
+                            "run_id": normalized_run_id,
+                            "source_id": str(source_id),
+                        },
+                    )
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                 ingestion_status = "failed"
                 error_message = str(exc).strip() or exc.__class__.__name__
                 errors.append(f"ingestion:{error_message}")
+            ingestion_duration_ms = int(
+                (datetime.now(UTC) - ingestion_started_at).total_seconds() * 1000,
+            )
+            logger.info(
+                "Pipeline stage finished",
+                extra={
+                    "run_id": normalized_run_id,
+                    "source_id": str(source_id),
+                    "stage": "ingestion",
+                    "stage_status": ingestion_status,
+                    "duration_ms": ingestion_duration_ms,
+                    "fetched_records": fetched_records,
+                    "parsed_publications": parsed_publications,
+                    "created_publications": created_publications,
+                    "updated_publications": updated_publications,
+                    "ingestion_job_id": (
+                        str(active_ingestion_job_id)
+                        if active_ingestion_job_id is not None
+                        else None
+                    ),
+                },
+            )
             pipeline_run_job = self._persist_pipeline_stage_checkpoint(
                 run_job=pipeline_run_job,
                 source_id=source_id,
@@ -203,6 +298,20 @@ class _PipelineOrchestrationExecutionHelpers(
             normalized_resume_stage in {"enrichment", "extraction", "graph"}
         )
         if should_run_enrichment and can_run_enrichment and not run_cancelled:
+            enrichment_started_at = datetime.now(UTC)
+            logger.info(
+                "Pipeline stage started",
+                extra={
+                    "run_id": normalized_run_id,
+                    "source_id": str(source_id),
+                    "stage": "enrichment",
+                    "ingestion_job_id": (
+                        str(active_ingestion_job_id)
+                        if active_ingestion_job_id is not None
+                        else None
+                    ),
+                },
+            )
             try:
                 try:
                     enrichment_summary = (
@@ -250,6 +359,22 @@ class _PipelineOrchestrationExecutionHelpers(
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                 enrichment_status = "failed"
                 errors.append(f"enrichment:{exc!s}")
+            enrichment_duration_ms = int(
+                (datetime.now(UTC) - enrichment_started_at).total_seconds() * 1000,
+            )
+            logger.info(
+                "Pipeline stage finished",
+                extra={
+                    "run_id": normalized_run_id,
+                    "source_id": str(source_id),
+                    "stage": "enrichment",
+                    "stage_status": enrichment_status,
+                    "duration_ms": enrichment_duration_ms,
+                    "enrichment_processed": enrichment_processed,
+                    "enrichment_enriched": enrichment_enriched,
+                    "enrichment_failed": enrichment_failed,
+                },
+            )
             pipeline_run_job = self._persist_pipeline_stage_checkpoint(
                 run_job=pipeline_run_job,
                 source_id=source_id,
@@ -272,10 +397,29 @@ class _PipelineOrchestrationExecutionHelpers(
             normalized_resume_stage in {"extraction", "graph"}
         )
         if should_run_extraction and can_run_extraction and not run_cancelled:
+            extraction_watchdog_timeout_seconds = _read_positive_timeout_seconds(
+                _ENV_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS,
+                default_seconds=_DEFAULT_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS,
+            )
+            extraction_started_at = datetime.now(UTC)
+            logger.info(
+                "Pipeline stage started",
+                extra={
+                    "run_id": normalized_run_id,
+                    "source_id": str(source_id),
+                    "stage": "extraction",
+                    "ingestion_job_id": (
+                        str(active_ingestion_job_id)
+                        if active_ingestion_job_id is not None
+                        else None
+                    ),
+                    "watchdog_timeout_seconds": extraction_watchdog_timeout_seconds,
+                },
+            )
             try:
                 try:
-                    extraction_summary = (
-                        await self._extraction.process_pending_documents(
+                    extraction_summary = await asyncio.wait_for(
+                        self._extraction.process_pending_documents(
                             limit=max(extraction_limit, 1),
                             source_id=source_id,
                             ingestion_job_id=active_ingestion_job_id,
@@ -284,13 +428,14 @@ class _PipelineOrchestrationExecutionHelpers(
                             model_id=model_id,
                             shadow_mode=shadow_mode,
                             pipeline_run_id=normalized_run_id,
-                        )
+                        ),
+                        timeout=extraction_watchdog_timeout_seconds,
                     )
                 except TypeError as exc:
                     if "ingestion_job_id" not in str(exc):
                         raise
-                    extraction_summary = (
-                        await self._extraction.process_pending_documents(
+                    extraction_summary = await asyncio.wait_for(
+                        self._extraction.process_pending_documents(
                             limit=max(extraction_limit, 1),
                             source_id=source_id,
                             research_space_id=research_space_id,
@@ -298,7 +443,8 @@ class _PipelineOrchestrationExecutionHelpers(
                             model_id=model_id,
                             shadow_mode=shadow_mode,
                             pipeline_run_id=normalized_run_id,
-                        )
+                        ),
+                        timeout=extraction_watchdog_timeout_seconds,
                     )
                 extraction_status = "completed"
                 extraction_processed = extraction_summary.processed
@@ -315,9 +461,41 @@ class _PipelineOrchestrationExecutionHelpers(
                     )
                 )
                 errors.extend(extraction_summary.errors)
+            except TimeoutError:
+                extraction_status = "failed"
+                timeout_error = (
+                    "extraction:stage_timeout:"
+                    f"{extraction_watchdog_timeout_seconds:.1f}s"
+                )
+                logger.exception(
+                    "Pipeline extraction stage timed out for run_id=%s source_id=%s",
+                    normalized_run_id,
+                    source_id,
+                )
+                errors.append(timeout_error)
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                 extraction_status = "failed"
                 errors.append(f"extraction:{exc!s}")
+            extraction_duration_ms = int(
+                (datetime.now(UTC) - extraction_started_at).total_seconds() * 1000,
+            )
+            logger.info(
+                "Pipeline stage finished",
+                extra={
+                    "run_id": normalized_run_id,
+                    "source_id": str(source_id),
+                    "stage": "extraction",
+                    "stage_status": extraction_status,
+                    "duration_ms": extraction_duration_ms,
+                    "extraction_processed": extraction_processed,
+                    "extraction_extracted": extraction_extracted,
+                    "extraction_failed": extraction_failed,
+                    "derived_graph_seed_entity_ids_count": len(
+                        derived_graph_seed_entity_ids,
+                    ),
+                    "watchdog_timeout_seconds": extraction_watchdog_timeout_seconds,
+                },
+            )
             pipeline_run_job = self._persist_pipeline_stage_checkpoint(
                 run_job=pipeline_run_job,
                 source_id=source_id,
@@ -379,6 +557,16 @@ class _PipelineOrchestrationExecutionHelpers(
             and self._graph is not None
             and not run_cancelled
         ):
+            graph_started_at = datetime.now(UTC)
+            logger.info(
+                "Pipeline stage started",
+                extra={
+                    "run_id": normalized_run_id,
+                    "source_id": str(source_id),
+                    "stage": "graph",
+                    "requested_seed_count": graph_requested,
+                },
+            )
             normalized_source = (
                 normalized_source_type if normalized_source_type else "clinvar"
             )
@@ -427,6 +615,22 @@ class _PipelineOrchestrationExecutionHelpers(
                 except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                     graph_status = "failed"
                     errors.append(f"graph:{seed_entity_id}:{exc!s}")
+            graph_duration_ms = int(
+                (datetime.now(UTC) - graph_started_at).total_seconds() * 1000,
+            )
+            logger.info(
+                "Pipeline stage finished",
+                extra={
+                    "run_id": normalized_run_id,
+                    "source_id": str(source_id),
+                    "stage": "graph",
+                    "stage_status": graph_status,
+                    "duration_ms": graph_duration_ms,
+                    "graph_requested": graph_requested,
+                    "graph_processed": graph_processed,
+                    "graph_persisted_relations": graph_persisted_relations,
+                },
+            )
         elif should_run_graph and can_run_graph and graph_requested > 0:
             graph_status = "failed"
             errors.append("graph:service_unavailable")
@@ -472,6 +676,23 @@ class _PipelineOrchestrationExecutionHelpers(
             updated_publications=updated_publications,
             extraction_extracted=extraction_extracted,
             graph_persisted_relations=graph_persisted_relations,
+        )
+        logger.info(
+            "Pipeline run finished",
+            extra={
+                "run_id": normalized_run_id,
+                "source_id": str(source_id),
+                "research_space_id": str(research_space_id),
+                "run_status": run_status,
+                "duration_ms": int(
+                    (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                ),
+                "ingestion_status": ingestion_status,
+                "enrichment_status": enrichment_status,
+                "extraction_status": extraction_status,
+                "graph_status": graph_status,
+                "error_count": len(errors),
+            },
         )
 
         return PipelineRunSummary(

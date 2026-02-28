@@ -35,6 +35,9 @@ from src.infrastructure.llm.adapters.graph_search_agent_adapter import (
 from src.infrastructure.llm.adapters.mapping_judge_agent_adapter import (
     ArtanaMappingJudgeAdapter,
 )
+from src.infrastructure.llm.adapters.pubmed_relevance_agent_adapter import (
+    ArtanaPubMedRelevanceAdapter,
+)
 from src.infrastructure.llm.adapters.query_agent_adapter import ArtanaQueryAgentAdapter
 
 __all__ = [
@@ -46,5 +49,6 @@ __all__ = [
     "ArtanaGraphConnectionAdapter",
     "ArtanaGraphSearchAdapter",
     "ArtanaMappingJudgeAdapter",
+    "ArtanaPubMedRelevanceAdapter",
     "ArtanaQueryAgentAdapter",
 ]

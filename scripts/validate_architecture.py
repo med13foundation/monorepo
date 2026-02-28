@@ -164,12 +164,23 @@ class ClassSizeOverride:
     expires_on: str | None = None
 
 
+@dataclass(frozen=True)
+class ImportCountOverride:
+    """Represents a documented import-count exception."""
+
+    path: str
+    max_imports: int
+    reason: str
+    expires_on: str | None = None
+
+
 @dataclass
 class ArchitectureOverrides:
     """Overrides for transitional technical debt."""
 
     file_size: dict[str, FileSizeOverride] = field(default_factory=dict)
     class_size: dict[tuple[str, str], ClassSizeOverride] = field(default_factory=dict)
+    import_count: dict[str, ImportCountOverride] = field(default_factory=dict)
 
     @classmethod
     def load(cls, root_path: Path) -> "ArchitectureOverrides":
@@ -190,8 +201,11 @@ class ArchitectureOverrides:
 
         file_overrides = cls._parse_file_size_overrides(raw_data.get("file_size"))
         class_overrides = cls._parse_class_size_overrides(raw_data.get("class_size"))
+        import_count_overrides = cls._parse_import_count_overrides(
+            raw_data.get("import_count"),
+        )
 
-        return cls(file_overrides, class_overrides)
+        return cls(file_overrides, class_overrides, import_count_overrides)
 
     @staticmethod
     def _parse_file_size_overrides(
@@ -257,6 +271,39 @@ class ArchitectureOverrides:
                     path=path_value,
                     class_name=class_name,
                     max_methods=max_methods_value,
+                    reason=reason_value,
+                    expires_on=expires,
+                )
+
+        return overrides
+
+    @staticmethod
+    def _parse_import_count_overrides(
+        value: object | None,
+    ) -> dict[str, ImportCountOverride]:
+        overrides: dict[str, ImportCountOverride] = {}
+        if not isinstance(value, list):
+            return overrides
+
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+
+            entry_dict: dict[str, object] = entry
+            path_value = entry_dict.get("path")
+            max_imports_value = entry_dict.get("max_imports")
+            reason_value = entry_dict.get("reason")
+            expires_value = entry_dict.get("expires_on")
+
+            if (
+                isinstance(path_value, str)
+                and isinstance(max_imports_value, int)
+                and isinstance(reason_value, str)
+            ):
+                expires = expires_value if isinstance(expires_value, str) else None
+                overrides[path_value] = ImportCountOverride(
+                    path=path_value,
+                    max_imports=max_imports_value,
                     reason=reason_value,
                     expires_on=expires,
                 )
@@ -650,29 +697,33 @@ class ArchitectureValidator:
                 parent_by_child=parent_by_child,
             )
         ]
+        import_count = len(imports)
 
-        if len(imports) > MAX_IMPORTS_PER_FILE:
+        if self._allows_import_count_override(file_path, import_count):
+            return
+
+        if import_count > MAX_IMPORTS_PER_FILE:
             self.result.violations.append(
                 Violation(
                     file_path=file_path,
                     line_number=0,
                     violation_type="import_count",
                     message=(
-                        f"File has too many imports ({len(imports)} > {MAX_IMPORTS_PER_FILE}). "
+                        f"File has too many imports ({import_count} > {MAX_IMPORTS_PER_FILE}). "
                         "May indicate multiple responsibilities. "
                         "Consider splitting into smaller, focused modules."
                     ),
                     severity="error",
                 ),
             )
-        elif len(imports) > WARNING_IMPORTS_PER_FILE:
+        elif import_count > WARNING_IMPORTS_PER_FILE:
             self.result.violations.append(
                 Violation(
                     file_path=file_path,
                     line_number=0,
                     violation_type="import_count",
                     message=(
-                        f"File has many imports ({len(imports)} > {WARNING_IMPORTS_PER_FILE}). "
+                        f"File has many imports ({import_count} > {WARNING_IMPORTS_PER_FILE}). "
                         "Consider reviewing if the file has multiple responsibilities."
                     ),
                     severity="warning",
@@ -988,6 +1039,13 @@ class ArchitectureValidator:
         if not override:
             return False
         return methods <= override.max_methods
+
+    def _allows_import_count_override(self, file_path: str, imports: int) -> bool:
+        """Return True when import count is within the documented override."""
+        override = self.overrides.import_count.get(file_path)
+        if not override:
+            return False
+        return imports <= override.max_imports
 
 
 def print_results(result: ValidationResult) -> None:

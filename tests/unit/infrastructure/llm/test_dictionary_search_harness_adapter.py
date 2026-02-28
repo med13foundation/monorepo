@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.domain.agents.contracts.mapping_judge import MappingJudgeContract
 from src.domain.agents.models import ModelCapability, ModelSpec
@@ -355,3 +359,175 @@ def test_search_uses_custom_vector_tool_and_reorders_with_mapping_judge() -> Non
     assert vector_call["terms"] == ["metabolic control axis"]
     assert vector_call["query_embeddings"] is not None
     adapter.close()
+
+
+def test_search_creates_runtime_per_call_to_avoid_loop_bound_reuse() -> None:
+    repo = MagicMock()
+    direct_hits = [
+        _build_result(
+            entry_id="VAR_ALPHA",
+            display_name="Alpha Marker",
+            match_method="fuzzy",
+            score=0.61,
+        ),
+    ]
+    vector_hits = [
+        _build_result(
+            entry_id="VAR_VECTOR",
+            display_name="Vector Candidate",
+            match_method="vector",
+            score=0.82,
+        ),
+    ]
+    # Each search performs direct + vector lookup.
+    repo.search_dictionary.side_effect = [
+        direct_hits,
+        vector_hits,
+        direct_hits,
+        vector_hits,
+    ]
+
+    governance = MagicMock()
+    governance.usage_limits.total_cost_usd = 1.0
+    runtime_policy = MagicMock()
+    runtime_policy.replay_policy = "strict"
+    runtime_policy.to_context_version.return_value = None
+
+    fake_kernel_first = _FakeKernel()
+    fake_kernel_second = _FakeKernel()
+    fake_model_port_first = _FakeModelPort()
+    fake_model_port_second = _FakeModelPort()
+    fake_client_first = _FakeClient(
+        outputs=[
+            {"action": "vector_original", "custom_terms": [], "rationale": "test"},
+        ],
+    )
+    fake_client_second = _FakeClient(
+        outputs=[
+            {"action": "vector_original", "custom_terms": [], "rationale": "test"},
+        ],
+    )
+    mapping_judge = _StubMappingJudge(selected_variable_id=None)
+
+    with (
+        patch.dict(
+            "os.environ",
+            {"OPENAI_API_KEY": "test-openai-key"},
+            clear=False,
+        ),
+        patch(f"{_ADAPTER_MODULE}._ARTANA_IMPORT_ERROR", None),
+        patch(f"{_ADAPTER_MODULE}.get_model_registry", return_value=_build_registry()),
+        patch(
+            f"{_ADAPTER_MODULE}.GovernanceConfig.from_environment",
+            return_value=governance,
+        ),
+        patch(f"{_ADAPTER_MODULE}.load_runtime_policy", return_value=runtime_policy),
+        patch(
+            f"{_ADAPTER_MODULE}.OpenAIJSONSchemaModelPort",
+            side_effect=[fake_model_port_first, fake_model_port_second],
+        ),
+        patch(
+            f"{_ADAPTER_MODULE}.ArtanaKernel",
+            side_effect=[fake_kernel_first, fake_kernel_second],
+            create=True,
+        ) as kernel_constructor,
+        patch(
+            f"{_ADAPTER_MODULE}.SingleStepModelClient",
+            side_effect=[fake_client_first, fake_client_second],
+            create=True,
+        ),
+        patch.object(
+            ArtanaDictionarySearchHarnessAdapter,
+            "_create_store",
+            return_value=object(),
+        ),
+    ):
+        adapter = ArtanaDictionarySearchHarnessAdapter(
+            dictionary_repo=repo,
+            embedding_provider=_StubEmbeddingProvider(),
+            mapping_judge_agent=mapping_judge,
+        )
+        first = adapter.search(terms=["term"], dimensions=["variables"], limit=5)
+        second = adapter.search(terms=["term"], dimensions=["variables"], limit=5)
+
+    assert first[0].entry_id == "VAR_VECTOR"
+    assert second[0].entry_id == "VAR_VECTOR"
+    # Runtime must be recreated per search to avoid reusing loop-bound async pools.
+    assert kernel_constructor.call_count == 2
+    fake_model_port_first.aclose.assert_awaited_once()
+    fake_model_port_second.aclose.assert_awaited_once()
+    fake_kernel_first.close.assert_awaited_once()
+    fake_kernel_second.close.assert_awaited_once()
+
+
+def test_search_creates_runtime_in_worker_thread_when_event_loop_is_active() -> None:
+    repo = MagicMock()
+    direct_hits = [
+        _build_result(
+            entry_id="VAR_ALPHA",
+            display_name="Alpha Marker",
+            match_method="fuzzy",
+            score=0.61,
+        ),
+    ]
+    vector_hits = [
+        _build_result(
+            entry_id="VAR_VECTOR",
+            display_name="Vector Candidate",
+            match_method="vector",
+            score=0.82,
+        ),
+    ]
+    repo.search_dictionary.side_effect = [direct_hits, vector_hits]
+    mapping_judge = _StubMappingJudge(selected_variable_id=None)
+    runtime_thread_ids: list[int] = []
+
+    with (
+        patch.dict(
+            "os.environ",
+            {"OPENAI_API_KEY": "test-openai-key"},
+            clear=False,
+        ),
+        _build_adapter(
+            repo=repo,
+            mapping_judge=mapping_judge,
+            planner_outputs=[
+                {"action": "vector_original", "custom_terms": [], "rationale": "test"},
+            ],
+        ) as (adapter, _, _, _),
+    ):
+        original_create_runtime = adapter._create_runtime
+
+        def _record_runtime_thread() -> tuple[_FakeKernel, _FakeClient, _FakeModelPort]:
+            runtime_thread_ids.append(threading.get_ident())
+            return original_create_runtime()
+
+        async def _invoke_search() -> tuple[int, list[DictionarySearchResult]]:
+            caller_thread_id = threading.get_ident()
+            results = adapter.search(terms=["term"], dimensions=["variables"], limit=5)
+            return caller_thread_id, results
+
+        with patch.object(
+            adapter,
+            "_create_runtime",
+            side_effect=_record_runtime_thread,
+        ):
+            caller_thread_id, results = asyncio.run(_invoke_search())
+
+    assert results[0].entry_id == "VAR_VECTOR"
+    assert runtime_thread_ids
+    assert all(thread_id != caller_thread_id for thread_id in runtime_thread_ids)
+
+
+def test_run_coroutine_times_out_when_bridge_thread_exceeds_deadline() -> None:
+    async def _invoke_timeout() -> None:
+        with (
+            patch(
+                f"{_ADAPTER_MODULE}._THREAD_BRIDGE_TIMEOUT_SECONDS",
+                0.01,
+            ),
+            pytest.raises(TimeoutError, match="timed out"),
+        ):
+            ArtanaDictionarySearchHarnessAdapter._run_coroutine(asyncio.sleep(0.1))
+
+    asyncio.run(_invoke_timeout())
