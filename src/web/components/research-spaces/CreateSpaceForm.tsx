@@ -82,6 +82,7 @@ export function CreateSpaceForm() {
           relation_governance_mode: data.governance_mode,
           relation_default_review_threshold: data.relation_default_review_threshold,
           relation_review_thresholds: relationReviewThresholds,
+          relation_auto_promotion: { enabled: false },
           dictionary_agent_creation_policy: 'ACTIVE',
         },
       })

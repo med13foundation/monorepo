@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from src.application.agents.services.graph_search_service import GraphSearchService
+from src.application.services.claim_first_metrics import (
+    emit_graph_filter_preset_usage,
+)
 from src.application.services.membership_management_service import (
     MembershipManagementService,
 )
@@ -39,6 +42,7 @@ class GraphSearchRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
     max_depth: int = Field(default=2, ge=1, le=4)
     top_k: int = Field(default=25, ge=1, le=100)
+    curation_statuses: list[str] | None = None
     include_evidence_chains: bool = Field(default=True)
     force_agent: bool = Field(default=False)
 
@@ -72,6 +76,10 @@ async def search_graph(
         session,
         current_user.role,
     )
+    emit_graph_filter_preset_usage(
+        endpoint="graph_search",
+        curation_statuses=request.curation_statuses,
+    )
 
     try:
         return await graph_search_service.search(
@@ -79,6 +87,7 @@ async def search_graph(
             research_space_id=str(space_id),
             max_depth=request.max_depth,
             top_k=request.top_k,
+            curation_statuses=request.curation_statuses,
             include_evidence_chains=request.include_evidence_chains,
             force_agent=request.force_agent,
         )

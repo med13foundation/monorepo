@@ -268,7 +268,15 @@ class StubDictionaryService:
         self.created_variables += 1
         return created
 
-    def resolve_synonym(self, synonym: str) -> _DictionaryVariable | None:
+    def resolve_synonym(
+        self,
+        synonym: str,
+        *,
+        domain_context: str | None = None,
+        include_inactive: bool = False,
+    ) -> _DictionaryVariable | None:
+        _ = domain_context
+        _ = include_inactive
         variable_id = self.synonyms.get(synonym)
         if variable_id is None:
             return None

@@ -585,6 +585,7 @@ async def test_ingest_skips_unchanged_records_using_ledger() -> None:
     assert summary.skipped_records == 1
     assert len(pipeline.calls) == 1
     assert len(pipeline.calls[0][0]) == 1
+    assert pipeline.calls[0][0][0].metadata["domain_context"] == "clinical"
     assert ledger.count_for_source(source.id) == 2
 
 

@@ -4,7 +4,6 @@ Factory for creating the ingestion pipeline.
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 from src.application.services.kernel.dictionary_management_service import (
@@ -46,24 +45,46 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
+    from src.domain.ports.dictionary_search_harness_port import (
+        DictionarySearchHarnessPort,
+    )
     from src.infrastructure.ingestion.interfaces import Mapper
-
-
-_ENABLE_LLM_JUDGE_MAPPER_ENV = "MED13_ENABLE_LLM_JUDGE_MAPPER"
 
 
 def create_ingestion_pipeline(
     session: Session,
     *,
     mapping_judge_agent: MappingJudgePort | None = None,
+    dictionary_search_harness: DictionarySearchHarnessPort | None = None,
 ) -> IngestionPipeline:
     """
     Create a fully wired ingestion pipeline.
     """
+    active_mapping_judge_agent = mapping_judge_agent
+    if active_mapping_judge_agent is None:
+        from src.infrastructure.llm.adapters.mapping_judge_agent_adapter import (
+            ArtanaMappingJudgeAdapter,
+        )
+
+        active_mapping_judge_agent = ArtanaMappingJudgeAdapter()
+
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
+    embedding_provider = HybridTextEmbeddingProvider()
+    active_dictionary_search_harness = dictionary_search_harness
+    if active_dictionary_search_harness is None:
+        from src.infrastructure.llm.adapters.dictionary_search_harness_adapter import (
+            ArtanaDictionarySearchHarnessAdapter,
+        )
+
+        active_dictionary_search_harness = ArtanaDictionarySearchHarnessAdapter(
+            dictionary_repo=dictionary_repo,
+            embedding_provider=embedding_provider,
+            mapping_judge_agent=active_mapping_judge_agent,
+        )
     dictionary_service = DictionaryManagementService(
         dictionary_repo=dictionary_repo,
-        embedding_provider=HybridTextEmbeddingProvider(),
+        dictionary_search_harness=active_dictionary_search_harness,
+        embedding_provider=embedding_provider,
     )
     enable_phi_encryption = is_phi_encryption_enabled()
     phi_encryption_service = (
@@ -80,21 +101,14 @@ def create_ingestion_pipeline(
     # Mapper
     exact_mapper = ExactMapper(dictionary_service)
     vector_mapper = VectorMapper(dictionary_service)
-    mappers: list[Mapper] = [exact_mapper, vector_mapper]
-    if os.getenv(_ENABLE_LLM_JUDGE_MAPPER_ENV, "0") == "1":
-        active_mapping_judge_agent = mapping_judge_agent
-        if active_mapping_judge_agent is None:
-            from src.infrastructure.llm.adapters.mapping_judge_agent_adapter import (
-                ArtanaMappingJudgeAdapter,
-            )
-
-            active_mapping_judge_agent = ArtanaMappingJudgeAdapter()
-        mappers.append(
-            LLMJudgeMapper(
-                dictionary_service,
-                mapping_judge_agent=active_mapping_judge_agent,
-            ),
-        )
+    mappers: list[Mapper] = [
+        exact_mapper,
+        vector_mapper,
+        LLMJudgeMapper(
+            dictionary_service,
+            mapping_judge_agent=active_mapping_judge_agent,
+        ),
+    ]
     mapper = HybridMapper(mappers)
 
     # Normalizer

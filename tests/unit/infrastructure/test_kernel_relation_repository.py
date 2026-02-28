@@ -133,9 +133,17 @@ def test_create_deduplicates_canonical_relation_and_aggregates_evidence(
     assert second.aggregate_confidence == pytest.approx(0.6)
     assert second.highest_evidence_tier == "EXPERIMENTAL"
 
-    relation_rows = db_session.scalars(select(RelationModel)).all()
+    relation_rows = db_session.scalars(
+        select(RelationModel).where(
+            RelationModel.research_space_id == research_space_id,
+        ),
+    ).all()
     assert len(relation_rows) == 1
-    evidence_rows = db_session.scalars(select(RelationEvidenceModel)).all()
+    evidence_rows = db_session.scalars(
+        select(RelationEvidenceModel).where(
+            RelationEvidenceModel.relation_id == first.id,
+        ),
+    ).all()
     assert len(evidence_rows) == 2
     assert all(row.relation_id == relation_rows[0].id for row in evidence_rows)
 

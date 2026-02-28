@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from threading import Thread
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.mapping_judge import MappingJudgeContract
@@ -29,8 +28,6 @@ from src.infrastructure.llm.prompts.mapping_judge import MAPPING_JUDGE_SYSTEM_PR
 
 if TYPE_CHECKING:
     from src.domain.agents.contexts.mapping_judge_context import MappingJudgeContext
-
-logger = logging.getLogger(__name__)
 
 _ARTANA_IMPORT_ERROR: Exception | None = None
 
@@ -61,7 +58,6 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         self._governance = GovernanceConfig.from_environment()
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
-        self._last_run_id: str | None = None
         timeout_seconds = self._resolve_timeout_seconds(model)
         self._model_port = _OpenAIChatModelPort(
             timeout_seconds=timeout_seconds,
@@ -79,21 +75,13 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         *,
         model_id: str | None = None,
     ) -> MappingJudgeContract:
-        self._last_run_id = None
-
         if not self._has_openai_key():
-            return self._fallback_contract(
-                context,
-                decision="no_match",
-                reason="Mapping-judge API key is not configured.",
-            )
+            msg = "Mapping-judge requires OPENAI_API_KEY for Artana execution."
+            raise RuntimeError(msg)
 
         if not context.candidates:
-            return self._fallback_contract(
-                context,
-                decision="no_match",
-                reason="Mapping-judge received no candidates.",
-            )
+            msg = "Mapping-judge received no candidates."
+            raise ValueError(msg)
 
         effective_model = self._resolve_model_id(model_id)
         run_id = self._create_run_id(
@@ -103,27 +91,14 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
             field_value_preview=context.field_value_preview,
             candidate_ids=[candidate.variable_id for candidate in context.candidates],
         )
-        self._last_run_id = run_id
 
-        try:
-            return self._run_contract_coroutine(
-                self._judge_async(
-                    context=context,
-                    model_id=effective_model,
-                    run_id=run_id,
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Mapping-judge execution failed for field_key=%s: %s",
-                context.field_key,
-                exc,
-            )
-            return self._fallback_contract(
-                context,
-                decision="no_match",
-                reason="Mapping-judge execution failed.",
-            )
+        return self._run_contract_coroutine(
+            self._judge_async(
+                context=context,
+                model_id=effective_model,
+                run_id=run_id,
+            ),
+        )
 
     def close(self) -> None:
         self._run_void_coroutine(self._close_async())
@@ -283,15 +258,10 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         if contract.decision == "matched":
             selected_id = contract.selected_variable_id
             if selected_id is None or selected_id not in candidate_map:
-                reason = (
-                    "Mapping-judge selected a variable_id outside provided candidates. "
-                    "Converted to no_match."
+                msg = (
+                    "Mapping-judge selected a variable_id outside provided candidates."
                 )
-                return self._fallback_contract(
-                    context,
-                    decision="no_match",
-                    reason=reason,
-                )
+                raise ValueError(msg)
             selected_candidate = candidate_map[selected_id]
             normalized = contract.model_copy(
                 update={
@@ -321,32 +291,6 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
                 "selected_variable_id": None,
                 "selected_candidate": None,
             },
-        )
-
-    def _fallback_contract(
-        self,
-        context: MappingJudgeContext,
-        *,
-        decision: Literal["no_match", "ambiguous"],
-        reason: str,
-    ) -> MappingJudgeContract:
-        return MappingJudgeContract(
-            decision=decision,
-            selected_variable_id=None,
-            candidate_count=len(context.candidates),
-            selection_rationale=reason,
-            selected_candidate=None,
-            confidence_score=0.3 if decision == "no_match" else 0.2,
-            rationale=reason,
-            evidence=[
-                EvidenceItem(
-                    source_type="note",
-                    locator=f"mapping-judge:{context.source_id}:{context.field_key}",
-                    excerpt=reason,
-                    relevance=0.2,
-                ),
-            ],
-            agent_run_id=self._last_run_id,
         )
 
     @staticmethod

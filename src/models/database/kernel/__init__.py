@@ -22,6 +22,7 @@ from .dictionary import (
 from .entities import EntityIdentifierModel, EntityModel
 from .observations import ObservationModel
 from .provenance import ProvenanceModel
+from .relation_claims import RelationClaimModel
 from .relations import RelationEvidenceModel, RelationModel
 
 __all__ = [
@@ -44,6 +45,7 @@ __all__ = [
     "EntityIdentifierModel",
     "ObservationModel",
     "RelationEvidenceModel",
+    "RelationClaimModel",
     "RelationModel",
     "ProvenanceModel",
 ]

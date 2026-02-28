@@ -45,6 +45,7 @@ interface AdvancedSettingsState {
   requireReview: boolean
   reviewThreshold: number
   relationGovernanceMode: 'FULL_AUTO' | 'HUMAN_IN_LOOP'
+  relationAutoPromotionEnabled: boolean
   relationDefaultReviewThreshold: number
   relationReviewThresholdsText: string
   dictionaryAgentCreationPolicy: 'ACTIVE' | 'PENDING_REVIEW'
@@ -72,6 +73,8 @@ const toAdvancedState = (settings?: ResearchSpaceSettings): AdvancedSettingsStat
     settings?.relation_governance_mode === 'HUMAN_IN_LOOP'
       ? 'HUMAN_IN_LOOP'
       : 'FULL_AUTO',
+  relationAutoPromotionEnabled:
+    settings?.relation_auto_promotion?.enabled === true,
   relationDefaultReviewThreshold: settings?.relation_default_review_threshold ?? 0.7,
   relationReviewThresholdsText: toThresholdText(settings?.relation_review_thresholds),
   dictionaryAgentCreationPolicy:
@@ -543,6 +546,9 @@ function buildSettingsPayload(state: AdvancedSettingsState): ResearchSpaceSettin
     require_review: state.requireReview,
     review_threshold: state.reviewThreshold,
     relation_governance_mode: state.relationGovernanceMode,
+    relation_auto_promotion: {
+      enabled: state.relationAutoPromotionEnabled,
+    },
     relation_default_review_threshold: state.relationDefaultReviewThreshold,
     relation_review_thresholds: parseThresholdText(state.relationReviewThresholdsText),
     dictionary_agent_creation_policy: state.dictionaryAgentCreationPolicy,

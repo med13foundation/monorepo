@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.infrastructure.ingestion.types import MappedObservation, RawRecord
 
 if TYPE_CHECKING:
@@ -34,9 +35,13 @@ class ExactMapper:
             if value is None or value == "":
                 continue
 
+            domain_context = self._extract_domain_context(record)
             # Try to find a variable definition matching the key
             # The repository method handles case-insensitivity
-            variable = self.dictionary_repo.resolve_synonym(key)
+            variable = self.dictionary_repo.resolve_synonym(
+                key,
+                domain_context=domain_context,
+            )
 
             if variable:
                 # We found a match! Create an observation
@@ -113,6 +118,16 @@ class ExactMapper:
         if not anchors and record.source_id.strip():
             anchors["source_id"] = record.source_id.strip()
         return anchors
+
+    @staticmethod
+    def _extract_domain_context(record: RawRecord) -> str | None:
+        raw_source_type = record.metadata.get("type")
+        source_type = raw_source_type if isinstance(raw_source_type, str) else None
+        return DomainContextResolver.resolve(
+            metadata=record.metadata,
+            source_type=source_type,
+            fallback=None,
+        )
 
     def _extract_timestamp(self, record: RawRecord) -> datetime | None:
         """Extract timestamp from record data."""

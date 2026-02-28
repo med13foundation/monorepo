@@ -23,8 +23,10 @@ class StubDictionaryService:
         self,
         synonym: str,
         *,
+        domain_context: str | None = None,
         include_inactive: bool = False,
     ) -> None:
+        _ = domain_context
         _ = include_inactive
         self.resolve_synonym_calls.append(synonym)
 
@@ -95,6 +97,7 @@ def test_vector_mapper_maps_when_similarity_meets_threshold() -> None:
     assert observation.provenance["method"] == "vector_match"
     assert observation.provenance["similarity_score"] == 0.92
     assert dictionary_service.dictionary_search_calls[0]["limit"] == 5
+    assert dictionary_service.dictionary_search_calls[0]["domain_context"] == "clinical"
 
 
 def test_vector_mapper_skips_when_similarity_is_below_threshold() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 from unittest.mock import Mock
 
 import pytest
@@ -21,6 +22,7 @@ from src.domain.entities.kernel.dictionary import (
     VariableDefinition,
     VariableSynonym,
 )
+from src.domain.ports.dictionary_search_harness_port import DictionarySearchHarnessPort
 from src.domain.ports.text_embedding_port import TextEmbeddingPort
 from src.domain.repositories.kernel.dictionary_repository import DictionaryRepository
 
@@ -38,6 +40,53 @@ class StubEmbeddingProvider(TextEmbeddingPort):
         if not normalized:
             return None
         return [float(len(normalized)), float(len(model_name))]
+
+
+class StubDictionarySearchHarness(DictionarySearchHarnessPort):
+    """Deterministic search harness stub."""
+
+    def __init__(
+        self,
+        *,
+        results: list[DictionarySearchResult] | None = None,
+        dictionary_repo: Mock | None = None,
+    ) -> None:
+        self.results = results
+        self.dictionary_repo = dictionary_repo
+        self.calls = 0
+        self.last_terms: list[str] = []
+        self.last_dimensions: list[str] | None = None
+        self.last_domain_context: str | None = None
+        self.last_limit: int = 0
+        self.last_include_inactive: bool = False
+
+    def search(
+        self,
+        *,
+        terms: list[str],
+        dimensions: list[str] | None = None,
+        domain_context: str | None = None,
+        limit: int = 50,
+        include_inactive: bool = False,
+    ) -> list[DictionarySearchResult]:
+        self.calls += 1
+        self.last_terms = terms
+        self.last_dimensions = dimensions
+        self.last_domain_context = domain_context
+        self.last_limit = limit
+        self.last_include_inactive = include_inactive
+        if self.dictionary_repo is None:
+            if self.results is None:
+                return []
+            return list(self.results)
+        return self.dictionary_repo.search_dictionary(
+            terms=terms,
+            dimensions=dimensions,
+            domain_context=domain_context,
+            limit=limit,
+            query_embeddings=None,
+            include_inactive=include_inactive,
+        )
 
 
 def _build_variable(
@@ -166,16 +215,23 @@ def _build_changelog() -> DictionaryChangelog:
     )
 
 
-def _build_search_result() -> DictionarySearchResult:
+def _build_search_result(
+    *,
+    entry_id: str = "VAR_TEST",
+    display_name: str = "Test Variable",
+    description: str | None = "test",
+    match_method: Literal["exact", "synonym", "fuzzy", "vector"] = "exact",
+    similarity_score: float = 1.0,
+) -> DictionarySearchResult:
     return DictionarySearchResult(
         dimension="variables",
-        entry_id="VAR_TEST",
-        display_name="Test Variable",
-        description="test",
+        entry_id=entry_id,
+        display_name=display_name,
+        description=description,
         domain_context="general",
-        match_method="exact",
-        similarity_score=1.0,
-        metadata={"canonical_name": "test_variable"},
+        match_method=match_method,
+        similarity_score=similarity_score,
+        metadata={"canonical_name": f"{entry_id.lower()}_canonical"},
     )
 
 
@@ -232,7 +288,9 @@ def _build_value_set_item(
 
 @pytest.fixture
 def dictionary_repo() -> Mock:
-    return Mock(spec=DictionaryRepository)
+    repo = Mock(spec=DictionaryRepository)
+    repo.search_dictionary.return_value = []
+    return repo
 
 
 @pytest.fixture
@@ -247,6 +305,9 @@ def service(
 ) -> DictionaryManagementService:
     return DictionaryManagementService(
         dictionary_repo=dictionary_repo,
+        dictionary_search_harness=StubDictionarySearchHarness(
+            dictionary_repo=dictionary_repo,
+        ),
         embedding_provider=embedding_provider,
     )
 
@@ -783,22 +844,39 @@ def test_list_variables_passes_include_inactive_flag(
     )
 
 
-def test_dictionary_search_adds_query_embeddings(
-    service: DictionaryManagementService,
+def test_dictionary_search_delegates_to_harness_when_configured(
     dictionary_repo: Mock,
 ) -> None:
-    dictionary_repo.search_dictionary.return_value = [_build_search_result()]
+    harness_result = _build_search_result(
+        entry_id="VAR_HARNESS",
+        display_name="Harness Variable",
+        match_method="vector",
+        similarity_score=0.88,
+    )
+    harness = StubDictionarySearchHarness(results=[harness_result])
+    service = DictionaryManagementService(
+        dictionary_repo=dictionary_repo,
+        dictionary_search_harness=harness,
+        embedding_provider=StubEmbeddingProvider(),
+    )
 
     results = service.dictionary_search(
-        terms=["Test Variable"],
+        terms=[" Harness Variable "],
         dimensions=["variables"],
-        limit=10,
+        domain_context="cardiology",
+        limit=7,
+        include_inactive=True,
     )
 
     assert len(results) == 1
-    called_kwargs = dictionary_repo.search_dictionary.call_args.kwargs
-    assert called_kwargs["query_embeddings"] is not None
-    assert "test variable" in called_kwargs["query_embeddings"]
+    assert results[0].entry_id == "VAR_HARNESS"
+    assert harness.calls == 1
+    assert harness.last_terms == ["Harness Variable"]
+    assert harness.last_dimensions == ["variables"]
+    assert harness.last_domain_context == "cardiology"
+    assert harness.last_limit == 7
+    assert harness.last_include_inactive is True
+    dictionary_repo.search_dictionary.assert_not_called()
 
 
 def test_dictionary_search_passes_include_inactive_flag(
@@ -814,6 +892,112 @@ def test_dictionary_search_passes_include_inactive_flag(
 
     called_kwargs = dictionary_repo.search_dictionary.call_args.kwargs
     assert called_kwargs["include_inactive"] is True
+
+
+def test_dictionary_search_short_circuits_on_deterministic_hit(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.search_dictionary.return_value = [_build_search_result()]
+
+    results = service.dictionary_search(
+        terms=["test variable"],
+        dimensions=["variables"],
+    )
+
+    assert len(results) == 1
+    assert results[0].match_method == "exact"
+    assert dictionary_repo.search_dictionary.call_count == 1
+
+
+def test_create_variable_reuses_existing_entry_on_deterministic_match(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    existing = _build_variable()
+    dictionary_repo.search_dictionary.return_value = [
+        _build_search_result(
+            entry_id=existing.id,
+            display_name=existing.display_name,
+            match_method="exact",
+            similarity_score=1.0,
+        ),
+    ]
+    dictionary_repo.get_variable.return_value = existing
+
+    resolved = service.create_variable(
+        variable_id="VAR_NEW",
+        canonical_name="new_variable",
+        display_name="New Variable",
+        data_type="STRING",
+        domain_context="general",
+        created_by="agent:run-123",
+    )
+
+    assert resolved.id == existing.id
+    dictionary_repo.create_variable.assert_not_called()
+
+
+def test_create_entity_type_reuses_existing_on_exact_search_match(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    existing = _build_entity_type()
+    dictionary_repo.search_dictionary.return_value = [
+        DictionarySearchResult(
+            dimension="entity_types",
+            entry_id="GENE",
+            display_name="Gene",
+            description="Gene entity type",
+            domain_context="general",
+            match_method="exact",
+            similarity_score=1.0,
+            metadata={},
+        ),
+    ]
+    dictionary_repo.get_entity_type.return_value = existing
+
+    resolved = service.create_entity_type(
+        entity_type="GENE_ALIAS",
+        display_name="Gene",
+        description="Alias description",
+        domain_context="general",
+        created_by="agent:run-123",
+    )
+
+    assert resolved.id == "GENE"
+    dictionary_repo.create_entity_type.assert_not_called()
+
+
+def test_create_relation_type_reuses_existing_on_exact_search_match(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    existing = _build_relation_type()
+    dictionary_repo.search_dictionary.return_value = [
+        DictionarySearchResult(
+            dimension="relation_types",
+            entry_id="ASSOCIATED_WITH",
+            display_name="Associated With",
+            description="Association relation",
+            domain_context="general",
+            match_method="exact",
+            similarity_score=1.0,
+            metadata={},
+        ),
+    ]
+    dictionary_repo.get_relation_type.return_value = existing
+
+    resolved = service.create_relation_type(
+        relation_type="ASSOCIATES_WITH_ALIAS",
+        display_name="Associated With",
+        description="Alias relation",
+        domain_context="general",
+        created_by="agent:run-123",
+    )
+
+    assert resolved.id == "ASSOCIATED_WITH"
+    dictionary_repo.create_relation_type.assert_not_called()
 
 
 def test_set_entity_type_review_status_queries_inactive_records(

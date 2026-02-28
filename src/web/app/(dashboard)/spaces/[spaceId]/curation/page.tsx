@@ -2,11 +2,11 @@ import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import SpaceCurationClient from '../space-curation-client'
-import { fetchKernelEntities, fetchKernelRelations } from '@/lib/api/kernel'
+import { fetchKernelEntities, fetchKernelRelations, fetchRelationClaims } from '@/lib/api/kernel'
 import { fetchMyMembership } from '@/lib/api/research-spaces'
 import { MembershipRole } from '@/types/research-space'
 import { UserRole } from '@/types/auth'
-import type { KernelRelationListResponse } from '@/types/kernel'
+import type { KernelRelationListResponse, RelationClaimListResponse } from '@/types/kernel'
 
 interface SpaceCurationPageProps {
   params: Promise<{
@@ -75,31 +75,49 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
   }
 
   let relations: KernelRelationListResponse | null = null
+  let claims: RelationClaimListResponse | null = null
   let relationsError: string | null = null
+  let claimsError: string | null = null
   let entityLabelsById: Record<string, string> = {}
 
   const isPlatformAdmin = session.user.role === UserRole.ADMIN
   let effectiveRole: MembershipRole = isPlatformAdmin ? MembershipRole.ADMIN : MembershipRole.VIEWER
 
+  const tab = firstString(resolvedSearchParams?.tab) === 'claims' ? 'claims' : 'graph'
   const relationType = firstString(resolvedSearchParams?.relation_type)
   const curationStatus = firstString(resolvedSearchParams?.curation_status)
+  const validationState = firstString(resolvedSearchParams?.validation_state)
+  const sourceDocumentId = firstString(resolvedSearchParams?.source_document_id)
+  const certaintyBand = firstString(resolvedSearchParams?.certainty_band)
   const nodeQuery = firstString(resolvedSearchParams?.node_query)
   const nodeIds = parseStringList(resolvedSearchParams?.node_ids)
   const offset = parseIntParam(firstString(resolvedSearchParams?.offset), 0)
   const limit = Math.min(parseIntParam(firstString(resolvedSearchParams?.limit), 25), 200)
+  const claimStatus = firstString(resolvedSearchParams?.claim_status)
+  const claimValidationState = firstString(resolvedSearchParams?.claim_validation_state)
+  const claimPersistability = firstString(resolvedSearchParams?.persistability)
+  const claimRelationType = firstString(resolvedSearchParams?.claim_relation_type)
+  const claimSourceDocumentId = firstString(resolvedSearchParams?.claim_source_document_id)
+  const claimLinkedRelationId = firstString(resolvedSearchParams?.linked_relation_id)
+  const claimCertaintyBand = firstString(resolvedSearchParams?.claim_certainty_band)
+  const claimOffset = parseIntParam(firstString(resolvedSearchParams?.claim_offset), 0)
+  const claimLimit = Math.min(parseIntParam(firstString(resolvedSearchParams?.claim_limit), 25), 200)
   const membershipPromise = fetchMyMembership(spaceId, token)
 
-  try {
-    relations = await fetchKernelRelations(
-      spaceId,
-      {
-        ...(relationType ? { relation_type: relationType } : {}),
-        ...(curationStatus ? { curation_status: curationStatus } : {}),
-        ...(nodeQuery ? { node_query: nodeQuery } : {}),
-        ...(nodeIds.length > 0 ? { node_ids: nodeIds } : {}),
-        offset,
-        limit,
-      },
+      try {
+        relations = await fetchKernelRelations(
+          spaceId,
+          {
+            ...(relationType ? { relation_type: relationType } : {}),
+            ...(curationStatus ? { curation_status: curationStatus } : {}),
+            ...(validationState ? { validation_state: validationState } : {}),
+            ...(sourceDocumentId ? { source_document_id: sourceDocumentId } : {}),
+            ...(certaintyBand ? { certainty_band: certaintyBand as 'HIGH' | 'MEDIUM' | 'LOW' } : {}),
+            ...(nodeQuery ? { node_query: nodeQuery } : {}),
+            ...(nodeIds.length > 0 ? { node_ids: nodeIds } : {}),
+            offset,
+            limit,
+          },
       token,
     )
   } catch (error) {
@@ -111,6 +129,9 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
           {
             ...(relationType ? { relation_type: relationType } : {}),
             ...(curationStatus ? { curation_status: curationStatus } : {}),
+            ...(validationState ? { validation_state: validationState } : {}),
+            ...(sourceDocumentId ? { source_document_id: sourceDocumentId } : {}),
+            ...(certaintyBand ? { certainty_band: certaintyBand as 'HIGH' | 'MEDIUM' | 'LOW' } : {}),
             ...(nodeQuery ? { node_query: nodeQuery } : {}),
             ...(nodeIds.length > 0 ? { node_ids: nodeIds } : {}),
             offset,
@@ -126,6 +147,39 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
       relationsError = errorMessage(error)
       console.warn(`[SpaceCurationPage] Relation lookup failed: ${relationsError}`)
     }
+  }
+
+  try {
+    claims = await fetchRelationClaims(
+      spaceId,
+      {
+        ...(claimStatus
+          ? {
+              claim_status: claimStatus as 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED',
+            }
+          : {}),
+        ...(claimValidationState ? { validation_state: claimValidationState } : {}),
+        ...(claimPersistability
+          ? {
+              persistability: claimPersistability as 'PERSISTABLE' | 'NON_PERSISTABLE',
+            }
+          : {}),
+        ...(claimSourceDocumentId
+          ? { source_document_id: claimSourceDocumentId }
+          : {}),
+        ...(claimRelationType ? { relation_type: claimRelationType } : {}),
+        ...(claimLinkedRelationId ? { linked_relation_id: claimLinkedRelationId } : {}),
+        ...(claimCertaintyBand
+          ? { certainty_band: claimCertaintyBand as 'HIGH' | 'MEDIUM' | 'LOW' }
+          : {}),
+        offset: claimOffset,
+        limit: claimLimit,
+      },
+      token,
+    )
+  } catch (error) {
+    claimsError = errorMessage(error)
+    console.warn(`[SpaceCurationPage] Relation claims lookup failed: ${claimsError}`)
   }
 
   try {
@@ -183,16 +237,34 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
   return (
     <SpaceCurationClient
       spaceId={spaceId}
+      activeTab={tab}
       relations={relations}
       relationsError={relationsError}
+      claims={claims}
+      claimsError={claimsError}
       entityLabelsById={entityLabelsById}
       canCurate={canCurate}
-      filters={{
+      relationFilters={{
         relationType: relationType ?? '',
         curationStatus: curationStatus ?? '',
+        validationState: validationState ?? '',
+        sourceDocumentId: sourceDocumentId ?? '',
+        certaintyBand: certaintyBand ?? '',
+        nodeQuery: nodeQuery ?? '',
         nodeIds,
         offset,
         limit,
+      }}
+      claimFilters={{
+        claimStatus: claimStatus ?? '',
+        validationState: claimValidationState ?? '',
+        persistability: claimPersistability ?? '',
+        relationType: claimRelationType ?? '',
+        sourceDocumentId: claimSourceDocumentId ?? '',
+        linkedRelationId: claimLinkedRelationId ?? '',
+        certaintyBand: claimCertaintyBand ?? '',
+        offset: claimOffset,
+        limit: claimLimit,
       }}
     />
   )

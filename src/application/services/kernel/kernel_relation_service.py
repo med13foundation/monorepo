@@ -25,6 +25,9 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+_ALLOWED_CURATION_STATUSES = frozenset(
+    {"DRAFT", "UNDER_REVIEW", "APPROVED", "REJECTED", "RETRACTED"},
+)
 
 
 class KernelRelationService:
@@ -138,9 +141,15 @@ class KernelRelationService:
         reviewed_at: datetime | None = None,
     ) -> KernelRelation:
         """Update the curation status of a relation."""
+        normalized_status = curation_status.strip().upper()
+        if normalized_status not in _ALLOWED_CURATION_STATUSES:
+            msg = "Invalid relation curation_status. Expected one of: " + ", ".join(
+                sorted(_ALLOWED_CURATION_STATUSES),
+            )
+            raise ValueError(msg)
         return self._relations.update_curation(
             relation_id,
-            curation_status=curation_status,
+            curation_status=normalized_status,
             reviewed_by=reviewed_by,
             reviewed_at=reviewed_at,
         )
@@ -207,6 +216,9 @@ class KernelRelationService:
         *,
         relation_type: str | None = None,
         curation_status: str | None = None,
+        validation_state: str | None = None,
+        source_document_id: str | None = None,
+        certainty_band: str | None = None,
         node_query: str | None = None,
         node_ids: list[str] | None = None,
         limit: int | None = None,
@@ -217,10 +229,37 @@ class KernelRelationService:
             research_space_id,
             relation_type=relation_type,
             curation_status=curation_status,
+            validation_state=validation_state,
+            source_document_id=source_document_id,
+            certainty_band=certainty_band,
             node_query=node_query,
             node_ids=node_ids,
             limit=limit,
             offset=offset,
+        )
+
+    def count_by_research_space(  # noqa: PLR0913
+        self,
+        research_space_id: str,
+        *,
+        relation_type: str | None = None,
+        curation_status: str | None = None,
+        validation_state: str | None = None,
+        source_document_id: str | None = None,
+        certainty_band: str | None = None,
+        node_query: str | None = None,
+        node_ids: list[str] | None = None,
+    ) -> int:
+        """Count relations in one research space with optional filters."""
+        return self._relations.count_by_research_space(
+            research_space_id,
+            relation_type=relation_type,
+            curation_status=curation_status,
+            validation_state=validation_state,
+            source_document_id=source_document_id,
+            certainty_band=certainty_band,
+            node_query=node_query,
+            node_ids=node_ids,
         )
 
     # ── Delete ────────────────────────────────────────────────────────

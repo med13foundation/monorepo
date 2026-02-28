@@ -6,7 +6,9 @@ that operate purely on domain entities and value objects.
 """
 
 from .base import DomainService
+from .domain_context_resolver import DomainContextResolver
 
 __all__ = [
     "DomainService",
+    "DomainContextResolver",
 ]

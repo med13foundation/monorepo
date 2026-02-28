@@ -33,6 +33,9 @@ if TYPE_CHECKING:
     from src.domain.entities.source_document import SourceDocument
     from src.domain.ports.dictionary_port import DictionaryPort
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
+    from src.domain.repositories.kernel.relation_claim_repository import (
+        KernelRelationClaimRepository,
+    )
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
@@ -47,6 +50,7 @@ class ExtractionServiceDependencies:
     ingestion_pipeline: IngestionPipelinePort
     extraction_policy_agent: ExtractionPolicyAgentPort | None = None
     relation_repository: KernelRelationRepository | None = None
+    relation_claim_repository: KernelRelationClaimRepository | None = None
     entity_repository: KernelEntityRepository | None = None
     dictionary_service: DictionaryPort | None = None
     governance_service: GovernanceService | None = None

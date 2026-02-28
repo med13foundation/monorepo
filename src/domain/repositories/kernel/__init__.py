@@ -9,12 +9,14 @@ from .dictionary_repository import DictionaryRepository
 from .entity_repository import KernelEntityRepository
 from .observation_repository import KernelObservationRepository
 from .provenance_repository import ProvenanceRepository
+from .relation_claim_repository import KernelRelationClaimRepository
 from .relation_repository import KernelRelationRepository
 
 __all__ = [
     "DictionaryRepository",
     "KernelEntityRepository",
     "KernelObservationRepository",
+    "KernelRelationClaimRepository",
     "KernelRelationRepository",
     "ProvenanceRepository",
 ]

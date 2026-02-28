@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost, apiPut, type ApiRequestOptions } from '@/lib/api/client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut, type ApiRequestOptions } from '@/lib/api/client'
 import type {
   KernelEntityCreateRequest,
   KernelEntityListResponse,
@@ -16,6 +16,9 @@ import type {
   KernelProvenanceListResponse,
   KernelProvenanceResponse,
   KernelRelationCreateRequest,
+  RelationClaimListResponse,
+  RelationClaimResponse,
+  RelationClaimTriageRequest,
   KernelRelationCurationUpdateRequest,
   KernelRelationListResponse,
   KernelRelationResponse,
@@ -177,6 +180,9 @@ export async function fetchKernelObservation(
 export interface KernelRelationListParams {
   relation_type?: string
   curation_status?: string
+  validation_state?: string
+  source_document_id?: string
+  certainty_band?: 'HIGH' | 'MEDIUM' | 'LOW'
   node_query?: string
   node_ids?: string[]
   offset?: number
@@ -197,6 +203,9 @@ export async function fetchKernelRelations(
     params: {
       ...(params.relation_type ? { relation_type: params.relation_type } : {}),
       ...(params.curation_status ? { curation_status: params.curation_status } : {}),
+      ...(params.validation_state ? { validation_state: params.validation_state } : {}),
+      ...(params.source_document_id ? { source_document_id: params.source_document_id } : {}),
+      ...(params.certainty_band ? { certainty_band: params.certainty_band } : {}),
       ...(params.node_query ? { node_query: params.node_query } : {}),
       ...(params.node_ids && params.node_ids.length > 0
         ? { node_ids: params.node_ids.join(',') }
@@ -231,6 +240,64 @@ export async function updateKernelRelationCurationStatus(
   }
   return apiPut<KernelRelationResponse>(
     `/research-spaces/${spaceId}/relations/${relationId}`,
+    payload,
+    { token },
+  )
+}
+
+export interface RelationClaimListParams {
+  claim_status?: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'
+  validation_state?: string
+  persistability?: 'PERSISTABLE' | 'NON_PERSISTABLE'
+  source_document_id?: string
+  relation_type?: string
+  linked_relation_id?: string
+  certainty_band?: 'HIGH' | 'MEDIUM' | 'LOW'
+  offset?: number
+  limit?: number
+}
+
+export async function fetchRelationClaims(
+  spaceId: string,
+  params: RelationClaimListParams = {},
+  token?: string,
+): Promise<RelationClaimListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchRelationClaims')
+  }
+
+  const options: ApiRequestOptions<RelationClaimListResponse> = {
+    token,
+    params: {
+      ...(params.claim_status ? { claim_status: params.claim_status } : {}),
+      ...(params.validation_state ? { validation_state: params.validation_state } : {}),
+      ...(params.persistability ? { persistability: params.persistability } : {}),
+      ...(params.source_document_id ? { source_document_id: params.source_document_id } : {}),
+      ...(params.relation_type ? { relation_type: params.relation_type } : {}),
+      ...(params.linked_relation_id ? { linked_relation_id: params.linked_relation_id } : {}),
+      ...(params.certainty_band ? { certainty_band: params.certainty_band } : {}),
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 50,
+    },
+  }
+
+  return apiGet<RelationClaimListResponse>(
+    `/research-spaces/${spaceId}/relation-claims`,
+    options,
+  )
+}
+
+export async function updateRelationClaimStatus(
+  spaceId: string,
+  claimId: string,
+  payload: RelationClaimTriageRequest,
+  token?: string,
+): Promise<RelationClaimResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for updateRelationClaimStatus')
+  }
+  return apiPatch<RelationClaimResponse>(
+    `/research-spaces/${spaceId}/relation-claims/${claimId}`,
     payload,
     { token },
   )

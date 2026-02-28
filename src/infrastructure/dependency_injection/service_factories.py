@@ -49,6 +49,7 @@ from src.infrastructure.repositories import (
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyGraphQueryRepository,
     SqlAlchemyKernelEntityRepository,
+    SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationRepository,
 )
 
@@ -196,6 +197,9 @@ class ApplicationServiceFactoryMixin(
                 extraction_policy_agent=extraction_policy_agent,
                 ingestion_pipeline=ingestion_pipeline,
                 relation_repository=SqlAlchemyKernelRelationRepository(session),
+                relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
+                    session,
+                ),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
                 dictionary_service=dictionary_service,
                 governance_service=governance_service,
@@ -235,6 +239,9 @@ class ApplicationServiceFactoryMixin(
                 extraction_policy_agent=extraction_policy_agent,
                 ingestion_pipeline=create_ingestion_pipeline(session),
                 relation_repository=SqlAlchemyKernelRelationRepository(session),
+                relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
+                    session,
+                ),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
                 dictionary_service=dictionary_service,
                 governance_service=GovernanceService(),

@@ -22,6 +22,7 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
     func,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -803,6 +804,13 @@ class VariableSynonymModel(Base):
     )
 
     __table_args__ = (
+        Index(
+            "uq_variable_synonyms_active_synonym",
+            text("lower(synonym)"),
+            unique=True,
+            postgresql_where=text("is_active"),
+            sqlite_where=text("is_active = 1"),
+        ),
         Index(
             "idx_synonym_variable_unique",
             "variable_id",

@@ -615,6 +615,7 @@ class TestDataDiscoveryService:
 
             assert source_type == SourceType.PUBMED
             assert isinstance(configuration.metadata.get("query"), str)
+            assert configuration.metadata.get("domain_context") == "clinical"
             return mock_data_source
 
         service._source_service.create_source.side_effect = _create_source_side_effect

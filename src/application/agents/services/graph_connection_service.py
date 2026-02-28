@@ -214,7 +214,7 @@ class GraphConnectionService:
                 persistence_errors.append("relation_type_missing")
                 continue
             try:
-                self._relations.create(
+                created_relation = self._relations.create(
                     research_space_id=resolved_research_space_id,
                     source_id=relation.source_id,
                     relation_type=normalized_relation_type,
@@ -222,11 +222,7 @@ class GraphConnectionService:
                     confidence=relation.confidence,
                     evidence_summary=relation.evidence_summary,
                     evidence_tier=relation.evidence_tier,
-                    curation_status=(
-                        "PENDING_REVIEW"
-                        if fallback_requires_pending_review
-                        else "DRAFT"
-                    ),
+                    curation_status="DRAFT",
                     provenance_id=(
                         relation.supporting_provenance_ids[0]
                         if relation.supporting_provenance_ids
@@ -235,6 +231,13 @@ class GraphConnectionService:
                     agent_run_id=run_id,
                 )
                 persisted_count += 1
+                relation_id = getattr(created_relation, "id", None)
+                if relation_id is not None:
+                    self._enqueue_relation_review_item(
+                        relation_id=str(relation_id),
+                        research_space_id=resolved_research_space_id,
+                        fallback_requires_pending_review=fallback_requires_pending_review,
+                    )
                 logger.info(
                     "Graph relation persisted from connection discovery",
                     extra={
@@ -389,6 +392,30 @@ class GraphConnectionService:
             logger.warning(
                 "Failed to enqueue graph-connection review item for seed=%s: %s",
                 seed_entity_id,
+                exc,
+            )
+
+    def _enqueue_relation_review_item(
+        self,
+        *,
+        relation_id: str,
+        research_space_id: str,
+        fallback_requires_pending_review: bool,
+    ) -> None:
+        submitter = self._review_queue_submitter
+        if submitter is None:
+            return
+        try:
+            submitter(
+                "relation",
+                relation_id,
+                research_space_id,
+                "medium" if fallback_requires_pending_review else "low",
+            )
+        except Exception as exc:  # noqa: BLE001 - do not block graph writes
+            logger.warning(
+                "Failed to enqueue graph-connection relation review item for relation=%s: %s",
+                relation_id,
                 exc,
             )
 

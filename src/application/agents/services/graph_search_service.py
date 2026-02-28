@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from src.domain.ports.graph_query_port import GraphQueryPort
     from src.domain.ports.research_query_port import ResearchQueryPort
 
-_REJECTED_RELATION_STATUSES = frozenset({"REVOKED", "REJECTED", "RETRACTED"})
 _EVIDENCE_TIER_RANK = {
     "EXPERT_CURATED": 6,
     "CLINICAL": 5,
@@ -62,6 +61,7 @@ class GraphSearchService:
         research_space_id: str,
         max_depth: int = 2,
         top_k: int = 25,
+        curation_statuses: list[str] | None = None,
         include_evidence_chains: bool = True,
         force_agent: bool = False,
         model_id: str | None = None,
@@ -72,6 +72,7 @@ class GraphSearchService:
             research_space_id=research_space_id,
             max_depth=max_depth,
             top_k=top_k,
+            curation_statuses=_normalize_curation_statuses(curation_statuses),
             include_evidence_chains=include_evidence_chains,
             force_agent=force_agent,
         )
@@ -117,8 +118,72 @@ class GraphSearchService:
         if self._graph_search_agent is None:
             return None
         contract = await self._graph_search_agent.search(context, model_id=model_id)
+        if context.curation_statuses:
+            contract = self._apply_agent_status_filter(
+                contract=contract,
+                context=context,
+            )
         contract.executed_path = "agent"
         return contract
+
+    def _apply_agent_status_filter(
+        self,
+        *,
+        contract: GraphSearchContract,
+        context: GraphSearchContext,
+    ) -> GraphSearchContract:
+        allowed_statuses = _normalize_curation_statuses(context.curation_statuses)
+        if not allowed_statuses:
+            return contract
+
+        filtered_results: list[GraphSearchResultEntry] = []
+        warnings = list(contract.warnings)
+        for result in contract.results:
+            allowed_relation_ids = {
+                str(relation.id)
+                for relation in self._graph_query_service.graph_query_relations(
+                    research_space_id=context.research_space_id,
+                    entity_id=result.entity_id,
+                    relation_types=None,
+                    curation_statuses=allowed_statuses,
+                    direction="both",
+                    depth=context.max_depth,
+                    limit=500,
+                )
+            }
+            filtered_relation_ids = [
+                relation_id
+                for relation_id in result.matching_relation_ids
+                if relation_id in allowed_relation_ids
+            ]
+            filtered_chain = [
+                item
+                for item in result.evidence_chain
+                if item.relation_id is None or item.relation_id in allowed_relation_ids
+            ]
+            if not filtered_relation_ids and result.matching_relation_ids:
+                warnings.append(
+                    (
+                        "Agent result relation set was filtered by selected trust "
+                        f"statuses for entity {result.entity_id}."
+                    ),
+                )
+            filtered_results.append(
+                result.model_copy(
+                    update={
+                        "matching_relation_ids": filtered_relation_ids,
+                        "evidence_chain": filtered_chain,
+                    },
+                ),
+            )
+
+        return contract.model_copy(
+            update={
+                "results": filtered_results,
+                "total_results": len(filtered_results),
+                "warnings": _dedupe(warnings),
+            },
+        )
 
     def _search_deterministic(
         self,
@@ -144,6 +209,7 @@ class GraphSearchService:
                 research_space_id=context.research_space_id,
                 entity=entity,
                 plan=plan,
+                curation_statuses=context.curation_statuses,
                 include_evidence_chains=context.include_evidence_chains,
             )
             warnings.extend(result_warnings)
@@ -247,6 +313,7 @@ class GraphSearchService:
         research_space_id: str,
         entity: KernelEntity,
         plan: ResearchQueryPlan,
+        curation_statuses: list[str] | None,
         include_evidence_chains: bool,
     ) -> tuple[GraphSearchResultEntry | None, list[str]]:
         warnings: list[str] = []
@@ -254,19 +321,27 @@ class GraphSearchService:
             research_space_id=research_space_id,
             entity_id=str(entity.id),
             relation_types=plan.relation_types or None,
+            curation_statuses=curation_statuses,
             direction="both",
             depth=plan.max_depth,
             limit=200,
         )
-        valid_relations: list[KernelRelation] = []
-        for relation in relations:
-            if relation.curation_status.upper() in _REJECTED_RELATION_STATUSES:
+        if not relations and plan.relation_types:
+            relations = self._graph_query_service.graph_query_relations(
+                research_space_id=research_space_id,
+                entity_id=str(entity.id),
+                relation_types=None,
+                curation_statuses=curation_statuses,
+                direction="both",
+                depth=plan.max_depth,
+                limit=200,
+            )
+            if relations:
                 warnings.append(
-                    "Filtered relation with rejected status "
-                    f"{relation.curation_status} ({relation.id}).",
+                    "Inferred relation-type filters returned no edges; broadened "
+                    "relation search for deterministic fallback coverage.",
                 )
-                continue
-            valid_relations.append(relation)
+        valid_relations = relations
 
         observations = self._graph_query_service.graph_query_observations(
             research_space_id=research_space_id,
@@ -485,6 +560,24 @@ def _highest_evidence_tier(evidence_chain: list[EvidenceChainItem]) -> str | Non
             highest_rank = rank
             highest_tier = item.evidence_tier
     return highest_tier
+
+
+def _normalize_curation_statuses(
+    statuses: list[str] | None,
+) -> list[str] | None:
+    if statuses is None:
+        return None
+    normalized: list[str] = []
+    for raw_status in statuses:
+        candidate = raw_status.strip().upper()
+        if not candidate:
+            continue
+        if candidate == "PENDING_REVIEW":
+            candidate = "DRAFT"
+        if candidate in normalized:
+            continue
+        normalized.append(candidate)
+    return normalized or None
 
 
 __all__ = ["GraphSearchService", "GraphSearchServiceDependencies"]

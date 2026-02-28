@@ -118,6 +118,40 @@ export interface KernelRelationListResponse {
   limit: number
 }
 
+export interface RelationClaimResponse {
+  id: string
+  research_space_id: string
+  source_document_id: string | null
+  agent_run_id: string | null
+  source_type: string
+  relation_type: string
+  target_type: string
+  source_label: string | null
+  target_label: string | null
+  confidence: number
+  validation_state: string
+  validation_reason: string | null
+  persistability: 'PERSISTABLE' | 'NON_PERSISTABLE'
+  claim_status: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'
+  linked_relation_id: string | null
+  metadata: JSONObject
+  triaged_by: string | null
+  triaged_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface RelationClaimListResponse {
+  claims: RelationClaimResponse[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export interface RelationClaimTriageRequest {
+  claim_status: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'
+}
+
 export interface KernelProvenanceResponse {
   id: string
   research_space_id: string
@@ -296,6 +330,7 @@ export interface GraphSearchRequest {
   question: string
   max_depth?: number
   top_k?: number
+  curation_statuses?: string[] | null
   include_evidence_chains?: boolean
   force_agent?: boolean
 }

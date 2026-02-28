@@ -302,4 +302,33 @@ describe('KnowledgeGraphClient', () => {
       expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('1')
     })
   })
+
+  it('uses trust preset as backend curation_statuses filter', async () => {
+    mockFetchKernelSubgraph
+      .mockResolvedValueOnce(buildSubgraphResponse())
+      .mockResolvedValueOnce(buildSubgraphResponse())
+
+    render(<KnowledgeGraphClient spaceId="space-1" />)
+
+    await waitFor(() => {
+      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(mockFetchKernelSubgraph.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          curation_statuses: null,
+        }),
+      )
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Approved only' }))
+
+    await waitFor(() => {
+      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(2)
+      expect(mockFetchKernelSubgraph.mock.calls[1]?.[1]).toEqual(
+        expect.objectContaining({
+          curation_statuses: ['APPROVED'],
+        }),
+      )
+    })
+  })
 })

@@ -26,6 +26,12 @@ from .dictionary import (
 from .entities import KernelEntity, KernelEntityIdentifier
 from .observations import KernelObservation
 from .provenance import KernelProvenanceRecord
+from .relation_claims import (
+    KernelRelationClaim,
+    RelationClaimPersistability,
+    RelationClaimStatus,
+    RelationClaimValidationState,
+)
 from .relations import KernelRelation, KernelRelationEvidence
 
 __all__ = [
@@ -41,6 +47,10 @@ __all__ = [
     "KernelEntityIdentifier",
     "KernelObservation",
     "KernelProvenanceRecord",
+    "KernelRelationClaim",
+    "RelationClaimPersistability",
+    "RelationClaimStatus",
+    "RelationClaimValidationState",
     "KernelRelation",
     "KernelRelationEvidence",
     "RelationConstraint",

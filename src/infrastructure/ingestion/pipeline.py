@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.infrastructure.ingestion.types import IngestResult, RawRecord
 
 if TYPE_CHECKING:
@@ -60,23 +61,25 @@ class IngestionPipeline:
 
         for record in records:
             try:
+                resolved_record = self._normalize_domain_context_metadata(record)
+
                 # 0. Track Provenance (Source Level)
                 # We create a provenance record for this source record
                 provenance_id = self.provenance_tracker.track_ingestion(
                     research_space_id=research_space_id,
                     source_type="PIPELINE_INGESTION",  # or from record.metadata
-                    source_ref=record.source_id,
-                    raw_input=record.data,
+                    source_ref=resolved_record.source_id,
+                    raw_input=resolved_record.data,
                     # agent_model, mapping_method could be passed if available
                 )
 
                 # 1. Map
-                mapped_observations = self.mapper.map(record)
+                mapped_observations = self.mapper.map(resolved_record)
                 if not mapped_observations:
                     continue
 
                 # 2. Resolve subject entity once per source record.
-                entity_type = record.metadata.get("entity_type")
+                entity_type = resolved_record.metadata.get("entity_type")
                 if not isinstance(entity_type, str) or not entity_type.strip():
                     result.errors.append("Missing entity_type")
                     continue
@@ -125,3 +128,29 @@ class IngestionPipeline:
                 result.success = False
 
         return result
+
+    @staticmethod
+    def _normalize_domain_context_metadata(record: RawRecord) -> RawRecord:
+        """
+        Canonicalize domain metadata without source-specific behavior.
+
+        Source connectors are responsible for enforcing domain requirements.
+        """
+        explicit_domain_context = DomainContextResolver.from_metadata(record.metadata)
+        if explicit_domain_context is None:
+            return record
+
+        raw_domain_context = record.metadata.get("domain_context")
+        current_domain_context = DomainContextResolver.normalize(
+            raw_domain_context if isinstance(raw_domain_context, str) else None,
+        )
+        if current_domain_context == explicit_domain_context:
+            return record
+
+        enriched_metadata = dict(record.metadata)
+        enriched_metadata["domain_context"] = explicit_domain_context
+        return RawRecord(
+            source_id=record.source_id,
+            data=record.data,
+            metadata=enriched_metadata,
+        )

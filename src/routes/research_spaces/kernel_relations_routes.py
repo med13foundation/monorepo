@@ -9,7 +9,13 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from src.application.services.claim_first_metrics import (
+    emit_graph_filter_preset_usage,
+)
 from src.application.services.kernel.kernel_entity_service import KernelEntityService
+from src.application.services.kernel.kernel_relation_claim_service import (
+    KernelRelationClaimService,
+)
 from src.application.services.kernel.kernel_relation_service import (
     KernelRelationService,
 )
@@ -28,6 +34,7 @@ from src.routes.research_spaces.dependencies import (
 )
 from src.routes.research_spaces.kernel_dependencies import (
     get_kernel_entity_service,
+    get_kernel_relation_claim_service,
     get_kernel_relation_service,
 )
 from src.routes.research_spaces.kernel_schemas import (
@@ -36,6 +43,9 @@ from src.routes.research_spaces.kernel_schemas import (
     KernelGraphSubgraphMeta,
     KernelGraphSubgraphRequest,
     KernelGraphSubgraphResponse,
+    KernelRelationClaimListResponse,
+    KernelRelationClaimResponse,
+    KernelRelationClaimTriageRequest,
     KernelRelationCreateRequest,
     KernelRelationCurationUpdateRequest,
     KernelRelationListResponse,
@@ -57,7 +67,41 @@ _CURATION_STATUS_PRIORITY: dict[str, int] = {
     "REJECTED": 2,
     "RETRACTED": 1,
 }
+_CANONICAL_CURATION_STATUSES = frozenset(_CURATION_STATUS_PRIORITY.keys())
+_CURATION_STATUS_ALIAS: dict[str, str] = {"PENDING_REVIEW": "DRAFT"}
+_CLAIM_STATUSES = frozenset({"OPEN", "NEEDS_MAPPING", "REJECTED", "RESOLVED"})
+_CLAIM_VALIDATION_STATES = frozenset(
+    {
+        "ALLOWED",
+        "FORBIDDEN",
+        "UNDEFINED",
+        "INVALID_COMPONENTS",
+        "ENDPOINT_UNRESOLVED",
+        "SELF_LOOP",
+    },
+)
+_CLAIM_PERSISTABILITY = frozenset({"PERSISTABLE", "NON_PERSISTABLE"})
+_CERTAINTY_BANDS = frozenset({"HIGH", "MEDIUM", "LOW"})
 _STARTER_FETCH_MULTIPLIER = 6
+_ClaimStatus = Literal["OPEN", "NEEDS_MAPPING", "REJECTED", "RESOLVED"]
+_ClaimValidationState = Literal[
+    "ALLOWED",
+    "FORBIDDEN",
+    "UNDEFINED",
+    "INVALID_COMPONENTS",
+    "ENDPOINT_UNRESOLVED",
+    "SELF_LOOP",
+]
+_ClaimPersistability = Literal["PERSISTABLE", "NON_PERSISTABLE"]
+_CertaintyBand = Literal["HIGH", "MEDIUM", "LOW"]
+_CLAIM_VALIDATION_STATE_MAP: dict[str, _ClaimValidationState] = {
+    "ALLOWED": "ALLOWED",
+    "FORBIDDEN": "FORBIDDEN",
+    "UNDEFINED": "UNDEFINED",
+    "INVALID_COMPONENTS": "INVALID_COMPONENTS",
+    "ENDPOINT_UNRESOLVED": "ENDPOINT_UNRESOLVED",
+    "SELF_LOOP": "SELF_LOOP",
+}
 
 
 def _normalize_filter_values(values: list[str] | None) -> set[str] | None:
@@ -78,6 +122,105 @@ def _parse_node_ids_param(node_ids: list[str] | None) -> list[str]:
 
 def _status_priority(status: str) -> int:
     return _CURATION_STATUS_PRIORITY.get(status.strip().upper(), 0)
+
+
+def _normalize_curation_status_filter(status: str | None) -> str | None:
+    if status is None:
+        return None
+    normalized = status.strip().upper()
+    if not normalized:
+        return None
+    return _CURATION_STATUS_ALIAS.get(normalized, normalized)
+
+
+def _normalize_curation_status_filters(
+    statuses: list[str] | None,
+) -> set[str] | None:
+    normalized_values = _normalize_filter_values(statuses)
+    if normalized_values is None:
+        return None
+    normalized = {
+        _CURATION_STATUS_ALIAS.get(value, value) for value in normalized_values
+    }
+    return normalized or None
+
+
+def _normalize_curation_status_update(status: str) -> str:
+    normalized = status.strip().upper()
+    if normalized not in _CANONICAL_CURATION_STATUSES:
+        msg = "curation_status must be one of: " + ", ".join(
+            sorted(_CANONICAL_CURATION_STATUSES),
+        )
+        raise ValueError(msg)
+    return normalized
+
+
+def _normalize_claim_status_filter(status: str | None) -> _ClaimStatus | None:
+    if status is None:
+        return None
+    normalized = status.strip().upper()
+    if not normalized:
+        return None
+    if normalized not in _CLAIM_STATUSES:
+        msg = "claim_status must be one of: OPEN, NEEDS_MAPPING, REJECTED, RESOLVED"
+        raise ValueError(msg)
+    if normalized == "OPEN":
+        return "OPEN"
+    if normalized == "NEEDS_MAPPING":
+        return "NEEDS_MAPPING"
+    if normalized == "REJECTED":
+        return "REJECTED"
+    return "RESOLVED"
+
+
+def _normalize_claim_validation_state(
+    value: str | None,
+) -> _ClaimValidationState | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if not normalized:
+        return None
+    normalized_state = _CLAIM_VALIDATION_STATE_MAP.get(normalized)
+    if normalized_state is None:
+        msg = (
+            "validation_state must be one of: ALLOWED, FORBIDDEN, UNDEFINED, "
+            "INVALID_COMPONENTS, ENDPOINT_UNRESOLVED, SELF_LOOP"
+        )
+        raise ValueError(msg)
+    return normalized_state
+
+
+def _normalize_claim_persistability(
+    value: str | None,
+) -> _ClaimPersistability | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if not normalized:
+        return None
+    if normalized not in _CLAIM_PERSISTABILITY:
+        msg = "persistability must be one of: PERSISTABLE, NON_PERSISTABLE"
+        raise ValueError(msg)
+    if normalized == "PERSISTABLE":
+        return "PERSISTABLE"
+    return "NON_PERSISTABLE"
+
+
+def _normalize_certainty_band(value: str | None) -> _CertaintyBand | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if not normalized:
+        return None
+    if normalized not in _CERTAINTY_BANDS:
+        msg = "certainty_band must be one of: HIGH, MEDIUM, LOW"
+        raise ValueError(msg)
+    if normalized == "HIGH":
+        return "HIGH"
+    if normalized == "MEDIUM":
+        return "MEDIUM"
+    return "LOW"
 
 
 def _sort_relations_for_subgraph(
@@ -212,6 +355,9 @@ def list_kernel_relations(
     *,
     relation_type: str | None = Query(None),
     curation_status: str | None = Query(None),
+    validation_state: str | None = Query(None),
+    source_document_id: str | None = Query(None),
+    certainty_band: str | None = Query(None),
     node_query: str | None = Query(None),
     node_ids: list[str] | None = Query(
         None,
@@ -232,19 +378,36 @@ def list_kernel_relations(
         current_user.role,
     )
 
+    normalized_curation_status = _normalize_curation_status_filter(curation_status)
+    normalized_validation_state = _normalize_claim_validation_state(validation_state)
+    normalized_certainty_band = _normalize_certainty_band(certainty_band)
+    parsed_node_ids = _parse_node_ids_param(node_ids)
     relations = relation_service.list_by_research_space(
         str(space_id),
         relation_type=relation_type,
-        curation_status=curation_status,
+        curation_status=normalized_curation_status,
+        validation_state=normalized_validation_state,
+        source_document_id=source_document_id,
+        certainty_band=normalized_certainty_band,
         node_query=node_query,
-        node_ids=_parse_node_ids_param(node_ids),
+        node_ids=parsed_node_ids,
         limit=limit,
         offset=offset,
+    )
+    total = relation_service.count_by_research_space(
+        str(space_id),
+        relation_type=relation_type,
+        curation_status=normalized_curation_status,
+        validation_state=normalized_validation_state,
+        source_document_id=source_document_id,
+        certainty_band=normalized_certainty_band,
+        node_query=node_query,
+        node_ids=parsed_node_ids,
     )
 
     return KernelRelationListResponse(
         relations=[KernelRelationResponse.from_model(r) for r in relations],
-        total=len(relations),
+        total=total,
         offset=offset,
         limit=limit,
     )
@@ -329,9 +492,10 @@ def update_relation_curation_status(
         )
 
     try:
+        normalized_status = _normalize_curation_status_update(request.curation_status)
         updated = relation_service.update_curation_status(
             str(relation_id),
-            curation_status=request.curation_status,
+            curation_status=normalized_status,
             reviewed_by=str(current_user.id),
         )
         session.commit()
@@ -415,7 +579,13 @@ def get_kernel_subgraph(
     )
 
     relation_types = _normalize_filter_values(request.relation_types)
-    curation_statuses = _normalize_filter_values(request.curation_statuses)
+    curation_statuses = _normalize_curation_status_filters(request.curation_statuses)
+    emit_graph_filter_preset_usage(
+        endpoint="subgraph",
+        curation_statuses=(
+            sorted(curation_statuses) if curation_statuses is not None else None
+        ),
+    )
     seed_entity_ids = [str(seed_id) for seed_id in request.seed_entity_ids]
     mode = request.mode
     space_id_str = str(space_id)
@@ -552,3 +722,125 @@ def get_kernel_neighborhood(
         nodes=nodes,
         edges=[KernelRelationResponse.from_model(r) for r in relations],
     )
+
+
+@research_spaces_router.get(
+    "/{space_id}/relation-claims",
+    response_model=KernelRelationClaimListResponse,
+    summary="List extraction relation claims",
+)
+def list_relation_claims(
+    space_id: UUID,
+    *,
+    claim_status: str | None = Query(None),
+    validation_state: str | None = Query(None),
+    persistability: str | None = Query(None),
+    source_document_id: str | None = Query(None),
+    relation_type: str | None = Query(None),
+    linked_relation_id: str | None = Query(None),
+    certainty_band: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_active_user),
+    membership_service: MembershipManagementService = Depends(get_membership_service),
+    relation_claim_service: KernelRelationClaimService = Depends(
+        get_kernel_relation_claim_service,
+    ),
+    session: Session = Depends(get_session),
+) -> KernelRelationClaimListResponse:
+    verify_space_membership(
+        space_id,
+        current_user.id,
+        membership_service,
+        session,
+        current_user.role,
+    )
+
+    normalized_claim_status = _normalize_claim_status_filter(claim_status)
+    normalized_validation_state = _normalize_claim_validation_state(validation_state)
+    normalized_persistability = _normalize_claim_persistability(persistability)
+    normalized_certainty_band = _normalize_certainty_band(certainty_band)
+
+    claims = relation_claim_service.list_by_research_space(
+        str(space_id),
+        claim_status=normalized_claim_status,
+        validation_state=normalized_validation_state,
+        persistability=normalized_persistability,
+        source_document_id=source_document_id,
+        relation_type=relation_type,
+        linked_relation_id=linked_relation_id,
+        certainty_band=normalized_certainty_band,
+        limit=limit,
+        offset=offset,
+    )
+    total = relation_claim_service.count_by_research_space(
+        str(space_id),
+        claim_status=normalized_claim_status,
+        validation_state=normalized_validation_state,
+        persistability=normalized_persistability,
+        source_document_id=source_document_id,
+        relation_type=relation_type,
+        linked_relation_id=linked_relation_id,
+        certainty_band=normalized_certainty_band,
+    )
+    return KernelRelationClaimListResponse(
+        claims=[KernelRelationClaimResponse.from_model(claim) for claim in claims],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@research_spaces_router.patch(
+    "/{space_id}/relation-claims/{claim_id}",
+    response_model=KernelRelationClaimResponse,
+    summary="Update relation-claim triage status",
+)
+def update_relation_claim_status(
+    space_id: UUID,
+    claim_id: UUID,
+    request: KernelRelationClaimTriageRequest,
+    current_user: User = Depends(get_current_active_user),
+    membership_service: MembershipManagementService = Depends(get_membership_service),
+    relation_claim_service: KernelRelationClaimService = Depends(
+        get_kernel_relation_claim_service,
+    ),
+    session: Session = Depends(get_session),
+) -> KernelRelationClaimResponse:
+    require_curator_role(
+        space_id,
+        current_user.id,
+        membership_service,
+        session,
+        current_user.role,
+    )
+    existing = relation_claim_service.get_claim(str(claim_id))
+    if existing is None or str(existing.research_space_id) != str(space_id):
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail="Relation claim not found",
+        )
+    try:
+        normalized_status = _normalize_claim_status_filter(request.claim_status)
+        if normalized_status is None:
+            msg = "claim_status is required"
+            raise ValueError(msg)
+        updated = relation_claim_service.update_claim_status(
+            str(claim_id),
+            claim_status=normalized_status,
+            triaged_by=str(current_user.id),
+        )
+        session.commit()
+        return KernelRelationClaimResponse.from_model(updated)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update relation claim: {exc!s}",
+        ) from exc

@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from src.domain.ports.dictionary_port import DictionaryPort
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.type_definitions.dictionary import (
     normalize_dictionary_data_type,
     validate_constraints_for_data_type,
@@ -31,6 +32,9 @@ if TYPE_CHECKING:
         VariableDefinition,
         VariableSynonym,
     )
+    from src.domain.ports.dictionary_search_harness_port import (
+        DictionarySearchHarnessPort,
+    )
     from src.domain.ports.text_embedding_port import TextEmbeddingPort
     from src.domain.repositories.kernel.dictionary_repository import (
         DictionaryRepository,
@@ -47,10 +51,10 @@ _ALLOWED_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     "PENDING_REVIEW": frozenset({"ACTIVE", "PENDING_REVIEW", "REVOKED"}),
     "REVOKED": frozenset({"REVOKED", "ACTIVE"}),
 }
-_VECTOR_SEARCH_DIMENSIONS: frozenset[str] = frozenset(
-    {"variables", "entity_types", "relation_types"},
-)
 _DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+_DETERMINISTIC_MATCH_METHODS: frozenset[str] = frozenset({"exact", "synonym"})
+_AGENT_VECTOR_REUSE_THRESHOLD = 0.93
+_AGENT_FUZZY_REUSE_THRESHOLD = 0.97
 
 
 def _parse_review_status(value: str) -> ReviewStatus:
@@ -72,11 +76,13 @@ class DictionaryManagementService(DictionaryPort):
     def __init__(
         self,
         dictionary_repo: DictionaryRepository,
+        dictionary_search_harness: DictionarySearchHarnessPort,
         embedding_provider: TextEmbeddingPort | None = None,
         default_embedding_model: str = _DEFAULT_EMBEDDING_MODEL,
     ) -> None:
         self._dictionary = dictionary_repo
         self._embedding_provider = embedding_provider
+        self._dictionary_search_harness = dictionary_search_harness
         normalized_model = default_embedding_model.strip()
         self._default_embedding_model = (
             normalized_model if normalized_model else _DEFAULT_EMBEDDING_MODEL
@@ -87,6 +93,19 @@ class DictionaryManagementService(DictionaryPort):
             return self._default_embedding_model
         normalized = model_name.strip()
         return normalized if normalized else self._default_embedding_model
+
+    @staticmethod
+    def _resolve_domain_context(
+        *,
+        explicit_domain_context: str | None,
+        source_type: str | None = None,
+        fallback: str | None = None,
+    ) -> str | None:
+        return DomainContextResolver.resolve(
+            explicit_domain_context=explicit_domain_context,
+            source_type=source_type,
+            fallback=fallback,
+        )
 
     def _embed_text(self, text: str, *, model_name: str) -> list[float] | None:
         if self._embedding_provider is None:
@@ -111,40 +130,6 @@ class DictionaryManagementService(DictionaryPort):
         if embedding is None:
             return None, None, None
         return embedding, datetime.now(UTC), model_name
-
-    def _build_query_embeddings(
-        self,
-        terms: list[str],
-        *,
-        model_name: str,
-    ) -> dict[str, list[float]] | None:
-        if self._embedding_provider is None:
-            return None
-
-        unique_terms: list[str] = []
-        seen_terms: set[str] = set()
-        for term in terms:
-            normalized_term = term.strip().casefold()
-            if not normalized_term or normalized_term in seen_terms:
-                continue
-            seen_terms.add(normalized_term)
-            unique_terms.append(normalized_term)
-
-        embedded_terms = self._embedding_provider.embed_texts(
-            unique_terms,
-            model_name=model_name,
-        )
-
-        embeddings: dict[str, list[float]] = {}
-        for index, normalized_term in enumerate(unique_terms):
-            embedding = embedded_terms[index]
-            if embedding is None:
-                continue
-            embeddings[normalized_term] = embedding
-
-        if not embeddings:
-            return None
-        return embeddings
 
     def _normalize_review_status(self, review_status: str) -> ReviewStatus:
         return _parse_review_status(review_status)
@@ -190,6 +175,156 @@ class DictionaryManagementService(DictionaryPort):
             msg = f"Invalid review transition: {from_status} -> {to_status}"
             raise ValueError(msg)
 
+    @staticmethod
+    def _normalize_search_terms(terms: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for term in terms:
+            value = term.strip()
+            if not value:
+                continue
+            key = value.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(value)
+        return normalized
+
+    def _resolve_existing_variable_for_create(
+        self,
+        *,
+        variable_id: str,
+        canonical_name: str,
+        display_name: str,
+        domain_context: str,
+        allow_semantic_reuse: bool,
+    ) -> VariableDefinition | None:
+        search_results = self.dictionary_search(
+            terms=[variable_id, canonical_name, display_name],
+            dimensions=["variables"],
+            domain_context=domain_context,
+            limit=10,
+            include_inactive=True,
+        )
+        normalized_id = variable_id.strip().casefold()
+        normalized_canonical = canonical_name.strip().casefold()
+        normalized_display = display_name.strip().casefold()
+        for result in search_results:
+            if result.dimension != "variables":
+                continue
+
+            candidate = self._dictionary.get_variable(result.entry_id)
+            if candidate is None:
+                continue
+
+            metadata_canonical = result.metadata.get("canonical_name")
+            metadata_canonical_name = (
+                str(metadata_canonical).strip().casefold()
+                if isinstance(metadata_canonical, str)
+                else ""
+            )
+            if (
+                result.entry_id.strip().casefold() == normalized_id
+                or metadata_canonical_name == normalized_canonical
+                or result.display_name.strip().casefold() == normalized_display
+                or result.match_method in _DETERMINISTIC_MATCH_METHODS
+            ):
+                return candidate
+
+            if not allow_semantic_reuse:
+                continue
+            if (
+                result.match_method == "vector"
+                and result.similarity_score >= _AGENT_VECTOR_REUSE_THRESHOLD
+            ):
+                return candidate
+            if (
+                result.match_method == "fuzzy"
+                and result.similarity_score >= _AGENT_FUZZY_REUSE_THRESHOLD
+            ):
+                return candidate
+        return None
+
+    def _resolve_existing_entity_type_for_create(
+        self,
+        *,
+        entity_type: str,
+        display_name: str,
+        domain_context: str,
+        allow_semantic_reuse: bool,
+    ) -> DictionaryEntityType | None:
+        search_results = self.dictionary_search(
+            terms=[entity_type, display_name],
+            dimensions=["entity_types"],
+            domain_context=domain_context,
+            limit=10,
+            include_inactive=True,
+        )
+        normalized_entity_type = entity_type.strip().casefold()
+        normalized_display_name = display_name.strip().casefold()
+        for result in search_results:
+            if result.dimension != "entity_types":
+                continue
+            candidate = self._dictionary.get_entity_type(
+                result.entry_id,
+                include_inactive=True,
+            )
+            if candidate is None:
+                continue
+            if (
+                result.entry_id.strip().casefold() == normalized_entity_type
+                or result.display_name.strip().casefold() == normalized_display_name
+                or result.match_method == "exact"
+            ):
+                return candidate
+            if (
+                allow_semantic_reuse
+                and result.match_method == "vector"
+                and result.similarity_score >= _AGENT_VECTOR_REUSE_THRESHOLD
+            ):
+                return candidate
+        return None
+
+    def _resolve_existing_relation_type_for_create(
+        self,
+        *,
+        relation_type: str,
+        display_name: str,
+        domain_context: str,
+        allow_semantic_reuse: bool,
+    ) -> DictionaryRelationType | None:
+        search_results = self.dictionary_search(
+            terms=[relation_type, display_name],
+            dimensions=["relation_types"],
+            domain_context=domain_context,
+            limit=10,
+            include_inactive=True,
+        )
+        normalized_relation_type = relation_type.strip().casefold()
+        normalized_display_name = display_name.strip().casefold()
+        for result in search_results:
+            if result.dimension != "relation_types":
+                continue
+            candidate = self._dictionary.get_relation_type(
+                result.entry_id,
+                include_inactive=True,
+            )
+            if candidate is None:
+                continue
+            if (
+                result.entry_id.strip().casefold() == normalized_relation_type
+                or result.display_name.strip().casefold() == normalized_display_name
+                or result.match_method == "exact"
+            ):
+                return candidate
+            if (
+                allow_semantic_reuse
+                and result.match_method == "vector"
+                and result.similarity_score >= _AGENT_VECTOR_REUSE_THRESHOLD
+            ):
+                return candidate
+        return None
+
     # ── Variable operations ───────────────────────────────────────────
 
     def get_variable(self, variable_id: str) -> VariableDefinition | None:
@@ -204,8 +339,12 @@ class DictionaryManagementService(DictionaryPort):
         include_inactive: bool = False,
     ) -> list[VariableDefinition]:
         """List variables, optionally filtered by domain and/or type."""
+        resolved_domain_context = self._resolve_domain_context(
+            explicit_domain_context=domain_context,
+            fallback=None,
+        )
         return self._dictionary.find_variables(
-            domain_context=domain_context,
+            domain_context=resolved_domain_context,
             data_type=data_type,
             include_inactive=include_inactive,
         )
@@ -214,11 +353,17 @@ class DictionaryManagementService(DictionaryPort):
         self,
         synonym: str,
         *,
+        domain_context: str | None = None,
         include_inactive: bool = False,
     ) -> VariableDefinition | None:
         """Resolve a field name to its canonical variable."""
+        resolved_domain_context = self._resolve_domain_context(
+            explicit_domain_context=domain_context,
+            fallback=None,
+        )
         return self._dictionary.find_variable_by_synonym(
             synonym,
+            domain_context=resolved_domain_context,
             include_inactive=include_inactive,
         )
 
@@ -239,7 +384,23 @@ class DictionaryManagementService(DictionaryPort):
         research_space_settings: ResearchSpaceSettings | None = None,
     ) -> VariableDefinition:
         """Create a new dictionary variable definition with provenance."""
+        resolved_domain_context = self._resolve_domain_context(
+            explicit_domain_context=domain_context,
+            fallback=DomainContextResolver.GENERAL_DEFAULT_DOMAIN,
+        )
+        if resolved_domain_context is None:
+            resolved_domain_context = DomainContextResolver.GENERAL_DEFAULT_DOMAIN
         created_by_normalized = self._normalize_created_by(created_by)
+        existing_variable = self._resolve_existing_variable_for_create(
+            variable_id=variable_id,
+            canonical_name=canonical_name,
+            display_name=display_name,
+            domain_context=resolved_domain_context,
+            allow_semantic_reuse=created_by_normalized.startswith("agent:"),
+        )
+        if existing_variable is not None:
+            return existing_variable
+
         normalized_data_type = normalize_dictionary_data_type(data_type)
         normalized_constraints = validate_constraints_for_data_type(
             data_type=normalized_data_type,
@@ -263,7 +424,7 @@ class DictionaryManagementService(DictionaryPort):
             canonical_name=canonical_name,
             display_name=display_name,
             data_type=normalized_data_type,
-            domain_context=domain_context,
+            domain_context=resolved_domain_context,
             sensitivity=sensitivity,
             preferred_unit=preferred_unit,
             constraints=normalized_constraints,
@@ -519,29 +680,19 @@ class DictionaryManagementService(DictionaryPort):
         limit: int = 50,
         include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
-        """Search dictionary entries with exact/fuzzy/vector matching."""
-        normalized_terms = [term for term in terms if term.strip()]
+        """Search dictionary entries through the unified dictionary search harness."""
+        normalized_terms = self._normalize_search_terms(terms)
         if not normalized_terms:
             return []
-
-        embedding_dimensions = dimensions or list(_VECTOR_SEARCH_DIMENSIONS)
-        should_embed = any(
-            dimension.strip().lower() in _VECTOR_SEARCH_DIMENSIONS
-            for dimension in embedding_dimensions
+        resolved_domain_context = self._resolve_domain_context(
+            explicit_domain_context=domain_context,
+            fallback=None,
         )
-        query_embeddings: dict[str, list[float]] | None = None
-        if should_embed:
-            query_embeddings = self._build_query_embeddings(
-                normalized_terms,
-                model_name=self._resolve_embedding_model(),
-            )
-
-        return self._dictionary.search_dictionary(
+        return self._dictionary_search_harness.search(
             terms=normalized_terms,
             dimensions=dimensions,
-            domain_context=domain_context,
+            domain_context=resolved_domain_context,
             limit=limit,
-            query_embeddings=query_embeddings,
             include_inactive=include_inactive,
         )
 
@@ -553,8 +704,15 @@ class DictionaryManagementService(DictionaryPort):
         include_inactive: bool = False,
     ) -> list[DictionarySearchResult]:
         """List dictionary entries scoped to one domain context."""
+        resolved_domain_context = self._resolve_domain_context(
+            explicit_domain_context=domain_context,
+            fallback=None,
+        )
+        if resolved_domain_context is None:
+            msg = "domain_context is required"
+            raise ValueError(msg)
         return self._dictionary.search_dictionary_by_domain(
-            domain_context=domain_context,
+            domain_context=resolved_domain_context,
             limit=limit,
             include_inactive=include_inactive,
         )
@@ -787,7 +945,22 @@ class DictionaryManagementService(DictionaryPort):
         research_space_settings: ResearchSpaceSettings | None = None,
     ) -> DictionaryEntityType:
         """Create a dictionary entity type with provenance metadata."""
+        resolved_domain_context = self._resolve_domain_context(
+            explicit_domain_context=domain_context,
+            fallback=DomainContextResolver.GENERAL_DEFAULT_DOMAIN,
+        )
+        if resolved_domain_context is None:
+            resolved_domain_context = DomainContextResolver.GENERAL_DEFAULT_DOMAIN
         created_by_normalized = self._normalize_created_by(created_by)
+        existing_entity_type = self._resolve_existing_entity_type_for_create(
+            entity_type=entity_type,
+            display_name=display_name,
+            domain_context=resolved_domain_context,
+            allow_semantic_reuse=created_by_normalized.startswith("agent:"),
+        )
+        if existing_entity_type is not None:
+            return existing_entity_type
+
         initial_review_status = self._resolve_agent_creation_review_status(
             created_by=created_by_normalized,
             research_space_settings=research_space_settings,
@@ -803,7 +976,7 @@ class DictionaryManagementService(DictionaryPort):
             entity_type=entity_type,
             display_name=display_name,
             description=description,
-            domain_context=domain_context,
+            domain_context=resolved_domain_context,
             external_ontology_ref=external_ontology_ref,
             expected_properties=expected_properties,
             description_embedding=description_embedding,
@@ -821,8 +994,12 @@ class DictionaryManagementService(DictionaryPort):
         include_inactive: bool = False,
     ) -> list[DictionaryEntityType]:
         """List dictionary entity types."""
+        resolved_domain_context = self._resolve_domain_context(
+            explicit_domain_context=domain_context,
+            fallback=None,
+        )
         return self._dictionary.find_entity_types(
-            domain_context=domain_context,
+            domain_context=resolved_domain_context,
             include_inactive=include_inactive,
         )
 
@@ -912,7 +1089,22 @@ class DictionaryManagementService(DictionaryPort):
         research_space_settings: ResearchSpaceSettings | None = None,
     ) -> DictionaryRelationType:
         """Create a dictionary relation type with provenance metadata."""
+        resolved_domain_context = self._resolve_domain_context(
+            explicit_domain_context=domain_context,
+            fallback=DomainContextResolver.GENERAL_DEFAULT_DOMAIN,
+        )
+        if resolved_domain_context is None:
+            resolved_domain_context = DomainContextResolver.GENERAL_DEFAULT_DOMAIN
         created_by_normalized = self._normalize_created_by(created_by)
+        existing_relation_type = self._resolve_existing_relation_type_for_create(
+            relation_type=relation_type,
+            display_name=display_name,
+            domain_context=resolved_domain_context,
+            allow_semantic_reuse=created_by_normalized.startswith("agent:"),
+        )
+        if existing_relation_type is not None:
+            return existing_relation_type
+
         initial_review_status = self._resolve_agent_creation_review_status(
             created_by=created_by_normalized,
             research_space_settings=research_space_settings,
@@ -928,7 +1120,7 @@ class DictionaryManagementService(DictionaryPort):
             relation_type=relation_type,
             display_name=display_name,
             description=description,
-            domain_context=domain_context,
+            domain_context=resolved_domain_context,
             is_directional=is_directional,
             inverse_label=inverse_label,
             description_embedding=description_embedding,
@@ -946,8 +1138,12 @@ class DictionaryManagementService(DictionaryPort):
         include_inactive: bool = False,
     ) -> list[DictionaryRelationType]:
         """List dictionary relation types."""
+        resolved_domain_context = self._resolve_domain_context(
+            explicit_domain_context=domain_context,
+            fallback=None,
+        )
         return self._dictionary.find_relation_types(
-            domain_context=domain_context,
+            domain_context=resolved_domain_context,
             include_inactive=include_inactive,
         )
 

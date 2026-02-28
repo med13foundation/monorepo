@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from src.domain.agents.contexts.mapping_judge_context import MappingJudgeContext
 from src.domain.agents.contracts.mapping_judge import (
     MappingJudgeCandidate,
@@ -120,12 +122,9 @@ def test_judge_falls_back_when_openai_key_missing() -> None:
     with (
         patch.dict(os.environ, {}, clear=True),
         _build_adapter() as (adapter, client, _, _),
+        pytest.raises(RuntimeError, match="requires OPENAI_API_KEY"),
     ):
-        contract = adapter.judge(context)
-
-    assert contract.decision == "no_match"
-    assert contract.selected_variable_id is None
-    assert "API key is not configured" in contract.selection_rationale
+        adapter.judge(context)
     client.step.assert_not_awaited()
 
 
@@ -164,12 +163,12 @@ def test_judge_invalid_selected_id_converts_to_no_match() -> None:
     with (
         patch.dict(os.environ, {"OPENAI_API_KEY": "test-openai-key"}, clear=True),
         _build_adapter(step_output=invalid_output) as (adapter, _, _, _),
+        pytest.raises(
+            ValueError,
+            match="outside provided candidates",
+        ),
     ):
-        contract = adapter.judge(context)
-
-    assert contract.decision == "no_match"
-    assert contract.selected_variable_id is None
-    assert "outside provided candidates" in contract.selection_rationale
+        adapter.judge(context)
 
 
 def test_close_closes_kernel_and_model_port() -> None:

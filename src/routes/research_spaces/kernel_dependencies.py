@@ -9,6 +9,7 @@ from src.application.services.kernel import (
     DictionaryManagementService,
     KernelEntityService,
     KernelObservationService,
+    KernelRelationClaimService,
     KernelRelationService,
     ProvenanceService,
 )
@@ -19,10 +20,14 @@ from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
 from src.infrastructure.ingestion.pipeline import IngestionPipeline
+from src.infrastructure.llm.adapters.dictionary_search_harness_adapter import (
+    ArtanaDictionarySearchHarnessAdapter,
+)
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyDictionaryRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
+    SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationRepository,
     SqlAlchemyProvenanceRepository,
 )
@@ -49,9 +54,15 @@ def get_dictionary_service(
 ) -> DictionaryPort:
     """Kernel dictionary service (read/write)."""
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
+    embedding_provider = HybridTextEmbeddingProvider()
+    search_harness = ArtanaDictionarySearchHarnessAdapter(
+        dictionary_repo=dictionary_repo,
+        embedding_provider=embedding_provider,
+    )
     return DictionaryManagementService(
         dictionary_repo=dictionary_repo,
-        embedding_provider=HybridTextEmbeddingProvider(),
+        dictionary_search_harness=search_harness,
+        embedding_provider=embedding_provider,
     )
 
 
@@ -74,9 +85,15 @@ def get_kernel_observation_service(
     observation_repo = SqlAlchemyKernelObservationRepository(session)
     entity_repo = _build_entity_repository(session)
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
+    embedding_provider = HybridTextEmbeddingProvider()
+    search_harness = ArtanaDictionarySearchHarnessAdapter(
+        dictionary_repo=dictionary_repo,
+        embedding_provider=embedding_provider,
+    )
     dictionary_service = DictionaryManagementService(
         dictionary_repo=dictionary_repo,
-        embedding_provider=HybridTextEmbeddingProvider(),
+        dictionary_search_harness=search_harness,
+        embedding_provider=embedding_provider,
     )
     return KernelObservationService(
         observation_repo=observation_repo,
@@ -99,6 +116,14 @@ def get_kernel_relation_service(
     )
 
 
+def get_kernel_relation_claim_service(
+    session: Session = Depends(get_session),
+) -> KernelRelationClaimService:
+    """Kernel relation-claim service (claim ledger curation)."""
+    relation_claim_repo = SqlAlchemyKernelRelationClaimRepository(session)
+    return KernelRelationClaimService(relation_claim_repo=relation_claim_repo)
+
+
 def get_provenance_service(
     session: Session = Depends(get_session),
 ) -> ProvenanceService:
@@ -119,6 +144,7 @@ __all__ = [
     "get_kernel_entity_service",
     "get_kernel_observation_service",
     "get_kernel_relation_service",
+    "get_kernel_relation_claim_service",
     "get_provenance_service",
     "get_ingestion_pipeline",
 ]

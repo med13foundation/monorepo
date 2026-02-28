@@ -14,6 +14,9 @@ Available Adapters:
 from src.infrastructure.llm.adapters.content_enrichment_agent_adapter import (
     ArtanaContentEnrichmentAdapter,
 )
+from src.infrastructure.llm.adapters.dictionary_search_harness_adapter import (
+    ArtanaDictionarySearchHarnessAdapter,
+)
 from src.infrastructure.llm.adapters.entity_recognition_agent_adapter import (
     ArtanaEntityRecognitionAdapter,
 )
@@ -36,6 +39,7 @@ from src.infrastructure.llm.adapters.query_agent_adapter import ArtanaQueryAgent
 
 __all__ = [
     "ArtanaContentEnrichmentAdapter",
+    "ArtanaDictionarySearchHarnessAdapter",
     "ArtanaEntityRecognitionAdapter",
     "ArtanaExtractionAdapter",
     "ArtanaExtractionPolicyAdapter",

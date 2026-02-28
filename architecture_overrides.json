@@ -38,8 +38,8 @@
     },
     {
       "path": "src/application/services/kernel/dictionary_management_service.py",
-      "max_lines": 1200,
-      "reason": "Phase 6 merge/versioning and inactive-filter support increased service surface while semantic layer APIs remain centralized.",
+      "max_lines": 1500,
+      "reason": "Phase 6-8 semantic-layer expansion (domain resolution, unified harness orchestration, and claim-first governance integration) increased service surface while decomposition by bounded workflow is scheduled.",
       "expires_on": "2026-12-31"
     },
     {

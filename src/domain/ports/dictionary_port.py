@@ -45,6 +45,7 @@ class DictionaryPort(ABC):
         self,
         synonym: str,
         *,
+        domain_context: str | None = None,
         include_inactive: bool = False,
     ) -> VariableDefinition | None:
         """Resolve a synonym to its canonical variable definition."""

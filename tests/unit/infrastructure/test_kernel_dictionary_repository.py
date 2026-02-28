@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from src.infrastructure.repositories.kernel.kernel_dictionary_repository import (
     SqlAlchemyDictionaryRepository,
 )
+from src.models.database.kernel.dictionary import DictionaryDomainContextModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -18,6 +21,7 @@ def _create_variable(
     variable_id: str,
     canonical_name: str,
 ) -> None:
+    _ensure_domain_context(repository, "general")
     repository.create_variable(
         variable_id=variable_id,
         canonical_name=canonical_name,
@@ -37,6 +41,7 @@ def _create_entity_type(
     *,
     entity_type: str,
 ) -> None:
+    _ensure_domain_context(repository, "general")
     repository.create_entity_type(
         entity_type=entity_type,
         display_name=entity_type.replace("_", " ").title(),
@@ -53,6 +58,7 @@ def _create_relation_type(
     *,
     relation_type: str,
 ) -> None:
+    _ensure_domain_context(repository, "general")
     repository.create_relation_type(
         relation_type=relation_type,
         display_name=relation_type.replace("_", " ").title(),
@@ -63,6 +69,24 @@ def _create_relation_type(
         created_by="manual:test",
         source_ref="test:repository",
     )
+
+
+def _ensure_domain_context(
+    repository: SqlAlchemyDictionaryRepository,
+    domain_context: str,
+) -> None:
+    normalized = domain_context.strip().lower()
+    existing = repository._session.get(DictionaryDomainContextModel, normalized)
+    if existing is not None:
+        return
+    repository._session.add(
+        DictionaryDomainContextModel(
+            id=normalized,
+            display_name=normalized.replace("_", " ").title(),
+            description="Test domain context",
+        ),
+    )
+    repository._session.flush()
 
 
 def test_find_variables_excludes_inactive_by_default(db_session: Session) -> None:
@@ -96,6 +120,24 @@ def test_find_variables_excludes_inactive_by_default(db_session: Session) -> Non
     assert "VAR_REPO_INACTIVE" in all_ids
 
 
+def test_create_variable_rejects_unknown_domain_context(db_session: Session) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+
+    with pytest.raises(ValueError, match="Unknown domain_context 'unknown_domain'"):
+        repository.create_variable(
+            variable_id="VAR_REPO_UNKNOWN_DOMAIN",
+            canonical_name="repo_unknown_domain",
+            display_name="Repo Unknown Domain",
+            data_type="STRING",
+            domain_context="unknown_domain",
+            sensitivity="INTERNAL",
+            constraints={},
+            description="Should fail because domain is not approved",
+            created_by="manual:test",
+            source_ref="test:repository",
+        )
+
+
 def test_set_variable_review_status_updates_validity_fields(
     db_session: Session,
 ) -> None:
@@ -124,6 +166,70 @@ def test_set_variable_review_status_updates_validity_fields(
     assert reactivated.review_status == "ACTIVE"
     assert reactivated.is_active is True
     assert reactivated.valid_to is None
+
+
+def test_create_synonym_rejects_active_cross_variable_duplicates(
+    db_session: Session,
+) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_variable(
+        repository,
+        variable_id="VAR_REPO_SYNONYM_A",
+        canonical_name="repo_synonym_a",
+    )
+    _create_variable(
+        repository,
+        variable_id="VAR_REPO_SYNONYM_B",
+        canonical_name="repo_synonym_b",
+    )
+
+    repository.create_synonym(
+        variable_id="VAR_REPO_SYNONYM_A",
+        synonym="shared alias",
+        source="manual",
+        created_by="manual:test",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Synonym 'shared alias' is already mapped to variable "
+            "'VAR_REPO_SYNONYM_A'"
+        ),
+    ):
+        repository.create_synonym(
+            variable_id="VAR_REPO_SYNONYM_B",
+            synonym="Shared Alias",
+            source="manual",
+            created_by="manual:test",
+        )
+
+
+def test_create_synonym_is_idempotent_for_same_variable_case_variants(
+    db_session: Session,
+) -> None:
+    repository = SqlAlchemyDictionaryRepository(db_session)
+    _create_variable(
+        repository,
+        variable_id="VAR_REPO_SYNONYM_SINGLE",
+        canonical_name="repo_synonym_single",
+    )
+
+    first = repository.create_synonym(
+        variable_id="VAR_REPO_SYNONYM_SINGLE",
+        synonym="My Alias",
+        source="manual",
+        created_by="manual:test",
+    )
+    second = repository.create_synonym(
+        variable_id="VAR_REPO_SYNONYM_SINGLE",
+        synonym="my alias",
+        source="manual",
+        created_by="manual:test",
+    )
+
+    assert second.id == first.id
+    assert second.synonym == "my alias"
 
 
 def test_merge_variable_definition_sets_versioning_state(db_session: Session) -> None:

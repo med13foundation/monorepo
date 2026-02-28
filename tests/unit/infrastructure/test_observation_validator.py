@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
@@ -47,10 +47,10 @@ def _build_variable(
     )
 
 
-def _build_value_set() -> ValueSet:
+def _build_value_set(*, value_set_id: str = "VS_CODED_STATUS") -> ValueSet:
     now = datetime.now(UTC)
     return ValueSet(
-        id="VS_CODED_STATUS",
+        id=value_set_id,
         variable_id="VAR_CODED_STATUS",
         variable_data_type="CODED",
         name="Coded statuses",
@@ -164,3 +164,94 @@ def test_validate_falls_back_to_allowed_values_without_value_set() -> None:
     assert accepted is not None
     assert accepted.value == "A"
     assert rejected is None
+
+
+def test_validate_enforces_string_pattern_and_length_constraints() -> None:
+    dictionary_port = Mock()
+    dictionary_port.get_variable.return_value = _build_variable(
+        data_type="STRING",
+        constraints={"min_length": 3, "max_length": 6, "pattern": r"^[A-Z]+$"},
+    )
+
+    validator = ObservationValidator(dictionary_port)
+    accepted = validator.validate(_build_observation(value="VALID"))
+    rejected_short = validator.validate(_build_observation(value="ab"))
+    rejected_pattern = validator.validate(_build_observation(value="abcDEF"))
+
+    assert accepted is not None
+    assert rejected_short is None
+    assert rejected_pattern is None
+
+
+def test_validate_enforces_date_constraints() -> None:
+    dictionary_port = Mock()
+    dictionary_port.get_variable.return_value = _build_variable(
+        data_type="DATE",
+        constraints={"min_date": "2025-01-01", "max_date": "2025-12-31"},
+    )
+
+    validator = ObservationValidator(dictionary_port)
+    accepted = validator.validate(
+        NormalizedObservation(
+            subject_anchor={"hgnc_id": "HGNC:1234"},
+            variable_id="VAR_CODED_STATUS",
+            value=date(2025, 6, 1),
+            unit=None,
+            observed_at=None,
+            provenance={},
+        ),
+    )
+    rejected = validator.validate(
+        NormalizedObservation(
+            subject_anchor={"hgnc_id": "HGNC:1234"},
+            variable_id="VAR_CODED_STATUS",
+            value=date(2024, 12, 1),
+            unit=None,
+            observed_at=None,
+            provenance={},
+        ),
+    )
+
+    assert accepted is not None
+    assert rejected is None
+
+
+def test_validate_allows_other_coded_values_when_allow_other_enabled() -> None:
+    dictionary_port = Mock()
+    dictionary_port.get_variable.return_value = _build_variable(
+        data_type="CODED",
+        constraints={"allow_other": True},
+    )
+    dictionary_port.list_value_sets.return_value = [_build_value_set()]
+    dictionary_port.list_value_set_items.return_value = [_build_value_set_item()]
+
+    validator = ObservationValidator(dictionary_port)
+    validated = validator.validate(_build_observation(value="UNLISTED"))
+
+    assert validated is not None
+    assert validated.value == "UNLISTED"
+
+
+def test_validate_uses_configured_value_set_id_for_coded_constraints() -> None:
+    dictionary_port = Mock()
+    dictionary_port.get_variable.return_value = _build_variable(
+        data_type="CODED",
+        constraints={"value_set_id": "VS_SECONDARY"},
+    )
+    dictionary_port.list_value_sets.return_value = [
+        _build_value_set(value_set_id="VS_PRIMARY"),
+        _build_value_set(value_set_id="VS_SECONDARY"),
+    ]
+    dictionary_port.list_value_set_items.return_value = [
+        _build_value_set_item(code="APPROVED"),
+    ]
+
+    validator = ObservationValidator(dictionary_port)
+    validated = validator.validate(_build_observation(value="APPROVED"))
+
+    assert validated is not None
+    assert validated.value == "APPROVED"
+    dictionary_port.list_value_set_items.assert_called_once_with(
+        value_set_id="VS_SECONDARY",
+        include_inactive=False,
+    )

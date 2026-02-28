@@ -331,7 +331,13 @@ class ResearchSpaceManagementService:
         settings: JSONObject | None,
     ) -> JSONObject:
         """Normalize arbitrary dicts into research space settings dict."""
-        return dict(settings or {})
+        normalized = dict(settings or {})
+        raw_policy = normalized.get("relation_auto_promotion")
+        policy = dict(raw_policy) if isinstance(raw_policy, dict) else {}
+        if not isinstance(policy.get("enabled"), bool):
+            policy["enabled"] = False
+        normalized["relation_auto_promotion"] = policy
+        return normalized
 
     def validate_space(self, space: ResearchSpace) -> list[str]:
         """

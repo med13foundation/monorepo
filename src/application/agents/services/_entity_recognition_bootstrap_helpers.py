@@ -13,6 +13,7 @@ from src.application.agents.services._entity_recognition_bootstrap_constants imp
     _PUBMED_PUBLICATION_BASELINE_ENTITY_TYPES,
     _PUBMED_PUBLICATION_BASELINE_RELATION_TYPES,
 )
+from src.domain.services.domain_context_resolver import DomainContextResolver
 
 if TYPE_CHECKING:
     from src.application.agents.services._entity_recognition_bootstrap_protocols import (
@@ -165,7 +166,8 @@ class _EntityRecognitionBootstrapHelpers:
                 research_space_settings=bootstrap_review_settings,
             )
 
-        if source_type.strip().lower() == "pubmed":
+        normalized_source_type = DomainContextResolver.normalize(source_type)
+        if normalized_source_type == "pubmed":
             (
                 pubmed_entity_types_created,
                 pubmed_variables_created,

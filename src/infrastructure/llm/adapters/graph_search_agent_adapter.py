@@ -423,11 +423,15 @@ class ArtanaGraphSearchAdapter(GraphSearchPort):
 
     @staticmethod
     def _build_input_text(context: GraphSearchContext) -> str:
+        curation_statuses = (
+            ", ".join(context.curation_statuses) if context.curation_statuses else "ALL"
+        )
         return (
             f"QUESTION: {context.question}\n"
             f"RESEARCH SPACE ID: {context.research_space_id}\n"
             f"MAX DEPTH: {context.max_depth}\n"
             f"TOP K: {context.top_k}\n"
+            f"CURATION STATUSES: {curation_statuses}\n"
             f"INCLUDE EVIDENCE CHAINS: {context.include_evidence_chains}\n"
             f"FORCE AGENT: {context.force_agent}\n"
         )

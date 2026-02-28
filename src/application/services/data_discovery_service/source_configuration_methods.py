@@ -11,6 +11,7 @@ from src.domain.entities import (
     data_source_configs,
     user_data_source,
 )
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.type_definitions.json_utils import to_json_value
 
 from .session_methods import SessionManagementMixin
@@ -53,6 +54,7 @@ class QuerySourceConfigurationMixin(SessionManagementMixin):
             query = "MED13"
         config = data_source_configs.pubmed.PubMedQueryConfig(
             query=query,
+            domain_context=DomainContextResolver.PUBMED_DEFAULT_DOMAIN,
             date_from=self._format_pubmed_date(parameters.date_from),
             date_to=self._format_pubmed_date(parameters.date_to),
             publication_types=(parameters.publication_types or None),
@@ -146,6 +148,10 @@ class QuerySourceConfigurationMixin(SessionManagementMixin):
         config_payload: JSONObject = dict(source_config)
         raw_metadata = config_payload.get("metadata")
         metadata = self._coerce_json_object(raw_metadata)
+        metadata.setdefault(
+            "domain_context",
+            DomainContextResolver.PUBMED_DEFAULT_DOMAIN,
+        )
         if not isinstance(metadata.get("query"), str) or not metadata.get("query"):
             derived = self._build_pubmed_metadata(parameters)
             for key, value in derived.items():

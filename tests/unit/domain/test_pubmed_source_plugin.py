@@ -28,6 +28,7 @@ class TestPubMedSourcePlugin:
         validated = self.plugin.validate_configuration(self.base_config)
 
         assert validated.metadata["query"] == "MED13 AND (mutation OR variant)"
+        assert validated.metadata["domain_context"] == "clinical"
         assert validated.metadata["max_results"] == 500
         assert validated.requests_per_minute == self.plugin.DEFAULT_REQUESTS_PER_MINUTE
 
@@ -71,3 +72,18 @@ class TestPubMedSourcePlugin:
         )
         with pytest.raises(ValueError):
             self.plugin.validate_configuration(config)
+
+    def test_validate_configuration_normalizes_domain_context(self) -> None:
+        """Domain context should be normalized and persisted."""
+        config = self.base_config.model_copy(
+            update={
+                "metadata": {
+                    **self.base_config.metadata,
+                    "domain_context": "  Cardiology  ",
+                },
+            },
+        )
+
+        validated = self.plugin.validate_configuration(config)
+
+        assert validated.metadata["domain_context"] == "cardiology"

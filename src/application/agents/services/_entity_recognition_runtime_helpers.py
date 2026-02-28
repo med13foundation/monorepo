@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from src.domain.entities.source_document import DocumentExtractionStatus
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
@@ -188,12 +189,10 @@ class _EntityRecognitionRuntimeHelpers:
 
     @staticmethod
     def _infer_domain_context(source_type: str) -> str:
-        normalized = source_type.strip().lower()
-        if normalized == "clinvar":
-            return "genomics"
-        if normalized == "pubmed":
-            return "clinical"
-        return "general"
+        resolved = DomainContextResolver.default_for_source_type(source_type)
+        if resolved is None:
+            return DomainContextResolver.GENERAL_DEFAULT_DOMAIN
+        return resolved
 
     @staticmethod
     def _normalize_seed_entity_ids(seed_entity_ids: list[str]) -> tuple[str, ...]:

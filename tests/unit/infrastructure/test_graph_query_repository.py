@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 
 
 def _seed_dictionary_primitives(db_session: Session) -> None:
-    db_session.add_all(
-        [
+    if db_session.get(DictionaryDataTypeModel, "STRING") is None:
+        db_session.add(
             DictionaryDataTypeModel(
                 id="STRING",
                 display_name="String",
@@ -38,20 +38,25 @@ def _seed_dictionary_primitives(db_session: Session) -> None:
                 description="Text",
                 constraint_schema={},
             ),
+        )
+    if db_session.get(DictionaryDomainContextModel, "general") is None:
+        db_session.add(
             DictionaryDomainContextModel(
                 id="general",
                 display_name="General",
                 description="General domain",
             ),
+        )
+    if db_session.get(DictionarySensitivityLevelModel, "INTERNAL") is None:
+        db_session.add(
             DictionarySensitivityLevelModel(
                 id="INTERNAL",
                 display_name="Internal",
                 description="Internal sensitivity",
             ),
-        ],
-    )
-    db_session.add_all(
-        [
+        )
+    if db_session.get(VariableDefinitionModel, "VAR_A") is None:
+        db_session.add(
             VariableDefinitionModel(
                 id="VAR_A",
                 canonical_name="var_a",
@@ -64,6 +69,9 @@ def _seed_dictionary_primitives(db_session: Session) -> None:
                 description="Test variable A",
                 created_by="seed",
             ),
+        )
+    if db_session.get(VariableDefinitionModel, "VAR_B") is None:
+        db_session.add(
             VariableDefinitionModel(
                 id="VAR_B",
                 canonical_name="var_b",
@@ -76,8 +84,7 @@ def _seed_dictionary_primitives(db_session: Session) -> None:
                 description="Test variable B",
                 created_by="seed",
             ),
-        ],
-    )
+        )
     db_session.flush()
 
 

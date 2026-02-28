@@ -633,7 +633,6 @@ export function DataSourcesList({
             current?.graph_edges_delta_last_run ?? 0,
           graph_edges_total: current?.graph_edges_total ?? 0,
         }
-        lastWorkflowSignalBySourceRef.current[source.id] = buildWorkflowSignal(nextStatus)
         return {
           ...previous,
           [source.id]: nextStatus,

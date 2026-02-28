@@ -46,12 +46,15 @@ def candidate_payload(candidate: _ResolvedRelationCandidate) -> JSONObject:
         "source_type": candidate.source_type,
         "relation_type": candidate.relation_type,
         "target_type": candidate.target_type,
-        "source_entity_id": candidate.source_entity_id,
-        "target_entity_id": candidate.target_entity_id,
         "confidence": candidate.confidence,
         "validation_state": candidate.validation_state,
         "validation_reason": candidate.validation_reason,
+        "persistability": candidate.persistability,
     }
+    if candidate.source_entity_id is not None:
+        payload["source_entity_id"] = candidate.source_entity_id
+    if candidate.target_entity_id is not None:
+        payload["target_entity_id"] = candidate.target_entity_id
     if candidate.source_label is not None:
         payload["source_label"] = candidate.source_label
     if candidate.target_label is not None:

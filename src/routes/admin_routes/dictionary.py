@@ -74,10 +74,20 @@ def get_dictionary_service(
     session: Session = Depends(get_admin_db_session),
 ) -> DictionaryPort:
     """Build a DictionaryManagementService backed by a scoped admin DB session."""
+    from src.infrastructure.llm.adapters.dictionary_search_harness_adapter import (
+        ArtanaDictionarySearchHarnessAdapter,
+    )
+
     repo = SqlAlchemyDictionaryRepository(session)
+    embedding_provider = HybridTextEmbeddingProvider()
+    search_harness = ArtanaDictionarySearchHarnessAdapter(
+        dictionary_repo=repo,
+        embedding_provider=embedding_provider,
+    )
     return DictionaryManagementService(
         dictionary_repo=repo,
-        embedding_provider=HybridTextEmbeddingProvider(),
+        dictionary_search_harness=search_harness,
+        embedding_provider=embedding_provider,
     )
 
 

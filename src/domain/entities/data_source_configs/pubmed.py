@@ -7,6 +7,8 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.domain.services.domain_context_resolver import DomainContextResolver
+
 
 class AiAgentConfig(BaseModel):
     """Configuration for steering AI agent behavior for a data source."""
@@ -45,6 +47,15 @@ class PubMedQueryConfig(BaseModel):
         ...,
         min_length=1,
         description="PubMed search query string (can be overridden by AI)",
+    )
+    domain_context: str = Field(
+        default=DomainContextResolver.PUBMED_DEFAULT_DOMAIN,
+        min_length=1,
+        max_length=64,
+        description=(
+            "Dictionary domain context used to scope mapping/search "
+            "(defaults to clinical for PubMed)."
+        ),
     )
     date_from: str | None = Field(
         None,
@@ -114,6 +125,15 @@ class PubMedQueryConfig(BaseModel):
             return None
         if not normalized.isdigit():
             msg = "pinned_pubmed_id must be digits only"
+            raise ValueError(msg)
+        return normalized
+
+    @field_validator("domain_context")
+    @classmethod
+    def normalize_domain_context(cls, value: str) -> str:
+        normalized = DomainContextResolver.normalize(value)
+        if not normalized:
+            msg = "domain_context is required for PubMed sources"
             raise ValueError(msg)
         return normalized
 

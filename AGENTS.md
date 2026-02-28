@@ -33,6 +33,12 @@ This document provides essential context and instructions for AI agents building
 - **Follow biomedical domain rules**: Respect MED13-specific validation and business logic
 - **Implement proper error handling**: Use domain-specific exceptions and validation
 
+### Greenfield Default (No Legacy Overhead)
+- **Use this mode for new apps/subsystems with no production users**: Implement a single forward-only path
+- **Do not add fallback behavior by default**: No fallback branches, compatibility shims, dual reads/writes, or deprecation scaffolding unless explicitly requested
+- **Do not add migration/backfill logic by default**: For early-stage work, avoid transition code for old schemas/data unless explicitly requested
+- **Prefer direct target architecture**: Build the final intended interfaces and data shapes now; add compatibility work later only when real user/data constraints exist
+
 ### Type Management Rules
 - **NEVER USE `Any`**: This is a strict requirement - use proper union types, generics, or specific types
 - **Use existing types**: Check `src/type_definitions/` for existing TypedDict, Protocol, and union types

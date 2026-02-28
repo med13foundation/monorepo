@@ -21,6 +21,9 @@ from src.application.agents.services._relation_persistence_payload_helpers impor
     normalize_run_id,
     relation_payload,
 )
+from src.application.services.claim_first_metrics import (
+    emit_claim_first_extraction_metrics,
+)
 from src.domain.value_objects.relation_types import normalize_relation_type
 
 if TYPE_CHECKING:
@@ -34,10 +37,15 @@ if TYPE_CHECKING:
     from src.domain.agents.contracts.extraction_policy import ExtractionPolicyContract
     from src.domain.entities.source_document import SourceDocument
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
+    from src.domain.repositories.kernel.relation_claim_repository import (
+        KernelRelationClaimRepository,
+    )
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
+
+_LOW_CONFIDENCE_REVIEW_THRESHOLD = 0.6
 
 
 @dataclass(frozen=True)
@@ -46,6 +54,8 @@ class RelationPersistenceResult:
 
     persisted_relations_count: int = 0
     pending_review_relations_count: int = 0
+    relation_claims_count: int = 0
+    non_persistable_claims_count: int = 0
     forbidden_relations_count: int = 0
     undefined_relations_count: int = 0
     policy_proposals_count: int = 0
@@ -71,6 +81,9 @@ class _CandidateBuildResult:
 class _PersistCandidatesResult:
     persisted_relations_count: int = 0
     pending_review_relations_count: int = 0
+    relation_claims_count: int = 0
+    relation_claims_queued_for_review_count: int = 0
+    non_persistable_claims_count: int = 0
     forbidden_relations_count: int = 0
     undefined_relations_count: int = 0
     rejected_relation_reasons: tuple[str, ...] = ()
@@ -87,6 +100,7 @@ class _ExtractionRelationPersistenceHelpers(
     """Shared relation-persistence helpers for extraction service."""
 
     _relations: KernelRelationRepository | None
+    _relation_claims: KernelRelationClaimRepository | None
     _entities: KernelEntityRepository | None
 
     async def _persist_extracted_relations(
@@ -151,9 +165,22 @@ class _ExtractionRelationPersistenceHelpers(
             policy_contract=policy_step.contract,
             relation_governance_mode=relation_governance_mode,
         )
+        emit_claim_first_extraction_metrics(
+            research_space_id=research_space_id,
+            source_document_id=str(document.id),
+            claims_created=persist_result.relation_claims_count,
+            claims_non_persistable=persist_result.non_persistable_claims_count,
+            relations_draft_created=persist_result.persisted_relations_count,
+            relation_claims_queued_for_review=(
+                persist_result.relation_claims_queued_for_review_count
+            ),
+            research_space_settings=research_space_settings,
+        )
         return RelationPersistenceResult(
             persisted_relations_count=persist_result.persisted_relations_count,
             pending_review_relations_count=persist_result.pending_review_relations_count,
+            relation_claims_count=persist_result.relation_claims_count,
+            non_persistable_claims_count=persist_result.non_persistable_claims_count,
             forbidden_relations_count=persist_result.forbidden_relations_count,
             undefined_relations_count=persist_result.undefined_relations_count,
             policy_proposals_count=proposal_count,
@@ -194,6 +221,13 @@ class _ExtractionRelationPersistenceHelpers(
                 ),
                 "relation_candidates_undefined": (
                     persist_result.undefined_relations_count
+                ),
+                "relation_claims_created": persist_result.relation_claims_count,
+                "relation_claims_queued_for_review": (
+                    persist_result.relation_claims_queued_for_review_count
+                ),
+                "relation_claims_non_persistable": (
+                    persist_result.non_persistable_claims_count
                 ),
                 "relation_candidates_persisted": (
                     persist_result.persisted_relations_count
@@ -247,13 +281,30 @@ class _ExtractionRelationPersistenceHelpers(
                     reason="invalid_relation_components",
                     payload=payload,
                     metadata={
-                        "validation_state": "UNDEFINED",
+                        "validation_state": "INVALID_COMPONENTS",
                         "validation_reason": (
                             "source_type, relation_type, and target_type are required"
                         ),
                     },
                 )
                 errors.append("relation_persistence_skipped_invalid_components")
+                candidates.append(
+                    _ResolvedRelationCandidate(
+                        source_entity_id=None,
+                        target_entity_id=None,
+                        source_type=normalized_source_type or "UNKNOWN",
+                        relation_type=normalized_relation_type or "UNKNOWN",
+                        target_type=normalized_target_type or "UNKNOWN",
+                        source_label=normalize_optional_text(relation.source_label),
+                        target_label=normalize_optional_text(relation.target_label),
+                        confidence=float(relation.confidence),
+                        validation_state="INVALID_COMPONENTS",
+                        validation_reason=(
+                            "source_type, relation_type, and target_type are required"
+                        ),
+                        persistability="NON_PERSISTABLE",
+                    ),
+                )
                 invalid_components_count += 1
                 continue
 
@@ -278,7 +329,7 @@ class _ExtractionRelationPersistenceHelpers(
                     reason="relation_endpoint_resolution_failed",
                     payload=payload,
                     metadata={
-                        "validation_state": "UNDEFINED",
+                        "validation_state": "ENDPOINT_UNRESOLVED",
                         "validation_reason": (
                             "source or target endpoint could not be resolved"
                         ),
@@ -291,6 +342,23 @@ class _ExtractionRelationPersistenceHelpers(
                         f"{normalized_target_type}"
                     ),
                 )
+                candidates.append(
+                    _ResolvedRelationCandidate(
+                        source_entity_id=source_entity_id,
+                        target_entity_id=target_entity_id,
+                        source_type=normalized_source_type,
+                        relation_type=normalized_relation_type,
+                        target_type=normalized_target_type,
+                        source_label=normalize_optional_text(relation.source_label),
+                        target_label=normalize_optional_text(relation.target_label),
+                        confidence=float(relation.confidence),
+                        validation_state="ENDPOINT_UNRESOLVED",
+                        validation_reason=(
+                            "source or target endpoint could not be resolved"
+                        ),
+                        persistability="NON_PERSISTABLE",
+                    ),
+                )
                 endpoint_resolution_failed_count += 1
                 continue
             if source_entity_id == target_entity_id:
@@ -300,9 +368,24 @@ class _ExtractionRelationPersistenceHelpers(
                     reason="relation_self_loop",
                     payload=payload,
                     metadata={
-                        "validation_state": "FORBIDDEN",
+                        "validation_state": "SELF_LOOP",
                         "validation_reason": "self-loop relations are not allowed",
                     },
+                )
+                candidates.append(
+                    _ResolvedRelationCandidate(
+                        source_entity_id=source_entity_id,
+                        target_entity_id=target_entity_id,
+                        source_type=normalized_source_type,
+                        relation_type=normalized_relation_type,
+                        target_type=normalized_target_type,
+                        source_label=normalize_optional_text(relation.source_label),
+                        target_label=normalize_optional_text(relation.target_label),
+                        confidence=float(relation.confidence),
+                        validation_state="SELF_LOOP",
+                        validation_reason="self-loop relations are not allowed",
+                        persistability="NON_PERSISTABLE",
+                    ),
                 )
                 self_loop_count += 1
                 continue
@@ -326,6 +409,7 @@ class _ExtractionRelationPersistenceHelpers(
                     confidence=float(relation.confidence),
                     validation_state=validation_state,
                     validation_reason=validation_reason,
+                    persistability="PERSISTABLE",
                 ),
             )
 
@@ -339,7 +423,7 @@ class _ExtractionRelationPersistenceHelpers(
             errors=tuple(errors),
         )
 
-    def _persist_relation_candidates(
+    def _persist_relation_candidates(  # noqa: C901, PLR0912, PLR0915
         self,
         *,
         document: SourceDocument,
@@ -355,6 +439,9 @@ class _ExtractionRelationPersistenceHelpers(
 
         persisted_count = 0
         pending_count = 0
+        relation_claims_count = 0
+        relation_claims_queued_for_review_count = 0
+        non_persistable_claims_count = 0
         forbidden_count = 0
         undefined_count = 0
         rejected_reasons: list[str] = []
@@ -389,33 +476,70 @@ class _ExtractionRelationPersistenceHelpers(
                 )
 
             payload = candidate_payload(effective_candidate)
+            claim_id: str | None = None
+            if self._relation_claims is not None:
+                try:
+                    created_claim = self._relation_claims.create(
+                        research_space_id=research_space_id,
+                        source_document_id=str(document.id),
+                        agent_run_id=run_id,
+                        source_type=document.source_type.value,
+                        relation_type=effective_candidate.relation_type,
+                        target_type=effective_candidate.target_type,
+                        source_label=effective_candidate.source_label,
+                        target_label=effective_candidate.target_label,
+                        confidence=effective_candidate.confidence,
+                        validation_state=effective_candidate.validation_state,
+                        validation_reason=effective_candidate.validation_reason,
+                        persistability=effective_candidate.persistability,
+                        claim_status="OPEN",
+                        linked_relation_id=None,
+                        metadata=payload,
+                    )
+                    claim_id = str(created_claim.id)
+                    relation_claims_count += 1
+                except (TypeError, ValueError) as exc:
+                    errors.append(
+                        (
+                            "relation_claim_create_failed:"
+                            f"{effective_candidate.relation_type}:{exc!s}"
+                        ),
+                    )
+
             if effective_candidate.validation_state == "FORBIDDEN":
                 forbidden_count += 1
-                self._record_rejected_relation(
-                    reasons=rejected_reasons,
-                    details=rejected_details,
-                    reason="forbidden_by_dictionary_constraint",
-                    payload=payload,
-                    metadata={
-                        "validation_state": effective_candidate.validation_state,
-                        "validation_reason": effective_candidate.validation_reason,
-                    },
-                )
-                continue
             if effective_candidate.validation_state == "UNDEFINED":
                 undefined_count += 1
-                if relation_governance_mode == "FULL_AUTO":
-                    self._record_rejected_relation(
-                        reasons=rejected_reasons,
-                        details=rejected_details,
-                        reason="undefined_relation_rejected_full_auto",
-                        payload=payload,
-                        metadata={
-                            "validation_state": effective_candidate.validation_state,
-                            "validation_reason": effective_candidate.validation_reason,
-                        },
+
+            if effective_candidate.persistability != "PERSISTABLE":
+                non_persistable_claims_count += 1
+                if claim_id is not None:
+                    self._enqueue_review_item(
+                        entity_type="relation_claim",
+                        entity_id=claim_id,
+                        research_space_id=research_space_id,
+                        priority=self._review_priority_for_candidate(
+                            candidate=effective_candidate,
+                        ),
                     )
-                    continue
+                    relation_claims_queued_for_review_count += 1
+                continue
+
+            if (
+                effective_candidate.source_entity_id is None
+                or effective_candidate.target_entity_id is None
+            ):
+                non_persistable_claims_count += 1
+                if claim_id is not None:
+                    self._enqueue_review_item(
+                        entity_type="relation_claim",
+                        entity_id=claim_id,
+                        research_space_id=research_space_id,
+                        priority="high",
+                    )
+                    relation_claims_queued_for_review_count += 1
+                errors.append("relation_persistence_missing_endpoint_entity_id")
+                continue
 
             try:
                 created_relation = self._relations.create(
@@ -438,15 +562,18 @@ class _ExtractionRelationPersistenceHelpers(
                         mapping_proposal=mapping_proposal,
                     ),
                     evidence_tier="COMPUTATIONAL",
-                    curation_status=(
-                        "PENDING_REVIEW"
-                        if effective_candidate.validation_state == "UNDEFINED"
-                        else "DRAFT"
-                    ),
+                    curation_status="DRAFT",
                     source_document_id=str(document.id),
                     agent_run_id=run_id,
                 )
                 persisted_count += 1
+                pending_count += 1
+                if claim_id is not None and self._relation_claims is not None:
+                    with_context_errors = self._link_claim_to_relation(
+                        claim_id=claim_id,
+                        relation_id=str(created_relation.id),
+                    )
+                    errors.extend(with_context_errors)
             except (TypeError, ValueError) as exc:
                 errors.append(
                     (
@@ -459,31 +586,23 @@ class _ExtractionRelationPersistenceHelpers(
                 persistence_failed_count += 1
                 continue
 
-            if effective_candidate.validation_state != "UNDEFINED":
-                continue
-
-            pending_count += 1
-            self._record_rejected_relation(
-                reasons=rejected_reasons,
-                details=rejected_details,
-                reason="undefined_relation_persisted_pending_review",
-                payload=payload,
-                metadata={
-                    "status": "pending_review",
-                    "validation_state": effective_candidate.validation_state,
-                    "validation_reason": effective_candidate.validation_reason,
-                },
-            )
             self._enqueue_review_item(
                 entity_type="relation",
                 entity_id=str(created_relation.id),
                 research_space_id=research_space_id,
-                priority="medium",
+                priority=self._review_priority_for_candidate(
+                    candidate=effective_candidate,
+                ),
             )
 
         return _PersistCandidatesResult(
             persisted_relations_count=persisted_count,
             pending_review_relations_count=pending_count,
+            relation_claims_count=relation_claims_count,
+            relation_claims_queued_for_review_count=(
+                relation_claims_queued_for_review_count
+            ),
+            non_persistable_claims_count=non_persistable_claims_count,
             forbidden_relations_count=forbidden_count,
             undefined_relations_count=undefined_count,
             rejected_relation_reasons=tuple(rejected_reasons),
@@ -491,6 +610,36 @@ class _ExtractionRelationPersistenceHelpers(
             persistence_failed_count=persistence_failed_count,
             errors=tuple(errors),
         )
+
+    def _link_claim_to_relation(
+        self,
+        *,
+        claim_id: str,
+        relation_id: str,
+    ) -> list[str]:
+        if self._relation_claims is None:
+            return []
+        try:
+            self._relation_claims.link_relation(
+                claim_id,
+                linked_relation_id=relation_id,
+            )
+        except (TypeError, ValueError) as exc:
+            return [f"relation_claim_link_failed:{claim_id}:{relation_id}:{exc!s}"]
+        return []
+
+    @staticmethod
+    def _review_priority_for_candidate(
+        *,
+        candidate: _ResolvedRelationCandidate,
+    ) -> str:
+        if candidate.validation_state in {"FORBIDDEN", "SELF_LOOP"}:
+            return "high"
+        if candidate.validation_state == "UNDEFINED":
+            return "medium"
+        if candidate.confidence < _LOW_CONFIDENCE_REVIEW_THRESHOLD:
+            return "medium"
+        return "low"
 
 
 __all__ = ["RelationPersistenceResult", "_ExtractionRelationPersistenceHelpers"]

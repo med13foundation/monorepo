@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.domain.entities.kernel.entities import KernelEntity
 from src.domain.entities.kernel.observations import KernelObservation
 from src.domain.entities.kernel.provenance import KernelProvenanceRecord
+from src.domain.entities.kernel.relation_claims import KernelRelationClaim
 from src.domain.entities.kernel.relations import KernelRelation
 from src.type_definitions.common import JSONObject, JSONValue
 
@@ -201,6 +202,14 @@ class KernelRelationCurationUpdateRequest(BaseModel):
     curation_status: str = Field(..., min_length=1, max_length=32)
 
 
+class KernelRelationClaimTriageRequest(BaseModel):
+    """Request model for triaging relation-claim status."""
+
+    model_config = ConfigDict(strict=True)
+
+    claim_status: str = Field(..., min_length=1, max_length=32)
+
+
 class KernelRelationResponse(BaseModel):
     """Response model for a kernel relation."""
 
@@ -212,6 +221,7 @@ class KernelRelationResponse(BaseModel):
     relation_type: str
     target_id: UUID
 
+    confidence: float
     aggregate_confidence: float
     source_count: int
     highest_evidence_tier: str | None
@@ -234,6 +244,7 @@ class KernelRelationResponse(BaseModel):
             source_id=_to_uuid(model.source_id),
             relation_type=str(model.relation_type),
             target_id=_to_uuid(model.target_id),
+            confidence=float(model.aggregate_confidence),
             aggregate_confidence=float(model.aggregate_confidence),
             source_count=int(model.source_count),
             highest_evidence_tier=model.highest_evidence_tier,
@@ -256,6 +267,83 @@ class KernelRelationListResponse(BaseModel):
     model_config = ConfigDict(strict=True)
 
     relations: list[KernelRelationResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class KernelRelationClaimResponse(BaseModel):
+    """Response model for one extraction relation claim."""
+
+    model_config = ConfigDict(strict=True)
+
+    id: UUID
+    research_space_id: UUID
+    source_document_id: UUID | None
+    agent_run_id: str | None
+    source_type: str
+    relation_type: str
+    target_type: str
+    source_label: str | None
+    target_label: str | None
+    confidence: float
+    validation_state: str
+    validation_reason: str | None
+    persistability: str
+    claim_status: str
+    linked_relation_id: UUID | None
+    metadata: JSONObject
+    triaged_by: UUID | None
+    triaged_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_model(cls, model: KernelRelationClaim) -> KernelRelationClaimResponse:
+        source_document_id_raw = getattr(model, "source_document_id", None)
+        linked_relation_id_raw = getattr(model, "linked_relation_id", None)
+        triaged_by_raw = getattr(model, "triaged_by", None)
+        metadata_payload = getattr(model, "metadata_payload", {}) or {}
+        return cls(
+            id=_to_uuid(model.id),
+            research_space_id=_to_uuid(model.research_space_id),
+            source_document_id=(
+                _to_uuid(source_document_id_raw)
+                if source_document_id_raw is not None
+                else None
+            ),
+            agent_run_id=model.agent_run_id,
+            source_type=str(model.source_type),
+            relation_type=str(model.relation_type),
+            target_type=str(model.target_type),
+            source_label=model.source_label,
+            target_label=model.target_label,
+            confidence=float(model.confidence),
+            validation_state=str(model.validation_state),
+            validation_reason=model.validation_reason,
+            persistability=str(model.persistability),
+            claim_status=str(model.claim_status),
+            linked_relation_id=(
+                _to_uuid(linked_relation_id_raw)
+                if linked_relation_id_raw is not None
+                else None
+            ),
+            metadata=dict(metadata_payload),
+            triaged_by=(
+                _to_uuid(triaged_by_raw) if triaged_by_raw is not None else None
+            ),
+            triaged_at=model.triaged_at,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+        )
+
+
+class KernelRelationClaimListResponse(BaseModel):
+    """List response for relation claims in one research space."""
+
+    model_config = ConfigDict(strict=True)
+
+    claims: list[KernelRelationClaimResponse]
     total: int
     offset: int
     limit: int

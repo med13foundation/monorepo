@@ -14,6 +14,7 @@ import { KnowledgeGraphQueryCard } from './knowledge-graph-query-card'
 import { KnowledgeGraphSearchResultsCard } from './knowledge-graph-search-results-card'
 import { KnowledgeGraphVisualization } from './knowledge-graph-visualization'
 import { useKnowledgeGraphController } from './use-knowledge-graph-controller'
+import type { GraphTrustPreset } from './use-knowledge-graph-controller'
 
 interface KnowledgeGraphClientProps {
   spaceId: string
@@ -21,6 +22,7 @@ interface KnowledgeGraphClientProps {
   initialTopK?: number
   initialMaxDepth?: number
   initialForceAgent?: boolean
+  initialTrustPreset?: GraphTrustPreset
 }
 
 export default function KnowledgeGraphClient({
@@ -29,6 +31,7 @@ export default function KnowledgeGraphClient({
   initialTopK = 25,
   initialMaxDepth = 2,
   initialForceAgent = false,
+  initialTrustPreset = 'ALL',
 }: KnowledgeGraphClientProps) {
   const router = useRouter()
   const { data: session } = useSession()
@@ -41,6 +44,7 @@ export default function KnowledgeGraphClient({
     initialTopK,
     initialMaxDepth,
     initialForceAgent,
+    initialTrustPreset,
   })
   const [showControlsPanel, setShowControlsPanel] = useState(true)
   const [activeControlsTab, setActiveControlsTab] = useState<'search' | 'filters'>('search')
@@ -147,13 +151,17 @@ export default function KnowledgeGraphClient({
                 ) : (
                   <div className="max-h-[48vh] overflow-auto px-3 pb-3">
                     <KnowledgeGraphFiltersCard
-                      availableRelationTypes={controller.availableRelationTypes}
-                      availableCurationStatuses={controller.availableCurationStatuses}
+                      filterOptions={{
+                        relationTypes: controller.availableRelationTypes,
+                        curationStatuses: controller.availableCurationStatuses,
+                      }}
+                      trustPreset={controller.trustPreset}
                       relationTypeFilter={controller.relationTypeFilter}
                       curationStatusFilter={controller.curationStatusFilter}
-                      onRelationTypeToggle={controller.toggleRelationType}
-                      onEnableAllRelationTypes={controller.enableAllRelationTypes}
-                      onCurationStatusToggle={controller.toggleCurationStatus}
+                      setTrustPreset={controller.setTrustPreset}
+                      toggleRelationType={controller.toggleRelationType}
+                      enableAllRelationTypes={controller.enableAllRelationTypes}
+                      toggleCurationStatus={controller.toggleCurationStatus}
                       variant="embedded"
                     />
                   </div>

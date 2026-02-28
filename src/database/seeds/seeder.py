@@ -311,6 +311,22 @@ def seed_variable_synonyms(session: Session) -> int:
     count = 0
     for row in rows:
         synonym = str(row["synonym"]).lower()
+        conflicting = session.execute(
+            text(
+                "SELECT variable_id FROM variable_synonyms "
+                "WHERE synonym = :syn AND variable_id <> :vid "
+                "AND is_active IS TRUE "
+                "LIMIT 1",
+            ),
+            {"syn": synonym, "vid": row["variable_id"]},
+        ).fetchone()
+        if conflicting:
+            msg = (
+                f"Synonym '{synonym}' is already mapped to variable "
+                f"'{conflicting[0]}'"
+            )
+            raise ValueError(msg)
+
         existing = session.execute(
             text(
                 "SELECT 1 FROM variable_synonyms "

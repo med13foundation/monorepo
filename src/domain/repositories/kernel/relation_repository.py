@@ -96,6 +96,9 @@ class KernelRelationRepository(ABC):
         *,
         relation_type: str | None = None,
         curation_status: str | None = None,
+        validation_state: str | None = None,
+        source_document_id: str | None = None,
+        certainty_band: str | None = None,
         node_query: str | None = None,
         node_ids: list[str] | None = None,
         limit: int | None = None,
@@ -137,8 +140,19 @@ class KernelRelationRepository(ABC):
         """Delete all relations linked to a provenance record. Returns count."""
 
     @abstractmethod
-    def count_by_research_space(self, research_space_id: str) -> int:
-        """Count total relations in a research space."""
+    def count_by_research_space(  # noqa: PLR0913
+        self,
+        research_space_id: str,
+        *,
+        relation_type: str | None = None,
+        curation_status: str | None = None,
+        validation_state: str | None = None,
+        source_document_id: str | None = None,
+        certainty_band: str | None = None,
+        node_query: str | None = None,
+        node_ids: list[str] | None = None,
+    ) -> int:
+        """Count relations in a research space with optional filters."""
 
 
 __all__ = ["KernelRelationRepository"]

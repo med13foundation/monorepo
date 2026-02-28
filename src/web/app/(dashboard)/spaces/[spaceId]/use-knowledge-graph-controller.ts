@@ -31,9 +31,18 @@ const MIN_DEPTH = 1
 const MIN_TOP_K = 1
 const MAX_RENDER_NODES = 180
 const MAX_RENDER_EDGES = 260
-const DEFAULT_VISIBLE_CURATION_STATUSES = ['APPROVED', 'UNDER_REVIEW', 'DRAFT']
 const MAX_SEEDED_SEARCH_RESULTS = 5
 const DEFAULT_EXPAND_TOP_K = 25
+const ALL_GRAPH_STATUSES = ['APPROVED', 'UNDER_REVIEW', 'DRAFT', 'REJECTED', 'RETRACTED'] as const
+
+export type GraphTrustPreset = 'ALL' | 'APPROVED_ONLY' | 'PENDING_REVIEW' | 'REJECTED'
+
+const TRUST_PRESET_STATUS_MAP: Record<GraphTrustPreset, string[] | null> = {
+  ALL: null,
+  APPROVED_ONLY: ['APPROVED'],
+  PENDING_REVIEW: ['DRAFT', 'UNDER_REVIEW'],
+  REJECTED: ['REJECTED', 'RETRACTED'],
+}
 
 interface QueryRouter {
   replace: (href: string) => void
@@ -47,6 +56,7 @@ interface UseKnowledgeGraphControllerArgs {
   initialTopK: number
   initialMaxDepth: number
   initialForceAgent: boolean
+  initialTrustPreset: GraphTrustPreset
 }
 
 function parseBoundedInt(
@@ -90,9 +100,13 @@ function updateQueryParams(
   topK: number,
   maxDepth: number,
   forceAgent: boolean,
+  trustPreset: GraphTrustPreset,
 ): void {
   const params = new URLSearchParams()
   const trimmedQuestion = question.trim()
+  if (trustPreset !== 'ALL') {
+    params.set('trust', trustPreset)
+  }
   if (trimmedQuestion.length > 0) {
     params.set('q', trimmedQuestion)
     params.set('top_k', String(topK))
@@ -114,10 +128,12 @@ export interface KnowledgeGraphController {
   topKInput: string
   maxDepthInput: string
   forceAgent: boolean
+  trustPreset: GraphTrustPreset
   setQuestionInput: (value: string) => void
   setTopKInput: (value: string) => void
   setMaxDepthInput: (value: string) => void
   setForceAgent: (value: boolean) => void
+  setTrustPreset: (value: GraphTrustPreset) => void
   topK: number
   maxDepth: number
   minDepth: number
@@ -165,6 +181,7 @@ export function useKnowledgeGraphController({
   initialTopK,
   initialMaxDepth,
   initialForceAgent,
+  initialTrustPreset,
 }: UseKnowledgeGraphControllerArgs): KnowledgeGraphController {
   const bootstrapRef = useRef(false)
 
@@ -172,6 +189,7 @@ export function useKnowledgeGraphController({
   const [topKInput, setTopKInput] = useState(String(initialTopK))
   const [maxDepthInput, setMaxDepthInput] = useState(String(initialMaxDepth))
   const [forceAgent, setForceAgent] = useState(initialForceAgent)
+  const [trustPreset, setTrustPresetState] = useState<GraphTrustPreset>(initialTrustPreset)
 
   const [rawGraph, setRawGraph] = useState<GraphModel>(emptyGraphModel())
   const [subgraphMeta, setSubgraphMeta] = useState<KernelGraphSubgraphMeta | null>(null)
@@ -188,8 +206,12 @@ export function useKnowledgeGraphController({
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
 
   const [relationTypeFilter, setRelationTypeFilter] = useState<Set<string>>(new Set())
-  const [curationStatusFilter, setCurationStatusFilter] = useState<Set<string>>(
-    new Set(DEFAULT_VISIBLE_CURATION_STATUSES),
+  const [curationStatusFilter, setCurationStatusFilter] = useState<Set<string>>(new Set())
+  const trustPresetSyncRef = useRef<GraphTrustPreset>(initialTrustPreset)
+
+  const activeCurationStatuses = useMemo(
+    () => TRUST_PRESET_STATUS_MAP[trustPreset],
+    [trustPreset],
   )
 
   const topK = useMemo(
@@ -252,15 +274,16 @@ export function useKnowledgeGraphController({
   const loadStarterSubgraph = useCallback(async (): Promise<void> => {
     setSelectedNodeId(null)
     setHoveredNodeId(null)
-    await fetchSubgraph({
-      mode: 'starter',
-      seed_entity_ids: [],
-      depth: DEFAULT_STARTER_DEPTH,
-      top_k: DEFAULT_STARTER_TOP_K,
-      max_nodes: MAX_RENDER_NODES,
-      max_edges: MAX_RENDER_EDGES,
-    })
-  }, [fetchSubgraph])
+      await fetchSubgraph({
+        mode: 'starter',
+        seed_entity_ids: [],
+        depth: DEFAULT_STARTER_DEPTH,
+        top_k: DEFAULT_STARTER_TOP_K,
+        curation_statuses: activeCurationStatuses,
+        max_nodes: MAX_RENDER_NODES,
+        max_edges: MAX_RENDER_EDGES,
+      })
+  }, [activeCurationStatuses, fetchSubgraph])
 
   const runQuery = useCallback(
     async ({
@@ -293,6 +316,7 @@ export function useKnowledgeGraphController({
             topK,
             maxDepth,
             forceAgent,
+            trustPreset,
           )
         }
         await loadStarterSubgraph()
@@ -313,6 +337,7 @@ export function useKnowledgeGraphController({
             question: normalizedQuestion,
             top_k: topK,
             max_depth: maxDepth,
+            curation_statuses: activeCurationStatuses,
             include_evidence_chains: true,
             force_agent: forceAgent,
           },
@@ -333,6 +358,7 @@ export function useKnowledgeGraphController({
             seed_entity_ids: seedEntityIds,
             depth: maxDepth,
             top_k: topK,
+            curation_statuses: activeCurationStatuses,
             max_nodes: MAX_RENDER_NODES,
             max_edges: MAX_RENDER_EDGES,
           })
@@ -346,6 +372,7 @@ export function useKnowledgeGraphController({
             topK,
             maxDepth,
             forceAgent,
+            trustPreset,
           )
         }
       } catch (error) {
@@ -356,7 +383,7 @@ export function useKnowledgeGraphController({
         setIsSearching(false)
       }
     },
-    [fetchSubgraph, loadStarterSubgraph, router, spaceId, token],
+    [activeCurationStatuses, fetchSubgraph, loadStarterSubgraph, router, spaceId, token, trustPreset],
   )
 
   useEffect(() => {
@@ -387,6 +414,49 @@ export function useKnowledgeGraphController({
     token,
   ])
 
+  useEffect(() => {
+    if (!bootstrapRef.current || !token) {
+      return
+    }
+    if (trustPresetSyncRef.current === trustPreset) {
+      return
+    }
+    trustPresetSyncRef.current = trustPreset
+
+    if (questionInput.trim().length > 0) {
+      void runQuery({
+        question: questionInput,
+        topK,
+        maxDepth,
+        forceAgent,
+        syncUrl: true,
+      })
+      return
+    }
+
+    updateQueryParams(
+      router,
+      spaceId,
+      '',
+      topK,
+      maxDepth,
+      forceAgent,
+      trustPreset,
+    )
+    void loadStarterSubgraph()
+  }, [
+    forceAgent,
+    loadStarterSubgraph,
+    maxDepth,
+    questionInput,
+    router,
+    runQuery,
+    spaceId,
+    token,
+    topK,
+    trustPreset,
+  ])
+
   const expandFromNode = useCallback(
     async (nodeId: string): Promise<void> => {
       if (!token) {
@@ -405,6 +475,7 @@ export function useKnowledgeGraphController({
             seed_entity_ids: [nodeId],
             depth: 1,
             top_k: Math.min(topK, DEFAULT_EXPAND_TOP_K),
+            curation_statuses: activeCurationStatuses,
             max_nodes: MAX_RENDER_NODES,
             max_edges: MAX_RENDER_EDGES,
           },
@@ -447,7 +518,7 @@ export function useKnowledgeGraphController({
         setIsExpandingNodeId(null)
       }
     },
-    [spaceId, token, topK],
+    [activeCurationStatuses, spaceId, token, topK],
   )
 
   const onNodeClick = useCallback(
@@ -460,7 +531,7 @@ export function useKnowledgeGraphController({
 
   const availableRelationTypes = rawGraph.relationTypes
   const availableCurationStatuses = useMemo(() => {
-    const merged = new Set<string>(DEFAULT_VISIBLE_CURATION_STATUSES)
+    const merged = new Set<string>(ALL_GRAPH_STATUSES)
     for (const status of rawGraph.curationStatuses) {
       merged.add(status)
     }
@@ -522,9 +593,19 @@ export function useKnowledgeGraphController({
       topK,
       maxDepth,
       false,
+      trustPreset,
     )
     void loadStarterSubgraph()
-  }, [initialMaxDepth, initialTopK, loadStarterSubgraph, maxDepth, router, spaceId, topK])
+  }, [
+    initialMaxDepth,
+    initialTopK,
+    loadStarterSubgraph,
+    maxDepth,
+    router,
+    spaceId,
+    topK,
+    trustPreset,
+  ])
 
   const clearSelection = useCallback((): void => {
     setSelectedNodeId(null)
@@ -543,7 +624,7 @@ export function useKnowledgeGraphController({
 
   const resetFilters = useCallback((): void => {
     setRelationTypeFilter(new Set())
-    setCurationStatusFilter(new Set(DEFAULT_VISIBLE_CURATION_STATUSES))
+    setCurationStatusFilter(new Set())
   }, [])
 
   const enableAllRelationTypes = useCallback((): void => {
@@ -587,10 +668,12 @@ export function useKnowledgeGraphController({
     topKInput,
     maxDepthInput,
     forceAgent,
+    trustPreset,
     setQuestionInput,
     setTopKInput,
     setMaxDepthInput,
     setForceAgent,
+    setTrustPreset: setTrustPresetState,
     topK,
     maxDepth,
     minDepth: MIN_DEPTH,

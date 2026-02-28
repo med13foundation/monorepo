@@ -60,6 +60,7 @@ class DictionaryRepository(ABC):
         self,
         synonym: str,
         *,
+        domain_context: str | None = None,
         include_inactive: bool = False,
     ) -> VariableDefinition | None:
         """

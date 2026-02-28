@@ -162,6 +162,7 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
         raw_records = self._to_pipeline_records(
             filtered_records,
             original_source_id=str(source.id),
+            domain_context=config.domain_context,
         )
 
         observations_created = 0

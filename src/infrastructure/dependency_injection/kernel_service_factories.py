@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from src.application.services.kernel import (
         KernelEntityService,
         KernelObservationService,
+        KernelRelationClaimService,
         KernelRelationService,
         ProvenanceService,
     )
@@ -68,6 +69,7 @@ class KernelServiceFactoryMixin:
             KernelObservationService,
         )
         from src.infrastructure.embeddings import HybridTextEmbeddingProvider
+        from src.infrastructure.llm.adapters import ArtanaDictionarySearchHarnessAdapter
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyDictionaryRepository,
             SqlAlchemyKernelObservationRepository,
@@ -76,9 +78,15 @@ class KernelServiceFactoryMixin:
         observation_repo = SqlAlchemyKernelObservationRepository(session)
         entity_repo = self._build_entity_repository(session)
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
+        embedding_provider = HybridTextEmbeddingProvider()
+        search_harness = ArtanaDictionarySearchHarnessAdapter(
+            dictionary_repo=dictionary_repo,
+            embedding_provider=embedding_provider,
+        )
         dictionary_service = DictionaryManagementService(
             dictionary_repo=dictionary_repo,
-            embedding_provider=HybridTextEmbeddingProvider(),
+            dictionary_search_harness=search_harness,
+            embedding_provider=embedding_provider,
         )
         return KernelObservationService(
             observation_repo=observation_repo,
@@ -105,20 +113,39 @@ class KernelServiceFactoryMixin:
             dictionary_repo=dictionary_repo,
         )
 
+    def create_kernel_relation_claim_service(
+        self,
+        session: Session,
+    ) -> KernelRelationClaimService:
+        from src.application.services.kernel import KernelRelationClaimService
+        from src.infrastructure.repositories.kernel import (
+            SqlAlchemyKernelRelationClaimRepository,
+        )
+
+        relation_claim_repo = SqlAlchemyKernelRelationClaimRepository(session)
+        return KernelRelationClaimService(relation_claim_repo=relation_claim_repo)
+
     def create_dictionary_management_service(
         self,
         session: Session,
     ) -> DictionaryPort:
         from src.application.services.kernel import DictionaryManagementService
         from src.infrastructure.embeddings import HybridTextEmbeddingProvider
+        from src.infrastructure.llm.adapters import ArtanaDictionarySearchHarnessAdapter
         from src.infrastructure.repositories.kernel import (
             SqlAlchemyDictionaryRepository,
         )
 
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
+        embedding_provider = HybridTextEmbeddingProvider()
+        search_harness = ArtanaDictionarySearchHarnessAdapter(
+            dictionary_repo=dictionary_repo,
+            embedding_provider=embedding_provider,
+        )
         return DictionaryManagementService(
             dictionary_repo=dictionary_repo,
-            embedding_provider=HybridTextEmbeddingProvider(),
+            dictionary_search_harness=search_harness,
+            embedding_provider=embedding_provider,
         )
 
     def create_provenance_service(
