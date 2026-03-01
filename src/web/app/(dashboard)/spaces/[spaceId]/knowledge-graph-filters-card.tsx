@@ -82,6 +82,10 @@ export function KnowledgeGraphFiltersCard({
 
   const selectedRelationCount = relationTypeFilter.size
   const selectedStatusCount = curationStatusFilter.size
+  const hasExplicitRelationFilter = selectedRelationCount > 0
+  const enabledRelationCount = hasExplicitRelationFilter
+    ? selectedRelationCount
+    : availableRelationTypes.length
   const trustPresetOptions: Array<{ value: GraphTrustPreset; label: string }> = [
     { value: 'ALL', label: 'All' },
     { value: 'APPROVED_ONLY', label: 'Approved only' },
@@ -93,7 +97,7 @@ export function KnowledgeGraphFiltersCard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm font-medium">Local Filters</div>
         <div className="text-xs text-muted-foreground">
-          {selectedRelationCount} relation types • {selectedStatusCount} statuses selected
+          {enabledRelationCount} relation types enabled • {selectedStatusCount} statuses selected
         </div>
       </div>
       <div className="space-y-2 rounded-lg border border-border/70 bg-background/65 p-2">
@@ -118,7 +122,7 @@ export function KnowledgeGraphFiltersCard({
           <div className="flex items-center justify-between text-xs">
             <div className="font-semibold uppercase text-muted-foreground">Relation Type</div>
             <div className="text-muted-foreground">
-              {selectedRelationCount === 0
+              {!hasExplicitRelationFilter
                 ? `All enabled (${availableRelationTypes.length || 0})`
                 : `${selectedRelationCount}/${availableRelationTypes.length || 0}`}
             </div>
@@ -137,7 +141,7 @@ export function KnowledgeGraphFiltersCard({
                 variant="outline"
                 className="h-7"
                 onClick={enableAllRelationTypes}
-                disabled={relationTypeFilter.size === 0}
+                disabled={!hasExplicitRelationFilter}
               >
                 Enable all
               </Button>
@@ -163,7 +167,7 @@ export function KnowledgeGraphFiltersCard({
                   >
                     <Checkbox
                       id={`relation-filter-${relationType}`}
-                      checked={relationTypeFilter.has(relationType)}
+                      checked={relationTypeFilter.size === 0 || relationTypeFilter.has(relationType)}
                       onCheckedChange={(checked) =>
                         toggleRelationType(relationType, checked === true)
                       }

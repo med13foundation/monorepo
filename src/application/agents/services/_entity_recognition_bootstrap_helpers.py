@@ -189,6 +189,11 @@ class _EntityRecognitionBootstrapHelpers:
         source_ref: str,
         research_space_settings: ResearchSpaceSettings,
     ) -> None:
+        self._activate_bootstrap_entity_type_if_needed(entity_type=source_type)
+        self._activate_bootstrap_relation_type_if_needed(
+            relation_type=_DEFAULT_BOOTSTRAP_RELATION_TYPE,
+        )
+        self._activate_bootstrap_entity_type_if_needed(entity_type=target_type)
         self._dictionary.create_relation_constraint(
             source_type=source_type,
             relation_type=_DEFAULT_BOOTSTRAP_RELATION_TYPE,
@@ -209,6 +214,9 @@ class _EntityRecognitionBootstrapHelpers:
         requires_evidence: bool = True,
     ) -> None:
         source_type, relation_type, target_type = relation_triplet
+        self._activate_bootstrap_entity_type_if_needed(entity_type=source_type)
+        self._activate_bootstrap_relation_type_if_needed(relation_type=relation_type)
+        self._activate_bootstrap_entity_type_if_needed(entity_type=target_type)
         self._dictionary.create_relation_constraint(
             source_type=source_type,
             relation_type=relation_type,
@@ -304,6 +312,44 @@ class _EntityRecognitionBootstrapHelpers:
             )
 
         return created_entity_types, created_variables
+
+    def _activate_bootstrap_entity_type_if_needed(
+        self: _EntityRecognitionBootstrapContext,
+        *,
+        entity_type: str,
+    ) -> None:
+        existing = self._dictionary.get_entity_type(
+            entity_type,
+            include_inactive=True,
+        )
+        if existing is None:
+            return
+        if existing.is_active and existing.review_status == "ACTIVE":
+            return
+        self._dictionary.set_entity_type_review_status(
+            entity_type,
+            review_status="ACTIVE",
+            reviewed_by=self._agent_created_by,
+        )
+
+    def _activate_bootstrap_relation_type_if_needed(
+        self: _EntityRecognitionBootstrapContext,
+        *,
+        relation_type: str,
+    ) -> None:
+        existing = self._dictionary.get_relation_type(
+            relation_type,
+            include_inactive=True,
+        )
+        if existing is None:
+            return
+        if existing.is_active and existing.review_status == "ACTIVE":
+            return
+        self._dictionary.set_relation_type_review_status(
+            relation_type,
+            review_status="ACTIVE",
+            reviewed_by=self._agent_created_by,
+        )
 
     def _ensure_pubmed_metadata_variable(  # noqa: PLR0913
         self: _EntityRecognitionBootstrapContext,

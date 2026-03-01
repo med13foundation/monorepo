@@ -3,6 +3,7 @@
 import { type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
+import { ChevronDown } from 'lucide-react'
 
 import {
   searchKernelRelationNodesAction,
@@ -15,6 +16,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DashboardSection } from '@/components/ui/composition-patterns'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -475,6 +483,10 @@ export default function SpaceCurationClient({
   }
 
   async function updateClaimStatus(claim: RelationClaimResponse, status: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'): Promise<void> {
+    if (claim.claim_status === status) {
+      toast.info(`Claim is already ${humanizeToken(status)}.`)
+      return
+    }
     setPendingClaimId(claim.id)
     const result = await updateRelationClaimStatusAction(spaceId, claim.id, status)
     setPendingClaimId(null)
@@ -483,8 +495,65 @@ export default function SpaceCurationClient({
       toast.error(result.error)
       return
     }
-    toast.success(`Claim marked ${status}`)
+    if (status === 'RESOLVED') {
+      const linkedRelationId = result.data.linked_relation_id
+      if (linkedRelationId) {
+        toast.success(`Resolved and linked to relation ${compactId(linkedRelationId)}`)
+      } else {
+        toast.success('Claim resolved')
+      }
+    } else {
+      toast.success(`Claim marked ${status}`)
+    }
     router.refresh()
+  }
+
+  function openDictionaryForClaim(claim: RelationClaimResponse): void {
+    const params = new URLSearchParams()
+    params.set('relation_type', claim.relation_type)
+    params.set('source_type', claim.source_type)
+    params.set('target_type', claim.target_type)
+    router.push(`/admin/dictionary?${params.toString()}`)
+  }
+
+  function claimResolveBlockedReason(claim: RelationClaimResponse): string | null {
+    if (claim.linked_relation_id) {
+      return null
+    }
+    if (claim.persistability !== 'PERSISTABLE') {
+      return 'Resolve blocked: claim is NON_PERSISTABLE. Use Needs Mapping or Reject.'
+    }
+    const sourceEntityId = typeof claim.metadata?.source_entity_id === 'string'
+      ? claim.metadata.source_entity_id.trim()
+      : ''
+    const targetEntityId = typeof claim.metadata?.target_entity_id === 'string'
+      ? claim.metadata.target_entity_id.trim()
+      : ''
+    if (!sourceEntityId || !targetEntityId) {
+      return 'Resolve blocked: source/target entity mapping is missing. Use Needs Mapping.'
+    }
+    return null
+  }
+
+  function applyClaimQueuePreset(
+    preset: 'ALL' | 'READY_TO_RESOLVE' | 'NEEDS_MAPPING' | 'REJECTED',
+  ): void {
+    const params = new URLSearchParams()
+    params.set('tab', 'claims')
+    params.set('claim_offset', '0')
+    params.set('claim_limit', String(claimFilters.limit))
+
+    if (preset === 'READY_TO_RESOLVE') {
+      params.set('claim_status', 'OPEN')
+      params.set('claim_validation_state', 'ALLOWED')
+      params.set('persistability', 'PERSISTABLE')
+    } else if (preset === 'NEEDS_MAPPING') {
+      params.set('claim_validation_state', 'UNDEFINED')
+    } else if (preset === 'REJECTED') {
+      params.set('claim_status', 'REJECTED')
+    }
+
+    router.push(`/spaces/${spaceId}/curation?${params.toString()}`)
   }
 
   const graphTotal = relations?.total ?? 0
@@ -522,6 +591,11 @@ export default function SpaceCurationClient({
               Extraction Claims
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {activeTab === 'graph'
+              ? 'Graph Relations: curate canonical edges (DRAFT, UNDER_REVIEW, APPROVED, REJECTED).'
+              : 'Extraction Claims: triage candidate edges. Resolve promotes/links into canonical graph when allowed.'}
+          </p>
 
           {activeTab === 'graph' ? (
             <>
@@ -859,6 +933,43 @@ export default function SpaceCurationClient({
           ) : (
             <>
               <Card className="border-border/80 bg-card">
+                <CardContent className="border-b border-border/70 py-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-semibold uppercase text-muted-foreground">Queue Presets</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => applyClaimQueuePreset('ALL')}
+                    >
+                      All
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => applyClaimQueuePreset('READY_TO_RESOLVE')}
+                    >
+                      Ready to resolve
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => applyClaimQueuePreset('NEEDS_MAPPING')}
+                    >
+                      Needs mapping
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => applyClaimQueuePreset('REJECTED')}
+                    >
+                      Rejected
+                    </Button>
+                  </div>
+                </CardContent>
                 <CardContent className="grid gap-4 py-6 md:grid-cols-3">
                   <div className="space-y-2">
                     <Label className="font-semibold text-foreground">Claim Status</Label>
@@ -1006,6 +1117,9 @@ export default function SpaceCurationClient({
                   {claimRows.map((claim) => {
                     const confidence = confidencePercent(claim.confidence)
                     const certaintyLevel = confidenceCertaintyLevel(confidence)
+                    const resolveBlockedReason = claimResolveBlockedReason(claim)
+                    const canResolveClaim = resolveBlockedReason === null
+                    const isPendingClaimAction = pendingClaimId === claim.id
                     return (
                       <Card key={claim.id} className="border-border bg-card shadow-sm">
                         <CardContent className="space-y-4 p-5">
@@ -1052,38 +1166,72 @@ export default function SpaceCurationClient({
 
                           {canCurate ? (
                             <div className="flex flex-wrap items-center gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={pendingClaimId === claim.id}
-                                onClick={() => updateClaimStatus(claim, 'OPEN')}
-                              >
-                                Open
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={pendingClaimId === claim.id}
-                                onClick={() => updateClaimStatus(claim, 'NEEDS_MAPPING')}
-                              >
-                                Needs Mapping
-                              </Button>
-                              <Button
-                                size="sm"
-                                disabled={pendingClaimId === claim.id}
-                                onClick={() => updateClaimStatus(claim, 'RESOLVED')}
-                              >
-                                Resolve
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                disabled={pendingClaimId === claim.id}
-                                onClick={() => updateClaimStatus(claim, 'REJECTED')}
-                              >
-                                Reject
-                              </Button>
+                              {canResolveClaim ? (
+                                <Button
+                                  size="sm"
+                                  disabled={isPendingClaimAction}
+                                  onClick={() => updateClaimStatus(claim, 'RESOLVED')}
+                                >
+                                  Resolve to graph draft
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  disabled={isPendingClaimAction}
+                                  onClick={() => updateClaimStatus(claim, 'NEEDS_MAPPING')}
+                                >
+                                  Send to mapping queue
+                                </Button>
+                              )}
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isPendingClaimAction}
+                                  >
+                                    Actions
+                                    <ChevronDown className="ml-1 size-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start">
+                                  <DropdownMenuItem
+                                    disabled={!canResolveClaim}
+                                    onClick={() => updateClaimStatus(claim, 'RESOLVED')}
+                                  >
+                                    Resolve to graph draft
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => updateClaimStatus(claim, 'NEEDS_MAPPING')}
+                                  >
+                                    Mark Needs Mapping
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => openDictionaryForClaim(claim)}
+                                  >
+                                    Open dictionary constraints
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={() => updateClaimStatus(claim, 'OPEN')}
+                                  >
+                                    Mark Open
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => updateClaimStatus(claim, 'REJECTED')}
+                                  >
+                                    Reject claim
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
+                          ) : null}
+                          {canCurate && !canResolveClaim ? (
+                            <p className="text-xs text-muted-foreground">
+                              {resolveBlockedReason} Next step: mark Needs Mapping, then open dictionary constraints.
+                            </p>
                           ) : null}
                         </CardContent>
                       </Card>

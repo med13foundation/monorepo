@@ -105,6 +105,18 @@ class KernelRelationClaimService:
             linked_relation_id=linked_relation_id,
         )
 
+    def set_system_status(
+        self,
+        claim_id: str,
+        *,
+        claim_status: RelationClaimStatus,
+    ) -> KernelRelationClaim:
+        """Set claim status via automated pipeline action."""
+        return self._claims.set_system_status(
+            claim_id,
+            claim_status=claim_status,
+        )
+
     @staticmethod
     def normalize_status_alias(
         value: str,

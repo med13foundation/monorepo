@@ -96,5 +96,14 @@ class KernelRelationClaimRepository(ABC):
     ) -> KernelRelationClaim:
         """Attach a canonical relation ID to an existing claim."""
 
+    @abstractmethod
+    def set_system_status(
+        self,
+        claim_id: str,
+        *,
+        claim_status: RelationClaimStatus,
+    ) -> KernelRelationClaim:
+        """Set claim status as an automated pipeline action."""
+
 
 __all__ = ["CertaintyBand", "KernelRelationClaimRepository"]

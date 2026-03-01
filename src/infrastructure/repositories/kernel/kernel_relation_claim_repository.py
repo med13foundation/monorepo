@@ -189,6 +189,23 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
         self._session.flush()
         return KernelRelationClaim.model_validate(model)
 
+    def set_system_status(
+        self,
+        claim_id: str,
+        *,
+        claim_status: RelationClaimStatus,
+    ) -> KernelRelationClaim:
+        model = self._session.get(RelationClaimModel, _as_uuid(claim_id))
+        if model is None:
+            msg = f"Relation claim {claim_id} not found"
+            raise ValueError(msg)
+        model.claim_status = claim_status
+        model.triaged_by = None
+        model.triaged_at = datetime.now(UTC)
+        model.updated_at = datetime.now(UTC)
+        self._session.flush()
+        return KernelRelationClaim.model_validate(model)
+
     def _build_filtered_stmt(  # noqa: C901, PLR0913
         self,
         *,

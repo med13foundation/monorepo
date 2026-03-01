@@ -705,15 +705,27 @@ export function useKnowledgeGraphController({
 
   const toggleRelationType = useCallback((relationType: string, checked: boolean): void => {
     setRelationTypeFilter((current) => {
-      const next = new Set(current)
+      const hasExplicitFilter = current.size > 0
+      const nextEnabled = hasExplicitFilter
+        ? new Set(current)
+        : new Set(availableRelationTypes)
+
       if (checked) {
-        next.add(relationType)
+        nextEnabled.add(relationType)
       } else {
-        next.delete(relationType)
+        nextEnabled.delete(relationType)
       }
-      return next
+
+      if (
+        nextEnabled.size === 0 ||
+        nextEnabled.size >= availableRelationTypes.length
+      ) {
+        return new Set()
+      }
+
+      return nextEnabled
     })
-  }, [])
+  }, [availableRelationTypes])
 
   const toggleCurationStatus = useCallback((status: string, checked: boolean): void => {
     setCurationStatusFilter((current) => {

@@ -1,5 +1,3 @@
-"""Relation persistence helpers for extraction orchestration."""
-
 from __future__ import annotations
 
 import logging
@@ -7,8 +5,12 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError
 
+from src.application.agents.services._extraction_relation_auto_resolve_helpers import (
+    _FULL_AUTO_CONFIDENCE_THRESHOLD,
+    _ExtractionRelationAutoResolveHelpers,
+)
 from src.application.agents.services._extraction_relation_canonicalization_helpers import (
     _ExtractionRelationCanonicalizationHelpers,
 )
@@ -54,7 +56,6 @@ if TYPE_CHECKING:
     )
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
-_LOW_CONFIDENCE_REVIEW_THRESHOLD = 0.6
 _PER_CANDIDATE_LOG_THRESHOLD = 25
 _PER_CANDIDATE_LOG_INTERVAL = 10
 logger = logging.getLogger(__name__)
@@ -62,8 +63,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RelationPersistenceResult:
-    """Persistence + review outcome for extracted relation candidates."""
-
     persisted_relations_count: int = 0
     pending_review_relations_count: int = 0
     relation_claims_count: int = 0
@@ -101,17 +100,17 @@ class _PersistCandidatesResult:
     rejected_relation_reasons: tuple[str, ...] = ()
     rejected_relation_details: tuple[JSONObject, ...] = ()
     persistence_failed_count: int = 0
+    full_auto_retry_skipped_count: int = 0
     errors: tuple[str, ...] = ()
 
 
 class _ExtractionRelationPersistenceHelpers(
+    _ExtractionRelationAutoResolveHelpers,
     _ExtractionRelationCanonicalizationHelpers,
     _ExtractionRelationFullAutoHelpers,
     _RelationEndpointEntityResolutionHelpers,
     _ExtractionRelationPolicyHelpers,
 ):
-    """Shared relation-persistence helpers for extraction service."""
-
     _relations: KernelRelationRepository | None
     _relation_claims: KernelRelationClaimRepository | None
     _entities: KernelEntityRepository | None
@@ -261,6 +260,9 @@ class _ExtractionRelationPersistenceHelpers(
                 "forbidden_relations_count": persist_result.forbidden_relations_count,
                 "undefined_relations_count": persist_result.undefined_relations_count,
                 "persistence_failed_count": persist_result.persistence_failed_count,
+                "full_auto_retry_skipped_count": (
+                    persist_result.full_auto_retry_skipped_count
+                ),
                 "error_count": len(persist_result.errors),
             },
         )
@@ -288,6 +290,9 @@ class _ExtractionRelationPersistenceHelpers(
                 "persisted_relations_count": persist_result.persisted_relations_count,
                 "non_persistable_claims_count": (
                     persist_result.non_persistable_claims_count
+                ),
+                "full_auto_retry_skipped_count": (
+                    persist_result.full_auto_retry_skipped_count
                 ),
                 "total_error_count": len(
                     candidate_build.errors
@@ -358,6 +363,9 @@ class _ExtractionRelationPersistenceHelpers(
                 ),
                 "relation_candidates_persistence_failed": (
                     persist_result.persistence_failed_count
+                ),
+                "relation_candidates_full_auto_retry_skipped": (
+                    persist_result.full_auto_retry_skipped_count
                 ),
                 "relation_policy_unknown_patterns": len(unknown_patterns),
                 "relation_policy_proposals_created": proposal_count,
@@ -593,6 +601,16 @@ class _ExtractionRelationPersistenceHelpers(
             "dictionary_agent_creation_policy": "ACTIVE",
         }
         relation_source_ref = f"source_document:{document.id}:relation_persist"
+        policy_run_id = normalize_run_id(
+            policy_contract.agent_run_id if policy_contract is not None else None,
+        )
+        dictionary_fingerprint = self._resolve_dictionary_fingerprint()
+        full_auto_retry_index = self._load_full_auto_retry_index(
+            research_space_id=research_space_id,
+            source_document_id=str(document.id),
+            relation_governance_mode=relation_governance_mode,
+        )
+        full_auto_retry_skipped_count = 0
 
         for index, candidate in enumerate(candidates, start=1):
             should_log_candidate = (
@@ -690,9 +708,39 @@ class _ExtractionRelationPersistenceHelpers(
                     source_ref=f"source_document:{document.id}:full_auto_persist",
                 )
 
+            candidate_signature = self._candidate_signature(effective_candidate)
+            if relation_governance_mode == "FULL_AUTO":
+                existing_retry_key = full_auto_retry_index.get(candidate_signature)
+                if existing_retry_key == dictionary_fingerprint:
+                    full_auto_retry_skipped_count += 1
+                    if should_log_candidate:
+                        logger.info(
+                            "Persist relation candidate skipped: unchanged dictionary fingerprint",
+                            extra={
+                                "document_id": str(document.id),
+                                "run_id": run_id,
+                                "candidate_index": index,
+                                "candidate_total": total_candidates,
+                                "relation_type": effective_candidate.relation_type,
+                                "dictionary_fingerprint": dictionary_fingerprint,
+                            },
+                        )
+                    continue
+
             payload = candidate_payload(effective_candidate)
             if canonicalization_metadata:
                 payload["canonicalization"] = canonicalization_metadata
+            if relation_governance_mode == "FULL_AUTO":
+                payload["auto_resolve_mode"] = "FULL_AUTO"
+                payload["auto_resolve_policy_run_id"] = policy_run_id
+                payload["auto_resolve_dictionary_fingerprint"] = dictionary_fingerprint
+                payload["auto_resolve_confidence_threshold"] = (
+                    _FULL_AUTO_CONFIDENCE_THRESHOLD
+                )
+                payload["auto_resolve_confidence_passed"] = (
+                    effective_candidate.confidence >= _FULL_AUTO_CONFIDENCE_THRESHOLD
+                )
+                payload["auto_resolve_retry_on_dictionary_change_only"] = True
             claim_id: str | None = None
             if self._relation_claims is not None:
                 try:
@@ -748,6 +796,19 @@ class _ExtractionRelationPersistenceHelpers(
             if effective_candidate.persistability != "PERSISTABLE":
                 non_persistable_claims_count += 1
                 if claim_id is not None:
+                    if relation_governance_mode == "FULL_AUTO":
+                        terminal_status = self._resolve_full_auto_terminal_status(
+                            candidate=effective_candidate,
+                        )
+                        status_errors = self._set_claim_system_status(
+                            claim_id=claim_id,
+                            claim_status=terminal_status,
+                        )
+                        errors.extend(status_errors)
+                        if terminal_status == "NEEDS_MAPPING":
+                            full_auto_retry_index[candidate_signature] = (
+                                dictionary_fingerprint
+                            )
                     self._enqueue_review_item(
                         entity_type="relation_claim",
                         entity_id=claim_id,
@@ -801,11 +862,61 @@ class _ExtractionRelationPersistenceHelpers(
                 continue
 
             if (
+                relation_governance_mode == "FULL_AUTO"
+                and effective_candidate.validation_state != "ALLOWED"
+            ):
+                if claim_id is not None:
+                    terminal_status = self._resolve_full_auto_terminal_status(
+                        candidate=effective_candidate,
+                    )
+                    status_errors = self._set_claim_system_status(
+                        claim_id=claim_id,
+                        claim_status=terminal_status,
+                    )
+                    errors.extend(status_errors)
+                    if terminal_status == "NEEDS_MAPPING":
+                        full_auto_retry_index[candidate_signature] = (
+                            dictionary_fingerprint
+                        )
+                    self._enqueue_review_item(
+                        entity_type="relation_claim",
+                        entity_id=claim_id,
+                        research_space_id=research_space_id,
+                        priority=self._review_priority_for_candidate(
+                            candidate=effective_candidate,
+                        ),
+                    )
+                    relation_claims_queued_for_review_count += 1
+                if should_log_candidate:
+                    logger.info(
+                        "Persist relation candidate stopped: full-auto unresolved validation",
+                        extra={
+                            "document_id": str(document.id),
+                            "run_id": run_id,
+                            "candidate_index": index,
+                            "candidate_total": total_candidates,
+                            "validation_state": effective_candidate.validation_state,
+                            "validation_reason": effective_candidate.validation_reason,
+                            "claim_id": claim_id,
+                        },
+                    )
+                continue
+
+            if (
                 effective_candidate.source_entity_id is None
                 or effective_candidate.target_entity_id is None
             ):
                 non_persistable_claims_count += 1
                 if claim_id is not None:
+                    if relation_governance_mode == "FULL_AUTO":
+                        status_errors = self._set_claim_system_status(
+                            claim_id=claim_id,
+                            claim_status="NEEDS_MAPPING",
+                        )
+                        errors.extend(status_errors)
+                        full_auto_retry_index[candidate_signature] = (
+                            dictionary_fingerprint
+                        )
                     self._enqueue_review_item(
                         entity_type="relation_claim",
                         entity_id=claim_id,
@@ -843,6 +954,15 @@ class _ExtractionRelationPersistenceHelpers(
                     ),
                 )
                 if claim_id is not None:
+                    if relation_governance_mode == "FULL_AUTO":
+                        status_errors = self._set_claim_system_status(
+                            claim_id=claim_id,
+                            claim_status="NEEDS_MAPPING",
+                        )
+                        errors.extend(status_errors)
+                        full_auto_retry_index[candidate_signature] = (
+                            dictionary_fingerprint
+                        )
                     self._enqueue_review_item(
                         entity_type="relation_claim",
                         entity_id=claim_id,
@@ -896,6 +1016,14 @@ class _ExtractionRelationPersistenceHelpers(
                         relation_id=str(created_relation.id),
                     )
                     errors.extend(with_context_errors)
+                    if relation_governance_mode == "FULL_AUTO":
+                        status_errors = self._set_claim_system_status(
+                            claim_id=claim_id,
+                            claim_status="RESOLVED",
+                        )
+                        errors.extend(status_errors)
+                        if candidate_signature in full_auto_retry_index:
+                            full_auto_retry_index.pop(candidate_signature)
             except (TypeError, ValueError, SQLAlchemyError) as exc:
                 self._rollback_after_persistence_error(
                     context="relation_create",
@@ -926,12 +1054,20 @@ class _ExtractionRelationPersistenceHelpers(
                             validation_state=effective_candidate.validation_state,
                             validation_reason=effective_candidate.validation_reason,
                             persistability=effective_candidate.persistability,
-                            claim_status="OPEN",
+                            claim_status=(
+                                "NEEDS_MAPPING"
+                                if relation_governance_mode == "FULL_AUTO"
+                                else "OPEN"
+                            ),
                             linked_relation_id=None,
                             metadata=payload,
                         )
                         claim_id = str(recreated_claim.id)
                         relation_claims_count += 1
+                        if relation_governance_mode == "FULL_AUTO":
+                            full_auto_retry_index[candidate_signature] = (
+                                dictionary_fingerprint
+                            )
                         self._enqueue_review_item(
                             entity_type="relation_claim",
                             entity_id=claim_id,
@@ -1037,6 +1173,7 @@ class _ExtractionRelationPersistenceHelpers(
                 "forbidden_relations_count": forbidden_count,
                 "undefined_relations_count": undefined_count,
                 "persistence_failed_count": persistence_failed_count,
+                "full_auto_retry_skipped_count": full_auto_retry_skipped_count,
                 "error_count": len(errors),
             },
         )
@@ -1053,103 +1190,9 @@ class _ExtractionRelationPersistenceHelpers(
             rejected_relation_reasons=tuple(rejected_reasons),
             rejected_relation_details=tuple(rejected_details),
             persistence_failed_count=persistence_failed_count,
+            full_auto_retry_skipped_count=full_auto_retry_skipped_count,
             errors=tuple(errors),
         )
-
-    def _link_claim_to_relation(
-        self,
-        *,
-        claim_id: str,
-        relation_id: str,
-    ) -> list[str]:
-        if self._relation_claims is None:
-            return []
-        try:
-            self._relation_claims.link_relation(
-                claim_id,
-                linked_relation_id=relation_id,
-            )
-        except (TypeError, ValueError, SQLAlchemyError) as exc:
-            self._rollback_after_persistence_error(
-                context="relation_claim_link",
-            )
-            error_code = self._map_relation_write_error_code(exc)
-            return [f"relation_claim_link_failed:{error_code}:{claim_id}:{relation_id}"]
-        return []
-
-    @staticmethod
-    def _map_relation_write_error_code(  # noqa: C901, PLR0911
-        exc: Exception,
-    ) -> str:
-        message = str(exc)
-        if isinstance(exc, IntegrityError) and exc.orig is not None:
-            message = str(exc.orig)
-        normalized = message.strip().lower()
-
-        if "requires evidence but none exists at commit" in normalized:
-            return "relation_requires_evidence"
-        if "not allowed by active relation constraints" in normalized:
-            return "relation_triple_not_allowed"
-        if (
-            "fk_relations_source_space_entities" in normalized
-            or "source_id" in normalized
-            and "does not belong to research_space_id" in normalized
-        ):
-            return "relation_source_cross_space"
-        if (
-            "fk_relations_target_space_entities" in normalized
-            or "target_id" in normalized
-            and "does not belong to research_space_id" in normalized
-        ):
-            return "relation_target_cross_space"
-        if (
-            "fk_relations_relation_type_dictionary" in normalized
-            or "active dictionary_relation_type" in normalized
-        ):
-            return "relation_type_invalid_or_inactive"
-        if (
-            "fk_entities_entity_type_dictionary" in normalized
-            or "active dictionary_entity_type" in normalized
-        ):
-            return "entity_type_invalid_or_inactive"
-        if "uq_relations_canonical_edge" in normalized:
-            return "relation_edge_duplicate"
-        if "foreign key" in normalized:
-            return "relation_foreign_key_violation"
-        if isinstance(exc, ValueError | TypeError):
-            return "relation_payload_invalid"
-        if isinstance(exc, IntegrityError):
-            return "relation_integrity_violation"
-        if isinstance(exc, SQLAlchemyError):
-            return "relation_sqlalchemy_error"
-        return "relation_write_failed"
-
-    def _rollback_after_persistence_error(self, *, context: str) -> None:
-        rollback = self._rollback_on_error
-        if rollback is None:
-            return
-        try:
-            rollback()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed rollback after extraction relation persistence error "
-                "(context=%s): %s",
-                context,
-                exc,
-            )
-
-    @staticmethod
-    def _review_priority_for_candidate(
-        *,
-        candidate: _ResolvedRelationCandidate,
-    ) -> str:
-        if candidate.validation_state in {"FORBIDDEN", "SELF_LOOP"}:
-            return "high"
-        if candidate.validation_state == "UNDEFINED":
-            return "medium"
-        if candidate.confidence < _LOW_CONFIDENCE_REVIEW_THRESHOLD:
-            return "medium"
-        return "low"
 
 
 __all__ = ["RelationPersistenceResult", "_ExtractionRelationPersistenceHelpers"]

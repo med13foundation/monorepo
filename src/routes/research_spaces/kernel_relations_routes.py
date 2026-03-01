@@ -25,6 +25,7 @@ from src.application.services.membership_management_service import (
 from src.database.session import get_session
 from src.domain.entities.kernel.relations import KernelRelation
 from src.domain.entities.user import User
+from src.domain.ports.dictionary_port import DictionaryPort
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
@@ -33,6 +34,7 @@ from src.routes.research_spaces.dependencies import (
     verify_space_membership,
 )
 from src.routes.research_spaces.kernel_dependencies import (
+    get_dictionary_service,
     get_kernel_entity_service,
     get_kernel_relation_claim_service,
     get_kernel_relation_service,
@@ -138,6 +140,68 @@ def _claim_resolution_evidence_summary(claim: object) -> str:
     if claim_id is None:
         return "Promoted from resolved extraction claim."
     return f"Promoted from resolved extraction claim ({claim_id})."
+
+
+def _activate_dictionary_dependencies_for_claim(  # noqa: PLR0913
+    *,
+    dictionary_service: DictionaryPort,
+    source_type: str,
+    relation_type: str,
+    target_type: str,
+    reviewed_by: str,
+    source_ref: str,
+) -> None:
+    source_entity = dictionary_service.get_entity_type(
+        source_type,
+        include_inactive=True,
+    )
+    if source_entity is None:
+        msg = f"Dictionary entity type '{source_type}' not found."
+        raise ValueError(msg)
+    if source_entity.review_status != "ACTIVE":
+        dictionary_service.set_entity_type_review_status(
+            source_type,
+            review_status="ACTIVE",
+            reviewed_by=reviewed_by,
+        )
+
+    target_entity = dictionary_service.get_entity_type(
+        target_type,
+        include_inactive=True,
+    )
+    if target_entity is None:
+        msg = f"Dictionary entity type '{target_type}' not found."
+        raise ValueError(msg)
+    if target_entity.review_status != "ACTIVE":
+        dictionary_service.set_entity_type_review_status(
+            target_type,
+            review_status="ACTIVE",
+            reviewed_by=reviewed_by,
+        )
+
+    relation = dictionary_service.get_relation_type(
+        relation_type,
+        include_inactive=True,
+    )
+    if relation is None:
+        msg = f"Dictionary relation type '{relation_type}' not found."
+        raise ValueError(msg)
+    if relation.review_status != "ACTIVE":
+        dictionary_service.set_relation_type_review_status(
+            relation_type,
+            review_status="ACTIVE",
+            reviewed_by=reviewed_by,
+        )
+
+    dictionary_service.create_relation_constraint(
+        source_type=source_type,
+        relation_type=relation_type,
+        target_type=target_type,
+        is_allowed=True,
+        requires_evidence=True,
+        created_by=reviewed_by,
+        source_ref=source_ref,
+    )
 
 
 def _normalize_filter_values(values: list[str] | None) -> set[str] | None:
@@ -842,6 +906,7 @@ def update_relation_claim_status(
         get_kernel_relation_claim_service,
     ),
     relation_service: KernelRelationService = Depends(get_kernel_relation_service),
+    dictionary_service: DictionaryPort = Depends(get_dictionary_service),
     session: Session = Depends(get_session),
 ) -> KernelRelationClaimResponse:
     require_curator_role(
@@ -870,13 +935,6 @@ def update_relation_claim_status(
                     "Use Needs Mapping or Reject."
                 )
                 raise ValueError(msg)
-            if existing.validation_state != "ALLOWED":
-                msg = (
-                    "Claim cannot be resolved yet because its validation state is "
-                    f"{existing.validation_state}. Use Needs Mapping or update "
-                    "dictionary constraints first."
-                )
-                raise ValueError(msg)
 
             source_entity_id, target_entity_id = _claim_endpoint_entity_ids(existing)
             if source_entity_id is None or target_entity_id is None:
@@ -887,6 +945,16 @@ def update_relation_claim_status(
                 raise ValueError(msg)
 
             try:
+                reviewed_by = str(current_user.id)
+                source_ref = f"relation_claim:{existing.id}"
+                _activate_dictionary_dependencies_for_claim(
+                    dictionary_service=dictionary_service,
+                    source_type=existing.source_type,
+                    relation_type=existing.relation_type,
+                    target_type=existing.target_type,
+                    reviewed_by=reviewed_by,
+                    source_ref=source_ref,
+                )
                 promoted_relation = relation_service.create_relation(
                     research_space_id=str(space_id),
                     source_id=source_entity_id,
@@ -905,8 +973,8 @@ def update_relation_claim_status(
             except ValueError as exc:
                 msg = (
                     "Claim cannot be resolved into a canonical relation because the "
-                    "dictionary currently rejects this triple. Use Needs Mapping and "
-                    "approve the required relation/entity constraints first. "
+                    "dictionary cascade could not complete. Use Needs Mapping for "
+                    "manual curation. "
                     f"Details: {exc!s}"
                 )
                 raise ValueError(msg) from exc

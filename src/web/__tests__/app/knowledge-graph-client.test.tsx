@@ -306,10 +306,20 @@ describe('KnowledgeGraphClient', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
-    fireEvent.click(screen.getByLabelText('ASSOCIATED_WITH'))
+    const associatedWithCheckbox = screen.getByLabelText('ASSOCIATED_WITH')
+    expect(associatedWithCheckbox).toBeChecked()
+    fireEvent.click(associatedWithCheckbox)
 
     await waitFor(() => {
       expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('1')
+    })
+
+    const enableAllButton = screen.getByRole('button', { name: 'Enable all' })
+    expect(enableAllButton).toBeEnabled()
+    fireEvent.click(enableAllButton)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
     })
   })
 

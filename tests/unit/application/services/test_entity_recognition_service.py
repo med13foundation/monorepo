@@ -310,6 +310,8 @@ class SlowExtractionService(StubExtractionService):
 @dataclass(frozen=True)
 class _DictionaryEntityType:
     id: str
+    is_active: bool = True
+    review_status: str = "ACTIVE"
 
 
 @dataclass(frozen=True)
@@ -326,6 +328,8 @@ class _DictionarySynonym:
 @dataclass(frozen=True)
 class _DictionaryRelationType:
     id: str
+    is_active: bool = True
+    review_status: str = "ACTIVE"
 
 
 @dataclass(frozen=True)
@@ -360,7 +364,13 @@ class StubDictionaryService:
         if isinstance(raw_policy, str) and raw_policy.strip():
             self.creation_policies.append(raw_policy.strip().upper())
 
-    def get_entity_type(self, entity_type_id: str) -> _DictionaryEntityType | None:
+    def get_entity_type(
+        self,
+        entity_type_id: str,
+        *,
+        include_inactive: bool = False,
+    ) -> _DictionaryEntityType | None:
+        _ = include_inactive
         return self.entity_types.get(entity_type_id)
 
     def create_entity_type(self, **kwargs: object) -> _DictionaryEntityType:
@@ -370,6 +380,26 @@ class StubDictionaryService:
         self.entity_types[entity_type] = created
         self.created_entity_types += 1
         return created
+
+    def set_entity_type_review_status(
+        self,
+        entity_type_id: str,
+        *,
+        review_status: str,
+        reviewed_by: str,
+    ) -> _DictionaryEntityType:
+        _ = reviewed_by
+        existing = self.entity_types.get(entity_type_id)
+        if existing is None:
+            msg = f"Unknown entity type: {entity_type_id}"
+            raise ValueError(msg)
+        updated = _DictionaryEntityType(
+            id=existing.id,
+            is_active=review_status.upper() == "ACTIVE",
+            review_status=review_status.upper(),
+        )
+        self.entity_types[entity_type_id] = updated
+        return updated
 
     def get_variable(self, variable_id: str) -> _DictionaryVariable | None:
         return self.variables.get(variable_id)
@@ -437,6 +467,26 @@ class StubDictionaryService:
         self.created_relation_types += 1
         self._domain_has_entries = True
         return created
+
+    def set_relation_type_review_status(
+        self,
+        relation_type_id: str,
+        *,
+        review_status: str,
+        reviewed_by: str,
+    ) -> _DictionaryRelationType:
+        _ = reviewed_by
+        existing = self.relation_types.get(relation_type_id)
+        if existing is None:
+            msg = f"Unknown relation type: {relation_type_id}"
+            raise ValueError(msg)
+        updated = _DictionaryRelationType(
+            id=existing.id,
+            is_active=review_status.upper() == "ACTIVE",
+            review_status=review_status.upper(),
+        )
+        self.relation_types[relation_type_id] = updated
+        return updated
 
     def get_constraints(
         self,
