@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
+_EXTRACTION_ENTITY_TYPE_CREATED_BY = "agent:extraction_service"
 
 
 class ExtractionService(_ExtractionRelationPersistenceHelpers):
@@ -52,8 +53,9 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         self._dictionary = dependencies.dictionary_service
         self._governance = dependencies.governance_service or GovernanceService()
         self._review_queue_submitter = dependencies.review_queue_submitter
+        self._rollback_on_error = dependencies.rollback_on_error
 
-    async def extract_from_entity_recognition(  # noqa: PLR0913
+    async def extract_from_entity_recognition(  # noqa: PLR0913, PLR0911
         self,
         *,
         document: SourceDocument,
@@ -218,12 +220,53 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 errors=(governance.reason,),
             )
 
+        primary_entity_type = recognition_contract.primary_entity_type.strip().upper()
+        if not primary_entity_type:
+            logger.warning(
+                "Extraction service missing primary entity type",
+                extra={"document_id": str(document.id), "run_id": run_id},
+            )
+            return build_extraction_outcome(
+                document=document,
+                contract=contract,
+                governance=governance,
+                run_id=run_id,
+                wrote_to_kernel=False,
+                reason="missing_primary_entity_type",
+                extraction_funnel=initial_funnel,
+                errors=("missing_primary_entity_type",),
+            )
+        if not self._ensure_active_primary_entity_type_for_ingestion(
+            entity_type=primary_entity_type,
+            source_ref=f"source_document:{document.id}:extraction_ingestion",
+        ):
+            logger.warning(
+                "Extraction service failed to ensure active primary entity type",
+                extra={
+                    "document_id": str(document.id),
+                    "run_id": run_id,
+                    "entity_type": primary_entity_type,
+                },
+            )
+            return build_extraction_outcome(
+                document=document,
+                contract=contract,
+                governance=governance,
+                run_id=run_id,
+                wrote_to_kernel=False,
+                reason="primary_entity_type_invalid_or_inactive",
+                extraction_funnel=initial_funnel,
+                errors=(
+                    f"primary_entity_type_invalid_or_inactive:{primary_entity_type}",
+                ),
+            )
+
         pipeline_records = self._build_pipeline_records(
             contract=contract,
             document=document,
             raw_record=raw_record,
             run_id=run_id,
-            primary_entity_type=recognition_contract.primary_entity_type,
+            primary_entity_type=primary_entity_type,
         )
         logger.info(
             "Extraction pipeline records built",
@@ -425,6 +468,67 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             return {}
         return {str(key): to_json_value(value) for key, value in raw_record.items()}
 
+    def _ensure_active_primary_entity_type_for_ingestion(  # noqa: PLR0911
+        self,
+        *,
+        entity_type: str,
+        source_ref: str,
+    ) -> bool:
+        dictionary = self._dictionary
+        if dictionary is None:
+            return False
+
+        normalized = entity_type.strip().upper()
+        if not normalized:
+            return False
+
+        existing = dictionary.get_entity_type(
+            normalized,
+            include_inactive=True,
+        )
+        if existing is not None:
+            if existing.is_active and existing.review_status == "ACTIVE":
+                return True
+            try:
+                dictionary.set_entity_type_review_status(
+                    normalized,
+                    review_status="ACTIVE",
+                    reviewed_by=_EXTRACTION_ENTITY_TYPE_CREATED_BY,
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "Failed to activate extraction primary entity type=%s (%s)",
+                    normalized,
+                    exc,
+                )
+                return False
+            return dictionary.get_entity_type(normalized) is not None
+
+        creation_settings: ResearchSpaceSettings = {
+            "dictionary_agent_creation_policy": "ACTIVE",
+        }
+        try:
+            dictionary.create_entity_type(
+                entity_type=normalized,
+                display_name=normalized.replace("_", " ").title(),
+                description=(
+                    "Auto-created entity type for extraction ingestion "
+                    "primary-entity persistence."
+                ),
+                domain_context="general",
+                created_by=_EXTRACTION_ENTITY_TYPE_CREATED_BY,
+                source_ref=source_ref,
+                research_space_settings=creation_settings,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "Failed to create extraction primary entity type=%s (%s)",
+                normalized,
+                exc,
+            )
+            return False
+        return dictionary.get_entity_type(normalized) is not None
+
     @staticmethod
     def _resolve_run_id(contract: ExtractionContract) -> str | None:
         run_id = contract.agent_run_id
@@ -456,6 +560,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         run_id: str | None,
         primary_entity_type: str,
     ) -> list[RawRecord]:
+        normalized_primary_entity_type = primary_entity_type.strip().upper()
         payloads = contract.pipeline_payloads or [raw_record]
         records: list[RawRecord] = []
         for index, payload in enumerate(payloads):
@@ -466,7 +571,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             )
             metadata: JSONObject = {
                 "type": document.source_type.value,
-                "entity_type": primary_entity_type,
+                "entity_type": normalized_primary_entity_type,
                 "source_document_id": str(document.id),
                 "source_record_id": source_record_id,
                 "extraction_decision": contract.decision,

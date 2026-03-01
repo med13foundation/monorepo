@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
+
 from src.application.agents.services._graph_connection_fallback_helpers import (
     build_seed_neighbourhood_fallback_relations,
     resolve_relations_for_persistence,
@@ -82,6 +84,7 @@ class GraphConnectionService:
         *,
         research_space_id: str,
         seed_entity_id: str,
+        source_id: str | None = None,
         source_type: str = "clinvar",
         research_space_settings: ResearchSpaceSettings | None = None,
         model_id: str | None = None,
@@ -103,6 +106,16 @@ class GraphConnectionService:
             seed_entity_id=resolved_seed_entity_id,
             source_type=source_type,
             research_space_id=resolved_research_space_id,
+            source_id=(
+                source_id.strip()
+                if isinstance(source_id, str) and source_id.strip()
+                else None
+            ),
+            pipeline_run_id=(
+                pipeline_run_id.strip()
+                if isinstance(pipeline_run_id, str) and pipeline_run_id.strip()
+                else None
+            ),
             research_space_settings=resolved_settings or {},
             relation_types=relation_types,
             max_depth=max_depth,
@@ -250,8 +263,10 @@ class GraphConnectionService:
                         "relation_target_id": relation.target_id,
                     },
                 )
-            except (TypeError, ValueError) as exc:
-                persistence_errors.append(str(exc))
+            except (TypeError, ValueError, IntegrityError) as exc:
+                persistence_errors.append(
+                    self._map_relation_persistence_error_code(exc),
+                )
                 logger.warning(
                     "Graph relation persistence failed",
                     extra={
@@ -262,6 +277,7 @@ class GraphConnectionService:
                         "relation_type": normalized_relation_type,
                         "relation_source_id": relation.source_id,
                         "relation_target_id": relation.target_id,
+                        "error_code": self._map_relation_persistence_error_code(exc),
                         "error": str(exc),
                     },
                 )
@@ -370,6 +386,51 @@ class GraphConnectionService:
                 continue
             relation_types.append(normalized)
         return tuple(relation_types) if relation_types else None
+
+    @staticmethod
+    def _map_relation_persistence_error_code(  # noqa: C901, PLR0911
+        exc: Exception,
+    ) -> str:
+        message = str(exc)
+        if isinstance(exc, IntegrityError) and exc.orig is not None:
+            message = str(exc.orig)
+        normalized = message.strip().lower()
+
+        if "requires evidence but none exists at commit" in normalized:
+            return "relation_requires_evidence"
+        if "not allowed by active relation constraints" in normalized:
+            return "relation_triple_not_allowed"
+        if (
+            "fk_relations_source_space_entities" in normalized
+            or "source_id" in normalized
+            and "does not belong to research_space_id" in normalized
+        ):
+            return "relation_source_cross_space"
+        if (
+            "fk_relations_target_space_entities" in normalized
+            or "target_id" in normalized
+            and "does not belong to research_space_id" in normalized
+        ):
+            return "relation_target_cross_space"
+        if (
+            "fk_relations_relation_type_dictionary" in normalized
+            or "active dictionary_relation_type" in normalized
+        ):
+            return "relation_type_invalid_or_inactive"
+        if (
+            "fk_entities_entity_type_dictionary" in normalized
+            or "active dictionary_entity_type" in normalized
+        ):
+            return "entity_type_invalid_or_inactive"
+        if "uq_relations_canonical_edge" in normalized:
+            return "relation_edge_duplicate"
+        if "foreign key" in normalized:
+            return "relation_foreign_key_violation"
+        if isinstance(exc, ValueError | TypeError):
+            return "relation_payload_invalid"
+        if isinstance(exc, IntegrityError):
+            return "relation_integrity_violation"
+        return "relation_persistence_failed"
 
     def _submit_review_item(
         self,

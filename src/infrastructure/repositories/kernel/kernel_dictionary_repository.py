@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from src.domain.entities.kernel.dictionary import (
     DictionaryChangelog,
     DictionaryEntityType,
+    DictionaryRelationSynonym,
     DictionaryRelationType,
     DictionarySearchResult,
     EntityResolutionPolicy,
@@ -46,6 +47,7 @@ from src.models.database.kernel.dictionary import (
     DictionaryDataTypeModel,
     DictionaryDomainContextModel,
     DictionaryEntityTypeModel,
+    DictionaryRelationSynonymModel,
     DictionaryRelationTypeModel,
     DictionarySensitivityLevelModel,
     EntityResolutionPolicyModel,
@@ -1134,6 +1136,208 @@ class SqlAlchemyDictionaryRepository(
     ) -> DictionaryRelationType:
         return self.set_relation_type_review_status(
             relation_type_id,
+            review_status="REVOKED",
+            reviewed_by=reviewed_by,
+            revocation_reason=reason,
+        )
+
+    def resolve_relation_synonym(
+        self,
+        synonym: str,
+        *,
+        include_inactive: bool = False,
+    ) -> DictionaryRelationType | None:
+        normalized_synonym = synonym.strip().upper()
+        if not normalized_synonym:
+            return None
+        stmt = (
+            select(DictionaryRelationTypeModel)
+            .join(
+                DictionaryRelationSynonymModel,
+                DictionaryRelationSynonymModel.relation_type
+                == DictionaryRelationTypeModel.id,
+            )
+            .where(
+                DictionaryRelationSynonymModel.synonym == normalized_synonym,
+            )
+        )
+        if not include_inactive:
+            stmt = stmt.where(
+                and_(
+                    DictionaryRelationSynonymModel.review_status == "ACTIVE",
+                    DictionaryRelationSynonymModel.is_active.is_(True),
+                    DictionaryRelationTypeModel.review_status == "ACTIVE",
+                    DictionaryRelationTypeModel.is_active.is_(True),
+                ),
+            )
+        stmt = stmt.order_by(
+            DictionaryRelationSynonymModel.id.asc(),
+            DictionaryRelationTypeModel.id.asc(),
+        )
+        model = self._session.scalars(stmt).first()
+        return (
+            DictionaryRelationType.model_validate(model) if model is not None else None
+        )
+
+    def create_relation_synonym(  # noqa: C901, PLR0913
+        self,
+        *,
+        relation_type_id: str,
+        synonym: str,
+        source: str | None = None,
+        created_by: str = "seed",
+        source_ref: str | None = None,
+        review_status: ReviewStatus = "ACTIVE",
+    ) -> DictionaryRelationSynonym:
+        normalized_relation_type = relation_type_id.strip().upper()
+        if not normalized_relation_type:
+            msg = "relation_type_id is required"
+            raise ValueError(msg)
+        if (
+            self._session.get(DictionaryRelationTypeModel, normalized_relation_type)
+            is None
+        ):
+            msg = f"Relation type '{relation_type_id}' not found"
+            raise ValueError(msg)
+
+        normalized_synonym = synonym.strip().upper()
+        if not normalized_synonym:
+            msg = "synonym is required"
+            raise ValueError(msg)
+
+        normalized_source = source.strip() if isinstance(source, str) else source
+        if normalized_source == "":
+            normalized_source = None
+        if isinstance(normalized_source, str):
+            normalized_source = normalized_source[:64]
+
+        conflicting_synonym_stmt = select(DictionaryRelationSynonymModel).where(
+            DictionaryRelationSynonymModel.synonym == normalized_synonym,
+            DictionaryRelationSynonymModel.relation_type != normalized_relation_type,
+            DictionaryRelationSynonymModel.is_active.is_(True),
+        )
+        conflicting_synonym = self._session.scalars(conflicting_synonym_stmt).first()
+        if conflicting_synonym is not None:
+            msg = (
+                f"Synonym '{normalized_synonym}' is already mapped to relation type "
+                f"'{conflicting_synonym.relation_type}'"
+            )
+            raise ValueError(msg)
+
+        existing_stmt = select(DictionaryRelationSynonymModel).where(
+            DictionaryRelationSynonymModel.relation_type == normalized_relation_type,
+            DictionaryRelationSynonymModel.synonym == normalized_synonym,
+        )
+        existing = self._session.scalars(existing_stmt).first()
+        if existing is not None:
+            return DictionaryRelationSynonym.model_validate(existing)
+
+        model = DictionaryRelationSynonymModel(
+            relation_type=normalized_relation_type,
+            synonym=normalized_synonym,
+            source=normalized_source,
+            created_by=created_by,
+            source_ref=source_ref,
+            review_status=review_status,
+        )
+        try:
+            self._session.add(model)
+            self._session.flush()
+        except IntegrityError as exc:
+            self._session.rollback()
+            existing_after_conflict = self._session.scalars(existing_stmt).first()
+            if existing_after_conflict is not None:
+                return DictionaryRelationSynonym.model_validate(existing_after_conflict)
+            conflicting_after_conflict = self._session.scalars(
+                conflicting_synonym_stmt,
+            ).first()
+            if conflicting_after_conflict is not None:
+                msg = (
+                    f"Synonym '{normalized_synonym}' is already mapped to relation type "
+                    f"'{conflicting_after_conflict.relation_type}'"
+                )
+                raise ValueError(msg) from exc
+            raise
+        self._record_change(
+            table_name=DictionaryRelationSynonymModel.__tablename__,
+            record_id=str(model.id),
+            action="CREATE",
+            before_snapshot=None,
+            after_snapshot=_snapshot_model(model),
+            changed_by=created_by,
+            source_ref=source_ref,
+        )
+        return DictionaryRelationSynonym.model_validate(model)
+
+    def find_relation_synonyms(
+        self,
+        *,
+        relation_type_id: str | None = None,
+        include_inactive: bool = False,
+    ) -> list[DictionaryRelationSynonym]:
+        stmt = select(DictionaryRelationSynonymModel)
+        if relation_type_id is not None:
+            normalized_relation_type = relation_type_id.strip().upper()
+            stmt = stmt.where(
+                DictionaryRelationSynonymModel.relation_type
+                == normalized_relation_type,
+            )
+        if not include_inactive:
+            stmt = stmt.where(DictionaryRelationSynonymModel.is_active.is_(True))
+        stmt = stmt.order_by(
+            DictionaryRelationSynonymModel.relation_type.asc(),
+            DictionaryRelationSynonymModel.synonym.asc(),
+            DictionaryRelationSynonymModel.id.asc(),
+        )
+        models = self._session.scalars(stmt).all()
+        return [DictionaryRelationSynonym.model_validate(model) for model in models]
+
+    def set_relation_synonym_review_status(
+        self,
+        synonym_id: int,
+        *,
+        review_status: ReviewStatus,
+        reviewed_by: str | None = None,
+        revocation_reason: str | None = None,
+    ) -> DictionaryRelationSynonym:
+        model = self._session.get(DictionaryRelationSynonymModel, synonym_id)
+        if model is None:
+            msg = f"Relation synonym '{synonym_id}' not found"
+            raise ValueError(msg)
+
+        before_snapshot = _snapshot_model(model)
+        model.review_status = review_status
+        model.reviewed_by = reviewed_by
+        model.reviewed_at = datetime.now(UTC)
+        if review_status == "REVOKED":
+            model.is_active = False
+            model.valid_to = datetime.now(UTC)
+            model.revocation_reason = revocation_reason
+        else:
+            model.is_active = True
+            model.valid_to = None
+            model.revocation_reason = None
+        self._session.flush()
+        self._record_change(
+            table_name=DictionaryRelationSynonymModel.__tablename__,
+            record_id=str(model.id),
+            action="REVOKE" if review_status == "REVOKED" else "UPDATE",
+            before_snapshot=before_snapshot,
+            after_snapshot=_snapshot_model(model),
+            changed_by=reviewed_by,
+            source_ref=model.source_ref,
+        )
+        return DictionaryRelationSynonym.model_validate(model)
+
+    def revoke_relation_synonym(
+        self,
+        synonym_id: int,
+        *,
+        reason: str,
+        reviewed_by: str | None = None,
+    ) -> DictionaryRelationSynonym:
+        return self.set_relation_synonym_review_status(
+            synonym_id,
             review_status="REVOKED",
             reviewed_by=reviewed_by,
             revocation_reason=reason,

@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         EntityRecognitionService,
     )
     from src.application.agents.services.graph_connection_service import (
+        GraphConnectionOutcome,
         GraphConnectionService,
     )
     from src.application.agents.services.graph_search_service import (
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
         IngestionSchedulingService,
         MembershipManagementService,
     )
+    from src.domain.agents.contracts.graph_connection import ProposedRelation
     from src.domain.entities.user import User
 
 
@@ -145,7 +147,48 @@ def get_pipeline_orchestration_service(
     session: Session = Depends(get_session),
 ) -> PipelineOrchestrationService:
     """Dependency provider for unified pipeline orchestration."""
+    from src.database.session import SessionLocal, set_session_rls_context
+    from src.infrastructure.dependency_injection.dependencies import (
+        get_legacy_dependency_container,
+    )
     from src.infrastructure.repositories import SqlAlchemyResearchSpaceRepository
+
+    container = get_legacy_dependency_container()
+
+    async def run_graph_seed_isolated_uow(  # noqa: PLR0913
+        *,
+        source_id: str,
+        research_space_id: str,
+        seed_entity_id: str,
+        source_type: str,
+        model_id: str | None,
+        relation_types: list[str] | None,
+        max_depth: int,
+        shadow_mode: bool | None,
+        pipeline_run_id: str | None,
+        fallback_relations: tuple[ProposedRelation, ...] | None,
+    ) -> GraphConnectionOutcome:
+        isolated_session = SessionLocal()
+        set_session_rls_context(isolated_session, bypass_rls=False)
+        isolated_graph_service = container.create_graph_connection_service(
+            isolated_session,
+        )
+        try:
+            return await isolated_graph_service.discover_connections_for_seed(
+                research_space_id=research_space_id,
+                seed_entity_id=seed_entity_id,
+                source_id=source_id,
+                source_type=source_type,
+                model_id=model_id,
+                relation_types=relation_types,
+                max_depth=max_depth,
+                shadow_mode=shadow_mode,
+                pipeline_run_id=pipeline_run_id,
+                fallback_relations=fallback_relations,
+            )
+        finally:
+            await isolated_graph_service.close()
+            isolated_session.close()
 
     return PipelineOrchestrationService(
         dependencies=PipelineOrchestrationDependencies(
@@ -153,6 +196,7 @@ def get_pipeline_orchestration_service(
             content_enrichment_service=content_enrichment_service,
             entity_recognition_service=entity_recognition_service,
             graph_connection_service=graph_connection_service,
+            graph_connection_seed_runner=run_graph_seed_isolated_uow,
             graph_search_service=graph_search_service,
             research_space_repository=SqlAlchemyResearchSpaceRepository(session),
             pipeline_run_repository=scheduling_service.get_job_repository(),

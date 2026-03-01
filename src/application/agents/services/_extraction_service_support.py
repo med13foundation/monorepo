@@ -55,6 +55,7 @@ class ExtractionServiceDependencies:
     dictionary_service: DictionaryPort | None = None
     governance_service: GovernanceService | None = None
     review_queue_submitter: Callable[[str, str, str | None, str], None] | None = None
+    rollback_on_error: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)

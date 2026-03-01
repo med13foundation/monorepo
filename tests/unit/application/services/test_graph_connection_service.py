@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from src.application.agents.services.governance_service import (
     GovernancePolicy,
@@ -72,6 +73,22 @@ class StubRelationRepository:
     ) -> list[_StubNeighbourhoodRelation]:
         _ = entity_id, depth, relation_types
         return list(self.neighbourhood)
+
+
+class FailingRelationRepository(StubRelationRepository):
+    """Relation repository stub that raises deterministic DB integrity errors."""
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        statement = "INSERT INTO relations (...)"
+        raise IntegrityError(
+            statement,
+            {},
+            Exception(
+                "relation triple (GENE -> ASSOCIATED_WITH -> PHENOTYPE) is not "
+                "allowed by ACTIVE relation constraints",
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -207,6 +224,32 @@ async def test_discover_connections_for_seed_writes_relations() -> None:
     assert outcome.wrote_to_graph is True
     assert outcome.persisted_relations_count == 1
     assert len(relation_repository.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_connections_for_seed_maps_integrity_errors_to_codes() -> None:
+    contract = _build_contract()
+    relation_repository = FailingRelationRepository()
+    service = GraphConnectionService(
+        dependencies=GraphConnectionServiceDependencies(
+            graph_connection_agent=StubGraphConnectionAgent(contract),
+            relation_repository=relation_repository,
+            governance_service=_build_governance_service(),
+        ),
+    )
+
+    outcome = await service.discover_connections_for_seed(
+        research_space_id=contract.research_space_id,
+        seed_entity_id=contract.seed_entity_id,
+        source_type="clinvar",
+        research_space_settings={},
+        shadow_mode=False,
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.reason == "relation_persistence_failed"
+    assert outcome.persisted_relations_count == 0
+    assert outcome.errors == ("relation_triple_not_allowed",)
 
 
 @pytest.mark.asyncio

@@ -204,6 +204,7 @@ class ApplicationServiceFactoryMixin(
                 dictionary_service=dictionary_service,
                 governance_service=governance_service,
                 review_queue_submitter=self._build_review_queue_submitter(session),
+                rollback_on_error=session.rollback,
             ),
         )
 
@@ -246,6 +247,7 @@ class ApplicationServiceFactoryMixin(
                 dictionary_service=dictionary_service,
                 governance_service=GovernanceService(),
                 review_queue_submitter=self._build_review_queue_submitter(session),
+                rollback_on_error=session.rollback,
             ),
         )
 

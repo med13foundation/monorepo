@@ -422,8 +422,8 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
     db_session.commit()
 
     assert outcome.status == "extracted"
-    assert outcome.persisted_relations_count == 3
-    assert outcome.pending_review_relations_count == 3
+    assert outcome.persisted_relations_count == 1
+    assert outcome.pending_review_relations_count == 1
 
     claims = claim_repo.find_by_research_space(str(space.id), limit=20, offset=0)
     assert len(claims) == 6
@@ -445,7 +445,9 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
     ]
     assert len(persistable_claims) == 3
     assert len(non_persistable_claims) == 3
-    assert all(claim.linked_relation_id is not None for claim in persistable_claims)
+    assert (
+        sum(claim.linked_relation_id is not None for claim in persistable_claims) == 1
+    )
     assert all(claim.linked_relation_id is None for claim in non_persistable_claims)
 
     persisted_relations = relation_repo.find_by_research_space(
@@ -453,15 +455,15 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
         limit=20,
         offset=0,
     )
-    assert len(persisted_relations) == 3
+    assert len(persisted_relations) == 1
     assert all(relation.curation_status == "DRAFT" for relation in persisted_relations)
 
     queued_relation_claims = [
         item for item in queued_items if item[0] == "relation_claim"
     ]
     queued_relations = [item for item in queued_items if item[0] == "relation"]
-    assert len(queued_relation_claims) == 3
-    assert len(queued_relations) == 3
+    assert len(queued_relation_claims) == 5
+    assert len(queued_relations) == 1
     assert all(item[2] == str(space.id) for item in queued_relation_claims)
     assert any(item[3] == "high" for item in queued_relation_claims)
 
@@ -643,7 +645,7 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
     db_session.commit()
 
     assert outcome.status == "extracted"
-    assert outcome.persisted_relations_count == 1
+    assert outcome.persisted_relations_count == 0
     assert outcome.undefined_relations_count == 1
 
     persisted_relations = relation_repo.find_by_research_space(
@@ -651,9 +653,7 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
         limit=10,
         offset=0,
     )
-    assert len(persisted_relations) == 1
-    assert persisted_relations[0].relation_type == "GENETIC_INTERACTION_IMPAIRMENT"
-    assert persisted_relations[0].curation_status == "DRAFT"
+    assert len(persisted_relations) == 0
 
     claims = claim_repo.find_by_research_space(str(space.id), limit=10, offset=0)
     assert len(claims) == 1

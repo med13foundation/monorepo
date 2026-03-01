@@ -93,6 +93,18 @@ class KernelRelationClaimService:
             triaged_by=triaged_by,
         )
 
+    def link_claim_to_relation(
+        self,
+        claim_id: str,
+        *,
+        linked_relation_id: str,
+    ) -> KernelRelationClaim:
+        """Attach one claim to a canonical relation."""
+        return self._claims.link_relation(
+            claim_id,
+            linked_relation_id=linked_relation_id,
+        )
+
     @staticmethod
     def normalize_status_alias(
         value: str,

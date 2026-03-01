@@ -163,7 +163,7 @@ wheels = [
 [[package]]
 name = "artana-kernel"
 version = "0.1.0"
-source = { git = "https://github.com/aandresalvarez/artana-kernel.git?rev=main#7f84e74d9818b72e9a81e2111972f48f31710601" }
+source = { git = "https://github.com/aandresalvarez/artana-kernel.git?rev=main#553ea6d87c0c5a26e5f2878219dbad368ffd04f8" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "asyncpg" },

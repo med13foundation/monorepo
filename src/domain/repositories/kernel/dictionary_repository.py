@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from src.domain.entities.kernel.dictionary import (
         DictionaryChangelog,
         DictionaryEntityType,
+        DictionaryRelationSynonym,
         DictionaryRelationType,
         DictionarySearchResult,
         EntityResolutionPolicy,
@@ -364,6 +365,58 @@ class DictionaryRepository(ABC):
         reviewed_by: str | None = None,
     ) -> DictionaryRelationType:
         """Revoke a dictionary relation type with a mandatory reason."""
+
+    @abstractmethod
+    def resolve_relation_synonym(
+        self,
+        synonym: str,
+        *,
+        include_inactive: bool = False,
+    ) -> DictionaryRelationType | None:
+        """Resolve a relation-type synonym to its canonical relation type."""
+
+    @abstractmethod
+    def create_relation_synonym(  # noqa: PLR0913
+        self,
+        *,
+        relation_type_id: str,
+        synonym: str,
+        source: str | None = None,
+        created_by: str = "seed",
+        source_ref: str | None = None,
+        review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE",
+    ) -> DictionaryRelationSynonym:
+        """Create a relation-type synonym entry."""
+
+    @abstractmethod
+    def find_relation_synonyms(
+        self,
+        *,
+        relation_type_id: str | None = None,
+        include_inactive: bool = False,
+    ) -> list[DictionaryRelationSynonym]:
+        """List relation-type synonyms, optionally filtered by canonical type."""
+
+    @abstractmethod
+    def set_relation_synonym_review_status(
+        self,
+        synonym_id: int,
+        *,
+        review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"],
+        reviewed_by: str | None = None,
+        revocation_reason: str | None = None,
+    ) -> DictionaryRelationSynonym:
+        """Set review state and metadata for a relation-type synonym."""
+
+    @abstractmethod
+    def revoke_relation_synonym(
+        self,
+        synonym_id: int,
+        *,
+        reason: str,
+        reviewed_by: str | None = None,
+    ) -> DictionaryRelationSynonym:
+        """Revoke a relation-type synonym with a mandatory reason."""
 
     @abstractmethod
     def find_changelog_entries(

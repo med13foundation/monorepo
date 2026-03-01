@@ -12,6 +12,7 @@ from src.domain.entities.kernel.dictionary import DictionarySearchResult
 from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.models.database.kernel.dictionary import (
     DictionaryEntityTypeModel,
+    DictionaryRelationSynonymModel,
     DictionaryRelationTypeModel,
     RelationConstraintModel,
     VariableDefinitionModel,
@@ -408,7 +409,7 @@ def _search_entity_types(  # noqa: PLR0913
             )
 
 
-def _search_relation_types(  # noqa: PLR0913
+def _search_relation_types(  # noqa: C901, PLR0912, PLR0913
     session: Session,
     *,
     terms: list[str],
@@ -431,8 +432,31 @@ def _search_relation_types(  # noqa: PLR0913
             DictionaryRelationTypeModel.domain_context.in_(domain_context_scope),
         )
     rows = session.scalars(stmt).all()
+    if not rows:
+        return
+    relation_type_ids = [row.id for row in rows]
+    synonym_stmt = select(DictionaryRelationSynonymModel)
+    if relation_type_ids:
+        synonym_stmt = synonym_stmt.where(
+            DictionaryRelationSynonymModel.relation_type.in_(relation_type_ids),
+        )
+    if not include_inactive:
+        synonym_stmt = synonym_stmt.where(
+            and_(
+                DictionaryRelationSynonymModel.review_status == "ACTIVE",
+                DictionaryRelationSynonymModel.is_active.is_(True),
+            ),
+        )
+    synonym_rows = session.scalars(synonym_stmt).all()
+    synonyms_by_relation_type: dict[str, list[str]] = {}
+    for synonym_row in synonym_rows:
+        synonyms_by_relation_type.setdefault(synonym_row.relation_type, []).append(
+            synonym_row.synonym,
+        )
 
     for row in rows:
+        relation_synonyms = synonyms_by_relation_type.get(row.id, [])
+        relation_synonym_keys = [synonym.casefold() for synonym in relation_synonyms]
         for term in terms:
             exact_fields = [row.id.casefold(), row.display_name.casefold()]
             if term in exact_fields:
@@ -449,6 +473,26 @@ def _search_relation_types(  # noqa: PLR0913
                         metadata={
                             "is_directional": row.is_directional,
                             "inverse_label": row.inverse_label,
+                        },
+                    ),
+                )
+                continue
+
+            if term in relation_synonym_keys:
+                _upsert_search_result(
+                    result_map,
+                    DictionarySearchResult(
+                        dimension="relation_types",
+                        entry_id=str(row.id),
+                        display_name=str(row.display_name),
+                        description=str(row.description),
+                        domain_context=str(row.domain_context),
+                        match_method="synonym",
+                        similarity_score=1.0,
+                        metadata={
+                            "is_directional": row.is_directional,
+                            "inverse_label": row.inverse_label,
+                            "synonyms": relation_synonyms,
                         },
                     ),
                 )

@@ -428,17 +428,10 @@ class _EntityRecognitionBootstrapHelpers:
             normalized["notification_frequency"] = settings["notification_frequency"]
         if "custom" in settings and isinstance(settings["custom"], dict):
             normalized["custom"] = dict(settings["custom"])
-        creation_policy = settings.get("dictionary_agent_creation_policy")
-        if isinstance(creation_policy, str):
-            normalized_policy = creation_policy.strip().upper()
-            if normalized_policy == "ACTIVE":
-                normalized["dictionary_agent_creation_policy"] = "ACTIVE"
-            elif normalized_policy == "PENDING_REVIEW":
-                normalized["dictionary_agent_creation_policy"] = "PENDING_REVIEW"
-            else:
-                normalized["dictionary_agent_creation_policy"] = "PENDING_REVIEW"
-        else:
-            normalized["dictionary_agent_creation_policy"] = "PENDING_REVIEW"
+        # Bootstrap entries are required for immediate kernel writes in the same run.
+        # Keep them ACTIVE regardless of space-level agent-creation policy so
+        # dictionary hard guarantees and runtime ingestion remain compatible.
+        normalized["dictionary_agent_creation_policy"] = "ACTIVE"
         return normalized
 
     @staticmethod

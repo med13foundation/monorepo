@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from src.domain.entities.kernel.dictionary import (
         DictionaryChangelog,
         DictionaryEntityType,
+        DictionaryRelationSynonym,
         DictionaryRelationType,
         DictionarySearchResult,
         EntityResolutionPolicy,
@@ -1214,6 +1215,111 @@ class DictionaryManagementService(DictionaryPort):
         """Convenience operation for revoking a relation type."""
         return self.set_relation_type_review_status(
             relation_type_id,
+            review_status="REVOKED",
+            reviewed_by=reviewed_by,
+            revocation_reason=reason,
+        )
+
+    def resolve_relation_synonym(
+        self,
+        synonym: str,
+        *,
+        include_inactive: bool = False,
+    ) -> DictionaryRelationType | None:
+        """Resolve a relation synonym to its canonical relation type."""
+        return self._dictionary.resolve_relation_synonym(
+            synonym,
+            include_inactive=include_inactive,
+        )
+
+    def create_relation_synonym(  # noqa: PLR0913
+        self,
+        *,
+        relation_type_id: str,
+        synonym: str,
+        source: str | None = None,
+        created_by: str,
+        source_ref: str | None = None,
+        research_space_settings: ResearchSpaceSettings | None = None,
+    ) -> DictionaryRelationSynonym:
+        """Create a synonym entry for a relation type."""
+        created_by_normalized = self._normalize_created_by(created_by)
+        relation_type = self._dictionary.get_relation_type(
+            relation_type_id,
+            include_inactive=True,
+        )
+        if relation_type is None:
+            msg = f"Relation type '{relation_type_id}' not found"
+            raise ValueError(msg)
+
+        initial_review_status = self._resolve_agent_creation_review_status(
+            created_by=created_by_normalized,
+            research_space_settings=research_space_settings,
+        )
+        return self._dictionary.create_relation_synonym(
+            relation_type_id=relation_type_id,
+            synonym=synonym,
+            source=source,
+            created_by=created_by_normalized,
+            source_ref=source_ref,
+            review_status=initial_review_status,
+        )
+
+    def list_relation_synonyms(
+        self,
+        *,
+        relation_type_id: str | None = None,
+        include_inactive: bool = False,
+    ) -> list[DictionaryRelationSynonym]:
+        """List relation-type synonyms."""
+        return self._dictionary.find_relation_synonyms(
+            relation_type_id=relation_type_id,
+            include_inactive=include_inactive,
+        )
+
+    def set_relation_synonym_review_status(
+        self,
+        synonym_id: int,
+        *,
+        review_status: ReviewStatus,
+        reviewed_by: str,
+        revocation_reason: str | None = None,
+    ) -> DictionaryRelationSynonym:
+        """Set review state for a relation-type synonym."""
+        reviewed_by_normalized = reviewed_by.strip()
+        if not reviewed_by_normalized:
+            msg = "reviewed_by is required"
+            raise ValueError(msg)
+
+        target_status = self._normalize_review_status(review_status)
+        if target_status == "REVOKED":
+            if revocation_reason is None or not revocation_reason.strip():
+                msg = "revocation_reason is required when setting REVOKED status"
+                raise ValueError(msg)
+            normalized_reason: str | None = revocation_reason.strip()
+        elif revocation_reason is not None:
+            msg = "revocation_reason is only valid for REVOKED status"
+            raise ValueError(msg)
+        else:
+            normalized_reason = None
+
+        return self._dictionary.set_relation_synonym_review_status(
+            synonym_id,
+            review_status=target_status,
+            reviewed_by=reviewed_by_normalized,
+            revocation_reason=normalized_reason,
+        )
+
+    def revoke_relation_synonym(
+        self,
+        synonym_id: int,
+        *,
+        reason: str,
+        reviewed_by: str,
+    ) -> DictionaryRelationSynonym:
+        """Convenience operation for revoking a relation-type synonym."""
+        return self.set_relation_synonym_review_status(
+            synonym_id,
             review_status="REVOKED",
             reviewed_by=reviewed_by,
             revocation_reason=reason,

@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, Index, String
+from sqlalchemy import ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -45,6 +45,7 @@ class EntityModel(Base):
     )
     entity_type: Mapped[str] = mapped_column(
         String(64),
+        ForeignKey("dictionary_entity_types.id"),
         nullable=False,
         index=True,
         doc="Entity type, e.g. GENE, VARIANT, PATIENT",
@@ -71,6 +72,11 @@ class EntityModel(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "research_space_id",
+            name="uq_entities_id_space",
+        ),
         Index("idx_entities_space_type", "research_space_id", "entity_type"),
         Index("idx_entities_created_at", "created_at"),
         {"comment": "Generic graph nodes (entities) for all domain types"},

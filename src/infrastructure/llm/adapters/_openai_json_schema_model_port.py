@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from typing import TYPE_CHECKING, TypeVar
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 if TYPE_CHECKING:
     from artana.ports.model import ModelRequest, ModelResult
@@ -15,6 +17,7 @@ if TYPE_CHECKING:
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 OutputT = TypeVar("OutputT", bound=BaseModel)
+logger = logging.getLogger(__name__)
 
 
 def resolve_configured_openai_api_key() -> str | None:
@@ -83,6 +86,49 @@ def _extract_prompt(request: object) -> str:
         return joined_messages
 
     return ""
+
+
+def _resolve_step_key(request: object) -> str | None:
+    raw_step_key = getattr(request, "step_key", None)
+    if isinstance(raw_step_key, str):
+        normalized = raw_step_key.strip()
+        if normalized:
+            return normalized
+
+    metadata = getattr(request, "metadata", None)
+    if isinstance(metadata, dict):
+        metadata_step_key = metadata.get("step_key")
+        if isinstance(metadata_step_key, str):
+            normalized_metadata_step_key = metadata_step_key.strip()
+            if normalized_metadata_step_key:
+                return normalized_metadata_step_key
+
+    return None
+
+
+def _extract_openai_request_id(response: httpx.Response | None) -> str | None:
+    if response is None:
+        return None
+    for header_name in ("x-request-id", "openai-request-id"):
+        request_id = response.headers.get(header_name)
+        if not isinstance(request_id, str):
+            continue
+        normalized = request_id.strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.perf_counter() - started_at) * 1000)
+
+
+def _raise_type_error(message: str) -> None:
+    raise TypeError(message)
+
+
+def _raise_value_error(message: str) -> None:
+    raise ValueError(message)
 
 
 def _normalize_openai_json_schema_node(node: object) -> object:
@@ -167,10 +213,11 @@ class OpenAIJSONSchemaModelPort:
             await self._client.aclose()
             self._client = None
 
-    async def complete(
+    async def complete(  # noqa: C901, PLR0915
         self,
         request: ModelRequest[OutputT],
     ) -> ModelResult[OutputT]:
+        started_at = time.perf_counter()
         api_key = self._resolve_openai_api_key()
         if api_key is None:
             msg = "OPENAI_API_KEY (or ARTANA_OPENAI_API_KEY) is not configured."
@@ -181,6 +228,8 @@ class OpenAIJSONSchemaModelPort:
         if not prompt:
             msg = "Artana model request is missing prompt/messages content."
             raise ValueError(msg)
+        step_key = _resolve_step_key(request)
+        prompt_size = len(prompt)
 
         requested_model = str(request.model or self._default_model)
         openai_model = _normalize_openai_model_id(requested_model)
@@ -201,35 +250,107 @@ class OpenAIJSONSchemaModelPort:
         }
 
         client = await self._http_client()
-        response = await client.post(
-            _OPENAI_API_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        response.raise_for_status()
-        body = response.json()
+        try:
+            response = await client.post(
+                _OPENAI_API_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            response_payload = getattr(exc, "response", None)
+            failure_response = (
+                response_payload
+                if isinstance(response_payload, httpx.Response)
+                else None
+            )
+            logger.exception(
+                "OpenAI request timed out for model=%s",
+                openai_model,
+                extra={
+                    "elapsed_ms": _elapsed_ms(started_at),
+                    "model": openai_model,
+                    "step_key": step_key,
+                    "http_status": (
+                        failure_response.status_code
+                        if failure_response is not None
+                        else None
+                    ),
+                    "openai_request_id": _extract_openai_request_id(failure_response),
+                    "prompt_size": prompt_size,
+                    "error_class": exc.__class__.__name__,
+                },
+            )
+            raise
+        except httpx.HTTPStatusError as exc:
+            logger.exception(
+                "OpenAI request returned non-success status for model=%s",
+                openai_model,
+                extra={
+                    "elapsed_ms": _elapsed_ms(started_at),
+                    "model": openai_model,
+                    "step_key": step_key,
+                    "http_status": exc.response.status_code,
+                    "openai_request_id": _extract_openai_request_id(exc.response),
+                    "prompt_size": prompt_size,
+                    "error_class": exc.__class__.__name__,
+                },
+            )
+            raise
+        except httpx.RequestError as exc:
+            logger.exception(
+                "OpenAI transport request failed for model=%s",
+                openai_model,
+                extra={
+                    "elapsed_ms": _elapsed_ms(started_at),
+                    "model": openai_model,
+                    "step_key": step_key,
+                    "http_status": None,
+                    "openai_request_id": None,
+                    "prompt_size": prompt_size,
+                    "error_class": exc.__class__.__name__,
+                },
+            )
+            raise
 
-        choices = body.get("choices", [])
-        if not isinstance(choices, list) or not choices:
-            msg = "OpenAI response did not include choices."
-            raise ValueError(msg)
-        first_choice = choices[0]
-        if not isinstance(first_choice, dict):
-            msg = "OpenAI response choice payload is invalid."
-            raise TypeError(msg)
-        message = first_choice.get("message", {})
-        if not isinstance(message, dict):
-            msg = "OpenAI response message payload is invalid."
-            raise TypeError(msg)
-        content = message.get("content", "")
-        if not isinstance(content, str):
-            msg = "OpenAI response message content is not text."
-            raise TypeError(msg)
-        parsed_payload = json.loads(content)
-        output = output_schema.model_validate(parsed_payload)
+        try:
+            body_raw = response.json()
+            if not isinstance(body_raw, dict):
+                _raise_type_error("OpenAI response payload is not a JSON object.")
+            body = {str(key): value for key, value in body_raw.items()}
+
+            choices = body.get("choices", [])
+            if not isinstance(choices, list) or not choices:
+                _raise_value_error("OpenAI response did not include choices.")
+            first_choice = choices[0]
+            if not isinstance(first_choice, dict):
+                _raise_type_error("OpenAI response choice payload is invalid.")
+            message = first_choice.get("message", {})
+            if not isinstance(message, dict):
+                _raise_type_error("OpenAI response message payload is invalid.")
+            content = message.get("content", "")
+            if not isinstance(content, str):
+                _raise_type_error("OpenAI response message content is not text.")
+            parsed_payload = json.loads(content)
+            output = output_schema.model_validate(parsed_payload)
+        except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
+            logger.exception(
+                "OpenAI response parsing/validation failed for model=%s",
+                openai_model,
+                extra={
+                    "elapsed_ms": _elapsed_ms(started_at),
+                    "model": openai_model,
+                    "step_key": step_key,
+                    "http_status": response.status_code,
+                    "openai_request_id": _extract_openai_request_id(response),
+                    "prompt_size": prompt_size,
+                    "error_class": exc.__class__.__name__,
+                },
+            )
+            raise
 
         usage_raw = body.get("usage", {})
         if not isinstance(usage_raw, dict):

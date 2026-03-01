@@ -12,6 +12,10 @@ from src.database import session as session_module
 from src.database.session import set_session_rls_context
 from src.domain.entities.user import UserRole, UserStatus
 from src.models.database.base import Base
+from src.models.database.kernel.dictionary import (
+    DictionaryDomainContextModel,
+    DictionaryEntityTypeModel,
+)
 from src.models.database.kernel.entities import EntityIdentifierModel, EntityModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
@@ -102,10 +106,46 @@ def _create_space(session: Session, *, owner_id: UUID, slug: str) -> ResearchSpa
     return space
 
 
+def _seed_required_entity_types(
+    session: Session,
+    *,
+    entity_type_ids: tuple[str, ...],
+) -> None:
+    domain_context_id = "biomedical"
+    if session.get(DictionaryDomainContextModel, domain_context_id) is None:
+        session.add(
+            DictionaryDomainContextModel(
+                id=domain_context_id,
+                display_name="Biomedical",
+                description="Biomedical domain context for integration tests",
+                is_active=True,
+            ),
+        )
+        session.flush()
+
+    for entity_type_id in entity_type_ids:
+        if session.get(DictionaryEntityTypeModel, entity_type_id) is not None:
+            continue
+        session.add(
+            DictionaryEntityTypeModel(
+                id=entity_type_id,
+                display_name=entity_type_id.title(),
+                description=f"{entity_type_id} entity type for integration tests",
+                domain_context=domain_context_id,
+                expected_properties={},
+                is_active=True,
+                review_status="ACTIVE",
+                created_by="test-seed",
+            ),
+        )
+    session.flush()
+
+
 def _seed_two_space_entities() -> tuple[UUID, UUID, UUID, UUID]:
     seed_session = session_module.SessionLocal()
     try:
         set_session_rls_context(seed_session, bypass_rls=True)
+        _seed_required_entity_types(seed_session, entity_type_ids=("GENE",))
         user_a = _create_user(seed_session, "rls-a")
         user_b = _create_user(seed_session, "rls-b")
 
@@ -168,6 +208,7 @@ def test_rls_hides_phi_identifiers_without_phi_access(rls_query_role: str) -> No
     seed_session = session_module.SessionLocal()
     try:
         set_session_rls_context(seed_session, bypass_rls=True)
+        _seed_required_entity_types(seed_session, entity_type_ids=("PATIENT",))
         user = _create_user(seed_session, "rls-phi")
         space = _create_space(
             seed_session,

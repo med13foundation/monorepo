@@ -15,6 +15,7 @@ from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_HEAD_REVISION = "024_claim_first_orchestration"
+CURRENT_HEAD_REVISION = "025_graph_dict_hard_guarantees"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"
@@ -74,7 +75,7 @@ def test_upgrade_head_remaps_legacy_revision_alias(tmp_path: Path) -> None:
             .all()
         )
 
-    assert versions == [EXPECTED_HEAD_REVISION]
+    assert versions == [CURRENT_HEAD_REVISION]
 
 
 def test_022_run_id_columns_are_textual_after_upgrade(tmp_path: Path) -> None:

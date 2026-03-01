@@ -15,6 +15,7 @@ class _StubRunStatus:
     last_event_type: str
     failure_reason: str | None = None
     blocked_on: str | None = None
+    last_event_outcome: str | None = None
 
 
 def test_resolve_effective_status_marks_run_summary_as_completed() -> None:
@@ -69,3 +70,31 @@ def test_resolve_effective_status_marks_paused_when_blocked() -> None:
     )
 
     assert status == "paused"
+
+
+def test_resolve_effective_status_marks_model_terminal_timeout_as_failed() -> None:
+    status = _resolve_effective_status(
+        progress_status="running",
+        percent=42,
+        run_status=_StubRunStatus(
+            status="active",
+            last_event_type="model_terminal",
+            last_event_outcome="timeout",
+        ),
+    )
+
+    assert status == "failed"
+
+
+def test_resolve_effective_status_marks_model_terminal_completed_as_completed() -> None:
+    status = _resolve_effective_status(
+        progress_status="running",
+        percent=0,
+        run_status=_StubRunStatus(
+            status="active",
+            last_event_type="model_terminal",
+            last_event_outcome="completed",
+        ),
+    )
+
+    assert status == "completed"

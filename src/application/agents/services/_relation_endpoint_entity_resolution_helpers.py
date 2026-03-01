@@ -15,16 +15,19 @@ from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from src.domain.entities.kernel.entities import KernelEntity
+    from src.domain.ports.dictionary_port import DictionaryPort
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
     from src.type_definitions.common import JSONObject
 
 logger = logging.getLogger(__name__)
+_ENDPOINT_ENTITY_TYPE_CREATED_BY = "agent:extraction_endpoint_entity_bootstrap"
 
 
 class _RelationEndpointEntityResolutionHelpers:
     """Shared endpoint resolution and concept-identifier helpers."""
 
     _entities: KernelEntityRepository | None
+    _dictionary: DictionaryPort | None
 
     def _resolve_relation_endpoint_entity_id(  # noqa: PLR0911
         self,
@@ -166,19 +169,33 @@ class _RelationEndpointEntityResolutionHelpers:
     ) -> str | None:
         if self._entities is None:
             return None
+        if not self._ensure_active_endpoint_entity_type(
+            entity_type=entity_type,
+            endpoint_name=endpoint_name,
+        ):
+            return None
 
         metadata: JSONObject = {
             "created_from": "extraction_relation_endpoint",
             "endpoint": endpoint_name,
         }
-        created = self._entities.create(
-            research_space_id=research_space_id,
-            entity_type=entity_type,
-            display_label=normalized_label,
-            metadata={
-                str(key): to_json_value(value) for key, value in metadata.items()
-            },
-        )
+        try:
+            created = self._entities.create(
+                research_space_id=research_space_id,
+                entity_type=entity_type,
+                display_label=normalized_label,
+                metadata={
+                    str(key): to_json_value(value) for key, value in metadata.items()
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to create extraction endpoint entity type=%s label=%s: %s",
+                entity_type,
+                normalized_label,
+                exc,
+            )
+            return None
         created_id = str(created.id)
         self._ensure_concept_identifiers(
             entity_id=created_id,
@@ -186,6 +203,62 @@ class _RelationEndpointEntityResolutionHelpers:
             label=normalized_label,
         )
         return created_id
+
+    def _ensure_active_endpoint_entity_type(
+        self,
+        *,
+        entity_type: str,
+        endpoint_name: str,
+    ) -> bool:
+        dictionary = self._dictionary
+        if dictionary is None:
+            return False
+
+        existing = dictionary.get_entity_type(
+            entity_type,
+            include_inactive=True,
+        )
+        if existing is not None:
+            if existing.is_active and existing.review_status == "ACTIVE":
+                return True
+            try:
+                dictionary.set_entity_type_review_status(
+                    entity_type,
+                    review_status="ACTIVE",
+                    reviewed_by=_ENDPOINT_ENTITY_TYPE_CREATED_BY,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to activate endpoint entity type=%s: %s",
+                    entity_type,
+                    exc,
+                )
+                return False
+            else:
+                return True
+
+        try:
+            dictionary.create_entity_type(
+                entity_type=entity_type,
+                display_name=entity_type.replace("_", " ").title(),
+                description=(
+                    "Auto-created entity type for extraction relation endpoint "
+                    "persistence."
+                ),
+                domain_context="general",
+                created_by=_ENDPOINT_ENTITY_TYPE_CREATED_BY,
+                source_ref=f"extraction_relation_endpoint:{endpoint_name}",
+                research_space_settings={"dictionary_agent_creation_policy": "ACTIVE"},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to create endpoint entity type=%s: %s",
+                entity_type,
+                exc,
+            )
+            return False
+        else:
+            return True
 
     def _ensure_concept_identifiers(
         self,

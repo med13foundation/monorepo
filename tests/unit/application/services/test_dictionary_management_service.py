@@ -14,6 +14,7 @@ from src.application.services.kernel.dictionary_management_service import (
 from src.domain.entities.kernel.dictionary import (
     DictionaryChangelog,
     DictionaryEntityType,
+    DictionaryRelationSynonym,
     DictionaryRelationType,
     DictionarySearchResult,
     RelationConstraint,
@@ -166,6 +167,31 @@ def _build_relation_type(*, review_status: str = "ACTIVE") -> DictionaryRelation
         inverse_label=None,
         description_embedding=None,
         created_by="seed",
+        source_ref=None,
+        review_status=review_status,
+        reviewed_by=None,
+        reviewed_at=None,
+        revocation_reason=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _build_relation_synonym(
+    *,
+    review_status: str = "ACTIVE",
+) -> DictionaryRelationSynonym:
+    now = datetime.now(UTC)
+    return DictionaryRelationSynonym(
+        id=1,
+        relation_type="ASSOCIATED_WITH",
+        synonym="ASSOCIATES_WITH",
+        source="manual",
+        created_by="seed",
+        is_active=review_status != "REVOKED",
+        valid_from=now,
+        valid_to=now if review_status == "REVOKED" else None,
+        superseded_by=None,
         source_ref=None,
         review_status=review_status,
         reviewed_by=None,
@@ -763,6 +789,72 @@ def test_revoke_relation_type_updates_review_state(
         review_status="REVOKED",
         reviewed_by="manual:user-123",
         revocation_reason="Deprecated relation type",
+    )
+
+
+def test_create_relation_synonym_uses_space_policy_for_agent(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.get_relation_type.return_value = _build_relation_type(
+        review_status="ACTIVE",
+    )
+    dictionary_repo.create_relation_synonym.return_value = _build_relation_synonym(
+        review_status="PENDING_REVIEW",
+    )
+
+    service.create_relation_synonym(
+        relation_type_id="ASSOCIATED_WITH",
+        synonym="associates_with",
+        source="agent",
+        created_by="agent:run-123",
+        research_space_settings={
+            "dictionary_agent_creation_policy": "PENDING_REVIEW",
+        },
+    )
+
+    called_kwargs = dictionary_repo.create_relation_synonym.call_args.kwargs
+    assert called_kwargs["review_status"] == "PENDING_REVIEW"
+
+
+def test_create_relation_synonym_requires_existing_relation_type(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.get_relation_type.return_value = None
+    with pytest.raises(
+        ValueError,
+        match="Relation type 'ASSOCIATED_WITH' not found",
+    ):
+        service.create_relation_synonym(
+            relation_type_id="ASSOCIATED_WITH",
+            synonym="associates_with",
+            created_by="manual:user-1",
+        )
+
+
+def test_revoke_relation_synonym_updates_review_state(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    dictionary_repo.set_relation_synonym_review_status.return_value = (
+        _build_relation_synonym(
+            review_status="REVOKED",
+        )
+    )
+
+    updated = service.revoke_relation_synonym(
+        1,
+        reason="Deprecated relation synonym",
+        reviewed_by="manual:user-123",
+    )
+
+    assert updated.review_status == "REVOKED"
+    dictionary_repo.set_relation_synonym_review_status.assert_called_once_with(
+        1,
+        review_status="REVOKED",
+        reviewed_by="manual:user-123",
+        revocation_reason="Deprecated relation synonym",
     )
 
 

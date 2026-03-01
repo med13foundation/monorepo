@@ -104,6 +104,42 @@ _CLAIM_VALIDATION_STATE_MAP: dict[str, _ClaimValidationState] = {
 }
 
 
+def _normalize_optional_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _claim_endpoint_entity_ids(
+    claim: object,
+) -> tuple[str | None, str | None]:
+    metadata_payload = getattr(claim, "metadata_payload", None)
+    if not isinstance(metadata_payload, dict):
+        return None, None
+    source_entity_id = _normalize_optional_text(
+        metadata_payload.get("source_entity_id"),
+    )
+    target_entity_id = _normalize_optional_text(
+        metadata_payload.get("target_entity_id"),
+    )
+    return source_entity_id, target_entity_id
+
+
+def _claim_resolution_evidence_summary(claim: object) -> str:
+    validation_reason = _normalize_optional_text(
+        getattr(claim, "validation_reason", None),
+    )
+    claim_id = _normalize_optional_text(str(getattr(claim, "id", "")))
+    if validation_reason is not None:
+        if claim_id is None:
+            return validation_reason
+        return f"{validation_reason} (claim_id={claim_id})"
+    if claim_id is None:
+        return "Promoted from resolved extraction claim."
+    return f"Promoted from resolved extraction claim ({claim_id})."
+
+
 def _normalize_filter_values(values: list[str] | None) -> set[str] | None:
     if values is None:
         return None
@@ -805,6 +841,7 @@ def update_relation_claim_status(
     relation_claim_service: KernelRelationClaimService = Depends(
         get_kernel_relation_claim_service,
     ),
+    relation_service: KernelRelationService = Depends(get_kernel_relation_service),
     session: Session = Depends(get_session),
 ) -> KernelRelationClaimResponse:
     require_curator_role(
@@ -825,6 +862,59 @@ def update_relation_claim_status(
         if normalized_status is None:
             msg = "claim_status is required"
             raise ValueError(msg)
+
+        if normalized_status == "RESOLVED" and existing.linked_relation_id is None:
+            if existing.persistability != "PERSISTABLE":
+                msg = (
+                    "Claim cannot be resolved yet because it is NON_PERSISTABLE. "
+                    "Use Needs Mapping or Reject."
+                )
+                raise ValueError(msg)
+            if existing.validation_state != "ALLOWED":
+                msg = (
+                    "Claim cannot be resolved yet because its validation state is "
+                    f"{existing.validation_state}. Use Needs Mapping or update "
+                    "dictionary constraints first."
+                )
+                raise ValueError(msg)
+
+            source_entity_id, target_entity_id = _claim_endpoint_entity_ids(existing)
+            if source_entity_id is None or target_entity_id is None:
+                msg = (
+                    "Claim cannot be resolved yet because source/target entity "
+                    "mapping is missing. Use Needs Mapping."
+                )
+                raise ValueError(msg)
+
+            try:
+                promoted_relation = relation_service.create_relation(
+                    research_space_id=str(space_id),
+                    source_id=source_entity_id,
+                    relation_type=existing.relation_type,
+                    target_id=target_entity_id,
+                    confidence=float(existing.confidence),
+                    evidence_summary=_claim_resolution_evidence_summary(existing),
+                    evidence_tier="COMPUTATIONAL",
+                    source_document_id=(
+                        str(existing.source_document_id)
+                        if existing.source_document_id is not None
+                        else None
+                    ),
+                    agent_run_id=existing.agent_run_id,
+                )
+            except ValueError as exc:
+                msg = (
+                    "Claim cannot be resolved into a canonical relation because the "
+                    "dictionary currently rejects this triple. Use Needs Mapping and "
+                    "approve the required relation/entity constraints first. "
+                    f"Details: {exc!s}"
+                )
+                raise ValueError(msg) from exc
+            relation_claim_service.link_claim_to_relation(
+                str(claim_id),
+                linked_relation_id=str(promoted_relation.id),
+            )
+
         updated = relation_claim_service.update_claim_status(
             str(claim_id),
             claim_status=normalized_status,

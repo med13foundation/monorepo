@@ -11,6 +11,8 @@ from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.infrastructure.ingestion.types import IngestResult, RawRecord
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.application.services.kernel.kernel_observation_service import (
         KernelObservationService,
     )
@@ -38,6 +40,7 @@ class IngestionPipeline:
         validator: Validator,
         observation_service: KernelObservationService,
         provenance_tracker: ProvenanceTracker,
+        rollback_on_error: Callable[[], None] | None = None,
     ) -> None:
         self.mapper = mapper
         self.normalizer = normalizer
@@ -45,8 +48,13 @@ class IngestionPipeline:
         self.validator = validator
         self.observation_service = observation_service
         self.provenance_tracker = provenance_tracker
+        self.rollback_on_error = rollback_on_error
 
-    def run(self, records: list[RawRecord], research_space_id: str) -> IngestResult:
+    def run(  # noqa: C901
+        self,
+        records: list[RawRecord],
+        research_space_id: str,
+    ) -> IngestResult:
         """
         Run the ingestion pipeline on a batch of records.
 
@@ -124,6 +132,14 @@ class IngestionPipeline:
 
             except Exception as e:
                 logger.exception("Error processing record %s", record.source_id)
+                if self.rollback_on_error is not None:
+                    try:
+                        self.rollback_on_error()
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "Error rolling back ingestion transaction for %s",
+                            record.source_id,
+                        )
                 result.errors.append(f"Error processing {record.source_id}: {e!s}")
                 result.success = False
 

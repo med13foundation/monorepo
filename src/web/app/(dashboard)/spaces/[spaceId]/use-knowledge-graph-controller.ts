@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
+  fetchRelationClaims,
   fetchKernelGraphExport,
   fetchKernelNeighborhood,
   fetchKernelSubgraph,
@@ -13,6 +14,7 @@ import {
   emptyGraphModel,
   filterGraphModel,
   getNeighborhood,
+  mergeGraphModelWithRelationClaims,
   mergeGraphModels,
   pruneGraphModelForRender,
   type GraphModel,
@@ -21,6 +23,7 @@ import type {
   GraphSearchResponse,
   KernelGraphSubgraphMeta,
   KernelGraphSubgraphRequest,
+  RelationClaimResponse,
 } from '@/types/kernel'
 
 const DEFAULT_STARTER_TOP_K = 25
@@ -33,6 +36,8 @@ const MAX_RENDER_NODES = 180
 const MAX_RENDER_EDGES = 260
 const MAX_SEEDED_SEARCH_RESULTS = 5
 const DEFAULT_EXPAND_TOP_K = 25
+const CLAIM_OVERLAY_PAGE_LIMIT = 200
+const CLAIM_OVERLAY_MAX_TOTAL = 2000
 const ALL_GRAPH_STATUSES = ['APPROVED', 'UNDER_REVIEW', 'DRAFT', 'REJECTED', 'RETRACTED'] as const
 
 export type GraphTrustPreset = 'ALL' | 'APPROVED_ONLY' | 'PENDING_REVIEW' | 'REJECTED'
@@ -206,7 +211,9 @@ export function useKnowledgeGraphController({
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
 
   const [relationTypeFilter, setRelationTypeFilter] = useState<Set<string>>(new Set())
-  const [curationStatusFilter, setCurationStatusFilter] = useState<Set<string>>(new Set())
+  const [curationStatusFilter, setCurationStatusFilter] = useState<Set<string>>(
+    () => new Set(TRUST_PRESET_STATUS_MAP[initialTrustPreset] ?? []),
+  )
   const trustPresetSyncRef = useRef<GraphTrustPreset>(initialTrustPreset)
 
   const activeCurationStatuses = useMemo(
@@ -235,14 +242,79 @@ export function useKnowledgeGraphController({
       setGraphNotice(null)
 
       try {
-        const response = await fetchKernelSubgraph(spaceId, payload, token)
-        setRawGraph(buildGraphModel(response))
+        const fetchClaimOverlay = async (): Promise<RelationClaimResponse[]> => {
+          const claims: RelationClaimResponse[] = []
+          let offset = 0
+          let total = 0
+
+          do {
+            const page = await fetchRelationClaims(
+              spaceId,
+              {
+                offset,
+                limit: CLAIM_OVERLAY_PAGE_LIMIT,
+              },
+              token,
+            )
+            claims.push(...page.claims)
+            total = page.total
+            if (page.claims.length === 0) {
+              break
+            }
+            offset += page.claims.length
+          } while (offset < total && offset < CLAIM_OVERLAY_MAX_TOTAL)
+
+          return claims
+        }
+
+        const [response, claimOverlay] = await Promise.all([
+          fetchKernelSubgraph(spaceId, payload, token),
+          fetchClaimOverlay(),
+        ])
+        const persistedGraph = buildGraphModel(response)
+        setRawGraph(
+          mergeGraphModelWithRelationClaims(persistedGraph, claimOverlay),
+        )
         setSubgraphMeta(response.meta)
       } catch (error) {
         if (errorStatusCode(error) === 404) {
           try {
-            const legacyGraph = await fetchKernelGraphExport(spaceId, token)
-            setRawGraph(buildGraphModel(legacyGraph))
+            const fetchClaimOverlay = async (): Promise<RelationClaimResponse[]> => {
+              const claims: RelationClaimResponse[] = []
+              let offset = 0
+              let total = 0
+
+              do {
+                const page = await fetchRelationClaims(
+                  spaceId,
+                  {
+                    offset,
+                    limit: CLAIM_OVERLAY_PAGE_LIMIT,
+                  },
+                  token,
+                )
+                claims.push(...page.claims)
+                total = page.total
+                if (page.claims.length === 0) {
+                  break
+                }
+                offset += page.claims.length
+              } while (offset < total && offset < CLAIM_OVERLAY_MAX_TOTAL)
+
+              return claims
+            }
+
+            const [legacyGraph, claimOverlay] = await Promise.all([
+              fetchKernelGraphExport(spaceId, token),
+              fetchClaimOverlay(),
+            ])
+            const persistedGraph = buildGraphModel(legacyGraph)
+            setRawGraph(
+              mergeGraphModelWithRelationClaims(
+                persistedGraph,
+                claimOverlay,
+              ),
+            )
             setSubgraphMeta(null)
             setGraphNotice(
               'Subgraph endpoint is unavailable on this backend instance. Showing legacy graph export.',
@@ -655,6 +727,12 @@ export function useKnowledgeGraphController({
     })
   }, [])
 
+  const setTrustPreset = useCallback((preset: GraphTrustPreset): void => {
+    setTrustPresetState(preset)
+    const mappedStatuses = TRUST_PRESET_STATUS_MAP[preset]
+    setCurationStatusFilter(new Set(mappedStatuses ?? []))
+  }, [])
+
   const graphSearchResults = graphSearch?.results ?? []
   const isLoading = isLoadingGraph || isSearching
   const truncationNotice =
@@ -673,7 +751,7 @@ export function useKnowledgeGraphController({
     setTopKInput,
     setMaxDepthInput,
     setForceAgent,
-    setTrustPreset: setTrustPresetState,
+    setTrustPreset,
     topK,
     maxDepth,
     minDepth: MIN_DEPTH,

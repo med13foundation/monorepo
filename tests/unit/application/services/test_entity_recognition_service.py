@@ -801,7 +801,7 @@ async def test_process_document_bootstraps_domain_when_dictionary_is_empty() -> 
     assert outcome.dictionary_variables_created >= 2
     assert dictionary.created_relation_types >= 1
     assert dictionary.created_constraints >= 1
-    assert "PENDING_REVIEW" in dictionary.creation_policies
+    assert "ACTIVE" in dictionary.creation_policies
 
 
 @pytest.mark.asyncio

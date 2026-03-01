@@ -117,6 +117,8 @@ class ArtanaGraphConnectionAdapter(GraphConnectionPort):
             source_type=source_type,
             model_id=effective_model,
             research_space_id=context.research_space_id,
+            source_id=context.source_id,
+            pipeline_run_id=context.pipeline_run_id,
             seed_entity_id=context.seed_entity_id,
         )
         self._last_run_id = run_id
@@ -207,14 +209,23 @@ class ArtanaGraphConnectionAdapter(GraphConnectionPort):
         raise ValueError(msg)
 
     @staticmethod
-    def _create_run_id(
+    def _create_run_id(  # noqa: PLR0913
         *,
         source_type: str,
         model_id: str,
         research_space_id: str,
+        source_id: str | None,
+        pipeline_run_id: str | None,
         seed_entity_id: str,
     ) -> str:
-        payload = f"{source_type}|{model_id}|{research_space_id}|{seed_entity_id}"
+        normalized_source_id = source_id.strip() if isinstance(source_id, str) else ""
+        normalized_pipeline_run_id = (
+            pipeline_run_id.strip() if isinstance(pipeline_run_id, str) else ""
+        )
+        payload = (
+            f"{source_type}|{model_id}|{research_space_id}|"
+            f"{normalized_source_id}|{normalized_pipeline_run_id}|{seed_entity_id}"
+        )
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
         return f"graph_connection:{source_type}:{digest}"
 
@@ -237,6 +248,8 @@ class ArtanaGraphConnectionAdapter(GraphConnectionPort):
         return (
             f"SOURCE TYPE: {context.source_type}\n"
             f"RESEARCH SPACE ID: {context.research_space_id}\n"
+            f"SOURCE ID: {context.source_id or 'unknown'}\n"
+            f"PIPELINE RUN ID: {context.pipeline_run_id or 'none'}\n"
             f"SEED ENTITY ID: {context.seed_entity_id}\n"
             f"MAX DEPTH: {context.max_depth}\n"
             f"RELATION TYPES FILTER: {relation_types}\n"

@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
 from src.application.agents.services._extraction_relation_canonicalization_helpers import (
     _ExtractionRelationCanonicalizationHelpers,
 )
@@ -32,6 +34,8 @@ from src.application.services.claim_first_metrics import (
 from src.domain.value_objects.relation_types import normalize_relation_type
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.application.agents.services._extraction_relation_policy_helpers import (
         RelationGovernanceMode,
     )
@@ -111,6 +115,7 @@ class _ExtractionRelationPersistenceHelpers(
     _relations: KernelRelationRepository | None
     _relation_claims: KernelRelationClaimRepository | None
     _entities: KernelEntityRepository | None
+    _rollback_on_error: Callable[[], None] | None
 
     async def _persist_extracted_relations(
         self,
@@ -584,6 +589,10 @@ class _ExtractionRelationPersistenceHelpers(
                 "relation_governance_mode": relation_governance_mode,
             },
         )
+        relation_type_settings: ResearchSpaceSettings = {
+            "dictionary_agent_creation_policy": "ACTIVE",
+        }
+        relation_source_ref = f"source_document:{document.id}:relation_persist"
 
         for index, candidate in enumerate(candidates, start=1):
             should_log_candidate = (
@@ -691,7 +700,7 @@ class _ExtractionRelationPersistenceHelpers(
                         research_space_id=research_space_id,
                         source_document_id=str(document.id),
                         agent_run_id=run_id,
-                        source_type=document.source_type.value,
+                        source_type=effective_candidate.source_type,
                         relation_type=effective_candidate.relation_type,
                         target_type=effective_candidate.target_type,
                         source_label=effective_candidate.source_label,
@@ -706,11 +715,15 @@ class _ExtractionRelationPersistenceHelpers(
                     )
                     claim_id = str(created_claim.id)
                     relation_claims_count += 1
-                except (TypeError, ValueError) as exc:
+                except (TypeError, ValueError, SQLAlchemyError) as exc:
+                    self._rollback_after_persistence_error(
+                        context="relation_claim_create",
+                    )
+                    error_code = self._map_relation_write_error_code(exc)
                     errors.append(
                         (
                             "relation_claim_create_failed:"
-                            f"{effective_candidate.relation_type}:{exc!s}"
+                            f"{error_code}:{effective_candidate.relation_type}"
                         ),
                     )
                     if should_log_candidate:
@@ -722,6 +735,8 @@ class _ExtractionRelationPersistenceHelpers(
                                 "candidate_index": index,
                                 "candidate_total": total_candidates,
                                 "relation_type": effective_candidate.relation_type,
+                                "error_code": error_code,
+                                "error": str(exc),
                             },
                         )
 
@@ -757,6 +772,35 @@ class _ExtractionRelationPersistenceHelpers(
                 continue
 
             if (
+                relation_governance_mode == "HUMAN_IN_LOOP"
+                and effective_candidate.validation_state != "ALLOWED"
+            ):
+                if claim_id is not None:
+                    self._enqueue_review_item(
+                        entity_type="relation_claim",
+                        entity_id=claim_id,
+                        research_space_id=research_space_id,
+                        priority=self._review_priority_for_candidate(
+                            candidate=effective_candidate,
+                        ),
+                    )
+                    relation_claims_queued_for_review_count += 1
+                if should_log_candidate:
+                    logger.info(
+                        "Persist relation candidate deferred by governance mode",
+                        extra={
+                            "document_id": str(document.id),
+                            "run_id": run_id,
+                            "candidate_index": index,
+                            "candidate_total": total_candidates,
+                            "relation_governance_mode": relation_governance_mode,
+                            "validation_state": effective_candidate.validation_state,
+                            "claim_id": claim_id,
+                        },
+                    )
+                continue
+
+            if (
                 effective_candidate.source_entity_id is None
                 or effective_candidate.target_entity_id is None
             ):
@@ -780,6 +824,41 @@ class _ExtractionRelationPersistenceHelpers(
                             "candidate_total": total_candidates,
                             "validation_state": effective_candidate.validation_state,
                             "claim_id": claim_id,
+                        },
+                    )
+                continue
+
+            relation_type_ready = self._ensure_relation_type_exists(
+                relation_type=effective_candidate.relation_type,
+                source_ref=relation_source_ref,
+                policy_settings=relation_type_settings,
+            )
+            if not relation_type_ready:
+                persistence_failed_count += 1
+                errors.append(
+                    (
+                        "relation_persistence_failed:"
+                        "relation_type_invalid_or_inactive:"
+                        f"{effective_candidate.relation_type}"
+                    ),
+                )
+                if claim_id is not None:
+                    self._enqueue_review_item(
+                        entity_type="relation_claim",
+                        entity_id=claim_id,
+                        research_space_id=research_space_id,
+                        priority="high",
+                    )
+                    relation_claims_queued_for_review_count += 1
+                if should_log_candidate:
+                    logger.warning(
+                        "Persist relation candidate relation type activation failed",
+                        extra={
+                            "document_id": str(document.id),
+                            "run_id": run_id,
+                            "candidate_index": index,
+                            "candidate_total": total_candidates,
+                            "relation_type": effective_candidate.relation_type,
                         },
                     )
                 continue
@@ -817,16 +896,88 @@ class _ExtractionRelationPersistenceHelpers(
                         relation_id=str(created_relation.id),
                     )
                     errors.extend(with_context_errors)
-            except (TypeError, ValueError) as exc:
+            except (TypeError, ValueError, SQLAlchemyError) as exc:
+                self._rollback_after_persistence_error(
+                    context="relation_create",
+                )
+                error_code = self._map_relation_write_error_code(exc)
                 errors.append(
                     (
                         "relation_persistence_failed:"
-                        f"{effective_candidate.relation_type}:"
+                        f"{error_code}:{effective_candidate.relation_type}:"
                         f"{effective_candidate.source_entity_id}"
-                        f"->{effective_candidate.target_entity_id}:{exc!s}"
+                        f"->{effective_candidate.target_entity_id}"
                     ),
                 )
                 persistence_failed_count += 1
+                if claim_id is not None and self._relation_claims is not None:
+                    relation_claims_count = max(0, relation_claims_count - 1)
+                    try:
+                        recreated_claim = self._relation_claims.create(
+                            research_space_id=research_space_id,
+                            source_document_id=str(document.id),
+                            agent_run_id=run_id,
+                            source_type=effective_candidate.source_type,
+                            relation_type=effective_candidate.relation_type,
+                            target_type=effective_candidate.target_type,
+                            source_label=effective_candidate.source_label,
+                            target_label=effective_candidate.target_label,
+                            confidence=effective_candidate.confidence,
+                            validation_state=effective_candidate.validation_state,
+                            validation_reason=effective_candidate.validation_reason,
+                            persistability=effective_candidate.persistability,
+                            claim_status="OPEN",
+                            linked_relation_id=None,
+                            metadata=payload,
+                        )
+                        claim_id = str(recreated_claim.id)
+                        relation_claims_count += 1
+                        self._enqueue_review_item(
+                            entity_type="relation_claim",
+                            entity_id=claim_id,
+                            research_space_id=research_space_id,
+                            priority="high",
+                        )
+                        relation_claims_queued_for_review_count += 1
+                        if should_log_candidate:
+                            logger.info(
+                                "Persist relation candidate claim restored after relation rollback",
+                                extra={
+                                    "document_id": str(document.id),
+                                    "run_id": run_id,
+                                    "candidate_index": index,
+                                    "candidate_total": total_candidates,
+                                    "claim_id": claim_id,
+                                    "relation_type": effective_candidate.relation_type,
+                                    "error_code": error_code,
+                                },
+                            )
+                    except (TypeError, ValueError, SQLAlchemyError) as claim_exc:
+                        self._rollback_after_persistence_error(
+                            context="relation_claim_recreate",
+                        )
+                        claim_error_code = self._map_relation_write_error_code(
+                            claim_exc,
+                        )
+                        errors.append(
+                            (
+                                "relation_claim_recreate_failed:"
+                                f"{claim_error_code}:{effective_candidate.relation_type}"
+                            ),
+                        )
+                        if should_log_candidate:
+                            logger.warning(
+                                "Persist relation candidate claim recreate failed after rollback",
+                                extra={
+                                    "document_id": str(document.id),
+                                    "run_id": run_id,
+                                    "candidate_index": index,
+                                    "candidate_total": total_candidates,
+                                    "relation_type": effective_candidate.relation_type,
+                                    "error_code": claim_error_code,
+                                    "error": str(claim_exc),
+                                },
+                            )
                 if should_log_candidate:
                     logger.warning(
                         "Persist relation candidate relation write failed",
@@ -838,6 +989,8 @@ class _ExtractionRelationPersistenceHelpers(
                             "relation_type": effective_candidate.relation_type,
                             "source_entity_id": effective_candidate.source_entity_id,
                             "target_entity_id": effective_candidate.target_entity_id,
+                            "error_code": error_code,
+                            "error": str(exc),
                         },
                     )
                 continue
@@ -916,9 +1069,74 @@ class _ExtractionRelationPersistenceHelpers(
                 claim_id,
                 linked_relation_id=relation_id,
             )
-        except (TypeError, ValueError) as exc:
-            return [f"relation_claim_link_failed:{claim_id}:{relation_id}:{exc!s}"]
+        except (TypeError, ValueError, SQLAlchemyError) as exc:
+            self._rollback_after_persistence_error(
+                context="relation_claim_link",
+            )
+            error_code = self._map_relation_write_error_code(exc)
+            return [f"relation_claim_link_failed:{error_code}:{claim_id}:{relation_id}"]
         return []
+
+    @staticmethod
+    def _map_relation_write_error_code(  # noqa: C901, PLR0911
+        exc: Exception,
+    ) -> str:
+        message = str(exc)
+        if isinstance(exc, IntegrityError) and exc.orig is not None:
+            message = str(exc.orig)
+        normalized = message.strip().lower()
+
+        if "requires evidence but none exists at commit" in normalized:
+            return "relation_requires_evidence"
+        if "not allowed by active relation constraints" in normalized:
+            return "relation_triple_not_allowed"
+        if (
+            "fk_relations_source_space_entities" in normalized
+            or "source_id" in normalized
+            and "does not belong to research_space_id" in normalized
+        ):
+            return "relation_source_cross_space"
+        if (
+            "fk_relations_target_space_entities" in normalized
+            or "target_id" in normalized
+            and "does not belong to research_space_id" in normalized
+        ):
+            return "relation_target_cross_space"
+        if (
+            "fk_relations_relation_type_dictionary" in normalized
+            or "active dictionary_relation_type" in normalized
+        ):
+            return "relation_type_invalid_or_inactive"
+        if (
+            "fk_entities_entity_type_dictionary" in normalized
+            or "active dictionary_entity_type" in normalized
+        ):
+            return "entity_type_invalid_or_inactive"
+        if "uq_relations_canonical_edge" in normalized:
+            return "relation_edge_duplicate"
+        if "foreign key" in normalized:
+            return "relation_foreign_key_violation"
+        if isinstance(exc, ValueError | TypeError):
+            return "relation_payload_invalid"
+        if isinstance(exc, IntegrityError):
+            return "relation_integrity_violation"
+        if isinstance(exc, SQLAlchemyError):
+            return "relation_sqlalchemy_error"
+        return "relation_write_failed"
+
+    def _rollback_after_persistence_error(self, *, context: str) -> None:
+        rollback = self._rollback_on_error
+        if rollback is None:
+            return
+        try:
+            rollback()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed rollback after extraction relation persistence error "
+                "(context=%s): %s",
+                context,
+                exc,
+            )
 
     @staticmethod
     def _review_priority_for_candidate(

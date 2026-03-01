@@ -52,6 +52,10 @@ _TERMINAL_COMPLETION_EVENTS: frozenset[str] = frozenset(
         "step_completed",
     },
 )
+_MODEL_TERMINAL_FAILURE_OUTCOMES: frozenset[str] = frozenset(
+    {"failed", "timeout", "cancelled", "abandoned"},
+)
+_MODEL_TERMINAL_COMPLETION_OUTCOMES: frozenset[str] = frozenset({"completed"})
 _FULL_PROGRESS_PERCENT = 100
 
 
@@ -277,11 +281,16 @@ def _resolve_effective_status(
         getattr(run_status, "failure_reason", None),
     )
     blocked_on = _normalize_optional_string(getattr(run_status, "blocked_on", None))
+    model_terminal_outcome = _resolve_model_terminal_outcome(run_status)
 
     if (
         failure_reason is not None
         or run_status_value in _FAILED_STATUSES
         or last_event_type in _TERMINAL_FAILURE_EVENTS
+        or (
+            last_event_type == "model_terminal"
+            and model_terminal_outcome in _MODEL_TERMINAL_FAILURE_OUTCOMES
+        )
     ):
         return "failed"
     if run_status_value in _PAUSED_STATUSES or blocked_on is not None:
@@ -291,10 +300,29 @@ def _resolve_effective_status(
     if (
         progress_status in _RUNNING_STATUSES
         and percent == 0
-        and last_event_type in _TERMINAL_COMPLETION_EVENTS
+        and (
+            last_event_type in _TERMINAL_COMPLETION_EVENTS
+            or (
+                last_event_type == "model_terminal"
+                and model_terminal_outcome in _MODEL_TERMINAL_COMPLETION_OUTCOMES
+            )
+        )
     ):
         return "completed"
     return progress_status
+
+
+def _resolve_model_terminal_outcome(run_status: object) -> str | None:
+    for field_name in (
+        "last_event_outcome",
+        "last_model_outcome",
+        "model_outcome",
+        "outcome",
+    ):
+        value = _normalize_optional_string(getattr(run_status, field_name, None))
+        if value is not None:
+            return value.lower()
+    return None
 
 
 def _coalesce_latest_datetime(

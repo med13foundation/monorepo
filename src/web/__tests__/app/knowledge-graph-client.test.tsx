@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import KnowledgeGraphClient from '@/app/(dashboard)/spaces/[spaceId]/knowledge-graph-client'
-import { fetchKernelSubgraph, searchKernelGraph } from '@/lib/api/kernel'
+import { fetchKernelSubgraph, fetchRelationClaims, searchKernelGraph } from '@/lib/api/kernel'
 import { useSession } from 'next-auth/react'
 import type { GraphSearchResponse, KernelGraphSubgraphResponse } from '@/types/kernel'
 
@@ -20,6 +20,7 @@ jest.mock('next/navigation', () => ({
 
 jest.mock('@/lib/api/kernel', () => ({
   fetchKernelSubgraph: jest.fn(),
+  fetchRelationClaims: jest.fn(),
   searchKernelGraph: jest.fn(),
 }))
 
@@ -167,10 +168,19 @@ function buildSearchResponse(): GraphSearchResponse {
 describe('KnowledgeGraphClient', () => {
   const mockUseSession = useSession as jest.MockedFunction<typeof useSession>
   const mockFetchKernelSubgraph = fetchKernelSubgraph as jest.MockedFunction<typeof fetchKernelSubgraph>
+  const mockFetchRelationClaims = fetchRelationClaims as jest.MockedFunction<
+    typeof fetchRelationClaims
+  >
   const mockSearchKernelGraph = searchKernelGraph as jest.MockedFunction<typeof searchKernelGraph>
 
   beforeEach(() => {
     jest.clearAllMocks()
+    mockFetchRelationClaims.mockResolvedValue({
+      claims: [],
+      total: 0,
+      offset: 0,
+      limit: 200,
+    })
     mockUseSession.mockReturnValue({
       data: {
         expires: new Date(Date.now() + 60_000).toISOString(),

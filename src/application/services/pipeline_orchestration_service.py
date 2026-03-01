@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 from src.application.services._pipeline_orchestration_checkpoint_helpers import (
     _PipelineOrchestrationCheckpointHelpers,
 )
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
         EntityRecognitionService,
     )
     from src.application.agents.services.graph_connection_service import (
+        GraphConnectionOutcome,
         GraphConnectionService,
     )
     from src.application.agents.services.graph_search_service import (
@@ -50,6 +53,9 @@ class PipelineOrchestrationDependencies:
     content_enrichment_service: ContentEnrichmentService
     entity_recognition_service: EntityRecognitionService
     graph_connection_service: GraphConnectionService | None = None
+    graph_connection_seed_runner: (
+        Callable[..., Awaitable[GraphConnectionOutcome]] | None
+    ) = None
     graph_search_service: GraphSearchService | None = None
     research_space_repository: ResearchSpaceRepository | None = None
     pipeline_run_repository: IngestionJobRepository | None = None
@@ -66,6 +72,7 @@ class PipelineOrchestrationService(
         self._enrichment = dependencies.content_enrichment_service
         self._extraction = dependencies.entity_recognition_service
         self._graph = dependencies.graph_connection_service
+        self._graph_seed_runner = dependencies.graph_connection_seed_runner
         self._graph_search = dependencies.graph_search_service
         self._research_spaces = dependencies.research_space_repository
         self._pipeline_runs = dependencies.pipeline_run_repository

@@ -143,4 +143,5 @@ def create_ingestion_pipeline(
         validator=validator,
         observation_service=observation_service,
         provenance_tracker=provenance_tracker,
+        rollback_on_error=session.rollback,
     )

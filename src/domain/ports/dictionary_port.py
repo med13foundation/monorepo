@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from src.domain.entities.kernel.dictionary import (
         DictionaryChangelog,
         DictionaryEntityType,
+        DictionaryRelationSynonym,
         DictionaryRelationType,
         DictionarySearchResult,
         EntityResolutionPolicy,
@@ -370,6 +371,58 @@ class DictionaryPort(ABC):
         reviewed_by: str,
     ) -> DictionaryRelationType:
         """Revoke a relation type with an audit reason."""
+
+    @abstractmethod
+    def resolve_relation_synonym(
+        self,
+        synonym: str,
+        *,
+        include_inactive: bool = False,
+    ) -> DictionaryRelationType | None:
+        """Resolve a relation-type synonym to its canonical relation type."""
+
+    @abstractmethod
+    def create_relation_synonym(  # noqa: PLR0913
+        self,
+        *,
+        relation_type_id: str,
+        synonym: str,
+        source: str | None = None,
+        created_by: str,
+        source_ref: str | None = None,
+        research_space_settings: ResearchSpaceSettings | None = None,
+    ) -> DictionaryRelationSynonym:
+        """Create a relation-type synonym with provenance metadata."""
+
+    @abstractmethod
+    def list_relation_synonyms(
+        self,
+        *,
+        relation_type_id: str | None = None,
+        include_inactive: bool = False,
+    ) -> list[DictionaryRelationSynonym]:
+        """List relation-type synonyms with optional canonical-type filtering."""
+
+    @abstractmethod
+    def set_relation_synonym_review_status(
+        self,
+        synonym_id: int,
+        *,
+        review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"],
+        reviewed_by: str,
+        revocation_reason: str | None = None,
+    ) -> DictionaryRelationSynonym:
+        """Update review status for a relation-type synonym."""
+
+    @abstractmethod
+    def revoke_relation_synonym(
+        self,
+        synonym_id: int,
+        *,
+        reason: str,
+        reviewed_by: str,
+    ) -> DictionaryRelationSynonym:
+        """Revoke a relation-type synonym with an audit reason."""
 
     @abstractmethod
     def list_changelog_entries(

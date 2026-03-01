@@ -114,6 +114,8 @@ export interface IngestionJobHistoryResponse {
   items: IngestionJobHistoryItem[]
 }
 
+const DATA_SOURCE_LIST_TIMEOUT_MS = 60000
+
 export async function fetchDataSources(
   params: DataSourceListParams = {},
   token?: string,
@@ -127,6 +129,7 @@ export async function fetchDataSources(
     {
       params,
       ...authHeaders(token),
+      timeout: DATA_SOURCE_LIST_TIMEOUT_MS,
     },
   )
 

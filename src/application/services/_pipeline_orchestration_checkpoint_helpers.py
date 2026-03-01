@@ -46,6 +46,13 @@ class _PipelineCheckpointSelf(Protocol):
         run_id: str,
     ) -> IngestionJob | None: ...
 
+    def _find_active_pipeline_run_job(
+        self,
+        *,
+        source_id: UUID,
+        exclude_run_id: str | None = None,
+    ) -> IngestionJob | None: ...
+
     def _cancel_pipeline_run(
         self,
         *,
@@ -92,6 +99,24 @@ class _PipelineOrchestrationCheckpointHelpers:
 
         existing = self._find_pipeline_run_job(source_id=source_id, run_id=run_id)
         if existing is None:
+            active_run = self._find_active_pipeline_run_job(
+                source_id=source_id,
+                exclude_run_id=run_id,
+            )
+            if active_run is not None:
+                active_metadata = self._coerce_json_object(active_run.metadata)
+                active_pipeline_payload = active_metadata.get("pipeline_run")
+                active_run_id = None
+                if isinstance(active_pipeline_payload, dict):
+                    stored_run_id = active_pipeline_payload.get("run_id")
+                    if isinstance(stored_run_id, str) and stored_run_id.strip():
+                        active_run_id = stored_run_id.strip()
+                active_identifier = active_run_id or str(active_run.id)
+                msg = (
+                    "An active pipeline run already exists for this source "
+                    f"(run_id={active_identifier})"
+                )
+                raise ValueError(msg)
             created = IngestionJob(
                 id=uuid4(),
                 source_id=source_id,
@@ -173,6 +198,59 @@ class _PipelineOrchestrationCheckpointHelpers:
             overall_status=overall_status,
             stage_updates={stage: (stage_status, stage_error)},
         )
+        return repository.save(
+            run_job.model_copy(update={"metadata": updated_metadata}),
+        )
+
+    def _persist_pipeline_run_progress(  # noqa: PLR0913
+        self: _PipelineCheckpointSelf,
+        *,
+        run_job: IngestionJob | None,
+        source_id: UUID,
+        research_space_id: UUID,
+        run_id: str,
+        resume_from_stage: PipelineStageName | None,
+        progress_key: str,
+        progress_payload: JSONObject,
+        overall_status: Literal[
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+        ] = "running",
+    ) -> IngestionJob | None:
+        repository = self._pipeline_runs
+        if repository is None:
+            return run_job
+        if run_job is None:
+            run_job = self._start_or_resume_pipeline_run(
+                source_id=source_id,
+                research_space_id=research_space_id,
+                run_id=run_id,
+                resume_from_stage=resume_from_stage,
+            )
+            if run_job is None:
+                return None
+
+        updated_metadata = self._build_pipeline_metadata(
+            existing_metadata=run_job.metadata,
+            run_id=run_id,
+            research_space_id=research_space_id,
+            resume_from_stage=resume_from_stage,
+            overall_status=overall_status,
+            stage_updates={},
+        )
+        pipeline_raw = updated_metadata.get("pipeline_run")
+        pipeline_payload = (
+            self._coerce_json_object(pipeline_raw)
+            if isinstance(pipeline_raw, dict)
+            else {}
+        )
+        pipeline_payload[progress_key] = self._coerce_json_object(progress_payload)
+        pipeline_payload["updated_at"] = datetime.now(UTC).isoformat(
+            timespec="seconds",
+        )
+        updated_metadata["pipeline_run"] = pipeline_payload
         return repository.save(
             run_job.model_copy(update={"metadata": updated_metadata}),
         )
@@ -313,6 +391,41 @@ class _PipelineOrchestrationCheckpointHelpers:
             stored_run_id = pipeline_payload.get("run_id")
             if isinstance(stored_run_id, str) and stored_run_id.strip() == run_id:
                 return candidate
+        return None
+
+    def _find_active_pipeline_run_job(
+        self: _PipelineCheckpointSelf,
+        *,
+        source_id: UUID,
+        exclude_run_id: str | None = None,
+    ) -> IngestionJob | None:
+        repository = self._pipeline_runs
+        if repository is None:
+            return None
+        normalized_exclude_run_id = (
+            exclude_run_id.strip()
+            if isinstance(exclude_run_id, str) and exclude_run_id.strip()
+            else None
+        )
+        for candidate in repository.find_by_source(source_id, limit=200):
+            if candidate.status != IngestionStatus.RUNNING:
+                continue
+            metadata = self._coerce_json_object(candidate.metadata)
+            pipeline_payload = metadata.get("pipeline_run")
+            if not isinstance(pipeline_payload, dict):
+                continue
+            stored_run_id = pipeline_payload.get("run_id")
+            normalized_stored_run_id = (
+                stored_run_id.strip()
+                if isinstance(stored_run_id, str) and stored_run_id.strip()
+                else None
+            )
+            if (
+                normalized_exclude_run_id is not None
+                and normalized_stored_run_id == normalized_exclude_run_id
+            ):
+                continue
+            return candidate
         return None
 
     def _build_pipeline_metadata(  # noqa: PLR0913

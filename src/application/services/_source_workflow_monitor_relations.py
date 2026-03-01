@@ -14,6 +14,7 @@ from src.models.database.extraction_queue import (
     ExtractionStatusEnum,
 )
 from src.models.database.kernel.entities import EntityModel
+from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 from src.models.database.review import ReviewRecord
 from src.models.database.source_document import SourceDocumentModel
@@ -76,6 +77,10 @@ class SourceWorkflowMonitorRelationsMixin:
             for item in persisted
             if item.get("relation_id") in pending_relation_ids
         ]
+        pending_claim_count = self._count_open_relation_claims_for_document_ids(
+            document_ids=document_ids,
+            space_id=space_id,
+        )
         rejected_by_document, rejected_reason_counts = (
             self._extract_rejected_relation_details(
                 extraction_rows=extraction_rows,
@@ -86,7 +91,8 @@ class SourceWorkflowMonitorRelationsMixin:
         return {
             "persisted_relation_rows": persisted,
             "pending_review_relation_rows": pending_relations,
-            "pending_review_relation_count": len(pending_relation_ids),
+            "pending_review_relation_count": len(pending_relation_ids)
+            + pending_claim_count,
             "review_queue_rows": review_queue,
             "rejected_relation_rows": rejected_by_document,
             "rejected_reason_counts": rejected_reason_counts,
@@ -413,6 +419,46 @@ class SourceWorkflowMonitorRelationsMixin:
             .where(RelationModel.research_space_id == space_id)
             .where(RelationModel.curation_status.in_(PENDING_RELATION_STATUSES))
             .where(RelationEvidenceModel.source_document_id.in_(source_document_ids))
+        )
+        pending_relations = int(self._session.execute(statement).scalar_one() or 0)
+        pending_claims = self._count_open_relation_claims_for_source_document_ids(
+            space_id=space_id,
+            source_document_ids=source_document_ids,
+        )
+        return pending_relations + pending_claims
+
+    def _count_open_relation_claims_for_document_ids(
+        self,
+        *,
+        document_ids: set[str],
+        space_id: UUID,
+    ) -> int:
+        source_document_ids = [
+            parsed_uuid
+            for document_id in document_ids
+            if (parsed_uuid := parse_uuid_runtime(document_id)) is not None
+        ]
+        if not source_document_ids:
+            return 0
+        return self._count_open_relation_claims_for_source_document_ids(
+            space_id=space_id,
+            source_document_ids=source_document_ids,
+        )
+
+    def _count_open_relation_claims_for_source_document_ids(
+        self,
+        *,
+        space_id: UUID,
+        source_document_ids: list[UUID],
+    ) -> int:
+        if not source_document_ids:
+            return 0
+        statement = (
+            select(func.count())
+            .select_from(RelationClaimModel)
+            .where(RelationClaimModel.research_space_id == space_id)
+            .where(RelationClaimModel.claim_status == "OPEN")
+            .where(RelationClaimModel.source_document_id.in_(source_document_ids))
         )
         return int(self._session.execute(statement).scalar_one() or 0)
 

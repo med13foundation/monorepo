@@ -266,6 +266,7 @@ def build_ingestion_scheduling_service(  # noqa: PLR0915
                     await graph_connection_service.discover_connections_for_seed(
                         research_space_id=str(source.research_space_id),
                         seed_entity_id=seed_entity_id,
+                        source_id=str(source.id),
                         source_type=source_type_value,
                         model_id=None,
                         relation_types=None,

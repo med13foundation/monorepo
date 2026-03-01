@@ -615,13 +615,16 @@ class EntityRecognitionService(
                 and self._extraction_service is not None
                 and document.research_space_id is not None
             ):
+                bootstrap_settings = self._enforce_active_dictionary_creation_policy(
+                    research_space_settings,
+                )
                 (
                     bootstrap_variables_created,
                     bootstrap_entity_types_created,
                 ) = self._ensure_domain_bootstrap(
                     source_type=document.source_type.value,
                     source_ref=f"source_document:{document.id}",
-                    research_space_settings=research_space_settings,
+                    research_space_settings=bootstrap_settings,
                 )
                 return await self._process_document_with_extraction(
                     document=document,
@@ -631,7 +634,7 @@ class EntityRecognitionService(
                     document_run_id=run_id,
                     model_id=model_id,
                     requested_shadow_mode=requested_shadow_mode,
-                    research_space_settings=research_space_settings,
+                    research_space_settings=bootstrap_settings,
                     dictionary_variables_created=bootstrap_variables_created,
                     dictionary_synonyms_created=0,
                     dictionary_entity_types_created=bootstrap_entity_types_created,
@@ -926,6 +929,15 @@ class EntityRecognitionService(
 
         return settings
 
+    @staticmethod
+    def _enforce_active_dictionary_creation_policy(
+        settings: ResearchSpaceSettings,
+    ) -> ResearchSpaceSettings:
+        return {
+            **settings,
+            "dictionary_agent_creation_policy": "ACTIVE",
+        }
+
     def _resolve_shadow_mode(
         self,
         *,
@@ -959,13 +971,16 @@ class EntityRecognitionService(
         source_ref: str,
         research_space_settings: ResearchSpaceSettings,
     ) -> tuple[int, int, int]:
+        mutation_settings = self._enforce_active_dictionary_creation_policy(
+            research_space_settings,
+        )
         (
             bootstrap_variables_created,
             bootstrap_entity_types_created,
         ) = self._ensure_domain_bootstrap(
             source_type=source_type,
             source_ref=source_ref,
-            research_space_settings=research_space_settings,
+            research_space_settings=mutation_settings,
         )
 
         if (
@@ -1004,7 +1019,7 @@ class EntityRecognitionService(
                 domain_context=domain_context,
                 created_by=self._agent_created_by,
                 source_ref=source_ref,
-                research_space_settings=research_space_settings,
+                research_space_settings=mutation_settings,
             )
             created_entity_types += 1
 
@@ -1046,7 +1061,7 @@ class EntityRecognitionService(
                         ),
                         created_by=self._agent_created_by,
                         source_ref=source_ref,
-                        research_space_settings=research_space_settings,
+                        research_space_settings=mutation_settings,
                     )
                     created_variables += 1
             if resolved_variable is None:
@@ -1057,7 +1072,7 @@ class EntityRecognitionService(
                 source=source_type.lower(),
                 created_by=self._agent_created_by,
                 source_ref=source_ref,
-                research_space_settings=research_space_settings,
+                research_space_settings=mutation_settings,
             )
             created_synonyms += 1
 
@@ -1084,7 +1099,7 @@ class EntityRecognitionService(
                         ),
                         created_by=self._agent_created_by,
                         source_ref=source_ref,
-                        research_space_settings=research_space_settings,
+                        research_space_settings=mutation_settings,
                     )
                     created_variables += 1
                 self._dictionary.create_synonym(
@@ -1093,7 +1108,7 @@ class EntityRecognitionService(
                     source=source_type.lower(),
                     created_by=self._agent_created_by,
                     source_ref=source_ref,
-                    research_space_settings=research_space_settings,
+                    research_space_settings=mutation_settings,
                 )
                 created_synonyms += 1
 
@@ -1126,7 +1141,7 @@ class EntityRecognitionService(
 
         return created_variables, created_synonyms, created_entity_types
 
-    async def _process_document_with_extraction(  # noqa: PLR0913
+    async def _process_document_with_extraction(  # noqa: PLR0913, PLR0915
         self,
         *,
         document: SourceDocument,
@@ -1184,10 +1199,24 @@ class EntityRecognitionService(
                 },
             )
         except TimeoutError:
+            elapsed_ms = int(
+                (datetime.now(UTC) - extraction_started_at).total_seconds() * 1000,
+            )
+            failure_run_id = run_id or document_run_id
+            error_code = "EXTRACTION_STAGE_TIMEOUT"
+            error_class = "TimeoutError"
             logger.exception(
                 "Extraction stage timed out for document=%s after %.1fs",
                 document.id,
                 self._extraction_stage_timeout_seconds,
+                extra={
+                    "pipeline_run_id": pipeline_run_id,
+                    "entity_run_id": run_id,
+                    "failure_run_id": failure_run_id,
+                    "elapsed_ms": elapsed_ms,
+                    "error_code": error_code,
+                    "error_class": error_class,
+                },
             )
             failure_reason = "extraction_stage_timeout"
             metadata_patch = self._build_outcome_metadata(
@@ -1209,6 +1238,16 @@ class EntityRecognitionService(
             metadata_patch["extraction_stage_timeout_seconds"] = (
                 self._extraction_stage_timeout_seconds
             )
+            metadata_patch["extraction_stage_failure"] = {
+                "error_code": error_code,
+                "error_class": error_class,
+                "elapsed_ms": elapsed_ms,
+                "run_id": failure_run_id,
+            }
+            metadata_patch["extraction_stage_error_code"] = error_code
+            metadata_patch["extraction_stage_error_class"] = error_class
+            metadata_patch["extraction_stage_elapsed_ms"] = elapsed_ms
+            metadata_patch["extraction_stage_run_id"] = failure_run_id
             self._persist_failed_document(
                 document=document,
                 run_id=document_run_id,
@@ -1231,9 +1270,28 @@ class EntityRecognitionService(
                 ),
             )
         except Exception as exc:  # noqa: BLE001 - surfaced via metadata/outcome
+            elapsed_ms = int(
+                (datetime.now(UTC) - extraction_started_at).total_seconds() * 1000,
+            )
+            failure_run_id = run_id or document_run_id
+            custom_error_code = getattr(exc, "error_code", None)
+            error_code = (
+                custom_error_code.strip()
+                if isinstance(custom_error_code, str) and custom_error_code.strip()
+                else "EXTRACTION_STAGE_FAILED"
+            )
+            error_class = type(exc).__name__
             logger.exception(
                 "Extraction stage failed for document=%s",
                 document.id,
+                extra={
+                    "pipeline_run_id": pipeline_run_id,
+                    "entity_run_id": run_id,
+                    "failure_run_id": failure_run_id,
+                    "elapsed_ms": elapsed_ms,
+                    "error_code": error_code,
+                    "error_class": error_class,
+                },
             )
             failure_reason = "extraction_stage_failed"
             metadata_patch = self._build_outcome_metadata(
@@ -1249,6 +1307,16 @@ class EntityRecognitionService(
             )
             metadata_patch["extraction_stage_error"] = str(exc)
             metadata_patch["extraction_stage_failure_reason"] = failure_reason
+            metadata_patch["extraction_stage_failure"] = {
+                "error_code": error_code,
+                "error_class": error_class,
+                "elapsed_ms": elapsed_ms,
+                "run_id": failure_run_id,
+            }
+            metadata_patch["extraction_stage_error_code"] = error_code
+            metadata_patch["extraction_stage_error_class"] = error_class
+            metadata_patch["extraction_stage_elapsed_ms"] = elapsed_ms
+            metadata_patch["extraction_stage_run_id"] = failure_run_id
             self._persist_failed_document(
                 document=document,
                 run_id=document_run_id,

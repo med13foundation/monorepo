@@ -12,7 +12,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -52,6 +61,7 @@ class RelationModel(Base):
     )
     relation_type: Mapped[str] = mapped_column(
         String(64),
+        ForeignKey("dictionary_relation_types.id"),
         nullable=False,
         doc="Relationship type, e.g. CAUSES, ASSOCIATED_WITH",
     )
@@ -126,6 +136,18 @@ class RelationModel(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["source_id", "research_space_id"],
+            ["entities.id", "entities.research_space_id"],
+            ondelete="CASCADE",
+            name="fk_relations_source_space_entities",
+        ),
+        ForeignKeyConstraint(
+            ["target_id", "research_space_id"],
+            ["entities.id", "entities.research_space_id"],
+            ondelete="CASCADE",
+            name="fk_relations_target_space_entities",
+        ),
         Index("idx_relations_source", "source_id"),
         Index("idx_relations_target", "target_id"),
         Index("idx_relations_space_type", "research_space_id", "relation_type"),

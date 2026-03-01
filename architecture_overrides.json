@@ -50,7 +50,7 @@
     },
     {
       "path": "src/models/database/kernel/dictionary.py",
-      "max_lines": 1300,
+      "max_lines": 1400,
       "reason": "Dictionary ORM includes expanded versioning/validity and transform-governance fields across multiple tables; model breakup is deferred to schema package reorganization.",
       "expires_on": "2026-12-31"
     },
