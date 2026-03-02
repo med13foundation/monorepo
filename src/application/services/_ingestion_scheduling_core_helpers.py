@@ -206,12 +206,30 @@ class _IngestionSchedulingCoreHelpers(
         if hook is None:
             return
         try:
-            await hook(source, summary)
-        except Exception:  # noqa: BLE001 - hook must not fail ingestion completion
+            await asyncio.wait_for(
+                hook(source, summary),
+                timeout=self._post_ingestion_hook_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            logger.exception(
+                "Post-ingestion hook timed out",
+                extra={
+                    "source_id": str(source.id),
+                    "timeout_seconds": self._post_ingestion_hook_timeout_seconds,
+                },
+            )
+            msg = (
+                "Post-ingestion hook timed out after "
+                f"{self._post_ingestion_hook_timeout_seconds}s for source {source.id}"
+            )
+            raise RuntimeError(msg) from exc
+        except Exception as exc:
             logger.exception(
                 "Post-ingestion hook failed",
                 extra={"source_id": str(source.id)},
             )
+            msg = f"Post-ingestion hook failed for source {source.id}: {exc!s}"
+            raise RuntimeError(msg) from exc
 
     def _recover_stale_running_jobs(
         self: IngestionSchedulingService,

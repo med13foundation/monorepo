@@ -8,10 +8,14 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from uuid import UUID
 
+    from src.application.agents.services._content_enrichment_types import (
+        ContentEnrichmentRunSummary,
+    )
     from src.application.agents.services.content_enrichment_service import (
         ContentEnrichmentService,
     )
     from src.application.agents.services.entity_recognition_service import (
+        EntityRecognitionRunSummary,
         EntityRecognitionService,
     )
     from src.application.agents.services.graph_connection_service import (
@@ -39,6 +43,12 @@ class _PipelineExecutionSelf(Protocol):
     _ingestion: IngestionSchedulingService
     _enrichment: ContentEnrichmentService
     _extraction: EntityRecognitionService
+    _enrichment_stage_runner: (
+        Callable[..., Awaitable[ContentEnrichmentRunSummary]] | None
+    )
+    _extraction_stage_runner: (
+        Callable[..., Awaitable[EntityRecognitionRunSummary]] | None
+    )
     _graph: GraphConnectionService | None
     _graph_seed_runner: Callable[..., Awaitable[GraphConnectionOutcome]] | None
     _graph_search: GraphSearchService | None

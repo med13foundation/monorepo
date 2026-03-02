@@ -46,6 +46,8 @@ class SourceDocumentRepository(ABC):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         """List documents waiting for enrichment."""
 
@@ -56,6 +58,8 @@ class SourceDocumentRepository(ABC):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         """List documents waiting for extraction."""
 

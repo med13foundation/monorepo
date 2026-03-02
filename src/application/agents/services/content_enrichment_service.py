@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
@@ -38,6 +41,71 @@ if TYPE_CHECKING:
         SourceDocumentRepository,
     )
 
+logger = logging.getLogger(__name__)
+
+_ENV_AGENT_TIMEOUT_SECONDS = "MED13_CONTENT_ENRICHMENT_AGENT_TIMEOUT_SECONDS"
+_ENV_BATCH_MAX_CONCURRENCY = "MED13_CONTENT_ENRICHMENT_BATCH_MAX_CONCURRENCY"
+_DEFAULT_AGENT_TIMEOUT_SECONDS = 180.0
+_DEFAULT_BATCH_MAX_CONCURRENCY = 4
+
+
+def _read_positive_timeout_seconds(
+    env_name: str,
+    *,
+    default_seconds: float,
+) -> float:
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        return default_seconds
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid timeout override in %s=%r; using default %.1fs",
+            env_name,
+            raw_value,
+            default_seconds,
+        )
+        return default_seconds
+    if parsed <= 0:
+        logger.warning(
+            "Non-positive timeout override in %s=%r; using default %.1fs",
+            env_name,
+            raw_value,
+            default_seconds,
+        )
+        return default_seconds
+    return parsed
+
+
+def _read_positive_int(
+    env_name: str,
+    *,
+    default_value: int,
+) -> int:
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        return default_value
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid integer override in %s=%r; using default %d",
+            env_name,
+            raw_value,
+            default_value,
+        )
+        return default_value
+    if parsed <= 0:
+        logger.warning(
+            "Non-positive integer override in %s=%r; using default %d",
+            env_name,
+            raw_value,
+            default_value,
+        )
+        return default_value
+    return parsed
+
 
 @dataclass(frozen=True)
 class ContentEnrichmentServiceDependencies:
@@ -57,6 +125,14 @@ class ContentEnrichmentService(
         self._agent = dependencies.content_enrichment_agent
         self._source_documents = dependencies.source_document_repository
         self._storage_coordinator = dependencies.storage_coordinator
+        self._agent_timeout_seconds = _read_positive_timeout_seconds(
+            _ENV_AGENT_TIMEOUT_SECONDS,
+            default_seconds=_DEFAULT_AGENT_TIMEOUT_SECONDS,
+        )
+        self._batch_max_concurrency = _read_positive_int(
+            _ENV_BATCH_MAX_CONCURRENCY,
+            default_value=_DEFAULT_BATCH_MAX_CONCURRENCY,
+        )
 
     async def process_pending_documents(  # noqa: PLR0913
         self,
@@ -74,40 +150,88 @@ class ContentEnrichmentService(
         fetch_limit = requested_limit
         if ingestion_job_id is not None:
             fetch_limit = max(requested_limit * 20, 200)
+        normalized_source_type = (
+            source_type.strip().lower() if isinstance(source_type, str) else None
+        )
         pending_documents = self._source_documents.list_pending_enrichment(
             limit=fetch_limit,
             source_id=source_id,
             research_space_id=research_space_id,
+            ingestion_job_id=ingestion_job_id,
+            source_type=normalized_source_type,
         )
-        normalized_source_type = (
-            source_type.strip().lower() if isinstance(source_type, str) else None
-        )
-        if normalized_source_type:
-            pending_documents = [
-                document
-                for document in pending_documents
-                if document.source_type.value.strip().lower() == normalized_source_type
-            ]
-        if ingestion_job_id is not None:
-            pending_documents = [
-                document
-                for document in pending_documents
-                if document.ingestion_job_id == ingestion_job_id
-            ]
         pending_documents = sorted(
             pending_documents,
             key=lambda document: document.created_at,
             reverse=True,
         )[:requested_limit]
 
-        outcomes = [
-            await self._process_document(
-                document=document,
-                model_id=model_id,
-                force=False,
-                pipeline_run_id=pipeline_run_id,
+        outcomes_by_index: list[ContentEnrichmentDocumentOutcome | None] = [None] * len(
+            pending_documents,
+        )
+        if pending_documents:
+            worker_count = min(self._batch_max_concurrency, len(pending_documents))
+            semaphore = asyncio.Semaphore(worker_count)
+
+            async def _process_document_with_guard(
+                *,
+                index: int,
+                document: SourceDocument,
+            ) -> None:
+                async with semaphore:
+                    try:
+                        outcome = await self._process_document(
+                            document=document,
+                            model_id=model_id,
+                            force=False,
+                            pipeline_run_id=pipeline_run_id,
+                        )
+                    except (
+                        Exception
+                    ) as exc:  # noqa: BLE001 - isolate unexpected batch failures
+                        logger.exception(
+                            "Content enrichment unexpected document failure",
+                            extra={
+                                "document_id": str(document.id),
+                                "pipeline_run_id": pipeline_run_id,
+                                "error_class": type(exc).__name__,
+                            },
+                        )
+                        failure_reason = "unexpected_batch_processing_error"
+                        self._persist_document_with_status(
+                            document=document,
+                            status=EnrichmentStatus.FAILED,
+                            run_id=None,
+                            acquisition_method="skipped",
+                            metadata_patch={
+                                "content_enrichment_error": str(exc),
+                                "content_enrichment_failure_reason": failure_reason,
+                                "content_enrichment_batch_error_class": type(
+                                    exc,
+                                ).__name__,
+                                "pipeline_run_id": pipeline_run_id,
+                            },
+                        )
+                        outcome = ContentEnrichmentDocumentOutcome(
+                            document_id=document.id,
+                            status="failed",
+                            execution_mode=self._resolve_execution_mode(
+                                document=document,
+                            ),
+                            reason=failure_reason,
+                            errors=(str(exc),),
+                        )
+                    outcomes_by_index[index] = outcome
+
+            await asyncio.gather(
+                *(
+                    _process_document_with_guard(index=index, document=document)
+                    for index, document in enumerate(pending_documents)
+                ),
             )
-            for document in pending_documents
+
+        outcomes: list[ContentEnrichmentDocumentOutcome] = [
+            outcome for outcome in outcomes_by_index if outcome is not None
         ]
 
         completed_at = datetime.now(UTC)
@@ -159,6 +283,33 @@ class ContentEnrichmentService(
 
         try:
             contract = await self._build_contract(document=document, model_id=model_id)
+        except TimeoutError:
+            failure_reason = "agent_execution_timeout"
+            self._persist_document_with_status(
+                document=document,
+                status=EnrichmentStatus.FAILED,
+                run_id=None,
+                acquisition_method="skipped",
+                metadata_patch={
+                    "content_enrichment_error": (
+                        "content_enrichment_agent_timeout:"
+                        f"{self._agent_timeout_seconds:.1f}s"
+                    ),
+                    "content_enrichment_failure_reason": failure_reason,
+                    "content_enrichment_timeout_seconds": self._agent_timeout_seconds,
+                    "pipeline_run_id": pipeline_run_id,
+                },
+            )
+            return ContentEnrichmentDocumentOutcome(
+                document_id=document.id,
+                status="failed",
+                execution_mode=execution_mode,
+                reason=failure_reason,
+                errors=(
+                    "content_enrichment_agent_timeout:"
+                    f"{self._agent_timeout_seconds:.1f}s",
+                ),
+            )
         except Exception as exc:  # noqa: BLE001
             failure_reason = "agent_execution_failed"
             self._persist_document_with_status(
@@ -383,7 +534,10 @@ class ContentEnrichmentService(
                 agent_run_id=None,
             )
         context = build_content_enrichment_context(document)
-        return await self._agent.enrich(context, model_id=model_id)
+        return await asyncio.wait_for(
+            self._agent.enrich(context, model_id=model_id),
+            timeout=self._agent_timeout_seconds,
+        )
 
     def _resolve_execution_mode(
         self,

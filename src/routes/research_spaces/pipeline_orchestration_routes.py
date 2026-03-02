@@ -17,6 +17,7 @@ from src.application.services.pipeline_orchestration_service import (
 )
 from src.database.session import get_session
 from src.domain.entities.ingestion_job import IngestionStatus
+from src.domain.entities.user import UserRole
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces import (
     content_enrichment_routes,
@@ -38,10 +39,14 @@ from .router import (
 )
 
 if TYPE_CHECKING:
+    from src.application.agents.services._content_enrichment_types import (
+        ContentEnrichmentRunSummary,
+    )
     from src.application.agents.services.content_enrichment_service import (
         ContentEnrichmentService,
     )
     from src.application.agents.services.entity_recognition_service import (
+        EntityRecognitionRunSummary,
         EntityRecognitionService,
     )
     from src.application.agents.services.graph_connection_service import (
@@ -144,6 +149,7 @@ def get_pipeline_orchestration_service(
     graph_search_service: GraphSearchService = Depends(
         kernel_graph_search_routes.get_graph_search_service,
     ),
+    current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
 ) -> PipelineOrchestrationService:
     """Dependency provider for unified pipeline orchestration."""
@@ -154,6 +160,79 @@ def get_pipeline_orchestration_service(
     from src.infrastructure.repositories import SqlAlchemyResearchSpaceRepository
 
     container = get_legacy_dependency_container()
+    is_admin_user = current_user.role == UserRole.ADMIN
+
+    async def run_enrichment_stage_isolated_uow(
+        *,
+        limit: int,
+        source_id: UUID | None,
+        ingestion_job_id: UUID | None,
+        research_space_id: UUID | None,
+        source_type: str | None,
+        model_id: str | None,
+        pipeline_run_id: str | None,
+    ) -> ContentEnrichmentRunSummary:
+        isolated_session = SessionLocal()
+        set_session_rls_context(
+            isolated_session,
+            current_user_id=current_user.id,
+            has_phi_access=is_admin_user,
+            is_admin=is_admin_user,
+            bypass_rls=False,
+        )
+        isolated_enrichment_service = container.create_content_enrichment_service(
+            isolated_session,
+        )
+        try:
+            return await isolated_enrichment_service.process_pending_documents(
+                limit=limit,
+                source_id=source_id,
+                ingestion_job_id=ingestion_job_id,
+                research_space_id=research_space_id,
+                source_type=source_type,
+                model_id=model_id,
+                pipeline_run_id=pipeline_run_id,
+            )
+        finally:
+            await isolated_enrichment_service.close()
+            isolated_session.close()
+
+    async def run_extraction_stage_isolated_uow(  # noqa: PLR0913
+        *,
+        limit: int,
+        source_id: UUID | None,
+        ingestion_job_id: UUID | None,
+        research_space_id: UUID | None,
+        source_type: str | None,
+        model_id: str | None,
+        shadow_mode: bool | None,
+        pipeline_run_id: str | None,
+    ) -> EntityRecognitionRunSummary:
+        isolated_session = SessionLocal()
+        set_session_rls_context(
+            isolated_session,
+            current_user_id=current_user.id,
+            has_phi_access=is_admin_user,
+            is_admin=is_admin_user,
+            bypass_rls=False,
+        )
+        isolated_extraction_service = container.create_entity_recognition_service(
+            isolated_session,
+        )
+        try:
+            return await isolated_extraction_service.process_pending_documents(
+                limit=limit,
+                source_id=source_id,
+                ingestion_job_id=ingestion_job_id,
+                research_space_id=research_space_id,
+                source_type=source_type,
+                model_id=model_id,
+                shadow_mode=shadow_mode,
+                pipeline_run_id=pipeline_run_id,
+            )
+        finally:
+            await isolated_extraction_service.close()
+            isolated_session.close()
 
     async def run_graph_seed_isolated_uow(  # noqa: PLR0913
         *,
@@ -169,7 +248,13 @@ def get_pipeline_orchestration_service(
         fallback_relations: tuple[ProposedRelation, ...] | None,
     ) -> GraphConnectionOutcome:
         isolated_session = SessionLocal()
-        set_session_rls_context(isolated_session, bypass_rls=False)
+        set_session_rls_context(
+            isolated_session,
+            current_user_id=current_user.id,
+            has_phi_access=is_admin_user,
+            is_admin=is_admin_user,
+            bypass_rls=False,
+        )
         isolated_graph_service = container.create_graph_connection_service(
             isolated_session,
         )
@@ -195,6 +280,8 @@ def get_pipeline_orchestration_service(
             ingestion_scheduling_service=scheduling_service,
             content_enrichment_service=content_enrichment_service,
             entity_recognition_service=entity_recognition_service,
+            content_enrichment_stage_runner=run_enrichment_stage_isolated_uow,
+            entity_recognition_stage_runner=run_extraction_stage_isolated_uow,
             graph_connection_service=graph_connection_service,
             graph_connection_seed_runner=run_graph_seed_isolated_uow,
             graph_search_service=graph_search_service,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
@@ -104,6 +105,33 @@ _CLAIM_VALIDATION_STATE_MAP: dict[str, _ClaimValidationState] = {
     "ENDPOINT_UNRESOLVED": "ENDPOINT_UNRESOLVED",
     "SELF_LOOP": "SELF_LOOP",
 }
+
+
+@dataclass(frozen=True)
+class _RelationClaimTriageDependencies:
+    membership_service: MembershipManagementService
+    relation_claim_service: KernelRelationClaimService
+    relation_service: KernelRelationService
+    dictionary_service: DictionaryPort
+    session: Session
+
+
+def _get_relation_claim_triage_dependencies(
+    membership_service: MembershipManagementService = Depends(get_membership_service),
+    relation_claim_service: KernelRelationClaimService = Depends(
+        get_kernel_relation_claim_service,
+    ),
+    relation_service: KernelRelationService = Depends(get_kernel_relation_service),
+    dictionary_service: DictionaryPort = Depends(get_dictionary_service),
+    session: Session = Depends(get_session),
+) -> _RelationClaimTriageDependencies:
+    return _RelationClaimTriageDependencies(
+        membership_service=membership_service,
+        relation_claim_service=relation_claim_service,
+        relation_service=relation_service,
+        dictionary_service=dictionary_service,
+        session=session,
+    )
 
 
 def _normalize_optional_text(value: object) -> str | None:
@@ -901,14 +929,16 @@ def update_relation_claim_status(
     claim_id: UUID,
     request: KernelRelationClaimTriageRequest,
     current_user: User = Depends(get_current_active_user),
-    membership_service: MembershipManagementService = Depends(get_membership_service),
-    relation_claim_service: KernelRelationClaimService = Depends(
-        get_kernel_relation_claim_service,
+    triage_dependencies: _RelationClaimTriageDependencies = Depends(
+        _get_relation_claim_triage_dependencies,
     ),
-    relation_service: KernelRelationService = Depends(get_kernel_relation_service),
-    dictionary_service: DictionaryPort = Depends(get_dictionary_service),
-    session: Session = Depends(get_session),
 ) -> KernelRelationClaimResponse:
+    membership_service = triage_dependencies.membership_service
+    relation_claim_service = triage_dependencies.relation_claim_service
+    relation_service = triage_dependencies.relation_service
+    dictionary_service = triage_dependencies.dictionary_service
+    session = triage_dependencies.session
+
     require_curator_role(
         space_id,
         current_user.id,

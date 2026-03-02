@@ -66,6 +66,7 @@ class IngestionSchedulingOptions:
     scheduler_lease_ttl_seconds: int = 120
     scheduler_stale_running_timeout_seconds: int = 300
     ingestion_job_hard_timeout_seconds: int = 7200
+    post_ingestion_hook_timeout_seconds: int = 1800
     # Backward-compatible aliases retained while transitioning option names.
     source_lock_repository: source_lock_repo.IngestionSourceLockRepository | None = None
     source_lock_lease_ttl_seconds: int | None = None
@@ -166,6 +167,10 @@ class IngestionSchedulingService(
         )
         self._retry_batch_size = max(resolved_options.retry_batch_size, 1)
         self._post_ingestion_hook = resolved_options.post_ingestion_hook
+        self._post_ingestion_hook_timeout_seconds = max(
+            resolved_options.post_ingestion_hook_timeout_seconds,
+            1,
+        )
 
     def get_job_repository(self) -> ingestion_job_repository.IngestionJobRepository:
         """Expose the ingestion-job repository for cross-service orchestration."""

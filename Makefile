@@ -120,7 +120,7 @@ define ensure_web_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait phi-backfill-dry-run phi-backfill-commit
+.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait phi-backfill-dry-run phi-backfill-commit
 
 PY_CHECK_PATHS := src tests scripts alembic
 PY_STRICT_CHECK_PATHS := src
@@ -261,9 +261,17 @@ lint-strict: ## Run all linting tools (fails on error)
 	@echo "Running bandit (strict)..."
 	@$(USE_PYTHON) -m bandit -r $(PY_CHECK_PATHS) -f json -o bandit-results.json 2>&1 | grep -vEi "(Test in comment|Unknown test found)" || true
 
+black-format: ## Format Python code with Black (uses pre-commit Black when available)
+	$(call check_venv)
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit run black --all-files; \
+	else \
+		$(USE_PYTHON) -m black $(PY_CHECK_PATHS); \
+	fi
+
 format: ## Format code with Black and sort imports with ruff
 	$(call check_venv)
-	@$(USE_PYTHON) -m black $(PY_CHECK_PATHS)
+	@$(MAKE) -s black-format SUPPRESS_VENV_WARNING=1
 	@$(USE_PYTHON) -m ruff check --fix $(PY_CHECK_PATHS) || echo "Ruff found linting issues (non-blocking)"
 
 format-check: ## Check code formatting without making changes

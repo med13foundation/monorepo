@@ -138,7 +138,9 @@ describe('SpaceCurationClient', () => {
     expect(screen.getByText('AI Low certainty')).toBeInTheDocument()
     expect(screen.getByText('Claim Status')).toBeInTheDocument()
     expect(screen.getByText('Validation State')).toBeInTheDocument()
-    expect(screen.getByText('Needs Mapping')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Needs mapping/i }),
+    ).toBeInTheDocument()
   })
 
   it('routes to claims tab when tab button is selected', () => {

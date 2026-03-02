@@ -22,10 +22,14 @@ from src.application.services._pipeline_orchestration_execution_helpers import (
 if TYPE_CHECKING:
     from uuid import UUID
 
+    from src.application.agents.services._content_enrichment_types import (
+        ContentEnrichmentRunSummary,
+    )
     from src.application.agents.services.content_enrichment_service import (
         ContentEnrichmentService,
     )
     from src.application.agents.services.entity_recognition_service import (
+        EntityRecognitionRunSummary,
         EntityRecognitionService,
     )
     from src.application.agents.services.graph_connection_service import (
@@ -52,6 +56,12 @@ class PipelineOrchestrationDependencies:
     ingestion_scheduling_service: IngestionSchedulingService
     content_enrichment_service: ContentEnrichmentService
     entity_recognition_service: EntityRecognitionService
+    content_enrichment_stage_runner: (
+        Callable[..., Awaitable[ContentEnrichmentRunSummary]] | None
+    ) = None
+    entity_recognition_stage_runner: (
+        Callable[..., Awaitable[EntityRecognitionRunSummary]] | None
+    ) = None
     graph_connection_service: GraphConnectionService | None = None
     graph_connection_seed_runner: (
         Callable[..., Awaitable[GraphConnectionOutcome]] | None
@@ -71,6 +81,8 @@ class PipelineOrchestrationService(
         self._ingestion = dependencies.ingestion_scheduling_service
         self._enrichment = dependencies.content_enrichment_service
         self._extraction = dependencies.entity_recognition_service
+        self._enrichment_stage_runner = dependencies.content_enrichment_stage_runner
+        self._extraction_stage_runner = dependencies.entity_recognition_stage_runner
         self._graph = dependencies.graph_connection_service
         self._graph_seed_runner = dependencies.graph_connection_seed_runner
         self._graph_search = dependencies.graph_search_service

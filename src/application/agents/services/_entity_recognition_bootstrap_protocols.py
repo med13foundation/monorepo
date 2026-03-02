@@ -92,5 +92,17 @@ class _EntityRecognitionBootstrapContext(Protocol):
         research_space_settings: ResearchSpaceSettings,
     ) -> None: ...
 
+    def _activate_bootstrap_entity_type_if_needed(
+        self,
+        *,
+        entity_type: str,
+    ) -> None: ...
+
+    def _activate_bootstrap_relation_type_if_needed(
+        self,
+        *,
+        relation_type: str,
+    ) -> None: ...
+
 
 __all__ = ["_EntityRecognitionBootstrapContext"]

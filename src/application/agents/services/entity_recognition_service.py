@@ -60,9 +60,11 @@ _ENV_EXTRACTION_STAGE_TIMEOUT_SECONDS = (
     "MED13_ENTITY_RECOGNITION_EXTRACTION_STAGE_TIMEOUT_SECONDS"
 )
 _ENV_STALE_IN_PROGRESS_SECONDS = "MED13_ENTITY_RECOGNITION_STALE_IN_PROGRESS_SECONDS"
+_ENV_BATCH_MAX_CONCURRENCY = "MED13_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY"
 _DEFAULT_AGENT_TIMEOUT_SECONDS = 180.0
 _DEFAULT_EXTRACTION_STAGE_TIMEOUT_SECONDS = 300.0
 _DEFAULT_STALE_IN_PROGRESS_SECONDS = 900.0
+_DEFAULT_BATCH_MAX_CONCURRENCY = 4
 
 
 def _read_positive_timeout_seconds(
@@ -91,6 +93,35 @@ def _read_positive_timeout_seconds(
             default_seconds,
         )
         return default_seconds
+    return parsed
+
+
+def _read_positive_int(
+    env_name: str,
+    *,
+    default_value: int,
+) -> int:
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        return default_value
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid integer override in %s=%r; using default %d",
+            env_name,
+            raw_value,
+            default_value,
+        )
+        return default_value
+    if parsed <= 0:
+        logger.warning(
+            "Non-positive integer override in %s=%r; using default %d",
+            env_name,
+            raw_value,
+            default_value,
+        )
+        return default_value
     return parsed
 
 
@@ -187,6 +218,10 @@ class EntityRecognitionService(
             _ENV_STALE_IN_PROGRESS_SECONDS,
             default_seconds=_DEFAULT_STALE_IN_PROGRESS_SECONDS,
         )
+        self._batch_max_concurrency = _read_positive_int(
+            _ENV_BATCH_MAX_CONCURRENCY,
+            default_value=_DEFAULT_BATCH_MAX_CONCURRENCY,
+        )
 
     async def process_pending_documents(  # noqa: PLR0913
         self,
@@ -255,26 +290,16 @@ class EntityRecognitionService(
                     "stale_threshold_seconds": self._stale_in_progress_seconds,
                 },
             )
+        normalized_source_type = (
+            source_type.strip().lower() if isinstance(source_type, str) else None
+        )
         pending_documents = self._source_documents.list_pending_extraction(
             limit=fetch_limit,
             source_id=source_id,
             research_space_id=research_space_id,
+            ingestion_job_id=ingestion_job_id,
+            source_type=normalized_source_type,
         )
-        normalized_source_type = (
-            source_type.strip().lower() if isinstance(source_type, str) else None
-        )
-        if normalized_source_type:
-            pending_documents = [
-                document
-                for document in pending_documents
-                if document.source_type.value.strip().lower() == normalized_source_type
-            ]
-        if ingestion_job_id is not None:
-            pending_documents = [
-                document
-                for document in pending_documents
-                if document.ingestion_job_id == ingestion_job_id
-            ]
         pending_documents = sorted(
             pending_documents,
             key=lambda document: document.created_at,
@@ -300,46 +325,106 @@ class EntityRecognitionService(
                     self._extraction_stage_timeout_seconds
                 ),
                 "stale_in_progress_seconds": self._stale_in_progress_seconds,
+                "batch_max_concurrency": self._batch_max_concurrency,
             },
         )
 
-        outcomes: list[EntityRecognitionDocumentOutcome] = []
-        for document in pending_documents:
-            logger.info(
-                "Entity recognition document started",
-                extra={
-                    "document_id": str(document.id),
-                    "pipeline_run_id": pipeline_run_id,
-                    "source_id": str(document.source_id),
-                    "ingestion_job_id": (
-                        str(document.ingestion_job_id)
-                        if document.ingestion_job_id is not None
-                        else None
-                    ),
-                    "external_record_id": document.external_record_id,
-                },
+        outcomes_by_index: list[EntityRecognitionDocumentOutcome | None] = [None] * len(
+            pending_documents,
+        )
+        if pending_documents:
+            worker_count = min(self._batch_max_concurrency, len(pending_documents))
+            semaphore = asyncio.Semaphore(worker_count)
+
+            async def _process_document_with_guard(
+                *,
+                index: int,
+                document: SourceDocument,
+            ) -> None:
+                async with semaphore:
+                    logger.info(
+                        "Entity recognition document started",
+                        extra={
+                            "document_id": str(document.id),
+                            "pipeline_run_id": pipeline_run_id,
+                            "source_id": str(document.source_id),
+                            "ingestion_job_id": (
+                                str(document.ingestion_job_id)
+                                if document.ingestion_job_id is not None
+                                else None
+                            ),
+                            "external_record_id": document.external_record_id,
+                            "worker_count": worker_count,
+                        },
+                    )
+                    try:
+                        outcome = await self._process_document_entity(
+                            document=document,
+                            model_id=model_id,
+                            shadow_mode=shadow_mode,
+                            force=False,
+                            pipeline_run_id=pipeline_run_id,
+                        )
+                    except (
+                        Exception
+                    ) as exc:  # noqa: BLE001 - isolate one document failure
+                        logger.exception(
+                            "Entity recognition unexpected document failure",
+                            extra={
+                                "document_id": str(document.id),
+                                "pipeline_run_id": pipeline_run_id,
+                                "error_class": type(exc).__name__,
+                            },
+                        )
+                        self._persist_failed_document(
+                            document=document,
+                            run_id=None,
+                            metadata_patch={
+                                "entity_recognition_error": (
+                                    "unexpected_batch_processing_error"
+                                ),
+                                "entity_recognition_batch_error_class": type(
+                                    exc,
+                                ).__name__,
+                                "entity_recognition_batch_error_message": str(exc),
+                                "pipeline_run_id": pipeline_run_id,
+                            },
+                        )
+                        outcome = EntityRecognitionDocumentOutcome(
+                            document_id=document.id,
+                            status="failed",
+                            reason="unexpected_batch_processing_error",
+                            review_required=False,
+                            shadow_mode=False,
+                            wrote_to_kernel=False,
+                            errors=(str(exc),),
+                        )
+
+                    outcomes_by_index[index] = outcome
+                    logger.info(
+                        "Entity recognition document finished",
+                        extra={
+                            "document_id": str(document.id),
+                            "pipeline_run_id": pipeline_run_id,
+                            "status": outcome.status,
+                            "reason": outcome.reason,
+                            "shadow_mode": outcome.shadow_mode,
+                            "wrote_to_kernel": outcome.wrote_to_kernel,
+                            "run_id": outcome.run_id,
+                            "error_count": len(outcome.errors),
+                        },
+                    )
+
+            await asyncio.gather(
+                *(
+                    _process_document_with_guard(index=index, document=document)
+                    for index, document in enumerate(pending_documents)
+                ),
             )
-            outcome = await self._process_document_entity(
-                document=document,
-                model_id=model_id,
-                shadow_mode=shadow_mode,
-                force=False,
-                pipeline_run_id=pipeline_run_id,
-            )
-            outcomes.append(outcome)
-            logger.info(
-                "Entity recognition document finished",
-                extra={
-                    "document_id": str(document.id),
-                    "pipeline_run_id": pipeline_run_id,
-                    "status": outcome.status,
-                    "reason": outcome.reason,
-                    "shadow_mode": outcome.shadow_mode,
-                    "wrote_to_kernel": outcome.wrote_to_kernel,
-                    "run_id": outcome.run_id,
-                    "error_count": len(outcome.errors),
-                },
-            )
+
+        outcomes: list[EntityRecognitionDocumentOutcome] = [
+            outcome for outcome in outcomes_by_index if outcome is not None
+        ]
 
         completed_at = datetime.now(UTC)
         summary = self._build_run_summary(

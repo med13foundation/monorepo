@@ -122,6 +122,7 @@ class ClinVarIngestionService(ClinVarIngestionServiceHelpers):
 
         return clinvar_ingestion.ClinVarIngestionSummary(
             source_id=source.id,
+            ingestion_job_id=context.ingestion_job_id if context else None,
             fetched_records=fetch_result.fetched_records,
             parsed_publications=len(raw_records),
             created_publications=observations_created,

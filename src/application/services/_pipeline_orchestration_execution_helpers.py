@@ -27,6 +27,12 @@ from src.application.services._pipeline_orchestration_seed_helpers import (
 if TYPE_CHECKING:
     from uuid import UUID
 
+    from src.application.agents.services._content_enrichment_types import (
+        ContentEnrichmentRunSummary,
+    )
+    from src.application.agents.services.entity_recognition_service import (
+        EntityRecognitionRunSummary,
+    )
     from src.application.agents.services.graph_connection_service import (
         GraphConnectionOutcome,
     )
@@ -41,12 +47,29 @@ _ENV_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS = (
     "MED13_PIPELINE_EXTRACTION_STAGE_TIMEOUT_SECONDS"
 )
 _DEFAULT_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS = 900.0
+_ENV_ENTITY_RECOGNITION_AGENT_TIMEOUT_SECONDS = (
+    "MED13_ENTITY_RECOGNITION_AGENT_TIMEOUT_SECONDS"
+)
+_DEFAULT_ENTITY_RECOGNITION_AGENT_TIMEOUT_SECONDS = 180.0
+_ENV_ENTITY_RECOGNITION_EXTRACTION_STAGE_TIMEOUT_SECONDS = (
+    "MED13_ENTITY_RECOGNITION_EXTRACTION_STAGE_TIMEOUT_SECONDS"
+)
+_DEFAULT_ENTITY_RECOGNITION_EXTRACTION_STAGE_TIMEOUT_SECONDS = 300.0
+_ENV_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY = (
+    "MED13_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY"
+)
+_DEFAULT_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY = 4
+_EXTRACTION_STAGE_TIMEOUT_OVERHEAD_SECONDS = 15.0
 _ENV_GRAPH_SEED_INFERENCE_TIMEOUT_SECONDS = (
     "MED13_PIPELINE_GRAPH_SEED_INFERENCE_TIMEOUT_SECONDS"
 )
 _DEFAULT_GRAPH_SEED_INFERENCE_TIMEOUT_SECONDS = 120.0
 _ENV_GRAPH_STAGE_MAX_CONCURRENCY = "MED13_PIPELINE_GRAPH_STAGE_MAX_CONCURRENCY"
 _DEFAULT_GRAPH_STAGE_MAX_CONCURRENCY = 2
+_ENV_GRAPH_STAGE_SEED_TIMEOUT_SECONDS = (
+    "MED13_PIPELINE_GRAPH_STAGE_SEED_TIMEOUT_SECONDS"
+)
+_DEFAULT_GRAPH_STAGE_SEED_TIMEOUT_SECONDS = 180.0
 
 
 def _read_positive_timeout_seconds(
@@ -350,32 +373,44 @@ class _PipelineOrchestrationExecutionHelpers(
                     ),
                 },
             )
-            try:
+
+            async def _run_enrichment_stage_with_compat() -> (
+                ContentEnrichmentRunSummary
+            ):
+                if self._enrichment_stage_runner is not None:
+                    return await self._enrichment_stage_runner(
+                        limit=max(enrichment_limit, 1),
+                        source_id=source_id,
+                        ingestion_job_id=active_ingestion_job_id,
+                        research_space_id=research_space_id,
+                        source_type=normalized_source_type,
+                        model_id=model_id,
+                        pipeline_run_id=normalized_run_id,
+                    )
                 try:
-                    enrichment_summary = (
-                        await self._enrichment.process_pending_documents(
-                            limit=max(enrichment_limit, 1),
-                            source_id=source_id,
-                            ingestion_job_id=active_ingestion_job_id,
-                            research_space_id=research_space_id,
-                            source_type=normalized_source_type,
-                            model_id=model_id,
-                            pipeline_run_id=normalized_run_id,
-                        )
+                    return await self._enrichment.process_pending_documents(
+                        limit=max(enrichment_limit, 1),
+                        source_id=source_id,
+                        ingestion_job_id=active_ingestion_job_id,
+                        research_space_id=research_space_id,
+                        source_type=normalized_source_type,
+                        model_id=model_id,
+                        pipeline_run_id=normalized_run_id,
                     )
                 except TypeError as exc:
                     if "ingestion_job_id" not in str(exc):
                         raise
-                    enrichment_summary = (
-                        await self._enrichment.process_pending_documents(
-                            limit=max(enrichment_limit, 1),
-                            source_id=source_id,
-                            research_space_id=research_space_id,
-                            source_type=normalized_source_type,
-                            model_id=model_id,
-                            pipeline_run_id=normalized_run_id,
-                        )
+                    return await self._enrichment.process_pending_documents(
+                        limit=max(enrichment_limit, 1),
+                        source_id=source_id,
+                        research_space_id=research_space_id,
+                        source_type=normalized_source_type,
+                        model_id=model_id,
+                        pipeline_run_id=normalized_run_id,
                     )
+
+            try:
+                enrichment_summary = await _run_enrichment_stage_with_compat()
                 enrichment_status = "completed"
                 enrichment_processed = enrichment_summary.processed
                 enrichment_enriched = enrichment_summary.enriched
@@ -435,10 +470,60 @@ class _PipelineOrchestrationExecutionHelpers(
             normalized_resume_stage in {"extraction", "graph"}
         )
         if should_run_extraction and can_run_extraction and not run_cancelled:
-            extraction_watchdog_timeout_seconds = _read_positive_timeout_seconds(
-                _ENV_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS,
-                default_seconds=_DEFAULT_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS,
+            configured_extraction_watchdog_timeout_seconds = (
+                _read_positive_timeout_seconds(
+                    _ENV_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS,
+                    default_seconds=_DEFAULT_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS,
+                )
             )
+            raw_extraction_watchdog_timeout_override = os.getenv(
+                _ENV_EXTRACTION_STAGE_WATCHDOG_TIMEOUT_SECONDS,
+            )
+            has_extraction_watchdog_timeout_override = False
+            if (
+                isinstance(raw_extraction_watchdog_timeout_override, str)
+                and raw_extraction_watchdog_timeout_override.strip()
+            ):
+                try:
+                    has_extraction_watchdog_timeout_override = (
+                        float(raw_extraction_watchdog_timeout_override.strip()) > 0
+                    )
+                except ValueError:
+                    has_extraction_watchdog_timeout_override = False
+            entity_agent_timeout_seconds = _read_positive_timeout_seconds(
+                _ENV_ENTITY_RECOGNITION_AGENT_TIMEOUT_SECONDS,
+                default_seconds=_DEFAULT_ENTITY_RECOGNITION_AGENT_TIMEOUT_SECONDS,
+            )
+            entity_extraction_timeout_seconds = _read_positive_timeout_seconds(
+                _ENV_ENTITY_RECOGNITION_EXTRACTION_STAGE_TIMEOUT_SECONDS,
+                default_seconds=(
+                    _DEFAULT_ENTITY_RECOGNITION_EXTRACTION_STAGE_TIMEOUT_SECONDS
+                ),
+            )
+            entity_batch_max_concurrency = _read_positive_int(
+                _ENV_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY,
+                default_value=_DEFAULT_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY,
+            )
+            extraction_waves = max(
+                (max(extraction_limit, 1) + entity_batch_max_concurrency - 1)
+                // entity_batch_max_concurrency,
+                1,
+            )
+            estimated_extraction_watchdog_timeout_seconds = float(
+                extraction_waves,
+            ) * (
+                entity_agent_timeout_seconds
+                + entity_extraction_timeout_seconds
+                + _EXTRACTION_STAGE_TIMEOUT_OVERHEAD_SECONDS
+            )
+            extraction_watchdog_timeout_seconds = (
+                configured_extraction_watchdog_timeout_seconds
+            )
+            if not has_extraction_watchdog_timeout_override:
+                extraction_watchdog_timeout_seconds = max(
+                    extraction_watchdog_timeout_seconds,
+                    estimated_extraction_watchdog_timeout_seconds,
+                )
             extraction_started_at = datetime.now(UTC)
             logger.info(
                 "Pipeline stage started",
@@ -451,39 +536,70 @@ class _PipelineOrchestrationExecutionHelpers(
                         if active_ingestion_job_id is not None
                         else None
                     ),
+                    "configured_watchdog_timeout_seconds": (
+                        configured_extraction_watchdog_timeout_seconds
+                    ),
+                    "estimated_watchdog_timeout_seconds": (
+                        estimated_extraction_watchdog_timeout_seconds
+                    ),
+                    "entity_agent_timeout_seconds": entity_agent_timeout_seconds,
+                    "entity_extraction_stage_timeout_seconds": (
+                        entity_extraction_timeout_seconds
+                    ),
+                    "entity_batch_max_concurrency": entity_batch_max_concurrency,
+                    "extraction_waves": extraction_waves,
+                    "watchdog_timeout_override": (
+                        raw_extraction_watchdog_timeout_override
+                        if has_extraction_watchdog_timeout_override
+                        else None
+                    ),
                     "watchdog_timeout_seconds": extraction_watchdog_timeout_seconds,
                 },
             )
-            try:
+
+            async def _run_extraction_stage_with_compat() -> (
+                EntityRecognitionRunSummary
+            ):
+                if self._extraction_stage_runner is not None:
+                    return await self._extraction_stage_runner(
+                        limit=max(extraction_limit, 1),
+                        source_id=source_id,
+                        ingestion_job_id=active_ingestion_job_id,
+                        research_space_id=research_space_id,
+                        source_type=normalized_source_type,
+                        model_id=model_id,
+                        shadow_mode=shadow_mode,
+                        pipeline_run_id=normalized_run_id,
+                    )
                 try:
-                    extraction_summary = await asyncio.wait_for(
-                        self._extraction.process_pending_documents(
-                            limit=max(extraction_limit, 1),
-                            source_id=source_id,
-                            ingestion_job_id=active_ingestion_job_id,
-                            research_space_id=research_space_id,
-                            source_type=normalized_source_type,
-                            model_id=model_id,
-                            shadow_mode=shadow_mode,
-                            pipeline_run_id=normalized_run_id,
-                        ),
-                        timeout=extraction_watchdog_timeout_seconds,
+                    return await self._extraction.process_pending_documents(
+                        limit=max(extraction_limit, 1),
+                        source_id=source_id,
+                        ingestion_job_id=active_ingestion_job_id,
+                        research_space_id=research_space_id,
+                        source_type=normalized_source_type,
+                        model_id=model_id,
+                        shadow_mode=shadow_mode,
+                        pipeline_run_id=normalized_run_id,
                     )
                 except TypeError as exc:
                     if "ingestion_job_id" not in str(exc):
                         raise
-                    extraction_summary = await asyncio.wait_for(
-                        self._extraction.process_pending_documents(
-                            limit=max(extraction_limit, 1),
-                            source_id=source_id,
-                            research_space_id=research_space_id,
-                            source_type=normalized_source_type,
-                            model_id=model_id,
-                            shadow_mode=shadow_mode,
-                            pipeline_run_id=normalized_run_id,
-                        ),
-                        timeout=extraction_watchdog_timeout_seconds,
+                    return await self._extraction.process_pending_documents(
+                        limit=max(extraction_limit, 1),
+                        source_id=source_id,
+                        research_space_id=research_space_id,
+                        source_type=normalized_source_type,
+                        model_id=model_id,
+                        shadow_mode=shadow_mode,
+                        pipeline_run_id=normalized_run_id,
                     )
+
+            try:
+                extraction_summary = await asyncio.wait_for(
+                    _run_extraction_stage_with_compat(),
+                    timeout=extraction_watchdog_timeout_seconds,
+                )
                 extraction_status = "completed"
                 extraction_processed = extraction_summary.processed
                 extraction_extracted = extraction_summary.extracted
@@ -631,6 +747,10 @@ class _PipelineOrchestrationExecutionHelpers(
                 _ENV_GRAPH_STAGE_MAX_CONCURRENCY,
                 default_value=_DEFAULT_GRAPH_STAGE_MAX_CONCURRENCY,
             )
+            graph_seed_timeout_seconds = _read_positive_timeout_seconds(
+                _ENV_GRAPH_STAGE_SEED_TIMEOUT_SECONDS,
+                default_seconds=_DEFAULT_GRAPH_STAGE_SEED_TIMEOUT_SECONDS,
+            )
             logger.info(
                 "Pipeline stage started",
                 extra={
@@ -639,6 +759,7 @@ class _PipelineOrchestrationExecutionHelpers(
                     "stage": "graph",
                     "requested_seed_count": graph_requested,
                     "max_concurrency": graph_max_concurrency,
+                    "seed_timeout_seconds": graph_seed_timeout_seconds,
                 },
             )
             normalized_source = (
@@ -680,21 +801,25 @@ class _PipelineOrchestrationExecutionHelpers(
                         seed_entity_id,
                         (),
                     )
+
                     try:
-                        if self._graph_seed_runner is not None:
-                            graph_outcome = await self._graph_seed_runner(
-                                source_id=str(source_id),
-                                research_space_id=str(research_space_id),
-                                seed_entity_id=seed_entity_id,
-                                source_type=normalized_source,
-                                model_id=model_id,
-                                relation_types=graph_relation_types,
-                                max_depth=graph_max_depth,
-                                shadow_mode=shadow_mode,
-                                pipeline_run_id=normalized_run_id,
-                                fallback_relations=fallback_relations,
-                            )
-                        else:
+
+                        async def _run_graph_discovery() -> (  # noqa: C901
+                            GraphConnectionOutcome
+                        ):
+                            if self._graph_seed_runner is not None:
+                                return await self._graph_seed_runner(
+                                    source_id=str(source_id),
+                                    research_space_id=str(research_space_id),
+                                    seed_entity_id=seed_entity_id,
+                                    source_type=normalized_source,
+                                    model_id=model_id,
+                                    relation_types=graph_relation_types,
+                                    max_depth=graph_max_depth,
+                                    shadow_mode=shadow_mode,
+                                    pipeline_run_id=normalized_run_id,
+                                    fallback_relations=fallback_relations,
+                                )
                             graph_service = self._graph
                             if graph_service is None:
                                 msg = "graph service unavailable"
@@ -759,13 +884,12 @@ class _PipelineOrchestrationExecutionHelpers(
                             include_fallback_relations = True
                             while True:
                                 try:
-                                    graph_outcome = await _call_graph_discovery(
+                                    return await _call_graph_discovery(
                                         include_source_id=include_source_id,
                                         include_fallback_relations=(
                                             include_fallback_relations
                                         ),
                                     )
-                                    break
                                 except TypeError as exc:
                                     fallback_message = str(exc)
                                     removed_unsupported_key = False
@@ -783,11 +907,24 @@ class _PipelineOrchestrationExecutionHelpers(
                                         removed_unsupported_key = True
                                     if not removed_unsupported_key:
                                         raise
+
+                        graph_outcome = await asyncio.wait_for(
+                            _run_graph_discovery(),
+                            timeout=graph_seed_timeout_seconds,
+                        )
                         return (  # noqa: TRY300
                             seed_entity_id,
                             graph_outcome.persisted_relations_count,
                             graph_outcome.errors,
                             None,
+                            False,
+                        )
+                    except TimeoutError:
+                        return (
+                            seed_entity_id,
+                            0,
+                            (),
+                            f"seed_timeout:{graph_seed_timeout_seconds:.1f}s",
                             False,
                         )
                     except Exception as exc:  # noqa: BLE001 - surfaced in run summary

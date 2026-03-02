@@ -128,6 +128,8 @@ class SqlAlchemySourceDocumentRepository(SourceDocumentRepository):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         stmt = select(SourceDocumentModel).where(
             SourceDocumentModel.enrichment_status == EnrichmentStatus.PENDING.value,
@@ -138,6 +140,17 @@ class SqlAlchemySourceDocumentRepository(SourceDocumentRepository):
             stmt = stmt.where(
                 SourceDocumentModel.research_space_id == str(research_space_id),
             )
+        if ingestion_job_id is not None:
+            stmt = stmt.where(
+                SourceDocumentModel.ingestion_job_id == str(ingestion_job_id),
+            )
+        if isinstance(source_type, str):
+            normalized_source_type = source_type.strip().lower()
+            if normalized_source_type:
+                stmt = stmt.where(
+                    func.lower(SourceDocumentModel.source_type)
+                    == normalized_source_type,
+                )
         stmt = stmt.order_by(SourceDocumentModel.created_at.asc()).limit(max(limit, 1))
         models = self.session.execute(stmt).scalars().all()
         return [SourceDocumentMapper.to_domain(model) for model in models]
@@ -148,6 +161,8 @@ class SqlAlchemySourceDocumentRepository(SourceDocumentRepository):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         stmt = select(SourceDocumentModel).where(
             SourceDocumentModel.extraction_status
@@ -159,6 +174,17 @@ class SqlAlchemySourceDocumentRepository(SourceDocumentRepository):
             stmt = stmt.where(
                 SourceDocumentModel.research_space_id == str(research_space_id),
             )
+        if ingestion_job_id is not None:
+            stmt = stmt.where(
+                SourceDocumentModel.ingestion_job_id == str(ingestion_job_id),
+            )
+        if isinstance(source_type, str):
+            normalized_source_type = source_type.strip().lower()
+            if normalized_source_type:
+                stmt = stmt.where(
+                    func.lower(SourceDocumentModel.source_type)
+                    == normalized_source_type,
+                )
         stmt = stmt.order_by(SourceDocumentModel.created_at.asc()).limit(max(limit, 1))
         models = self.session.execute(stmt).scalars().all()
         return [SourceDocumentMapper.to_domain(model) for model in models]
