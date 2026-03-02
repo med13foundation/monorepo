@@ -326,6 +326,56 @@ export interface SourceWorkflowEventsResponse {
   has_more: boolean
 }
 
+export interface SourceWorkflowCardStatusPayload {
+  last_pipeline_status: string | null
+  last_failed_stage: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
+  pending_paper_count: number
+  pending_relation_review_count: number
+  graph_edges_delta_last_run: number
+  graph_edges_total: number
+  artana_progress?: Record<string, ArtanaStageProgressSnapshot>
+}
+
+export interface WorkflowEventCardItem {
+  event_id: string
+  occurred_at: string | null
+  category: string | null
+  stage: string | null
+  status: string | null
+  message: string
+}
+
+export interface SourceWorkflowStreamBootstrapPayload {
+  monitor: SourceWorkflowMonitorResponse
+  events: SourceWorkflowEvent[]
+  generated_at: string
+  run_id: string | null
+}
+
+export interface SourceWorkflowStreamSnapshotPayload {
+  monitor: SourceWorkflowMonitorResponse
+  generated_at: string
+  run_id: string | null
+}
+
+export interface SourceWorkflowStreamEventsPayload {
+  events: SourceWorkflowEvent[]
+  generated_at: string
+  run_id: string | null
+}
+
+export interface SpaceWorkflowSourceCardPayload {
+  source_id: string
+  workflow_status: SourceWorkflowCardStatusPayload
+  events: WorkflowEventCardItem[]
+  generated_at: string
+}
+
+export interface SpaceWorkflowBootstrapPayload {
+  sources: SpaceWorkflowSourceCardPayload[]
+  generated_at: string
+}
+
 export interface GraphSearchRequest {
   question: string
   max_depth?: number

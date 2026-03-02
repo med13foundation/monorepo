@@ -722,7 +722,7 @@ wheels = [
 
 [[package]]
 name = "fastapi"
-version = "0.133.1"
+version = "0.135.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc" },
@@ -731,9 +731,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/22/6f/0eafed8349eea1fa462238b54a624c8b408cd1ba2795c8e64aa6c34f8ab7/fastapi-0.133.1.tar.gz", hash = "sha256:ed152a45912f102592976fde6cbce7dae1a8a1053da94202e51dd35d184fadd6", size = 378741 }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/7b/f8e0211e9380f7195ba3f3d40c292594fd81ba8ec4629e3854c353aaca45/fastapi-0.135.1.tar.gz", hash = "sha256:d04115b508d936d254cea545b7312ecaa58a7b3a0f84952535b4c9afae7668cd", size = 394962 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d2/c9/a175a7779f3599dfa4adfc97a6ce0e157237b3d7941538604aadaf97bfb6/fastapi-0.133.1-py3-none-any.whl", hash = "sha256:658f34ba334605b1617a65adf2ea6461901bdb9af3a3080d63ff791ecf7dc2e2", size = 109029 },
+    { url = "https://files.pythonhosted.org/packages/e4/72/42e900510195b23a56bde950d26a51f8b723846bfcaa0286e90287f0422b/fastapi-0.135.1-py3-none-any.whl", hash = "sha256:46e2fc5745924b7c840f71ddd277382af29ce1cdb7d5eab5bf697e3fb9999c9e", size = 116999 },
 ]
 
 [[package]]
@@ -1777,7 +1777,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "email-validator", specifier = ">=2.2.0" },
-    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "fastapi", specifier = ">=0.135,<0.136" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "google-cloud-secret-manager", specifier = ">=2.16.0" },
     { name = "google-cloud-storage", specifier = ">=2.10.0" },

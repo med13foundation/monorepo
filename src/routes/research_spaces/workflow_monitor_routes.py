@@ -1,4 +1,4 @@
-"""Source workflow monitor routes for research spaces."""
+"""Source workflow monitor snapshot routes for research spaces."""
 
 from __future__ import annotations
 
@@ -285,7 +285,11 @@ def list_source_workflow_events(
 
 
 __all__ = [
+    "_reset_run_progress_port_cache_for_tests",
+    "get_run_progress_port",
     "get_source_workflow_monitor",
+    "get_source_workflow_monitor_service",
+    "get_workflow_monitor_query_params",
     "list_source_pipeline_runs",
     "list_source_workflow_events",
 ]
