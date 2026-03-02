@@ -144,20 +144,16 @@ class _RelationEndpointEntityResolutionHelpers:
                 ),
             )
             return resolved_id
-        if not candidates:
-            return None
-        fallback_entity = candidates[0]
-        fallback_id = str(fallback_entity.id)
-        self._ensure_concept_identifiers(
-            entity_id=fallback_id,
-            entity_type=entity_type,
-            label=(
-                fallback_entity.display_label
-                if isinstance(fallback_entity.display_label, str)
-                else normalized_label
-            ),
-        )
-        return fallback_id
+        if candidates:
+            logger.info(
+                "Endpoint label search returned candidates but no safe match; creating new entity",
+                extra={
+                    "entity_type": entity_type,
+                    "query_label": normalized_label,
+                    "candidate_count": len(candidates),
+                },
+            )
+        return None
 
     def _create_relation_endpoint_entity(
         self,
