@@ -300,7 +300,7 @@ class _PipelineOrchestrationCheckpointHelpers:
                 + graph_persisted_relations,
                 0,
             ),
-            records_failed=len(errors),
+            records_failed=0 if run_status == "completed" else len(errors),
             records_skipped=0,
             bytes_processed=0,
             api_calls_made=0,

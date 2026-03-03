@@ -195,6 +195,12 @@ export default async function SpaceDataSourcesPage({
               last_failed_stage: extractLastFailedStage(monitor),
               pending_paper_count: toNumber(counters.pending_paper_count),
               pending_relation_review_count: toNumber(counters.pending_relation_review_count),
+              extraction_extracted_count: toNumber(counters.extraction_extracted_count),
+              extraction_failed_count: toNumber(counters.extraction_failed_count),
+              extraction_skipped_count: toNumber(counters.extraction_skipped_count),
+              extraction_timeout_failed_count: toNumber(
+                counters.extraction_timeout_failed_count,
+              ),
               graph_edges_delta_last_run: toNumber(counters.graph_edges_delta_last_run),
               graph_edges_total: toNumber(counters.graph_edges_total),
               artana_progress: parseArtanaProgress(monitor),

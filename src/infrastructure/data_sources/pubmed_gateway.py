@@ -101,6 +101,27 @@ class PubMedSourceGateway(PubMedGateway):
             has_more = False
             returned_count = fetched_records
 
+        # Protect checkpoint progression when upstream search returned IDs but the
+        # fetch/parser path yielded zero records. Advancing the cursor in this case
+        # can permanently skip a page.
+        preserve_cursor_for_empty_page = returned_count > 0 and fetched_records == 0
+        if preserve_cursor_for_empty_page:
+            logger.warning(
+                (
+                    "PubMed incremental fetch returned IDs but yielded zero records; "
+                    "preserving cursor to avoid page loss"
+                ),
+                extra={
+                    "query": config.query,
+                    "retstart": retstart,
+                    "returned_count": returned_count,
+                    "fetched_records": fetched_records,
+                    "total_count": total_count,
+                },
+            )
+            next_retstart = retstart
+            has_more = True
+
         outcome = await self._apply_relevance_threshold(
             raw_records,
             config=config,
@@ -119,6 +140,7 @@ class PubMedSourceGateway(PubMedGateway):
             "semantic_relevance_filtering": outcome.semantic_filtering_enabled,
             "filtered_out_count": len(outcome.filtered_out_pubmed_ids),
             "filtered_out_pubmed_ids": outcome.filtered_out_pubmed_ids,
+            "cursor_preserved_due_to_empty_page": preserve_cursor_for_empty_page,
         }
         return PubMedGatewayFetchResult(
             records=outcome.records,

@@ -15,6 +15,7 @@ from src.application.services._ingestion_scheduling_queue_helpers import (
     _IngestionSchedulingQueueHelpers,
 )
 from src.domain.entities import user_data_source
+from src.domain.entities.ingestion_job import IngestionTrigger
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -220,6 +221,7 @@ class IngestionSchedulingService(
         source_id: UUID,
         *,
         skip_post_ingestion_hook: bool = False,
+        skip_legacy_extraction_queue: bool = False,
         force_recover_lock: bool = False,
     ) -> IngestionRunSummary:
         """Manually trigger ingestion for a source outside scheduler cadence."""
@@ -232,6 +234,8 @@ class IngestionSchedulingService(
             raise ValueError(msg)
         return await self._run_ingestion_for_source(
             source,
+            trigger=IngestionTrigger.API,
             skip_post_ingestion_hook=skip_post_ingestion_hook,
+            skip_legacy_extraction_queue=skip_legacy_extraction_queue,
             force_recover_lock=force_recover_lock,
         )

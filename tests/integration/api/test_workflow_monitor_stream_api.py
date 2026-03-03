@@ -18,6 +18,7 @@ from src.infrastructure.security.jwt_provider import JWTProvider
 from src.main import create_app
 from src.models.database import Base
 from src.models.database.research_space import ResearchSpaceModel
+from src.models.database.source_document import SourceDocumentModel
 from src.models.database.user import UserModel
 from src.models.database.user_data_source import (
     SourceStatusEnum,
@@ -100,6 +101,10 @@ def _build_monitor_payload(source_id: str) -> dict[str, object]:
             "last_pipeline_status": "running",
             "pending_paper_count": 2,
             "pending_relation_review_count": 1,
+            "extraction_extracted_count": 1,
+            "extraction_failed_count": 1,
+            "extraction_skipped_count": 0,
+            "extraction_timeout_failed_count": 1,
             "graph_edges_delta_last_run": 3,
             "graph_edges_total": 9,
         },
@@ -331,6 +336,9 @@ def test_source_workflow_stream_emits_bootstrap_payload(
     monitor = payload.get("monitor")
     assert isinstance(monitor, dict)
     assert monitor.get("source_snapshot", {}).get("source_id") == source.id
+    counters = monitor.get("operational_counters")
+    assert isinstance(counters, dict)
+    assert counters.get("extraction_timeout_failed_count") == 1
     assert isinstance(payload.get("events"), list)
 
 
@@ -370,7 +378,68 @@ def test_space_workflow_stream_emits_bootstrap_payload(
     source_payload = sources[0]
     assert isinstance(source_payload, dict)
     assert source_payload.get("source_id") == source.id
-    assert (
-        source_payload.get("workflow_status", {}).get("last_pipeline_status")
-        == "running"
+    workflow_status = source_payload.get("workflow_status")
+    assert isinstance(workflow_status, dict)
+    assert workflow_status.get("last_pipeline_status") == "running"
+    assert workflow_status.get("extraction_timeout_failed_count") == 1
+
+
+def test_source_workflow_monitor_reports_timeout_failure_counter(
+    test_client: TestClient,
+    db_session,
+    researcher_user: UserModel,
+    space: ResearchSpaceModel,
+    source: UserDataSourceModel,
+) -> None:
+    with _session_for_api(db_session) as session:
+        timeout_failed_doc = SourceDocumentModel(
+            id=str(uuid4()),
+            research_space_id=str(space.id),
+            source_id=str(source.id),
+            external_record_id="PMID-TIMEOUT",
+            source_type=SourceTypeEnum.PUBMED.value,
+            document_format="json",
+            extraction_status="failed",
+            metadata_payload={
+                "entity_recognition_failure_reason": "agent_execution_timeout",
+            },
+        )
+        failed_doc = SourceDocumentModel(
+            id=str(uuid4()),
+            research_space_id=str(space.id),
+            source_id=str(source.id),
+            external_record_id="PMID-FAILED",
+            source_type=SourceTypeEnum.PUBMED.value,
+            document_format="json",
+            extraction_status="failed",
+            metadata_payload={
+                "entity_recognition_failure_reason": "dictionary_mutation_failed",
+            },
+        )
+        extracted_doc = SourceDocumentModel(
+            id=str(uuid4()),
+            research_space_id=str(space.id),
+            source_id=str(source.id),
+            external_record_id="PMID-EXTRACTED",
+            source_type=SourceTypeEnum.PUBMED.value,
+            document_format="json",
+            extraction_status="extracted",
+            metadata_payload={},
+        )
+        session.add_all([timeout_failed_doc, failed_doc, extracted_doc])
+        session.commit()
+
+    response = test_client.get(
+        (
+            f"/research-spaces/{space.id}/sources/{source.id}/workflow-monitor"
+            "?limit=10&include_graph=false"
+        ),
+        headers=_auth_headers(researcher_user),
     )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    counters = payload.get("operational_counters", {})
+    assert counters.get("extraction_extracted_count") == 1
+    assert counters.get("extraction_failed_count") == 2
+    assert counters.get("extraction_timeout_failed_count") == 1

@@ -8,6 +8,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.application.services.claim_first_metrics import (
@@ -59,6 +60,7 @@ from .router import (
     HTTP_201_CREATED,
     HTTP_400_BAD_REQUEST,
     HTTP_404_NOT_FOUND,
+    HTTP_409_CONFLICT,
     HTTP_500_INTERNAL_SERVER_ERROR,
     research_spaces_router,
 )
@@ -576,6 +578,15 @@ def create_kernel_relation(
         )
         session.commit()
         return KernelRelationResponse.from_model(relation)
+    except IntegrityError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=HTTP_409_CONFLICT,
+            detail=(
+                "Relation write conflicts with dictionary constraints, "
+                "research-space isolation, or required evidence checks"
+            ),
+        ) from e
     except ValueError as e:
         session.rollback()
         raise HTTPException(

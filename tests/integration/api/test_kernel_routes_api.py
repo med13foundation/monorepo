@@ -1105,6 +1105,135 @@ def test_admin_dictionary_type_endpoints(test_client, admin_user):
     assert revoke_relation_type_response.json()["valid_to"] is not None
 
 
+def test_admin_dictionary_relation_synonym_endpoints(test_client, admin_user):
+    create_relation_type_response = test_client.post(
+        "/admin/dictionary/relation-types",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "REL_SYNONYM_CANONICAL_TEST",
+            "display_name": "Relation Synonym Canonical Test",
+            "description": "Canonical relation type for relation-synonym endpoint test",
+            "domain_context": "general",
+            "is_directional": True,
+        },
+    )
+    assert (
+        create_relation_type_response.status_code == 201
+    ), create_relation_type_response.text
+
+    create_synonym_response = test_client.post(
+        "/admin/dictionary/relation-synonyms",
+        headers=_auth_headers(admin_user),
+        json={
+            "relation_type_id": "REL_SYNONYM_CANONICAL_TEST",
+            "synonym": "REL_SYNONYM_ALIAS_TEST",
+            "source": "integration-test",
+            "source_ref": "test:relation-synonym",
+        },
+    )
+    assert create_synonym_response.status_code == 201, create_synonym_response.text
+    created_synonym_payload = create_synonym_response.json()
+    synonym_id = int(created_synonym_payload["id"])
+    assert created_synonym_payload["relation_type"] == "REL_SYNONYM_CANONICAL_TEST"
+    assert created_synonym_payload["synonym"] == "REL_SYNONYM_ALIAS_TEST"
+    assert created_synonym_payload["review_status"] == "ACTIVE"
+    assert created_synonym_payload["created_by"] == f"manual:{admin_user.id}"
+
+    list_synonyms_response = test_client.get(
+        "/admin/dictionary/relation-synonyms",
+        headers=_auth_headers(admin_user),
+        params={
+            "relation_type_id": "REL_SYNONYM_CANONICAL_TEST",
+        },
+    )
+    assert list_synonyms_response.status_code == 200, list_synonyms_response.text
+    listed_synonyms = list_synonyms_response.json()["relation_synonyms"]
+    assert any(item["id"] == synonym_id for item in listed_synonyms)
+
+    resolve_active_response = test_client.get(
+        "/admin/dictionary/relation-synonyms/resolve",
+        headers=_auth_headers(admin_user),
+        params={"synonym": "rel_synonym_alias_test"},
+    )
+    assert resolve_active_response.status_code == 200, resolve_active_response.text
+    assert resolve_active_response.json()["id"] == "REL_SYNONYM_CANONICAL_TEST"
+
+    set_pending_response = test_client.patch(
+        f"/admin/dictionary/relation-synonyms/{synonym_id}/review-status",
+        headers=_auth_headers(admin_user),
+        json={"review_status": "PENDING_REVIEW"},
+    )
+    assert set_pending_response.status_code == 200, set_pending_response.text
+    pending_payload = set_pending_response.json()
+    assert pending_payload["id"] == synonym_id
+    assert pending_payload["review_status"] == "PENDING_REVIEW"
+    assert pending_payload["reviewed_by"] == f"manual:{admin_user.id}"
+
+    revoke_response = test_client.post(
+        f"/admin/dictionary/relation-synonyms/{synonym_id}/revoke",
+        headers=_auth_headers(admin_user),
+        json={"reason": "Deprecated synonym"},
+    )
+    assert revoke_response.status_code == 200, revoke_response.text
+    revoked_payload = revoke_response.json()
+    assert revoked_payload["id"] == synonym_id
+    assert revoked_payload["review_status"] == "REVOKED"
+    assert revoked_payload["revocation_reason"] == "Deprecated synonym"
+    assert revoked_payload["is_active"] is False
+    assert revoked_payload["valid_to"] is not None
+
+    resolve_revoked_response = test_client.get(
+        "/admin/dictionary/relation-synonyms/resolve",
+        headers=_auth_headers(admin_user),
+        params={"synonym": "REL_SYNONYM_ALIAS_TEST"},
+    )
+    assert resolve_revoked_response.status_code == 404, resolve_revoked_response.text
+
+    resolve_with_inactive_response = test_client.get(
+        "/admin/dictionary/relation-synonyms/resolve",
+        headers=_auth_headers(admin_user),
+        params={
+            "synonym": "REL_SYNONYM_ALIAS_TEST",
+            "include_inactive": True,
+        },
+    )
+    assert (
+        resolve_with_inactive_response.status_code == 200
+    ), resolve_with_inactive_response.text
+    assert resolve_with_inactive_response.json()["id"] == "REL_SYNONYM_CANONICAL_TEST"
+
+    list_active_response = test_client.get(
+        "/admin/dictionary/relation-synonyms",
+        headers=_auth_headers(admin_user),
+        params={
+            "relation_type_id": "REL_SYNONYM_CANONICAL_TEST",
+            "include_inactive": False,
+        },
+    )
+    assert list_active_response.status_code == 200, list_active_response.text
+    active_ids = {
+        int(item["id"]) for item in list_active_response.json()["relation_synonyms"]
+    }
+    assert synonym_id not in active_ids
+
+    list_with_inactive_response = test_client.get(
+        "/admin/dictionary/relation-synonyms",
+        headers=_auth_headers(admin_user),
+        params={
+            "relation_type_id": "REL_SYNONYM_CANONICAL_TEST",
+            "include_inactive": True,
+        },
+    )
+    assert (
+        list_with_inactive_response.status_code == 200
+    ), list_with_inactive_response.text
+    inactive_or_active_payload = list_with_inactive_response.json()["relation_synonyms"]
+    assert any(
+        int(item["id"]) == synonym_id and item["review_status"] == "REVOKED"
+        for item in inactive_or_active_payload
+    )
+
+
 def test_admin_dictionary_merge_endpoints(test_client, admin_user):
     source_variable_response = test_client.post(
         "/admin/dictionary/variables",

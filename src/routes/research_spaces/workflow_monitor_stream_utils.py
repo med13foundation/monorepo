@@ -165,6 +165,18 @@ def build_workflow_card_status(
         "pending_relation_review_count": _coerce_card_count(
             counters.get("pending_relation_review_count"),
         ),
+        "extraction_extracted_count": _coerce_card_count(
+            counters.get("extraction_extracted_count"),
+        ),
+        "extraction_failed_count": _coerce_card_count(
+            counters.get("extraction_failed_count"),
+        ),
+        "extraction_skipped_count": _coerce_card_count(
+            counters.get("extraction_skipped_count"),
+        ),
+        "extraction_timeout_failed_count": _coerce_card_count(
+            counters.get("extraction_timeout_failed_count"),
+        ),
         "graph_edges_delta_last_run": _coerce_card_count(
             counters.get("graph_edges_delta_last_run"),
         ),

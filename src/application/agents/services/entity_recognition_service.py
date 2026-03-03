@@ -15,19 +15,15 @@ from src.application.agents.services._entity_recognition_bootstrap_helpers impor
 from src.application.agents.services._entity_recognition_metadata_helpers import (
     _EntityRecognitionMetadataHelpers,
 )
+from src.application.agents.services._entity_recognition_processing_helpers import (
+    _EntityRecognitionProcessingContext,
+    _EntityRecognitionProcessingHelpers,
+)
 from src.application.agents.services._entity_recognition_runtime_helpers import (
     _EntityRecognitionRuntimeHelpers,
 )
 from src.application.agents.services.governance_service import (
-    GovernanceDecision,
     GovernanceService,
-)
-from src.domain.agents.contexts.entity_recognition_context import (
-    EntityRecognitionContext,
-)
-from src.domain.entities.source_document import (
-    DocumentExtractionStatus,
-    SourceDocument,
 )
 from src.type_definitions.ingestion import RawRecord
 from src.type_definitions.json_utils import to_json_value
@@ -43,6 +39,7 @@ if TYPE_CHECKING:
     )
     from src.domain.agents.contracts.entity_recognition import EntityRecognitionContract
     from src.domain.agents.ports.entity_recognition_port import EntityRecognitionPort
+    from src.domain.entities.source_document import SourceDocument
     from src.domain.ports.dictionary_port import DictionaryPort
     from src.domain.repositories.research_space_repository import (
         ResearchSpaceRepository,
@@ -61,10 +58,22 @@ _ENV_EXTRACTION_STAGE_TIMEOUT_SECONDS = (
 )
 _ENV_STALE_IN_PROGRESS_SECONDS = "MED13_ENTITY_RECOGNITION_STALE_IN_PROGRESS_SECONDS"
 _ENV_BATCH_MAX_CONCURRENCY = "MED13_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY"
+_ENV_AGENT_TIMEOUT_RETRY_ATTEMPTS = (
+    "MED13_ENTITY_RECOGNITION_AGENT_TIMEOUT_RETRY_ATTEMPTS"
+)
+_ENV_AGENT_TIMEOUT_RETRY_BACKOFF_SECONDS = (
+    "MED13_ENTITY_RECOGNITION_AGENT_TIMEOUT_RETRY_BACKOFF_SECONDS"
+)
+_ENV_AGENT_RAW_RECORD_MAX_TEXT_CHARS = (
+    "MED13_ENTITY_RECOGNITION_AGENT_RAW_RECORD_MAX_TEXT_CHARS"
+)
 _DEFAULT_AGENT_TIMEOUT_SECONDS = 180.0
 _DEFAULT_EXTRACTION_STAGE_TIMEOUT_SECONDS = 300.0
 _DEFAULT_STALE_IN_PROGRESS_SECONDS = 900.0
-_DEFAULT_BATCH_MAX_CONCURRENCY = 4
+_DEFAULT_BATCH_MAX_CONCURRENCY = 2
+_DEFAULT_AGENT_TIMEOUT_RETRY_ATTEMPTS = 1
+_DEFAULT_AGENT_TIMEOUT_RETRY_BACKOFF_SECONDS = 0.5
+_DEFAULT_AGENT_RAW_RECORD_MAX_TEXT_CHARS = 20000
 
 
 def _read_positive_timeout_seconds(
@@ -125,6 +134,35 @@ def _read_positive_int(
     return parsed
 
 
+def _read_non_negative_int(
+    env_name: str,
+    *,
+    default_value: int,
+) -> int:
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        return default_value
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid integer override in %s=%r; using default %d",
+            env_name,
+            raw_value,
+            default_value,
+        )
+        return default_value
+    if parsed < 0:
+        logger.warning(
+            "Negative integer override in %s=%r; using default %d",
+            env_name,
+            raw_value,
+            default_value,
+        )
+        return default_value
+    return parsed
+
+
 @dataclass(frozen=True)
 class EntityRecognitionServiceDependencies:
     """Dependencies required by the entity-recognition orchestration service."""
@@ -154,6 +192,7 @@ class EntityRecognitionDocumentOutcome:
     dictionary_entity_types_created: int = 0
     ingestion_entities_created: int = 0
     ingestion_observations_created: int = 0
+    persisted_relations_count: int = 0
     seed_entity_ids: tuple[str, ...] = ()
     graph_fallback_relation_payloads: tuple[JSONObject, ...] = ()
     errors: tuple[str, ...] = ()
@@ -179,13 +218,16 @@ class EntityRecognitionRunSummary:
     errors: tuple[str, ...]
     started_at: datetime
     completed_at: datetime
+    persisted_relations_count: int = 0
     derived_graph_fallback_relation_payloads: tuple[JSONObject, ...] = ()
 
 
 class EntityRecognitionService(
+    _EntityRecognitionProcessingHelpers,
     _EntityRecognitionRuntimeHelpers,
     _EntityRecognitionBootstrapHelpers,
     _EntityRecognitionMetadataHelpers,
+    _EntityRecognitionProcessingContext,
 ):
     """Coordinate Document Store -> Entity Agent -> Governance -> Kernel ingestion."""
 
@@ -221,6 +263,18 @@ class EntityRecognitionService(
         self._batch_max_concurrency = _read_positive_int(
             _ENV_BATCH_MAX_CONCURRENCY,
             default_value=_DEFAULT_BATCH_MAX_CONCURRENCY,
+        )
+        self._agent_timeout_retry_attempts = _read_non_negative_int(
+            _ENV_AGENT_TIMEOUT_RETRY_ATTEMPTS,
+            default_value=_DEFAULT_AGENT_TIMEOUT_RETRY_ATTEMPTS,
+        )
+        self._agent_timeout_retry_backoff_seconds = _read_positive_timeout_seconds(
+            _ENV_AGENT_TIMEOUT_RETRY_BACKOFF_SECONDS,
+            default_seconds=_DEFAULT_AGENT_TIMEOUT_RETRY_BACKOFF_SECONDS,
+        )
+        self._agent_raw_record_max_text_chars = _read_positive_int(
+            _ENV_AGENT_RAW_RECORD_MAX_TEXT_CHARS,
+            default_value=_DEFAULT_AGENT_RAW_RECORD_MAX_TEXT_CHARS,
         )
 
     async def process_pending_documents(  # noqa: PLR0913
@@ -444,6 +498,7 @@ class EntityRecognitionService(
                 "skipped": summary.skipped,
                 "review_required": summary.review_required,
                 "shadow_runs": summary.shadow_runs,
+                "persisted_relations_count": summary.persisted_relations_count,
                 "error_count": len(summary.errors),
                 "duration_ms": int(
                     (completed_at - started_at).total_seconds() * 1000,
@@ -479,458 +534,43 @@ class EntityRecognitionService(
         if self._extraction_service is not None:
             await self._extraction_service.close()
 
-    async def _process_document_entity(  # noqa: C901, PLR0911, PLR0915
-        self,
+    @staticmethod
+    def _document_outcome(  # noqa: PLR0913
         *,
-        document: SourceDocument,
-        model_id: str | None,
-        shadow_mode: bool | None,
-        force: bool,
-        pipeline_run_id: str | None,
+        document_id: UUID,
+        status: Literal["extracted", "failed", "skipped"],
+        reason: str,
+        review_required: bool,
+        shadow_mode: bool,
+        wrote_to_kernel: bool,
+        run_id: str | None = None,
+        dictionary_variables_created: int = 0,
+        dictionary_synonyms_created: int = 0,
+        dictionary_entity_types_created: int = 0,
+        ingestion_entities_created: int = 0,
+        ingestion_observations_created: int = 0,
+        persisted_relations_count: int = 0,
+        seed_entity_ids: tuple[str, ...] = (),
+        graph_fallback_relation_payloads: tuple[JSONObject, ...] = (),
+        errors: tuple[str, ...] = (),
     ) -> EntityRecognitionDocumentOutcome:
-        if not force and document.extraction_status != DocumentExtractionStatus.PENDING:
-            logger.info(
-                "Entity recognition document skipped due to extraction status",
-                extra={
-                    "document_id": str(document.id),
-                    "extraction_status": document.extraction_status.value,
-                    "pipeline_run_id": pipeline_run_id,
-                },
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="skipped",
-                reason=f"document_status={document.extraction_status.value}",
-                review_required=False,
-                shadow_mode=False,
-                wrote_to_kernel=False,
-            )
-
-        raw_record = self._extract_raw_record(document)
-        if not raw_record:
-            failure_reason = "missing_raw_record_metadata"
-            logger.warning(
-                "Entity recognition document missing raw_record metadata",
-                extra={
-                    "document_id": str(document.id),
-                    "pipeline_run_id": pipeline_run_id,
-                },
-            )
-            self._persist_failed_document(
-                document=document,
-                run_id=None,
-                metadata_patch={"entity_recognition_error": failure_reason},
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=failure_reason,
-                review_required=False,
-                shadow_mode=False,
-                wrote_to_kernel=False,
-                errors=(failure_reason,),
-            )
-
-        research_space_settings = self._resolve_research_space_settings(document)
-        requested_shadow_mode = self._resolve_shadow_mode(
-            override=shadow_mode,
-            settings=research_space_settings,
-        )
-        context = EntityRecognitionContext(
-            document_id=str(document.id),
-            source_type=document.source_type.value,
-            research_space_id=(
-                str(document.research_space_id) if document.research_space_id else None
-            ),
-            research_space_settings=research_space_settings,
-            raw_record=raw_record,
-            shadow_mode=requested_shadow_mode,
-        )
-
-        logger.info(
-            "Entity recognition marking document in_progress",
-            extra={
-                "document_id": str(document.id),
-                "pipeline_run_id": pipeline_run_id,
-                "shadow_mode": requested_shadow_mode,
-                "source_type": document.source_type.value,
-            },
-        )
-        in_progress = document.mark_extraction_in_progress(started_at=datetime.now(UTC))
-        document = self._source_documents.upsert(
-            in_progress.model_copy(
-                update={
-                    "metadata": self._merge_metadata(
-                        in_progress.metadata,
-                        {
-                            "entity_recognition_started_at": datetime.now(
-                                UTC,
-                            ).isoformat(),
-                            "entity_recognition_shadow_mode": requested_shadow_mode,
-                            "pipeline_run_id": pipeline_run_id,
-                        },
-                    ),
-                },
-            ),
-        )
-
-        agent_started_at = datetime.now(UTC)
-        logger.info(
-            "Entity recognition agent call started",
-            extra={
-                "document_id": str(document.id),
-                "pipeline_run_id": pipeline_run_id,
-                "source_type": document.source_type.value,
-                "model_id": model_id,
-                "timeout_seconds": self._agent_timeout_seconds,
-            },
-        )
-        try:
-            contract = await asyncio.wait_for(
-                self._agent.recognize(context, model_id=model_id),
-                timeout=self._agent_timeout_seconds,
-            )
-            logger.info(
-                "Entity recognition agent call finished",
-                extra={
-                    "document_id": str(document.id),
-                    "pipeline_run_id": pipeline_run_id,
-                    "duration_ms": int(
-                        (datetime.now(UTC) - agent_started_at).total_seconds() * 1000,
-                    ),
-                    "decision": contract.decision,
-                    "confidence_score": contract.confidence_score,
-                },
-            )
-        except TimeoutError:
-            logger.exception(
-                "Entity recognition agent call timed out for document=%s after %.1fs",
-                document.id,
-                self._agent_timeout_seconds,
-            )
-            failure_reason = "agent_execution_timeout"
-            self._persist_failed_document(
-                document=document,
-                run_id=None,
-                metadata_patch={
-                    "entity_recognition_error": (
-                        "entity_recognition_agent_timeout:"
-                        f"{self._agent_timeout_seconds:.1f}s"
-                    ),
-                    "entity_recognition_failure_reason": failure_reason,
-                    "entity_recognition_timeout_seconds": self._agent_timeout_seconds,
-                    "pipeline_run_id": pipeline_run_id,
-                },
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=failure_reason,
-                review_required=False,
-                shadow_mode=requested_shadow_mode,
-                wrote_to_kernel=False,
-                errors=(
-                    "entity_recognition_agent_timeout:"
-                    f"{self._agent_timeout_seconds:.1f}s",
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 - surfaced via metadata/outcome
-            logger.exception(
-                "Entity recognition failed for document=%s",
-                document.id,
-            )
-            failure_reason = "agent_execution_failed"
-            self._persist_failed_document(
-                document=document,
-                run_id=None,
-                metadata_patch={
-                    "entity_recognition_error": str(exc),
-                    "entity_recognition_failure_reason": failure_reason,
-                },
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=failure_reason,
-                review_required=False,
-                shadow_mode=requested_shadow_mode,
-                wrote_to_kernel=False,
-                errors=(str(exc),),
-            )
-
-        run_id = self._resolve_run_id(contract)
-        governance = self._governance.evaluate(
-            confidence_score=contract.confidence_score,
-            evidence_count=len(contract.evidence),
-            decision=self._resolve_governance_decision(contract),
-            requested_shadow_mode=requested_shadow_mode,
-            research_space_settings=research_space_settings,
-        )
-
-        if governance.shadow_mode:
-            self._persist_extracted_document(
-                document=document,
-                run_id=run_id,
-                metadata_patch=self._build_outcome_metadata(
-                    contract=contract,
-                    governance=governance,
-                    run_id=run_id,
-                    pipeline_run_id=pipeline_run_id,
-                    wrote_to_kernel=False,
-                    dictionary_variables_created=0,
-                    dictionary_synonyms_created=0,
-                    dictionary_entity_types_created=0,
-                    ingestion_result=None,
-                ),
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="extracted",
-                reason="shadow_mode_enabled",
-                review_required=False,
-                shadow_mode=True,
-                wrote_to_kernel=False,
-                run_id=run_id,
-            )
-
-        if not governance.allow_write:
-            failure_reason = governance.reason
-            if (
-                failure_reason == "agent_requested_escalation"
-                and self._extraction_service is not None
-                and document.research_space_id is not None
-            ):
-                bootstrap_settings = self._enforce_active_dictionary_creation_policy(
-                    research_space_settings,
-                )
-                (
-                    bootstrap_variables_created,
-                    bootstrap_entity_types_created,
-                ) = self._ensure_domain_bootstrap(
-                    source_type=document.source_type.value,
-                    source_ref=f"source_document:{document.id}",
-                    research_space_settings=bootstrap_settings,
-                )
-                return await self._process_document_with_extraction(
-                    document=document,
-                    contract=contract,
-                    governance=governance,
-                    run_id=run_id,
-                    document_run_id=run_id,
-                    model_id=model_id,
-                    requested_shadow_mode=requested_shadow_mode,
-                    research_space_settings=bootstrap_settings,
-                    dictionary_variables_created=bootstrap_variables_created,
-                    dictionary_synonyms_created=0,
-                    dictionary_entity_types_created=bootstrap_entity_types_created,
-                    pipeline_run_id=pipeline_run_id,
-                )
-            self._persist_failed_document(
-                document=document,
-                run_id=run_id,
-                metadata_patch=self._build_outcome_metadata(
-                    contract=contract,
-                    governance=governance,
-                    run_id=run_id,
-                    pipeline_run_id=pipeline_run_id,
-                    wrote_to_kernel=False,
-                    dictionary_variables_created=0,
-                    dictionary_synonyms_created=0,
-                    dictionary_entity_types_created=0,
-                    ingestion_result=None,
-                ),
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=failure_reason,
-                review_required=governance.requires_review,
-                shadow_mode=False,
-                wrote_to_kernel=False,
-                run_id=run_id,
-                errors=(failure_reason,),
-            )
-
-        if document.research_space_id is None:
-            failure_reason = "missing_research_space_id"
-            self._persist_failed_document(
-                document=document,
-                run_id=run_id,
-                metadata_patch={
-                    "entity_recognition_failure_reason": failure_reason,
-                    "entity_recognition_run_id": run_id,
-                    "pipeline_run_id": pipeline_run_id,
-                },
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=failure_reason,
-                review_required=False,
-                shadow_mode=False,
-                wrote_to_kernel=False,
-                run_id=run_id,
-                errors=(failure_reason,),
-            )
-
-        try:
-            (
-                dictionary_variables_created,
-                dictionary_synonyms_created,
-                dictionary_entity_types_created,
-            ) = self._apply_dictionary_mutations(
-                contract=contract,
-                raw_record=raw_record,
-                source_type=document.source_type.value,
-                source_ref=f"source_document:{document.id}",
-                research_space_settings=research_space_settings,
-            )
-        except Exception as exc:  # noqa: BLE001 - surfaced via metadata/outcome
-            logger.exception(
-                "Dictionary mutation failed for document=%s",
-                document.id,
-            )
-            failure_reason = "dictionary_mutation_failed"
-            self._persist_failed_document(
-                document=document,
-                run_id=run_id,
-                metadata_patch={
-                    "entity_recognition_failure_reason": failure_reason,
-                    "entity_recognition_error": str(exc),
-                    "entity_recognition_run_id": run_id,
-                    "pipeline_run_id": pipeline_run_id,
-                },
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=failure_reason,
-                review_required=False,
-                shadow_mode=False,
-                wrote_to_kernel=False,
-                run_id=run_id,
-                errors=(str(exc),),
-            )
-
-        if self._extraction_service is not None:
-            return await self._process_document_with_extraction(
-                document=document,
-                contract=contract,
-                governance=governance,
-                run_id=run_id,
-                document_run_id=run_id,
-                model_id=model_id,
-                requested_shadow_mode=requested_shadow_mode,
-                research_space_settings=research_space_settings,
-                dictionary_variables_created=dictionary_variables_created,
-                dictionary_synonyms_created=dictionary_synonyms_created,
-                dictionary_entity_types_created=dictionary_entity_types_created,
-                pipeline_run_id=pipeline_run_id,
-            )
-
-        pipeline_records = self._build_pipeline_records(
-            contract=contract,
-            document=document,
-            raw_record=raw_record,
-            run_id=run_id,
-        )
-        if not pipeline_records:
-            failure_reason = "no_pipeline_payloads"
-            self._persist_failed_document(
-                document=document,
-                run_id=run_id,
-                metadata_patch={
-                    "entity_recognition_failure_reason": failure_reason,
-                    "entity_recognition_run_id": run_id,
-                    "pipeline_run_id": pipeline_run_id,
-                },
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=failure_reason,
-                review_required=False,
-                shadow_mode=False,
-                wrote_to_kernel=False,
-                run_id=run_id,
-                dictionary_variables_created=dictionary_variables_created,
-                dictionary_synonyms_created=dictionary_synonyms_created,
-                dictionary_entity_types_created=dictionary_entity_types_created,
-                errors=(failure_reason,),
-            )
-
-        ingestion_result = self._ingestion_pipeline.run(
-            pipeline_records,
-            str(document.research_space_id),
-        )
-        if not ingestion_result.success:
-            failure_reason = "kernel_ingestion_failed"
-            self._persist_failed_document(
-                document=document,
-                run_id=run_id,
-                metadata_patch=self._build_outcome_metadata(
-                    contract=contract,
-                    governance=governance,
-                    run_id=run_id,
-                    pipeline_run_id=pipeline_run_id,
-                    wrote_to_kernel=False,
-                    dictionary_variables_created=dictionary_variables_created,
-                    dictionary_synonyms_created=dictionary_synonyms_created,
-                    dictionary_entity_types_created=dictionary_entity_types_created,
-                    ingestion_result=ingestion_result,
-                ),
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=failure_reason,
-                review_required=False,
-                shadow_mode=False,
-                wrote_to_kernel=False,
-                run_id=run_id,
-                dictionary_variables_created=dictionary_variables_created,
-                dictionary_synonyms_created=dictionary_synonyms_created,
-                dictionary_entity_types_created=dictionary_entity_types_created,
-                ingestion_entities_created=ingestion_result.entities_created,
-                ingestion_observations_created=ingestion_result.observations_created,
-                seed_entity_ids=self._normalize_seed_entity_ids(
-                    ingestion_result.entity_ids_touched,
-                ),
-                errors=tuple(ingestion_result.errors),
-            )
-
-        self._persist_extracted_document(
-            document=document,
-            run_id=run_id,
-            metadata_patch=self._build_outcome_metadata(
-                contract=contract,
-                governance=governance,
-                run_id=run_id,
-                pipeline_run_id=pipeline_run_id,
-                wrote_to_kernel=True,
-                dictionary_variables_created=dictionary_variables_created,
-                dictionary_synonyms_created=dictionary_synonyms_created,
-                dictionary_entity_types_created=dictionary_entity_types_created,
-                ingestion_result=ingestion_result,
-            ),
-        )
         return EntityRecognitionDocumentOutcome(
-            document_id=document.id,
-            status="extracted",
-            reason="processed",
-            review_required=False,
-            shadow_mode=False,
-            wrote_to_kernel=True,
+            document_id=document_id,
+            status=status,
+            reason=reason,
+            review_required=review_required,
+            shadow_mode=shadow_mode,
+            wrote_to_kernel=wrote_to_kernel,
             run_id=run_id,
             dictionary_variables_created=dictionary_variables_created,
             dictionary_synonyms_created=dictionary_synonyms_created,
             dictionary_entity_types_created=dictionary_entity_types_created,
-            ingestion_entities_created=ingestion_result.entities_created,
-            ingestion_observations_created=ingestion_result.observations_created,
-            seed_entity_ids=self._normalize_seed_entity_ids(
-                ingestion_result.entity_ids_touched,
-            ),
-            errors=tuple(ingestion_result.errors),
+            ingestion_entities_created=ingestion_entities_created,
+            ingestion_observations_created=ingestion_observations_created,
+            persisted_relations_count=persisted_relations_count,
+            seed_entity_ids=seed_entity_ids,
+            graph_fallback_relation_payloads=graph_fallback_relation_payloads,
+            errors=errors,
         )
 
     def _resolve_research_space_settings(  # noqa: C901, PLR0912, PLR0915
@@ -1046,6 +686,40 @@ class EntityRecognitionService(
         if not isinstance(raw_record, dict):
             return {}
         return {str(key): to_json_value(value) for key, value in raw_record.items()}
+
+    def _prepare_agent_raw_record(self, raw_record: JSONObject) -> JSONObject:
+        prepared = {str(key): to_json_value(value) for key, value in raw_record.items()}
+        text_limit = self._agent_raw_record_max_text_chars
+        for text_key in ("full_text", "text", "abstract", "title"):
+            raw_text = prepared.get(text_key)
+            if not isinstance(raw_text, str):
+                continue
+            if len(raw_text) <= text_limit:
+                continue
+            prepared[text_key] = raw_text[:text_limit]
+            prepared[f"{text_key}_truncated"] = True
+            prepared[f"{text_key}_original_length"] = len(raw_text)
+
+        raw_authors = prepared.get("authors")
+        if isinstance(raw_authors, list):
+            prepared["authors"] = self._compact_authors(raw_authors)
+        return prepared
+
+    @staticmethod
+    def _compact_authors(authors: list[object]) -> list[JSONObject]:
+        compacted: list[JSONObject] = []
+        for raw_author in authors[:25]:
+            if isinstance(raw_author, dict):
+                author_payload: JSONObject = {}
+                for key in ("first_name", "last_name", "initials", "name"):
+                    value = raw_author.get(key)
+                    if isinstance(value, str) and value.strip():
+                        author_payload[key] = value.strip()
+                if author_payload:
+                    compacted.append(author_payload)
+            elif isinstance(raw_author, str) and raw_author.strip():
+                compacted.append({"name": raw_author.strip()})
+        return compacted
 
     def _apply_dictionary_mutations(  # noqa: C901, PLR0912, PLR0913
         self,
@@ -1226,283 +900,6 @@ class EntityRecognitionService(
 
         return created_variables, created_synonyms, created_entity_types
 
-    async def _process_document_with_extraction(  # noqa: PLR0913, PLR0915
-        self,
-        *,
-        document: SourceDocument,
-        contract: EntityRecognitionContract,
-        governance: GovernanceDecision,
-        run_id: str | None,
-        document_run_id: str | None,
-        model_id: str | None,
-        requested_shadow_mode: bool,
-        research_space_settings: ResearchSpaceSettings,
-        dictionary_variables_created: int,
-        dictionary_synonyms_created: int,
-        dictionary_entity_types_created: int,
-        pipeline_run_id: str | None,
-    ) -> EntityRecognitionDocumentOutcome:
-        if self._extraction_service is None:
-            msg = "Extraction service is not configured"
-            raise RuntimeError(msg)
-
-        extraction_started_at = datetime.now(UTC)
-        logger.info(
-            "Entity recognition extraction handoff started",
-            extra={
-                "document_id": str(document.id),
-                "pipeline_run_id": pipeline_run_id,
-                "entity_run_id": run_id,
-                "model_id": model_id,
-                "timeout_seconds": self._extraction_stage_timeout_seconds,
-            },
-        )
-        try:
-            extraction_outcome = await asyncio.wait_for(
-                self._extraction_service.extract_from_entity_recognition(
-                    document=document,
-                    recognition_contract=contract,
-                    research_space_settings=research_space_settings,
-                    model_id=model_id,
-                    shadow_mode=requested_shadow_mode,
-                ),
-                timeout=self._extraction_stage_timeout_seconds,
-            )
-            logger.info(
-                "Entity recognition extraction handoff finished",
-                extra={
-                    "document_id": str(document.id),
-                    "pipeline_run_id": pipeline_run_id,
-                    "entity_run_id": run_id,
-                    "duration_ms": int(
-                        (datetime.now(UTC) - extraction_started_at).total_seconds()
-                        * 1000,
-                    ),
-                    "extraction_status": extraction_outcome.status,
-                    "extraction_reason": extraction_outcome.reason,
-                    "extraction_run_id": extraction_outcome.run_id,
-                },
-            )
-        except TimeoutError:
-            elapsed_ms = int(
-                (datetime.now(UTC) - extraction_started_at).total_seconds() * 1000,
-            )
-            failure_run_id = run_id or document_run_id
-            error_code = "EXTRACTION_STAGE_TIMEOUT"
-            error_class = "TimeoutError"
-            logger.exception(
-                "Extraction stage timed out for document=%s after %.1fs",
-                document.id,
-                self._extraction_stage_timeout_seconds,
-                extra={
-                    "pipeline_run_id": pipeline_run_id,
-                    "entity_run_id": run_id,
-                    "failure_run_id": failure_run_id,
-                    "elapsed_ms": elapsed_ms,
-                    "error_code": error_code,
-                    "error_class": error_class,
-                },
-            )
-            failure_reason = "extraction_stage_timeout"
-            metadata_patch = self._build_outcome_metadata(
-                contract=contract,
-                governance=governance,
-                run_id=run_id,
-                pipeline_run_id=pipeline_run_id,
-                wrote_to_kernel=False,
-                dictionary_variables_created=dictionary_variables_created,
-                dictionary_synonyms_created=dictionary_synonyms_created,
-                dictionary_entity_types_created=dictionary_entity_types_created,
-                ingestion_result=None,
-            )
-            metadata_patch["extraction_stage_error"] = (
-                "extraction_stage_timeout:"
-                f"{self._extraction_stage_timeout_seconds:.1f}s"
-            )
-            metadata_patch["extraction_stage_failure_reason"] = failure_reason
-            metadata_patch["extraction_stage_timeout_seconds"] = (
-                self._extraction_stage_timeout_seconds
-            )
-            metadata_patch["extraction_stage_failure"] = {
-                "error_code": error_code,
-                "error_class": error_class,
-                "elapsed_ms": elapsed_ms,
-                "run_id": failure_run_id,
-            }
-            metadata_patch["extraction_stage_error_code"] = error_code
-            metadata_patch["extraction_stage_error_class"] = error_class
-            metadata_patch["extraction_stage_elapsed_ms"] = elapsed_ms
-            metadata_patch["extraction_stage_run_id"] = failure_run_id
-            self._persist_failed_document(
-                document=document,
-                run_id=document_run_id,
-                metadata_patch=metadata_patch,
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=failure_reason,
-                review_required=governance.requires_review,
-                shadow_mode=False,
-                wrote_to_kernel=False,
-                run_id=run_id,
-                dictionary_variables_created=dictionary_variables_created,
-                dictionary_synonyms_created=dictionary_synonyms_created,
-                dictionary_entity_types_created=dictionary_entity_types_created,
-                errors=(
-                    "extraction_stage_timeout:"
-                    f"{self._extraction_stage_timeout_seconds:.1f}s",
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 - surfaced via metadata/outcome
-            elapsed_ms = int(
-                (datetime.now(UTC) - extraction_started_at).total_seconds() * 1000,
-            )
-            failure_run_id = run_id or document_run_id
-            custom_error_code = getattr(exc, "error_code", None)
-            error_code = (
-                custom_error_code.strip()
-                if isinstance(custom_error_code, str) and custom_error_code.strip()
-                else "EXTRACTION_STAGE_FAILED"
-            )
-            error_class = type(exc).__name__
-            logger.exception(
-                "Extraction stage failed for document=%s",
-                document.id,
-                extra={
-                    "pipeline_run_id": pipeline_run_id,
-                    "entity_run_id": run_id,
-                    "failure_run_id": failure_run_id,
-                    "elapsed_ms": elapsed_ms,
-                    "error_code": error_code,
-                    "error_class": error_class,
-                },
-            )
-            failure_reason = "extraction_stage_failed"
-            metadata_patch = self._build_outcome_metadata(
-                contract=contract,
-                governance=governance,
-                run_id=run_id,
-                pipeline_run_id=pipeline_run_id,
-                wrote_to_kernel=False,
-                dictionary_variables_created=dictionary_variables_created,
-                dictionary_synonyms_created=dictionary_synonyms_created,
-                dictionary_entity_types_created=dictionary_entity_types_created,
-                ingestion_result=None,
-            )
-            metadata_patch["extraction_stage_error"] = str(exc)
-            metadata_patch["extraction_stage_failure_reason"] = failure_reason
-            metadata_patch["extraction_stage_failure"] = {
-                "error_code": error_code,
-                "error_class": error_class,
-                "elapsed_ms": elapsed_ms,
-                "run_id": failure_run_id,
-            }
-            metadata_patch["extraction_stage_error_code"] = error_code
-            metadata_patch["extraction_stage_error_class"] = error_class
-            metadata_patch["extraction_stage_elapsed_ms"] = elapsed_ms
-            metadata_patch["extraction_stage_run_id"] = failure_run_id
-            self._persist_failed_document(
-                document=document,
-                run_id=document_run_id,
-                metadata_patch=metadata_patch,
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=failure_reason,
-                review_required=governance.requires_review,
-                shadow_mode=False,
-                wrote_to_kernel=False,
-                run_id=run_id,
-                dictionary_variables_created=dictionary_variables_created,
-                dictionary_synonyms_created=dictionary_synonyms_created,
-                dictionary_entity_types_created=dictionary_entity_types_created,
-                errors=(str(exc),),
-            )
-
-        extraction_run_id = (
-            extraction_outcome.run_id.strip()
-            if isinstance(extraction_outcome.run_id, str)
-            and extraction_outcome.run_id.strip()
-            else document_run_id
-        )
-        graph_fallback_relation_payloads = self._build_graph_fallback_relation_payloads(
-            seed_entity_ids=extraction_outcome.seed_entity_ids,
-            rejected_relation_details=extraction_outcome.rejected_relation_details,
-        )
-        metadata_patch = self._build_outcome_metadata(
-            contract=contract,
-            governance=governance,
-            run_id=run_id,
-            pipeline_run_id=pipeline_run_id,
-            wrote_to_kernel=extraction_outcome.wrote_to_kernel,
-            dictionary_variables_created=dictionary_variables_created,
-            dictionary_synonyms_created=dictionary_synonyms_created,
-            dictionary_entity_types_created=dictionary_entity_types_created,
-            ingestion_result=None,
-        )
-        metadata_patch = self._merge_metadata(
-            metadata_patch,
-            self._build_extraction_metadata(extraction_outcome),
-        )
-
-        review_required = (
-            governance.requires_review or extraction_outcome.review_required
-        )
-        if extraction_outcome.status == "failed":
-            self._persist_failed_document(
-                document=document,
-                run_id=extraction_run_id,
-                metadata_patch=metadata_patch,
-            )
-            return EntityRecognitionDocumentOutcome(
-                document_id=document.id,
-                status="failed",
-                reason=extraction_outcome.reason,
-                review_required=review_required,
-                shadow_mode=extraction_outcome.shadow_mode,
-                wrote_to_kernel=False,
-                run_id=run_id,
-                dictionary_variables_created=dictionary_variables_created,
-                dictionary_synonyms_created=dictionary_synonyms_created,
-                dictionary_entity_types_created=dictionary_entity_types_created,
-                ingestion_entities_created=(
-                    extraction_outcome.ingestion_entities_created
-                ),
-                ingestion_observations_created=(
-                    extraction_outcome.ingestion_observations_created
-                ),
-                seed_entity_ids=extraction_outcome.seed_entity_ids,
-                graph_fallback_relation_payloads=graph_fallback_relation_payloads,
-                errors=extraction_outcome.errors,
-            )
-
-        self._persist_extracted_document(
-            document=document,
-            run_id=extraction_run_id,
-            metadata_patch=metadata_patch,
-        )
-        return EntityRecognitionDocumentOutcome(
-            document_id=document.id,
-            status="extracted",
-            reason=extraction_outcome.reason,
-            review_required=review_required,
-            shadow_mode=extraction_outcome.shadow_mode,
-            wrote_to_kernel=extraction_outcome.wrote_to_kernel,
-            run_id=run_id,
-            dictionary_variables_created=dictionary_variables_created,
-            dictionary_synonyms_created=dictionary_synonyms_created,
-            dictionary_entity_types_created=dictionary_entity_types_created,
-            ingestion_entities_created=extraction_outcome.ingestion_entities_created,
-            ingestion_observations_created=(
-                extraction_outcome.ingestion_observations_created
-            ),
-            seed_entity_ids=extraction_outcome.seed_entity_ids,
-            graph_fallback_relation_payloads=graph_fallback_relation_payloads,
-            errors=extraction_outcome.errors,
-        )
-
     def _build_pipeline_records(
         self,
         *,
@@ -1569,6 +966,9 @@ class EntityRecognitionService(
         )
         ingestion_observations_created = sum(
             outcome.ingestion_observations_created for outcome in outcomes
+        )
+        persisted_relations_count = sum(
+            outcome.persisted_relations_count for outcome in outcomes
         )
 
         errors: list[str] = []
@@ -1654,6 +1054,7 @@ class EntityRecognitionService(
             dictionary_entity_types_created=dictionary_entity_types_created,
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
+            persisted_relations_count=persisted_relations_count,
             derived_graph_seed_entity_ids=tuple(derived_graph_seed_entity_ids),
             derived_graph_fallback_relation_payloads=tuple(
                 derived_graph_fallback_relation_payloads,

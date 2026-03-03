@@ -145,6 +145,8 @@ class SourceWorkflowMonitorPipelineMixin:
         metadata = coerce_json_object(row.job_metadata)
         extraction_queue_meta = coerce_json_object(metadata.get("extraction_queue"))
         extraction_run_meta = coerce_json_object(metadata.get("extraction_run"))
+        graph_progress = coerce_json_object(pipeline_payload.get("graph_progress"))
+        run_scope = coerce_json_object(pipeline_payload.get("run_scope"))
         stage_counters: JSONObject = {
             "records_processed": safe_int(metrics.get("records_processed")),
             "records_failed": safe_int(metrics.get("records_failed")),
@@ -153,6 +155,16 @@ class SourceWorkflowMonitorPipelineMixin:
             "extraction_processed": safe_int(extraction_run_meta.get("processed")),
             "extraction_completed": safe_int(extraction_run_meta.get("completed")),
             "extraction_failed": safe_int(extraction_run_meta.get("failed")),
+            "graph_requested": safe_int(graph_progress.get("requested")),
+            "graph_processed": safe_int(graph_progress.get("processed")),
+            "graph_completed": safe_int(graph_progress.get("completed")),
+            "persisted_relations": safe_int(graph_progress.get("persisted_relations")),
+            "extraction_persisted_relations": safe_int(
+                graph_progress.get("extraction_persisted_relations"),
+            ),
+            "graph_stage_persisted_relations": safe_int(
+                graph_progress.get("graph_stage_persisted_relations"),
+            ),
         }
 
         source_snapshot = coerce_json_object(row.source_config_snapshot)
@@ -161,9 +173,18 @@ class SourceWorkflowMonitorPipelineMixin:
         if executed_query is None:
             executed_query = normalize_optional_string(source_metadata.get("query"))
 
+        run_ingestion_job_id = normalize_optional_string(
+            run_scope.get("ingestion_job_id"),
+        )
+        if run_ingestion_job_id is None:
+            run_ingestion_job_id = normalize_optional_string(
+                pipeline_payload.get("ingestion_job_id"),
+            )
+
         return {
             "job_id": str(row.id),
             "run_id": str(pipeline_payload.get("run_id")),
+            "ingestion_job_id": run_ingestion_job_id,
             "status": normalize_optional_string(pipeline_payload.get("status"))
             or str(row.status.value),
             "triggered_at": row.triggered_at,

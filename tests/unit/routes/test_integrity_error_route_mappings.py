@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+from uuid import uuid4
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
+
+from src.database.session import get_session
+from src.domain.entities.user import User, UserRole, UserStatus
+from src.routes.admin_routes import dictionary as dictionary_routes
+from src.routes.auth import get_current_active_user
+from src.routes.research_spaces import research_spaces_router
+from src.routes.research_spaces.dependencies import get_membership_service
+from src.routes.research_spaces.kernel_dependencies import get_kernel_relation_service
+
+
+class _SessionStub:
+    def __init__(self, *, commit_error: IntegrityError | None = None) -> None:
+        self.bind = None
+        self._commit_error = commit_error
+        self.rollback_called = False
+
+    def commit(self) -> None:
+        if self._commit_error is not None:
+            raise self._commit_error
+
+    def rollback(self) -> None:
+        self.rollback_called = True
+
+
+class _DictionaryServiceStub:
+    def set_entity_type_review_status(self, *_args, **_kwargs) -> object:
+        return object()
+
+    def set_relation_type_review_status(self, *_args, **_kwargs) -> object:
+        return object()
+
+
+class _RelationServiceStub:
+    def create_relation(self, *_args, **_kwargs) -> object:
+        return object()
+
+
+def _admin_user() -> User:
+    return User(
+        email="admin@example.com",
+        username="admin",
+        full_name="Admin User",
+        hashed_password="hashed-password",
+        role=UserRole.ADMIN,
+        status=UserStatus.ACTIVE,
+    )
+
+
+def test_entity_type_review_status_maps_integrity_error_to_conflict() -> None:
+    service = _DictionaryServiceStub()
+    session = _SessionStub(
+        commit_error=IntegrityError(
+            "UPDATE dictionary_entity_types",
+            {},
+            Exception("in use by graph"),
+        ),
+    )
+    app = FastAPI()
+    app.include_router(dictionary_routes.router)
+    app.dependency_overrides[dictionary_routes.require_admin_user] = _admin_user
+    app.dependency_overrides[dictionary_routes.get_dictionary_service] = lambda: service
+    app.dependency_overrides[dictionary_routes.get_admin_db_session] = lambda: session
+    client = TestClient(app)
+
+    response = client.patch(
+        "/dictionary/entity-types/GENE/review-status",
+        json={"review_status": "REVOKED", "revocation_reason": "retire"},
+    )
+
+    assert response.status_code == 409
+    assert "conflicts with active graph references" in response.json()["detail"]
+    assert session.rollback_called is True
+
+
+def test_relation_type_review_status_maps_integrity_error_to_conflict() -> None:
+    service = _DictionaryServiceStub()
+    session = _SessionStub(
+        commit_error=IntegrityError(
+            "UPDATE dictionary_relation_types",
+            {},
+            Exception("in use by graph"),
+        ),
+    )
+    app = FastAPI()
+    app.include_router(dictionary_routes.router)
+    app.dependency_overrides[dictionary_routes.require_admin_user] = _admin_user
+    app.dependency_overrides[dictionary_routes.get_dictionary_service] = lambda: service
+    app.dependency_overrides[dictionary_routes.get_admin_db_session] = lambda: session
+    client = TestClient(app)
+
+    response = client.patch(
+        "/dictionary/relation-types/ASSOCIATED_WITH/review-status",
+        json={"review_status": "REVOKED", "revocation_reason": "retire"},
+    )
+
+    assert response.status_code == 409
+    assert "conflicts with active graph references" in response.json()["detail"]
+    assert session.rollback_called is True
+
+
+def test_create_relation_maps_integrity_error_to_conflict() -> None:
+    relation_service = _RelationServiceStub()
+    session = _SessionStub(
+        commit_error=IntegrityError(
+            "INSERT INTO relations",
+            {},
+            Exception("requires evidence"),
+        ),
+    )
+    app = FastAPI()
+    app.include_router(research_spaces_router)
+    app.dependency_overrides[get_current_active_user] = _admin_user
+    app.dependency_overrides[get_membership_service] = lambda: object()
+    app.dependency_overrides[get_kernel_relation_service] = lambda: relation_service
+    app.dependency_overrides[get_session] = lambda: session
+    client = TestClient(app)
+
+    response = client.post(
+        f"/research-spaces/{uuid4()}/relations",
+        json={
+            "source_id": str(uuid4()),
+            "relation_type": "ASSOCIATED_WITH",
+            "target_id": str(uuid4()),
+            "confidence": 0.9,
+            "evidence_summary": "evidence",
+            "evidence_tier": "LITERATURE",
+            "provenance_id": None,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "Relation write conflicts" in response.json()["detail"]
+    assert session.rollback_called is True

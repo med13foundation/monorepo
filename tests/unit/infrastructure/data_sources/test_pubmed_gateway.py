@@ -198,6 +198,41 @@ async def test_gateway_incremental_fetch_uses_cursor_checkpoint() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gateway_incremental_fetch_preserves_cursor_on_empty_parsed_page() -> (
+    None
+):
+    """If ESearch returns IDs but parser yields zero records, retain cursor."""
+    ingestor = AsyncMock()
+    ingestor.fetch_page.return_value = PubMedFetchPage(
+        records=[],
+        total_count=126,
+        retstart=20,
+        retmax=5,
+        returned_count=5,
+    )
+    gateway = PubMedSourceGateway(ingestor=ingestor)
+    config = PubMedQueryConfig(
+        query="MED13",
+        date_from=None,
+        date_to=None,
+        relevance_threshold=0,
+        max_results=5,
+    )
+
+    result = await gateway.fetch_records_incremental(
+        config,
+        checkpoint={"provider": "pubmed", "retstart": 20},
+    )
+
+    assert result.fetched_records == 0
+    assert result.checkpoint_after is not None
+    assert result.checkpoint_after["retstart"] == 20
+    assert result.checkpoint_after["has_more"] is True
+    assert result.checkpoint_after["cycle_completed"] is False
+    assert result.checkpoint_after["cursor_preserved_due_to_empty_page"] is True
+
+
+@pytest.mark.asyncio
 async def test_gateway_filters_with_semantic_relevance_agent() -> None:
     """Semantic relevance agent should drive threshold filtering by meaning."""
     ingestor = AsyncMock()

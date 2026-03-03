@@ -76,6 +76,10 @@ export interface SourceWorkflowCardStatus {
   last_failed_stage?: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
   pending_paper_count: number
   pending_relation_review_count: number
+  extraction_extracted_count: number
+  extraction_failed_count: number
+  extraction_skipped_count: number
+  extraction_timeout_failed_count: number
   graph_edges_delta_last_run: number
   graph_edges_total: number
   artana_progress?: Record<string, SourceWorkflowArtanaStage>
@@ -92,6 +96,7 @@ interface WorkflowSignal {
   pipelineStatus: string | null
   pendingPapers: number
   pendingReview: number
+  timeoutFailures: number
   newEdges: number
 }
 
@@ -111,6 +116,7 @@ function buildWorkflowSignal(status: SourceWorkflowCardStatus): WorkflowSignal {
     pipelineStatus: status.last_pipeline_status,
     pendingPapers: status.pending_paper_count,
     pendingReview: status.pending_relation_review_count,
+    timeoutFailures: status.extraction_timeout_failed_count ?? 0,
     newEdges: status.graph_edges_delta_last_run,
   }
 }
@@ -119,6 +125,18 @@ function describePipelineStage(status: SourceWorkflowCardStatus | undefined): st
   if (!status) return 'Connecting to monitor'
   if (status.last_pipeline_status === 'failed') {
     return 'Pipeline failed'
+  }
+  if (
+    status.last_pipeline_status === 'completed' &&
+    (status.extraction_timeout_failed_count ?? 0) > 0
+  ) {
+    return 'Completed with timeout failures'
+  }
+  if (
+    status.last_pipeline_status === 'completed' &&
+    (status.extraction_failed_count ?? 0) > 0
+  ) {
+    return 'Completed with extraction failures'
   }
   if (status.pending_paper_count > 0) {
     return 'Document ingestion and extraction'
@@ -187,6 +205,11 @@ function describeWorkflowChange(
   if (previousSignal.pendingReview !== nextSignal.pendingReview) {
     updates.push(
       `review ${previousSignal.pendingReview} -> ${nextSignal.pendingReview}`,
+    )
+  }
+  if (previousSignal.timeoutFailures !== nextSignal.timeoutFailures) {
+    updates.push(
+      `timeouts ${previousSignal.timeoutFailures} -> ${nextSignal.timeoutFailures}`,
     )
   }
   if (previousSignal.newEdges !== nextSignal.newEdges) {
@@ -695,6 +718,11 @@ export function DataSourcesList({
           pending_paper_count: current?.pending_paper_count ?? 0,
           pending_relation_review_count:
             current?.pending_relation_review_count ?? 0,
+          extraction_extracted_count: current?.extraction_extracted_count ?? 0,
+          extraction_failed_count: current?.extraction_failed_count ?? 0,
+          extraction_skipped_count: current?.extraction_skipped_count ?? 0,
+          extraction_timeout_failed_count:
+            current?.extraction_timeout_failed_count ?? 0,
           graph_edges_delta_last_run:
             current?.graph_edges_delta_last_run ?? 0,
           graph_edges_total: current?.graph_edges_total ?? 0,
@@ -824,6 +852,14 @@ export function DataSourcesList({
               {
                 label: 'Pending review',
                 value: String(workflowStatus?.pending_relation_review_count ?? 0),
+              },
+              {
+                label: 'Failed papers',
+                value: String(workflowStatus?.extraction_failed_count ?? 0),
+              },
+              {
+                label: 'Timeouts',
+                value: String(workflowStatus?.extraction_timeout_failed_count ?? 0),
               },
               {
                 label: 'New edges',
@@ -1103,6 +1139,26 @@ export function DataSourcesList({
                       <p className="text-sm text-amber-700">
                         Queue backlog: {workflowStatus?.pending_paper_count ?? 0} pending paper
                         {(workflowStatus?.pending_paper_count ?? 0) === 1 ? '' : 's'}.
+                      </p>
+                    )}
+                  {isExpanded &&
+                    !isRunning &&
+                    isActive &&
+                    (workflowStatus?.extraction_timeout_failed_count ?? 0) > 0 && (
+                      <p className="text-sm text-destructive">
+                        Timeout failures: {workflowStatus?.extraction_timeout_failed_count ?? 0}{' '}
+                        paper{(workflowStatus?.extraction_timeout_failed_count ?? 0) === 1 ? '' : 's'} hit
+                        timeout in the latest run.
+                      </p>
+                    )}
+                  {isExpanded &&
+                    !isRunning &&
+                    isActive &&
+                    (workflowStatus?.extraction_failed_count ?? 0) > 0 && (
+                      <p className="text-sm text-destructive">
+                        Extraction failures: {workflowStatus?.extraction_failed_count ?? 0} paper
+                        {(workflowStatus?.extraction_failed_count ?? 0) === 1 ? '' : 's'} failed in the
+                        latest run.
                       </p>
                     )}
                 </CardHeader>

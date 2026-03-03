@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from src.domain.value_objects.relation_types import normalize_relation_type
+
 if TYPE_CHECKING:
     from datetime import datetime
 
@@ -91,14 +93,31 @@ class KernelRelationService:
             msg = f"Target entity {target_id} is not in research space {research_space_id}"
             raise ValueError(msg)
 
+        normalized_relation_type = normalize_relation_type(relation_type)
+        if not normalized_relation_type:
+            msg = "relation_type is required"
+            raise ValueError(msg)
+
+        canonical_relation_type = normalized_relation_type
+        resolved_relation_type = self._dictionary.resolve_relation_synonym(
+            normalized_relation_type,
+        )
+        if resolved_relation_type is not None:
+            resolved_relation_type_id = getattr(resolved_relation_type, "id", None)
+            if (
+                isinstance(resolved_relation_type_id, str)
+                and resolved_relation_type_id.strip()
+            ):
+                canonical_relation_type = resolved_relation_type_id.strip().upper()
+
         # 2. Check triple is allowed
         if not self._dictionary.is_triple_allowed(
             source.entity_type,
-            relation_type,
+            canonical_relation_type,
             target.entity_type,
         ):
             msg = (
-                f"Triple ({source.entity_type}, {relation_type}, "
+                f"Triple ({source.entity_type}, {canonical_relation_type}, "
                 f"{target.entity_type}) is not allowed by constraints"
             )
             raise ValueError(msg)
@@ -107,20 +126,20 @@ class KernelRelationService:
         if (
             self._dictionary.requires_evidence(
                 source.entity_type,
-                relation_type,
+                canonical_relation_type,
                 target.entity_type,
             )
             and not evidence_summary
         ):
             logger.warning(
                 "Creating relation %s without evidence (required by constraints)",
-                relation_type,
+                canonical_relation_type,
             )
 
         return self._relations.create(
             research_space_id=research_space_id,
             source_id=source_id,
-            relation_type=relation_type,
+            relation_type=canonical_relation_type,
             target_id=target_id,
             confidence=confidence,
             evidence_summary=evidence_summary,

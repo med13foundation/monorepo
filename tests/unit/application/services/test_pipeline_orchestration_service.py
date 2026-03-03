@@ -52,6 +52,7 @@ class StubIngestionSummary:
     updated_records: int = 0
     unchanged_records: int = 0
     skipped_records: int = 0
+    ingestion_job_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class StubExtractionSummary:
     processed: int = 3
     extracted: int = 3
     failed: int = 0
+    persisted_relations_count: int = 0
     derived_graph_seed_entity_ids: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
@@ -489,6 +491,60 @@ async def test_run_for_source_records_stage_checkpoints_with_run_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_for_source_records_ingestion_scope_and_total_persisted_relations() -> (
+    None
+):
+    source_id = uuid4()
+    research_space_id = uuid4()
+    ingestion_job_id = uuid4()
+    repository = StubPipelineRunRepository()
+    ingestion_service = StubIngestionSchedulingService(
+        StubIngestionSummary(
+            source_id=source_id,
+            ingestion_job_id=ingestion_job_id,
+        ),
+    )
+    enrichment_service = StubContentEnrichmentService(StubEnrichmentSummary())
+    extraction_service = StubEntityRecognitionService(
+        StubExtractionSummary(persisted_relations_count=5),
+    )
+    graph_service = StubGraphConnectionService(
+        StubGraphOutcome(persisted_relations_count=2),
+    )
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=ingestion_service,
+            content_enrichment_service=enrichment_service,
+            entity_recognition_service=extraction_service,
+            graph_connection_service=graph_service,
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-scope-001",
+        source_type="pubmed",
+        graph_seed_entity_ids=["seed-1"],
+    )
+
+    assert summary.graph_persisted_relations == 7
+
+    jobs = repository.find_by_source(source_id)
+    assert len(jobs) == 1
+    pipeline_run = _coerce_json_object(jobs[0].metadata.get("pipeline_run"))
+    run_scope = _coerce_json_object(pipeline_run.get("run_scope"))
+    graph_progress = _coerce_json_object(pipeline_run.get("graph_progress"))
+
+    assert run_scope.get("ingestion_job_id") == str(ingestion_job_id)
+    assert graph_progress.get("persisted_relations") == 7
+    assert graph_progress.get("extraction_persisted_relations") == 5
+    assert graph_progress.get("graph_stage_persisted_relations") == 2
+
+
+@pytest.mark.asyncio
 async def test_run_for_source_resume_from_extraction_skips_prior_stages() -> None:
     source_id = uuid4()
     research_space_id = uuid4()
@@ -581,6 +637,45 @@ async def test_run_for_source_persists_failed_stage_checkpoint() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_for_source_completed_with_warnings_keeps_failed_metrics_zero() -> (
+    None
+):
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    ingestion_service = StubIngestionSchedulingService(
+        StubIngestionSummary(source_id=source_id),
+    )
+    enrichment_service = StubContentEnrichmentService(
+        StubEnrichmentSummary(errors=("enrichment:warning",)),
+    )
+    extraction_service = StubEntityRecognitionService(StubExtractionSummary())
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=ingestion_service,
+            content_enrichment_service=enrichment_service,
+            entity_recognition_service=extraction_service,
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-warning-metrics",
+    )
+
+    assert summary.status == "completed"
+    assert "enrichment:warning" in summary.errors
+
+    job = repository.find_by_source(source_id)[0]
+    assert job.status == IngestionStatus.COMPLETED
+    assert job.metrics is not None
+    assert job.metrics.records_failed == 0
+
+
+@pytest.mark.asyncio
 async def test_run_for_source_marks_failed_when_extraction_watchdog_times_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -622,6 +717,65 @@ async def test_run_for_source_marks_failed_when_extraction_watchdog_times_out(
     checkpoints = _coerce_json_object(pipeline_run.get("checkpoints"))
     extraction_checkpoint = _coerce_json_object(checkpoints.get("extraction"))
     assert extraction_checkpoint.get("status") == "failed"
+    assert isinstance(extraction_checkpoint.get("error"), str)
+
+
+@pytest.mark.asyncio
+async def test_run_for_source_fails_pubmed_quality_gate_on_partial_extraction() -> None:
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    ingestion_service = StubIngestionSchedulingService(
+        StubIngestionSummary(source_id=source_id),
+    )
+    enrichment_service = StubContentEnrichmentService(StubEnrichmentSummary())
+    extraction_service = StubEntityRecognitionService(
+        StubExtractionSummary(
+            processed=4,
+            extracted=1,
+            failed=3,
+        ),
+    )
+    graph_service = StubGraphConnectionService(
+        StubGraphOutcome(persisted_relations_count=1),
+    )
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=ingestion_service,
+            content_enrichment_service=enrichment_service,
+            entity_recognition_service=extraction_service,
+            graph_connection_service=graph_service,
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-pubmed-quality-gate",
+        source_type="pubmed",
+        graph_seed_entity_ids=["seed-1"],
+    )
+
+    assert summary.status == "failed"
+    assert summary.extraction_status == "completed"
+    assert any(
+        error.startswith("extraction:quality_gate_failed:") for error in summary.errors
+    )
+    assert summary.metadata is not None
+    assert summary.metadata.get("extraction_quality_gate_failed") is True
+    assert summary.metadata.get("extraction_failure_ratio") == pytest.approx(0.75)
+    assert summary.metadata.get("extraction_failure_ratio_threshold") == pytest.approx(
+        0.0,
+    )
+
+    job = repository.find_by_source(source_id)[0]
+    assert job.status == IngestionStatus.FAILED
+    pipeline_run = _coerce_json_object(job.metadata.get("pipeline_run"))
+    checkpoints = _coerce_json_object(pipeline_run.get("checkpoints"))
+    extraction_checkpoint = _coerce_json_object(checkpoints.get("extraction"))
+    assert extraction_checkpoint.get("status") == "completed"
     assert isinstance(extraction_checkpoint.get("error"), str)
 
 

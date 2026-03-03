@@ -1315,6 +1315,47 @@ async def test_trigger_ingestion_takes_over_expired_source_lock() -> None:
 
 
 @pytest.mark.asyncio
+async def test_trigger_ingestion_force_recover_does_not_steal_active_source_lock() -> (
+    None
+):
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    source_repo = StubSourceRepository(source)
+    job_repo = StubJobRepository()
+    source_lock_repository = StubSourceLockRepository()
+    source_lock_repository.upsert(
+        IngestionSourceLock(
+            source_id=source.id,
+            lock_token="active-lock-token",
+            lease_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            last_heartbeat_at=datetime.now(UTC),
+            acquired_by="worker-a",
+        ),
+    )
+
+    service = IngestionSchedulingService(
+        scheduler=InMemoryScheduler(),
+        source_repository=source_repo,
+        job_repository=job_repo,
+        ingestion_services={SourceType.PUBMED: StubPubMedIngestionService().ingest},
+        options=_build_ingestion_options(
+            source_lock_repository=source_lock_repository,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="already running"):
+        await service.trigger_ingestion(source.id, force_recover_lock=True)
+
+    assert source.id in source_lock_repository.by_source
+    assert source_lock_repository.by_source[source.id].lock_token == "active-lock-token"
+    assert source_lock_repository.release_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_run_due_jobs_releases_source_lock_after_completion() -> None:
     schedule = IngestionSchedule(
         enabled=True,
@@ -1575,6 +1616,65 @@ async def test_trigger_ingestion_queues_and_runs_extraction_for_pubmed_source() 
     assert queued_targets[0].source_type == SourceType.PUBMED.value
     assert runner_service.calls
     assert runner_service.calls[0][2] == len(queued_targets)
+
+
+@pytest.mark.asyncio
+async def test_trigger_ingestion_marks_job_as_api_triggered() -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    job_repository = StubJobRepository()
+    service = IngestionSchedulingService(
+        scheduler=InMemoryScheduler(),
+        source_repository=StubSourceRepository(source),
+        job_repository=job_repository,
+        ingestion_services={SourceType.PUBMED: StubPubMedIngestionService().ingest},
+        options=_build_ingestion_options(),
+    )
+
+    await service.trigger_ingestion(source.id)
+
+    latest_jobs = job_repository.find_by_source(source.id)
+    assert latest_jobs
+    latest_job = latest_jobs[0]
+    assert latest_job.trigger == IngestionTrigger.API
+    assert latest_job.provenance.acquired_by == "ingestion-api"
+    assert latest_job.provenance.processing_steps == ("api_triggered_ingestion",)
+
+
+@pytest.mark.asyncio
+async def test_trigger_ingestion_skips_legacy_queue_when_requested() -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    queue_service = StubExtractionQueueService()
+    runner_service = StubExtractionRunnerService({SourceType.PUBMED.value})
+    service = IngestionSchedulingService(
+        scheduler=InMemoryScheduler(),
+        source_repository=StubSourceRepository(source),
+        job_repository=StubJobRepository(),
+        ingestion_services={
+            SourceType.PUBMED: QueueingSourceIngestionService(SourceType.PUBMED).ingest,
+        },
+        options=_build_ingestion_options(
+            extraction_queue_service=queue_service,
+            extraction_runner_service=runner_service,
+        ),
+    )
+
+    await service.trigger_ingestion(
+        source.id,
+        skip_legacy_extraction_queue=True,
+    )
+
+    assert queue_service.calls == []
+    assert runner_service.calls == []
 
 
 @pytest.mark.asyncio

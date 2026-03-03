@@ -19,6 +19,9 @@ from src.models.database.kernel.relations import RelationEvidenceModel, Relation
 from src.models.database.review import ReviewRecord
 from src.models.database.source_document import SourceDocumentModel
 
+from ._source_workflow_monitor_quality_helpers import (
+    SourceWorkflowMonitorQualityMixin,
+)
 from ._source_workflow_monitor_shared import (
     PENDING_DOCUMENT_STATUSES,
     PENDING_RELATION_STATUSES,
@@ -45,7 +48,7 @@ _PENDING_QUEUE_STATUSES: tuple[ExtractionStatusEnum, ...] = (
 )
 
 
-class SourceWorkflowMonitorRelationsMixin:
+class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
     """Relation and graph summarization helpers for workflow monitor."""
 
     _session: Session
@@ -308,12 +311,24 @@ class SourceWorkflowMonitorRelationsMixin:
         selected_run: PipelineRunRecord | None,
         graph_summary: JSONObject | None,
         relation_edge_delta: int,
+        selected_run_id: str | None,
+        selected_ingestion_job_id: str | None,
     ) -> JSONObject:
         pending_documents = self._count_pending_documents(source_id=source_id)
         pending_queue = self._count_pending_queue_items(source_id=source_id)
         pending_relation_reviews = self._count_pending_relation_reviews(
             space_id=space_id,
             source_id=source_id,
+        )
+        (
+            extraction_extracted_count,
+            extraction_failed_count,
+            extraction_skipped_count,
+            extraction_timeout_failed_count,
+        ) = self._count_document_extraction_outcomes(
+            source_id=source_id,
+            run_id=selected_run_id,
+            ingestion_job_id=selected_ingestion_job_id,
         )
         graph_edges_total = (
             safe_int(graph_summary.get("edge_count"))
@@ -340,43 +355,15 @@ class SourceWorkflowMonitorRelationsMixin:
             "pending_document_count": pending_documents,
             "pending_queue_count": pending_queue,
             "pending_relation_review_count": pending_relation_reviews,
+            "extraction_extracted_count": extraction_extracted_count,
+            "extraction_failed_count": extraction_failed_count,
+            "extraction_skipped_count": extraction_skipped_count,
+            "extraction_timeout_failed_count": extraction_timeout_failed_count,
             "graph_edges_total": graph_edges_total,
             "graph_edges_for_source": graph_edges_for_source,
             "graph_edges_delta_last_run": max(relation_edge_delta, 0),
             "stage_counters": stage_counters,
         }
-
-    def _build_warnings(self, *, extraction_rows: list[JSONObject]) -> list[str]:
-        warnings: list[str] = []
-        no_full_text_count = 0
-        all_rejected_count = 0
-
-        for extraction in extraction_rows:
-            text_source = normalize_optional_string(extraction.get("text_source"))
-            if text_source == "abstract":
-                no_full_text_count += 1
-            metadata = coerce_json_object(extraction.get("metadata"))
-            funnel = coerce_json_object(metadata.get("extraction_stage_funnel"))
-            generated = safe_int(funnel.get("relation_candidates_generated"))
-            persisted = safe_int(funnel.get("relation_candidates_persisted"))
-            if generated > 0 and persisted == 0:
-                all_rejected_count += 1
-
-        if no_full_text_count > 0:
-            warnings.append(
-                (
-                    f"{no_full_text_count} extraction(s) used abstract-only text because "
-                    "full text was unavailable."
-                ),
-            )
-        if all_rejected_count > 0:
-            warnings.append(
-                (
-                    f"{all_rejected_count} extraction(s) generated relation candidates "
-                    "but persisted zero relations."
-                ),
-            )
-        return warnings
 
     def _count_pending_documents(self, *, source_id: UUID) -> int:
         statement = (

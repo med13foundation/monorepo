@@ -138,10 +138,9 @@ export function DataSourceAiConfigDialog({
       agent_config: updatedAgentConfig,
     }
     if (isPubMedSource) {
-      const normalizedQuery = values.agent_prompt.trim()
-      const fallbackQuery = sourceQuery.trim() || source.name.trim() || 'pubmed'
-      updatedMetadata.query =
-        normalizedQuery.length > 0 ? normalizedQuery : fallbackQuery
+      if (sourceQuery.trim().length > 0) {
+        updatedMetadata.query = sourceQuery.trim()
+      }
       updatedMetadata.max_results = Math.max(1, Math.min(10000, values.max_results))
       updatedMetadata.open_access_only = true
     }
@@ -150,7 +149,9 @@ export function DataSourceAiConfigDialog({
       metadata: updatedMetadata,
     }
     if (isPubMedSource) {
-      updatedConfig.query = updatedMetadata.query
+      if (sourceQuery.trim().length > 0) {
+        updatedConfig.query = sourceQuery.trim()
+      }
     }
 
     try {

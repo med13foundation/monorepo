@@ -331,6 +331,10 @@ export interface SourceWorkflowCardStatusPayload {
   last_failed_stage: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
   pending_paper_count: number
   pending_relation_review_count: number
+  extraction_extracted_count: number
+  extraction_failed_count: number
+  extraction_skipped_count: number
+  extraction_timeout_failed_count: number
   graph_edges_delta_last_run: number
   graph_edges_total: number
   artana_progress?: Record<string, ArtanaStageProgressSnapshot>

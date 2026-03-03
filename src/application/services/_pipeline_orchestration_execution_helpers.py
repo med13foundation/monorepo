@@ -58,7 +58,7 @@ _DEFAULT_ENTITY_RECOGNITION_EXTRACTION_STAGE_TIMEOUT_SECONDS = 300.0
 _ENV_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY = (
     "MED13_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY"
 )
-_DEFAULT_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY = 4
+_DEFAULT_ENTITY_RECOGNITION_BATCH_MAX_CONCURRENCY = 2
 _EXTRACTION_STAGE_TIMEOUT_OVERHEAD_SECONDS = 15.0
 _ENV_GRAPH_SEED_INFERENCE_TIMEOUT_SECONDS = (
     "MED13_PIPELINE_GRAPH_SEED_INFERENCE_TIMEOUT_SECONDS"
@@ -70,6 +70,14 @@ _ENV_GRAPH_STAGE_SEED_TIMEOUT_SECONDS = (
     "MED13_PIPELINE_GRAPH_STAGE_SEED_TIMEOUT_SECONDS"
 )
 _DEFAULT_GRAPH_STAGE_SEED_TIMEOUT_SECONDS = 180.0
+_ENV_EXTRACTION_FAILURE_RATIO_THRESHOLD = (
+    "MED13_PIPELINE_EXTRACTION_FAILURE_RATIO_THRESHOLD"
+)
+_DEFAULT_EXTRACTION_FAILURE_RATIO_THRESHOLD = 1.0
+_ENV_EXTRACTION_FAILURE_RATIO_THRESHOLD_PUBMED = (
+    "MED13_PIPELINE_EXTRACTION_FAILURE_RATIO_THRESHOLD_PUBMED"
+)
+_DEFAULT_EXTRACTION_FAILURE_RATIO_THRESHOLD_PUBMED = 0.0
 
 
 def _read_positive_timeout_seconds(
@@ -128,6 +136,72 @@ def _read_positive_int(
         )
         return default_value
     return parsed
+
+
+def _read_failure_ratio_threshold(
+    env_name: str,
+    *,
+    default_value: float,
+) -> float:
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        return default_value
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid ratio override in %s=%r; using default %.3f",
+            env_name,
+            raw_value,
+            default_value,
+        )
+        return default_value
+    if parsed < 0:
+        logger.warning(
+            "Negative ratio override in %s=%r; clamping to 0.0",
+            env_name,
+            raw_value,
+        )
+        return 0.0
+    if parsed > 1:
+        logger.warning(
+            "Ratio override above 1.0 in %s=%r; clamping to 1.0",
+            env_name,
+            raw_value,
+        )
+        return 1.0
+    return parsed
+
+
+def _resolve_extraction_failure_ratio_threshold(source_type: str | None) -> float:
+    normalized_source_type = source_type.strip().lower() if source_type else None
+    if normalized_source_type == "pubmed":
+        return _read_failure_ratio_threshold(
+            _ENV_EXTRACTION_FAILURE_RATIO_THRESHOLD_PUBMED,
+            default_value=_DEFAULT_EXTRACTION_FAILURE_RATIO_THRESHOLD_PUBMED,
+        )
+    return _read_failure_ratio_threshold(
+        _ENV_EXTRACTION_FAILURE_RATIO_THRESHOLD,
+        default_value=_DEFAULT_EXTRACTION_FAILURE_RATIO_THRESHOLD,
+    )
+
+
+def _coerce_optional_uuid(raw_value: object) -> UUID | None:
+    if raw_value is None:
+        return None
+    import uuid
+
+    if isinstance(raw_value, uuid.UUID):
+        return raw_value
+    if isinstance(raw_value, str):
+        normalized = raw_value.strip()
+        if not normalized:
+            return None
+        try:
+            return uuid.UUID(normalized)
+        except ValueError:
+            return None
+    return None
 
 
 class _PipelineOrchestrationExecutionHelpers(
@@ -199,6 +273,10 @@ class _PipelineOrchestrationExecutionHelpers(
         extraction_processed = 0
         extraction_extracted = 0
         extraction_failed = 0
+        extraction_persisted_relations = 0
+        extraction_failure_ratio = 0.0
+        extraction_failure_ratio_threshold: float | None = None
+        extraction_quality_gate_failed = False
 
         explicit_graph_seed_entity_ids = self._normalize_graph_seed_entity_ids(
             graph_seed_entity_ids,
@@ -213,7 +291,8 @@ class _PipelineOrchestrationExecutionHelpers(
         graph_seed_mode = "explicit" if explicit_graph_seed_entity_ids else "none"
         graph_requested = len(active_graph_seed_entity_ids)
         graph_processed = 0
-        graph_persisted_relations = 0
+        graph_stage_persisted_relations = 0
+        total_persisted_relations = 0
         run_cancelled = False
         active_ingestion_job_id: UUID | None = None
         pipeline_run_job = self._start_or_resume_pipeline_run(
@@ -259,12 +338,21 @@ class _PipelineOrchestrationExecutionHelpers(
                     ingestion_summary = await self._ingestion.trigger_ingestion(
                         source_id,
                         skip_post_ingestion_hook=True,
+                        skip_legacy_extraction_queue=True,
                         force_recover_lock=force_recover_lock,
                     )
                 except TypeError as exc:
-                    if "skip_post_ingestion_hook" not in str(
-                        exc,
-                    ) and "force_recover_lock" not in str(exc):
+                    if (
+                        "skip_post_ingestion_hook"
+                        not in str(
+                            exc,
+                        )
+                        and "force_recover_lock"
+                        not in str(
+                            exc,
+                        )
+                        and "skip_legacy_extraction_queue" not in str(exc)
+                    ):
                         raise
                     ingestion_summary = await self._ingestion.trigger_ingestion(
                         source_id,
@@ -295,10 +383,14 @@ class _PipelineOrchestrationExecutionHelpers(
                     if isinstance(fallback_reason, str) and fallback_reason.strip()
                     else None
                 )
-                active_ingestion_job_id = resolve_latest_ingestion_job_id(
-                    ingestion_service=self._ingestion,
-                    source_id=source_id,
+                active_ingestion_job_id = _coerce_optional_uuid(
+                    getattr(ingestion_summary, "ingestion_job_id", None),
                 )
+                if active_ingestion_job_id is None:
+                    active_ingestion_job_id = resolve_latest_ingestion_job_id(
+                        ingestion_service=self._ingestion,
+                        source_id=source_id,
+                    )
                 if active_ingestion_job_id is None:
                     logger.warning(
                         "Pipeline ingestion completed but no ingestion job id was resolved",
@@ -306,6 +398,19 @@ class _PipelineOrchestrationExecutionHelpers(
                             "run_id": normalized_run_id,
                             "source_id": str(source_id),
                         },
+                    )
+                else:
+                    pipeline_run_job = self._persist_pipeline_run_progress(
+                        run_job=pipeline_run_job,
+                        source_id=source_id,
+                        research_space_id=research_space_id,
+                        run_id=normalized_run_id,
+                        resume_from_stage=normalized_resume_stage,
+                        progress_key="run_scope",
+                        progress_payload={
+                            "ingestion_job_id": str(active_ingestion_job_id),
+                        },
+                        overall_status="running",
                     )
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                 ingestion_status = "failed"
@@ -595,6 +700,7 @@ class _PipelineOrchestrationExecutionHelpers(
                         pipeline_run_id=normalized_run_id,
                     )
 
+            extraction_stage_error: str | None = None
             try:
                 extraction_summary = await asyncio.wait_for(
                     _run_extraction_stage_with_compat(),
@@ -604,6 +710,19 @@ class _PipelineOrchestrationExecutionHelpers(
                 extraction_processed = extraction_summary.processed
                 extraction_extracted = extraction_summary.extracted
                 extraction_failed = extraction_summary.failed
+                extraction_persisted_relations_raw = getattr(
+                    extraction_summary,
+                    "persisted_relations_count",
+                    0,
+                )
+                if isinstance(extraction_persisted_relations_raw, int):
+                    extraction_persisted_relations = max(
+                        extraction_persisted_relations_raw,
+                        0,
+                    )
+                else:
+                    extraction_persisted_relations = 0
+                total_persisted_relations = extraction_persisted_relations
                 derived_graph_seed_entity_ids = (
                     self._extract_seed_entity_ids_from_extraction_summary(
                         extraction_summary,
@@ -615,6 +734,37 @@ class _PipelineOrchestrationExecutionHelpers(
                     )
                 )
                 errors.extend(extraction_summary.errors)
+                if extraction_processed > 0:
+                    extraction_failure_ratio = extraction_failed / extraction_processed
+                    extraction_failure_ratio_threshold = (
+                        _resolve_extraction_failure_ratio_threshold(
+                            normalized_source_type,
+                        )
+                    )
+                    if extraction_failure_ratio > extraction_failure_ratio_threshold:
+                        extraction_quality_gate_failed = True
+                        extraction_stage_error = (
+                            "extraction:quality_gate_failed:"
+                            f"failed={extraction_failed}/processed={extraction_processed}:"
+                            f"ratio={extraction_failure_ratio:.3f}:"
+                            "threshold="
+                            f"{extraction_failure_ratio_threshold:.3f}"
+                        )
+                        errors.append(extraction_stage_error)
+                        logger.warning(
+                            "Extraction quality gate failed for pipeline run",
+                            extra={
+                                "run_id": normalized_run_id,
+                                "source_id": str(source_id),
+                                "source_type": normalized_source_type,
+                                "extraction_processed": extraction_processed,
+                                "extraction_failed": extraction_failed,
+                                "extraction_failure_ratio": extraction_failure_ratio,
+                                "extraction_failure_ratio_threshold": (
+                                    extraction_failure_ratio_threshold
+                                ),
+                            },
+                        )
             except TimeoutError:
                 extraction_status = "failed"
                 timeout_error = (
@@ -627,9 +777,11 @@ class _PipelineOrchestrationExecutionHelpers(
                     source_id,
                 )
                 errors.append(timeout_error)
+                extraction_stage_error = timeout_error
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                 extraction_status = "failed"
-                errors.append(f"extraction:{exc!s}")
+                extraction_stage_error = f"extraction:{exc!s}"
+                errors.append(extraction_stage_error)
             extraction_duration_ms = int(
                 (datetime.now(UTC) - extraction_started_at).total_seconds() * 1000,
             )
@@ -644,6 +796,12 @@ class _PipelineOrchestrationExecutionHelpers(
                     "extraction_processed": extraction_processed,
                     "extraction_extracted": extraction_extracted,
                     "extraction_failed": extraction_failed,
+                    "extraction_persisted_relations": extraction_persisted_relations,
+                    "extraction_failure_ratio": extraction_failure_ratio,
+                    "extraction_failure_ratio_threshold": (
+                        extraction_failure_ratio_threshold
+                    ),
+                    "extraction_quality_gate_failed": extraction_quality_gate_failed,
                     "derived_graph_seed_entity_ids_count": len(
                         derived_graph_seed_entity_ids,
                     ),
@@ -659,9 +817,7 @@ class _PipelineOrchestrationExecutionHelpers(
                 stage="extraction",
                 stage_status=extraction_status,
                 overall_status="running",
-                stage_error=(
-                    errors[-1] if extraction_status == "failed" and errors else None
-                ),
+                stage_error=extraction_stage_error,
             )
             run_cancelled = self._is_pipeline_run_cancelled(
                 source_id=source_id,
@@ -780,7 +936,11 @@ class _PipelineOrchestrationExecutionHelpers(
                     "requested": graph_requested,
                     "completed": graph_completed_count,
                     "processed": graph_processed,
-                    "persisted_relations": graph_persisted_relations,
+                    "persisted_relations": total_persisted_relations,
+                    "extraction_persisted_relations": extraction_persisted_relations,
+                    "graph_stage_persisted_relations": (
+                        graph_stage_persisted_relations
+                    ),
                     "max_concurrency": graph_max_concurrency,
                     "last_seed_entity_id": None,
                     "last_error": None,
@@ -951,7 +1111,8 @@ class _PipelineOrchestrationExecutionHelpers(
                     errors.append(f"graph:{completed_seed_id}:{stage_error}")
                 else:
                     graph_processed += 1
-                    graph_persisted_relations += persisted_relations_count
+                    graph_stage_persisted_relations += persisted_relations_count
+                    total_persisted_relations += persisted_relations_count
                     errors.extend(outcome_errors)
                 pipeline_run_job = self._persist_pipeline_run_progress(
                     run_job=pipeline_run_job,
@@ -965,7 +1126,13 @@ class _PipelineOrchestrationExecutionHelpers(
                         "requested": graph_requested,
                         "completed": graph_completed_count,
                         "processed": graph_processed,
-                        "persisted_relations": graph_persisted_relations,
+                        "persisted_relations": total_persisted_relations,
+                        "extraction_persisted_relations": (
+                            extraction_persisted_relations
+                        ),
+                        "graph_stage_persisted_relations": (
+                            graph_stage_persisted_relations
+                        ),
                         "max_concurrency": graph_max_concurrency,
                         "last_seed_entity_id": completed_seed_id,
                         "last_error": stage_error,
@@ -993,7 +1160,11 @@ class _PipelineOrchestrationExecutionHelpers(
                     "requested": graph_requested,
                     "completed": graph_completed_count,
                     "processed": graph_processed,
-                    "persisted_relations": graph_persisted_relations,
+                    "persisted_relations": total_persisted_relations,
+                    "extraction_persisted_relations": extraction_persisted_relations,
+                    "graph_stage_persisted_relations": (
+                        graph_stage_persisted_relations
+                    ),
                     "max_concurrency": graph_max_concurrency,
                 },
                 overall_status="running",
@@ -1008,7 +1179,8 @@ class _PipelineOrchestrationExecutionHelpers(
                     "duration_ms": graph_duration_ms,
                     "graph_requested": graph_requested,
                     "graph_processed": graph_processed,
-                    "graph_persisted_relations": graph_persisted_relations,
+                    "graph_stage_persisted_relations": graph_stage_persisted_relations,
+                    "total_persisted_relations": total_persisted_relations,
                 },
             )
         elif should_run_graph and can_run_graph and graph_requested > 0:
@@ -1034,14 +1206,17 @@ class _PipelineOrchestrationExecutionHelpers(
         run_status: Literal["completed", "failed", "cancelled"] = "completed"
         if run_cancelled:
             run_status = "cancelled"
-        elif any(
-            stage == "failed"
-            for stage in (
-                ingestion_status,
-                enrichment_status,
-                extraction_status,
-                graph_status,
+        elif (
+            any(
+                stage == "failed"
+                for stage in (
+                    ingestion_status,
+                    enrichment_status,
+                    extraction_status,
+                    graph_status,
+                )
             )
+            or extraction_quality_gate_failed
         ):
             run_status = "failed"
         pipeline_run_job = self._finalize_pipeline_run_checkpoint(
@@ -1055,7 +1230,7 @@ class _PipelineOrchestrationExecutionHelpers(
             created_publications=created_publications,
             updated_publications=updated_publications,
             extraction_extracted=extraction_extracted,
-            graph_persisted_relations=graph_persisted_relations,
+            graph_persisted_relations=total_persisted_relations,
         )
         logger.info(
             "Pipeline run finished",
@@ -1071,6 +1246,11 @@ class _PipelineOrchestrationExecutionHelpers(
                 "enrichment_status": enrichment_status,
                 "extraction_status": extraction_status,
                 "graph_status": graph_status,
+                "extraction_quality_gate_failed": extraction_quality_gate_failed,
+                "extraction_failure_ratio": extraction_failure_ratio,
+                "extraction_failure_ratio_threshold": (
+                    extraction_failure_ratio_threshold
+                ),
                 "error_count": len(errors),
             },
         )
@@ -1099,7 +1279,7 @@ class _PipelineOrchestrationExecutionHelpers(
             extraction_failed=extraction_failed,
             graph_requested=graph_requested,
             graph_processed=graph_processed,
-            graph_persisted_relations=graph_persisted_relations,
+            graph_persisted_relations=total_persisted_relations,
             executed_query=executed_query,
             errors=tuple(errors),
             metadata={
@@ -1121,6 +1301,14 @@ class _PipelineOrchestrationExecutionHelpers(
                 "enrichment_status": enrichment_status,
                 "extraction_status": extraction_status,
                 "graph_status": graph_status,
+                "extraction_persisted_relations": extraction_persisted_relations,
+                "graph_stage_persisted_relations": (graph_stage_persisted_relations),
+                "total_persisted_relations": total_persisted_relations,
+                "extraction_quality_gate_failed": extraction_quality_gate_failed,
+                "extraction_failure_ratio": extraction_failure_ratio,
+                "extraction_failure_ratio_threshold": (
+                    extraction_failure_ratio_threshold
+                ),
                 "graph_seed_mode": graph_seed_mode,
                 "graph_explicit_seed_count": len(explicit_graph_seed_entity_ids),
                 "graph_derived_seed_count": len(derived_graph_seed_entity_ids),

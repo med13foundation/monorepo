@@ -166,6 +166,11 @@ class TestPubMedIngestor:
                             <Author><LastName>Smith</LastName><ForeName>John</ForeName></Author>
                         </AuthorList>
                     </MedlineCitation>
+                    <PubmedData>
+                        <ArticleIdList>
+                            <ArticleId IdType="pmc">PMC1234567</ArticleId>
+                        </ArticleIdList>
+                    </PubmedData>
                 </PubmedArticle>
             </PubmedArticleSet>""",
             headers={"content-type": "text/xml"},
