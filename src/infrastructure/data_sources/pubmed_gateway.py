@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,25 @@ if TYPE_CHECKING:
     from src.domain.agents.ports.pubmed_relevance_port import PubMedRelevancePort
 
 logger = logging.getLogger(__name__)
+_QUERY_TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
+_QUERY_STOPWORDS = frozenset(
+    {
+        "and",
+        "or",
+        "not",
+        "title",
+        "abstract",
+        "all",
+        "fields",
+        "mesh",
+        "terms",
+        "pmid",
+        "sb",
+    },
+)
+_MAX_DERIVED_RESCUE_TERMS = 8
+_MIN_RESCUE_TERM_LENGTH = 2
+_UPPERCASE_RESCUE_TOKEN_MIN_LENGTH = 4
 
 
 @dataclass(frozen=True)
@@ -25,6 +45,20 @@ class _RelevanceFilterOutcome:
     records: list[RawRecord]
     filtered_out_pubmed_ids: list[str]
     semantic_filtering_enabled: bool
+    pre_rescue_filtered_out_pubmed_ids: list[str]
+    full_text_entity_rescue_enabled: bool
+    full_text_entity_rescue_terms: list[str]
+    full_text_rescue_attempted_pubmed_ids: list[str]
+    full_text_rescued_pubmed_ids: list[str]
+
+
+@dataclass(frozen=True)
+class _FullTextRescueOutcome:
+    rescued_records: list[RawRecord]
+    attempted_pubmed_ids: list[str]
+    rescued_pubmed_ids: list[str]
+    rescue_terms: list[str]
+    enabled: bool
 
 
 class PubMedSourceGateway(PubMedGateway):
@@ -36,10 +70,15 @@ class PubMedSourceGateway(PubMedGateway):
         *,
         relevance_agent: PubMedRelevancePort | None = None,
         relevance_model_id: str | None = None,
+        full_text_rescue_timeout_seconds: int = 20,
     ) -> None:
         self._ingestor = ingestor or PubMedIngestor()
         self._relevance_agent = relevance_agent
         self._relevance_model_id = relevance_model_id
+        self._full_text_rescue_timeout_seconds = max(
+            int(full_text_rescue_timeout_seconds),
+            1,
+        )
 
     async def fetch_records(self, config: PubMedQueryConfig) -> list[RawRecord]:
         """Fetch PubMed records using per-source query parameters."""
@@ -140,6 +179,24 @@ class PubMedSourceGateway(PubMedGateway):
             "semantic_relevance_filtering": outcome.semantic_filtering_enabled,
             "filtered_out_count": len(outcome.filtered_out_pubmed_ids),
             "filtered_out_pubmed_ids": outcome.filtered_out_pubmed_ids,
+            "pre_rescue_filtered_out_count": len(
+                outcome.pre_rescue_filtered_out_pubmed_ids,
+            ),
+            "pre_rescue_filtered_out_pubmed_ids": (
+                outcome.pre_rescue_filtered_out_pubmed_ids
+            ),
+            "full_text_entity_rescue_enabled": (
+                outcome.full_text_entity_rescue_enabled
+            ),
+            "full_text_entity_rescue_terms": outcome.full_text_entity_rescue_terms,
+            "full_text_rescue_attempted_count": len(
+                outcome.full_text_rescue_attempted_pubmed_ids,
+            ),
+            "full_text_rescue_attempted_pubmed_ids": (
+                outcome.full_text_rescue_attempted_pubmed_ids
+            ),
+            "full_text_rescued_count": len(outcome.full_text_rescued_pubmed_ids),
+            "full_text_rescued_pubmed_ids": outcome.full_text_rescued_pubmed_ids,
             "cursor_preserved_due_to_empty_page": preserve_cursor_for_empty_page,
         }
         return PubMedGatewayFetchResult(
@@ -186,9 +243,15 @@ class PubMedSourceGateway(PubMedGateway):
                 records=records,
                 filtered_out_pubmed_ids=[],
                 semantic_filtering_enabled=False,
+                pre_rescue_filtered_out_pubmed_ids=[],
+                full_text_entity_rescue_enabled=config.full_text_entity_rescue_enabled,
+                full_text_entity_rescue_terms=[],
+                full_text_rescue_attempted_pubmed_ids=[],
+                full_text_rescued_pubmed_ids=[],
             )
 
-        filtered: list[RawRecord] = []
+        kept_records: list[RawRecord] = []
+        filtered_records: list[RawRecord] = []
         filtered_out_pubmed_ids: list[str] = []
         for record in records:
             relevance = record.get("med13_relevance")
@@ -198,16 +261,42 @@ class PubMedSourceGateway(PubMedGateway):
                 if isinstance(score_value, int | float):
                     score = int(score_value)
             if score is None or score >= threshold:
-                filtered.append(record)
+                kept_records.append(record)
             else:
+                filtered_records.append(record)
                 pubmed_id = self._extract_pubmed_id(record)
                 if pubmed_id is not None:
                     filtered_out_pubmed_ids.append(pubmed_id)
-        if filtered:
+        pre_rescue_filtered_out_pubmed_ids = list(filtered_out_pubmed_ids)
+        rescue_outcome = await self._run_full_text_entity_rescue_lane(
+            filtered_records=filtered_records,
+            config=config,
+        )
+        rescued_record_ids = {id(record) for record in rescue_outcome.rescued_records}
+        kept_record_ids = {id(record) for record in kept_records}
+        filtered_out_after_rescue = [
+            pubmed_id
+            for pubmed_id in pre_rescue_filtered_out_pubmed_ids
+            if pubmed_id not in set(rescue_outcome.rescued_pubmed_ids)
+        ]
+        final_records = [
+            record
+            for record in records
+            if id(record) in kept_record_ids or id(record) in rescued_record_ids
+        ]
+
+        if final_records:
             return _RelevanceFilterOutcome(
-                records=filtered,
-                filtered_out_pubmed_ids=filtered_out_pubmed_ids,
+                records=final_records,
+                filtered_out_pubmed_ids=filtered_out_after_rescue,
                 semantic_filtering_enabled=False,
+                pre_rescue_filtered_out_pubmed_ids=pre_rescue_filtered_out_pubmed_ids,
+                full_text_entity_rescue_enabled=rescue_outcome.enabled,
+                full_text_entity_rescue_terms=rescue_outcome.rescue_terms,
+                full_text_rescue_attempted_pubmed_ids=(
+                    rescue_outcome.attempted_pubmed_ids
+                ),
+                full_text_rescued_pubmed_ids=rescue_outcome.rescued_pubmed_ids,
             )
         logger.warning(
             (
@@ -217,13 +306,22 @@ class PubMedSourceGateway(PubMedGateway):
             extra={
                 "threshold": threshold,
                 "raw_record_count": len(records),
-                "filtered_out_pubmed_ids": filtered_out_pubmed_ids,
+                "filtered_out_pubmed_ids": pre_rescue_filtered_out_pubmed_ids,
+                "full_text_rescue_attempted_pubmed_ids": (
+                    rescue_outcome.attempted_pubmed_ids
+                ),
+                "full_text_rescued_pubmed_ids": rescue_outcome.rescued_pubmed_ids,
             },
         )
         return _RelevanceFilterOutcome(
             records=records,
-            filtered_out_pubmed_ids=filtered_out_pubmed_ids,
+            filtered_out_pubmed_ids=[],
             semantic_filtering_enabled=False,
+            pre_rescue_filtered_out_pubmed_ids=pre_rescue_filtered_out_pubmed_ids,
+            full_text_entity_rescue_enabled=rescue_outcome.enabled,
+            full_text_entity_rescue_terms=rescue_outcome.rescue_terms,
+            full_text_rescue_attempted_pubmed_ids=(rescue_outcome.attempted_pubmed_ids),
+            full_text_rescued_pubmed_ids=rescue_outcome.rescued_pubmed_ids,
         )
 
     async def _apply_semantic_relevance_threshold(
@@ -243,6 +341,7 @@ class PubMedSourceGateway(PubMedGateway):
         )
 
         filtered_records: list[RawRecord] = []
+        filtered_out_records: list[RawRecord] = []
         filtered_out_pubmed_ids: list[str] = []
         classification_errors = 0
         classification_error_pubmed_ids: list[str] = []
@@ -278,26 +377,59 @@ class PubMedSourceGateway(PubMedGateway):
                 filtered_records.append(record)
                 continue
 
+            filtered_out_records.append(record)
             pubmed_id = self._extract_pubmed_id(record)
             if pubmed_id is not None:
                 filtered_out_pubmed_ids.append(pubmed_id)
 
-        if filtered_records:
+        pre_rescue_filtered_out_pubmed_ids = list(filtered_out_pubmed_ids)
+        rescue_outcome = await self._run_full_text_entity_rescue_lane(
+            filtered_records=filtered_out_records,
+            config=config,
+        )
+        rescued_record_ids = {id(record) for record in rescue_outcome.rescued_records}
+        kept_record_ids = {id(record) for record in filtered_records}
+        filtered_out_after_rescue = [
+            pubmed_id
+            for pubmed_id in pre_rescue_filtered_out_pubmed_ids
+            if pubmed_id not in set(rescue_outcome.rescued_pubmed_ids)
+        ]
+        final_records = [
+            record
+            for record in records
+            if id(record) in kept_record_ids or id(record) in rescued_record_ids
+        ]
+
+        if final_records:
             logger.info(
                 "PubMed semantic relevance filtering completed",
                 extra={
                     "threshold": threshold,
                     "raw_record_count": len(records),
-                    "kept_count": len(filtered_records),
-                    "filtered_out_count": len(filtered_out_pubmed_ids),
+                    "kept_count": len(final_records),
+                    "pre_rescue_filtered_out_count": len(
+                        pre_rescue_filtered_out_pubmed_ids,
+                    ),
+                    "filtered_out_count": len(filtered_out_after_rescue),
                     "classification_errors": classification_errors,
                     "classification_error_pubmed_ids": classification_error_pubmed_ids,
+                    "full_text_rescue_attempted_count": len(
+                        rescue_outcome.attempted_pubmed_ids,
+                    ),
+                    "full_text_rescued_count": len(rescue_outcome.rescued_pubmed_ids),
                 },
             )
             return _RelevanceFilterOutcome(
-                records=filtered_records,
-                filtered_out_pubmed_ids=filtered_out_pubmed_ids,
+                records=final_records,
+                filtered_out_pubmed_ids=filtered_out_after_rescue,
                 semantic_filtering_enabled=True,
+                pre_rescue_filtered_out_pubmed_ids=pre_rescue_filtered_out_pubmed_ids,
+                full_text_entity_rescue_enabled=rescue_outcome.enabled,
+                full_text_entity_rescue_terms=rescue_outcome.rescue_terms,
+                full_text_rescue_attempted_pubmed_ids=(
+                    rescue_outcome.attempted_pubmed_ids
+                ),
+                full_text_rescued_pubmed_ids=rescue_outcome.rescued_pubmed_ids,
             )
 
         logger.warning(
@@ -308,15 +440,24 @@ class PubMedSourceGateway(PubMedGateway):
             extra={
                 "threshold": threshold,
                 "raw_record_count": len(records),
-                "filtered_out_pubmed_ids": filtered_out_pubmed_ids,
+                "filtered_out_pubmed_ids": pre_rescue_filtered_out_pubmed_ids,
                 "classification_errors": classification_errors,
                 "classification_error_pubmed_ids": classification_error_pubmed_ids,
+                "full_text_rescue_attempted_pubmed_ids": (
+                    rescue_outcome.attempted_pubmed_ids
+                ),
+                "full_text_rescued_pubmed_ids": rescue_outcome.rescued_pubmed_ids,
             },
         )
         return _RelevanceFilterOutcome(
             records=records,
-            filtered_out_pubmed_ids=filtered_out_pubmed_ids,
+            filtered_out_pubmed_ids=[],
             semantic_filtering_enabled=True,
+            pre_rescue_filtered_out_pubmed_ids=pre_rescue_filtered_out_pubmed_ids,
+            full_text_entity_rescue_enabled=rescue_outcome.enabled,
+            full_text_entity_rescue_terms=rescue_outcome.rescue_terms,
+            full_text_rescue_attempted_pubmed_ids=(rescue_outcome.attempted_pubmed_ids),
+            full_text_rescued_pubmed_ids=rescue_outcome.rescued_pubmed_ids,
         )
 
     async def _classify_record_relevance(
@@ -385,3 +526,187 @@ class PubMedSourceGateway(PubMedGateway):
             if isinstance(value, int):
                 return str(value)
         return None
+
+    async def _run_full_text_entity_rescue_lane(
+        self,
+        *,
+        filtered_records: list[RawRecord],
+        config: PubMedQueryConfig,
+    ) -> _FullTextRescueOutcome:
+        if not config.full_text_entity_rescue_enabled:
+            return _FullTextRescueOutcome(
+                rescued_records=[],
+                attempted_pubmed_ids=[],
+                rescued_pubmed_ids=[],
+                rescue_terms=[],
+                enabled=False,
+            )
+        if not filtered_records:
+            return _FullTextRescueOutcome(
+                rescued_records=[],
+                attempted_pubmed_ids=[],
+                rescued_pubmed_ids=[],
+                rescue_terms=self._resolve_full_text_entity_rescue_terms(config),
+                enabled=True,
+            )
+
+        rescue_terms = self._resolve_full_text_entity_rescue_terms(config)
+        if not rescue_terms:
+            return _FullTextRescueOutcome(
+                rescued_records=[],
+                attempted_pubmed_ids=[],
+                rescued_pubmed_ids=[],
+                rescue_terms=[],
+                enabled=True,
+            )
+
+        rescued_records: list[RawRecord] = []
+        attempted_pubmed_ids: list[str] = []
+        rescued_pubmed_ids: list[str] = []
+        for record in filtered_records:
+            pubmed_id = self._extract_pubmed_id(record)
+            fetch_result = await self._fetch_open_access_full_text_for_record(record)
+            attempted_sources = getattr(fetch_result, "attempted_sources", ())
+            if attempted_sources and pubmed_id is not None:
+                attempted_pubmed_ids.append(pubmed_id)
+            content_text_raw = getattr(fetch_result, "content_text", None)
+            content_text = content_text_raw if isinstance(content_text_raw, str) else ""
+            matched_terms = self._match_rescue_terms(
+                content_text=content_text,
+                rescue_terms=rescue_terms,
+            )
+            if not matched_terms:
+                continue
+            if pubmed_id is not None:
+                rescued_pubmed_ids.append(pubmed_id)
+            self._set_full_text_entity_rescue_metadata(
+                record=record,
+                matched_terms=matched_terms,
+                acquisition_method=getattr(
+                    fetch_result,
+                    "acquisition_method",
+                    "skipped",
+                ),
+                source_url=getattr(fetch_result, "source_url", None),
+            )
+            rescued_records.append(record)
+
+        if rescued_pubmed_ids:
+            logger.info(
+                "PubMed full-text rescue lane retained filtered records",
+                extra={
+                    "rescue_terms": rescue_terms,
+                    "attempted_pubmed_ids": attempted_pubmed_ids,
+                    "rescued_pubmed_ids": rescued_pubmed_ids,
+                },
+            )
+
+        return _FullTextRescueOutcome(
+            rescued_records=rescued_records,
+            attempted_pubmed_ids=attempted_pubmed_ids,
+            rescued_pubmed_ids=rescued_pubmed_ids,
+            rescue_terms=rescue_terms,
+            enabled=True,
+        )
+
+    async def _fetch_open_access_full_text_for_record(
+        self,
+        record: RawRecord,
+    ) -> object:
+        from src.infrastructure.llm.content_enrichment_full_text import (
+            fetch_pubmed_open_access_full_text,
+        )
+
+        metadata: JSONObject = {}
+        for key in ("pmc_id", "pmid", "pubmed_id", "doi"):
+            value = record.get(key)
+            if isinstance(value, str) and value.strip():
+                metadata[key] = value.strip()
+            elif isinstance(value, int):
+                metadata[key] = str(value)
+        return await asyncio.to_thread(
+            fetch_pubmed_open_access_full_text,
+            metadata,
+            timeout_seconds=self._full_text_rescue_timeout_seconds,
+        )
+
+    def _resolve_full_text_entity_rescue_terms(
+        self,
+        config: PubMedQueryConfig,
+    ) -> list[str]:
+        configured_terms = config.full_text_entity_rescue_terms or []
+        normalized_configured_terms = self._normalize_rescue_terms(configured_terms)
+        if normalized_configured_terms:
+            return normalized_configured_terms
+
+        query_term_slice = re.split(
+            r"\bNOT\b",
+            config.query,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        derived_tokens = _QUERY_TOKEN_PATTERN.findall(query_term_slice)
+        candidate_terms: list[str] = []
+        for token in derived_tokens:
+            normalized = token.casefold()
+            if normalized in _QUERY_STOPWORDS:
+                continue
+            if any(character.isdigit() for character in normalized) or (
+                token.isupper() and len(token) >= _UPPERCASE_RESCUE_TOKEN_MIN_LENGTH
+            ):
+                candidate_terms.append(normalized)
+        return self._normalize_rescue_terms(candidate_terms)[:_MAX_DERIVED_RESCUE_TERMS]
+
+    @staticmethod
+    def _normalize_rescue_terms(terms: list[str]) -> list[str]:
+        normalized_terms: list[str] = []
+        seen: set[str] = set()
+        for raw_term in terms:
+            candidate = raw_term.strip().casefold()
+            if len(candidate) < _MIN_RESCUE_TERM_LENGTH or candidate in seen:
+                continue
+            seen.add(candidate)
+            normalized_terms.append(candidate)
+        return normalized_terms
+
+    @staticmethod
+    def _match_rescue_terms(
+        *,
+        content_text: str,
+        rescue_terms: list[str],
+    ) -> list[str]:
+        if not content_text:
+            return []
+        content_lower = content_text.casefold()
+        matched_terms: list[str] = []
+        for rescue_term in rescue_terms:
+            if " " in rescue_term or "-" in rescue_term or "_" in rescue_term:
+                if rescue_term in content_lower:
+                    matched_terms.append(rescue_term)
+                continue
+            term_pattern = rf"\b{re.escape(rescue_term)}\b"
+            if re.search(term_pattern, content_lower):
+                matched_terms.append(rescue_term)
+        return matched_terms
+
+    @staticmethod
+    def _set_full_text_entity_rescue_metadata(
+        *,
+        record: RawRecord,
+        matched_terms: list[str],
+        acquisition_method: object,
+        source_url: object,
+    ) -> None:
+        record["full_text_entity_rescue"] = {
+            "rescued": True,
+            "matched_terms": matched_terms,
+            "acquisition_method": (
+                str(acquisition_method) if isinstance(acquisition_method, str) else None
+            ),
+            "source_url": source_url if isinstance(source_url, str) else None,
+        }
+        semantic_relevance_raw = record.get("semantic_relevance")
+        if not isinstance(semantic_relevance_raw, dict):
+            return
+        semantic_relevance_raw["rescued_by_full_text"] = True
+        semantic_relevance_raw["rescue_terms"] = matched_terms

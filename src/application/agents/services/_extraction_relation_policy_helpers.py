@@ -58,6 +58,8 @@ class _ResolvedRelationCandidate:
     confidence: float
     validation_state: RelationValidationState
     validation_reason: str
+    evidence_excerpt: str | None = None
+    evidence_locator: str | None = None
     persistability: RelationPersistability = "PERSISTABLE"
 
 

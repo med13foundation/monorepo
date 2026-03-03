@@ -26,6 +26,7 @@ export default async function SpaceSettingsPage({ params }: SpaceSettingsPagePro
   } catch (error) {
     console.error('[SpaceSettingsPage] Failed to fetch research space', error)
   }
+  const effectiveSpaceId = space?.id ?? spaceId
 
-  return <SpaceSettingsClient spaceId={spaceId} space={space} />
+  return <SpaceSettingsClient spaceId={effectiveSpaceId} space={space} />
 }

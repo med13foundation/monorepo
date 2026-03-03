@@ -196,6 +196,7 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
   let currentMembership: ResearchSpaceMembership | null = null
   let relationTypeDistribution: DistributionPoint[] = []
   let nodeDistribution: DistributionPoint[] = []
+  let effectiveSpaceId = spaceId
 
   const [overviewResult, membersResult] = await Promise.allSettled([
     fetchSpaceOverview(spaceId, { data_source_limit: 5, queue_limit: 5 }, token),
@@ -215,6 +216,7 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
   if (overviewResult.status === 'fulfilled') {
     const overview = overviewResult.value
     space = overview.space
+    effectiveSpaceId = overview.space.id
     currentMembership = overview.membership
     dataSources = overview.data_sources
     curationStats = overview.curation_stats
@@ -226,26 +228,20 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
     showMembershipNotice = overview.access.show_membership_notice
   } else {
     const overviewStatusCode = getErrorStatusCode(overviewResult.reason)
-    if (overviewStatusCode === 404) {
+    if (overviewStatusCode === 404 || overviewStatusCode === 422) {
       console.warn(
         '[SpaceDetailPage] Overview endpoint unavailable, using legacy multi-call fallback',
       )
-
-      const [spaceResult, membershipResult] = await Promise.allSettled([
-        fetchResearchSpace(spaceId, token),
-        fetchMyMembership(spaceId, token),
-      ])
-
-      if (spaceResult.status === 'fulfilled') {
-        space = spaceResult.value
-      } else {
-        console.error('[SpaceDetailPage] Failed to fetch research space', spaceResult.reason)
+      try {
+        space = await fetchResearchSpace(spaceId, token)
+        effectiveSpaceId = space.id
+      } catch (error) {
+        console.error('[SpaceDetailPage] Failed to fetch research space', error)
       }
-
-      if (membershipResult.status === 'fulfilled') {
-        currentMembership = membershipResult.value
-      } else {
-        console.error('[SpaceDetailPage] Failed to fetch membership', membershipResult.reason)
+      try {
+        currentMembership = await fetchMyMembership(effectiveSpaceId, token)
+      } catch (error) {
+        console.error('[SpaceDetailPage] Failed to fetch membership', error)
       }
 
       const isPlatformAdmin = session.user.role === UserRole.ADMIN
@@ -262,12 +258,22 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
       canEditSpace = isOwner || isPlatformAdmin
       showMembershipNotice = !currentMembership && !isPlatformAdmin
 
+      if (membersResult.status !== 'fulfilled' && effectiveSpaceId !== spaceId) {
+        try {
+          const membersResponse = await fetchSpaceMembers(effectiveSpaceId, undefined, token)
+          memberships = membersResponse.memberships
+          membersError = null
+        } catch (error) {
+          console.error('[SpaceDetailPage] Failed to refetch members by canonical id', error)
+        }
+      }
+
       if (hasSpaceAccess) {
         const [dataSourcesResult, curationStatsResult, curationQueueResult] =
           await Promise.allSettled([
-            fetchDataSourcesBySpace(spaceId, { page: 1, limit: 5 }, token),
-            fetchSpaceCurationStats(spaceId, token),
-            fetchSpaceCurationQueue(spaceId, { limit: 5 }, token),
+            fetchDataSourcesBySpace(effectiveSpaceId, { page: 1, limit: 5 }, token),
+            fetchSpaceCurationStats(effectiveSpaceId, token),
+            fetchSpaceCurationQueue(effectiveSpaceId, { limit: 5 }, token),
           ])
 
         if (dataSourcesResult.status === 'fulfilled') {
@@ -301,9 +307,9 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
 
   if (hasSpaceAccess) {
     try {
-      const sampledRelations = await fetchRelationSample(spaceId, token)
+      const sampledRelations = await fetchRelationSample(effectiveSpaceId, token)
       relationTypeDistribution = buildRelationTypeDistribution(sampledRelations)
-      nodeDistribution = await buildNodeDistribution(spaceId, sampledRelations, token)
+      nodeDistribution = await buildNodeDistribution(effectiveSpaceId, sampledRelations, token)
     } catch (error) {
       console.error(
         '[SpaceDetailPage] Failed to fetch relation distributions',
@@ -314,7 +320,7 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
 
   return (
     <SpaceDetailClient
-      spaceId={spaceId}
+      spaceId={effectiveSpaceId}
       space={space}
       memberships={memberships}
       membersError={membersError}

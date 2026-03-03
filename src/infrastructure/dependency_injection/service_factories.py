@@ -39,6 +39,7 @@ from src.infrastructure.llm.adapters import (
     ArtanaExtractionPolicyAdapter,
     ArtanaGraphConnectionAdapter,
     ArtanaGraphSearchAdapter,
+    ArtanaMappingJudgeAdapter,
     ArtanaQueryAgentAdapter,
 )
 from src.infrastructure.llm.config.model_registry import get_model_registry
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
         GraphConnectionPort,
         QueryAgentPort,
     )
+    from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
     from src.domain.services import storage_metrics, storage_providers
 
 
@@ -81,6 +83,7 @@ class ApplicationServiceFactoryMixin(
         _storage_metrics_recorder: storage_metrics.StorageMetricsRecorder
         _entity_recognition_agent: EntityRecognitionPort | None
         _extraction_agent: ExtractionAgentPort | None
+        _mapping_judge_agent: MappingJudgePort | None
         _graph_connection_agent: GraphConnectionPort | None
         _query_agent: QueryAgentPort | None
 
@@ -169,6 +172,27 @@ class ApplicationServiceFactoryMixin(
             )
         return self._extraction_agent
 
+    def get_mapping_judge_agent(self) -> MappingJudgePort | None:
+        if not self._is_stage_enabled("MED13_ENABLE_ENDPOINT_SHAPE_AGENT"):
+            return None
+        if self._mapping_judge_agent is not None:
+            return self._mapping_judge_agent
+        registry = get_model_registry()
+        model_spec = registry.get_default_model(
+            ModelCapability.EVIDENCE_EXTRACTION,
+        )
+        try:
+            self._mapping_judge_agent = ArtanaMappingJudgeAdapter(
+                model=model_spec.model_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail-closed to deterministic guard
+            self._logger.warning(
+                "Endpoint-shape mapping judge unavailable, using deterministic guard only: %s",
+                exc,
+            )
+            self._mapping_judge_agent = None
+        return self._mapping_judge_agent
+
     def create_entity_recognition_service(
         self,
         session: Session,
@@ -202,6 +226,7 @@ class ApplicationServiceFactoryMixin(
                 ),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
                 dictionary_service=dictionary_service,
+                endpoint_shape_judge=self.get_mapping_judge_agent(),
                 governance_service=governance_service,
                 review_queue_submitter=self._build_review_queue_submitter(session),
                 rollback_on_error=session.rollback,
@@ -245,6 +270,7 @@ class ApplicationServiceFactoryMixin(
                 ),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
                 dictionary_service=dictionary_service,
+                endpoint_shape_judge=self.get_mapping_judge_agent(),
                 governance_service=GovernanceService(),
                 review_queue_submitter=self._build_review_queue_submitter(session),
                 rollback_on_error=session.rollback,

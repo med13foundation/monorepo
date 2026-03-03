@@ -51,6 +51,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         self._relation_claims = dependencies.relation_claim_repository
         self._entities = dependencies.entity_repository
         self._dictionary = dependencies.dictionary_service
+        self._endpoint_shape_judge = dependencies.endpoint_shape_judge
         self._governance = dependencies.governance_service or GovernanceService()
         self._review_queue_submitter = dependencies.review_queue_submitter
         self._rollback_on_error = dependencies.rollback_on_error

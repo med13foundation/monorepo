@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from src.domain.entities.kernel.entities import KernelEntity
@@ -23,6 +24,84 @@ _CONCEPTUAL_ENTITY_TYPES = frozenset(
 )
 _TOKEN_BASE_CONCEPT_KEY_TYPES = frozenset({"GENE", "PROTEIN", "COMPLEX"})
 _TOKEN_BASE_FAMILY_TYPES = frozenset({"GENE", "PROTEIN", "COMPLEX", "VARIANT"})
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "it",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "this",
+        "to",
+        "was",
+        "were",
+        "with",
+    },
+)
+_HARD_SENTENCE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bthis study\b", re.IGNORECASE),
+    re.compile(r"\bwe (show|found|demonstrate|demonstrated|report)\b", re.IGNORECASE),
+    re.compile(r"\bresults? (show|suggest|indicate)\b", re.IGNORECASE),
+    re.compile(r"\bconclusion\b", re.IGNORECASE),
+)
+_SOFT_SENTENCE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bassociated with\b", re.IGNORECASE),
+    re.compile(r"\bcompared with\b", re.IGNORECASE),
+    re.compile(r"\bin patients?\b", re.IGNORECASE),
+    re.compile(r"\busing\b", re.IGNORECASE),
+)
+_URL_OR_IDENTIFIER_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"https?://", re.IGNORECASE),
+    re.compile(r"\bwww\.", re.IGNORECASE),
+    re.compile(r"\bdoi:\s*\S+", re.IGNORECASE),
+    re.compile(r"\S+@\S+"),
+)
+_REFERENCE_MARKER_PATTERN = re.compile(
+    r"\b(et\s+al\.?|PMID\s*:?\s*\d+)\b|\[\d{1,3}\]|(?:19|20)\d{2}",
+    re.IGNORECASE,
+)
+_ALLOWED_SYMBOL_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^[A-Z0-9][A-Z0-9\-]{1,24}$"),
+    re.compile(r"^rs\d+$", re.IGNORECASE),
+    re.compile(r"^c\.[0-9+_\-]+[ACGT]>[ACGT]$", re.IGNORECASE),
+    re.compile(r"^p\.[A-Z][a-z]{2}\d+[A-Z][a-z]{2}$"),
+    re.compile(r"^chr(?:[0-9]+|X|Y|M):\d+(?:-\d+)?$", re.IGNORECASE),
+)
+_MAX_HARD_LABEL_LENGTH = 180
+_MAX_SOFT_TOKEN_COUNT = 16
+_MAX_SOFT_PUNCTUATION_RATIO = 0.18
+_MAX_SOFT_STOPWORD_RATIO = 0.55
+_MULTILINE_HARD_LABEL_LENGTH = 80
+_TERMINAL_PUNCT_MIN_TOKEN_COUNT = 6
+_STOPWORD_RATIO_MIN_TOKEN_COUNT = 8
+_PUNCT_RATIO_MIN_TOKEN_COUNT = 6
+_BORDERLINE_SIGNAL_THRESHOLD = 2
+
+
+type EntityShapeGuardOutcome = Literal["ACCEPT", "REJECT", "BORDERLINE"]
+
+
+@dataclass(frozen=True)
+class EntityShapeGuardDecision:
+    """Deterministic endpoint-entity label shape classification result."""
+
+    outcome: EntityShapeGuardOutcome
+    normalized_label: str
+    reason_code: str
+    signals: tuple[str, ...] = ()
 
 
 def build_label_variants(label: str) -> tuple[str, ...]:
@@ -52,6 +131,106 @@ def build_label_variants(label: str) -> tuple[str, ...]:
         if primary_token is not None:
             _append(primary_token)
     return tuple(variants)
+
+
+def evaluate_entity_shape(  # noqa: C901, PLR0912
+    *,
+    entity_type: str,
+    label: str,
+) -> EntityShapeGuardDecision:
+    """Classify endpoint-label shape as ACCEPT/REJECT/BORDERLINE."""
+    del entity_type
+    raw_label = label.strip()
+    normalized_label = " ".join(raw_label.split())
+    if not normalized_label:
+        return EntityShapeGuardDecision(
+            outcome="REJECT",
+            normalized_label="",
+            reason_code="shape_empty_label",
+            signals=("empty_label",),
+        )
+    if _is_allowlisted_symbol(normalized_label):
+        return EntityShapeGuardDecision(
+            outcome="ACCEPT",
+            normalized_label=normalized_label,
+            reason_code="shape_allowlisted_symbol",
+        )
+
+    hard_signals: list[str] = []
+    soft_signals: list[str] = []
+
+    if len(normalized_label) > _MAX_HARD_LABEL_LENGTH:
+        hard_signals.append("label_too_long")
+    if "\n" in raw_label and len(normalized_label) > _MULTILINE_HARD_LABEL_LENGTH:
+        hard_signals.append("multi_line_label")
+    if any(pattern.search(normalized_label) for pattern in _URL_OR_IDENTIFIER_PATTERNS):
+        hard_signals.append("url_or_identifier_like")
+    if any(pattern.search(normalized_label) for pattern in _HARD_SENTENCE_PATTERNS):
+        hard_signals.append("sentence_discourse_marker")
+
+    lowered = normalized_label.casefold()
+    tokens = re.findall(r"[A-Za-z0-9]+", lowered)
+    token_count = len(tokens)
+    if token_count == 0:
+        return EntityShapeGuardDecision(
+            outcome="REJECT",
+            normalized_label=normalized_label,
+            reason_code="shape_no_alnum_tokens",
+            signals=("no_alnum_tokens",),
+        )
+
+    if token_count > _MAX_SOFT_TOKEN_COUNT:
+        soft_signals.append("high_token_count")
+    if any(pattern.search(normalized_label) for pattern in _SOFT_SENTENCE_PATTERNS):
+        soft_signals.append("soft_sentence_marker")
+    if _REFERENCE_MARKER_PATTERN.search(normalized_label):
+        soft_signals.append("citation_or_year_marker")
+    if (
+        normalized_label.endswith((".", ";", ":", "?", "!"))
+        and token_count >= _TERMINAL_PUNCT_MIN_TOKEN_COUNT
+    ):
+        soft_signals.append("terminal_sentence_punctuation")
+
+    stopword_count = sum(1 for token in tokens if token in _STOPWORDS)
+    stopword_ratio = stopword_count / max(token_count, 1)
+    if (
+        token_count >= _STOPWORD_RATIO_MIN_TOKEN_COUNT
+        and stopword_ratio >= _MAX_SOFT_STOPWORD_RATIO
+    ):
+        soft_signals.append("high_stopword_ratio")
+
+    punctuation_count = sum(
+        1 for char in normalized_label if not char.isalnum() and not char.isspace()
+    )
+    punctuation_ratio = punctuation_count / max(len(normalized_label), 1)
+    if (
+        token_count >= _PUNCT_RATIO_MIN_TOKEN_COUNT
+        and punctuation_ratio >= _MAX_SOFT_PUNCTUATION_RATIO
+    ):
+        soft_signals.append("high_punctuation_ratio")
+
+    if hard_signals:
+        return EntityShapeGuardDecision(
+            outcome="REJECT",
+            normalized_label=normalized_label,
+            reason_code="shape_hard_reject",
+            signals=tuple(hard_signals),
+        )
+
+    if len(soft_signals) >= _BORDERLINE_SIGNAL_THRESHOLD:
+        return EntityShapeGuardDecision(
+            outcome="BORDERLINE",
+            normalized_label=normalized_label,
+            reason_code="shape_borderline",
+            signals=tuple(soft_signals),
+        )
+
+    return EntityShapeGuardDecision(
+        outcome="ACCEPT",
+        normalized_label=normalized_label,
+        reason_code="shape_ok",
+        signals=tuple(soft_signals),
+    )
 
 
 def select_best_candidate(
@@ -218,11 +397,20 @@ def build_concept_family_key_from_label(label: str) -> str | None:
     return primary.upper()
 
 
+def _is_allowlisted_symbol(label: str) -> bool:
+    if " " in label:
+        return False
+    return any(pattern.fullmatch(label) for pattern in _ALLOWED_SYMBOL_PATTERNS)
+
+
 __all__ = [
+    "EntityShapeGuardDecision",
+    "EntityShapeGuardOutcome",
     "build_label_variants",
     "build_concept_family_key",
     "build_concept_family_key_from_label",
     "build_entity_concept_key",
+    "evaluate_entity_shape",
     "extract_primary_token",
     "extract_species_hints",
     "is_conceptual_entity_type",

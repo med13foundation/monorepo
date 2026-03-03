@@ -9,8 +9,15 @@ from uuid import UUID
 if TYPE_CHECKING:
     from src.domain.agents.contracts.graph_connection import ProposedRelation
 
+_BLOCKED_GRAPH_FALLBACK_REASONS = frozenset(
+    {
+        "relation_evidence_span_missing",
+        "relation_endpoint_shape_rejected",
+    },
+)
 
-def extract_graph_fallback_relations_from_extraction_summary(  # noqa: C901, PLR0912
+
+def extract_graph_fallback_relations_from_extraction_summary(  # noqa: C901, PLR0912, PLR0915
     extraction_summary: object,
     *,
     max_relations_per_seed: int = 8,
@@ -72,6 +79,19 @@ def extract_graph_fallback_relations_from_extraction_summary(  # noqa: C901, PLR
             continue
         seen_keys.add(relation_key)
 
+        reason_value = raw_payload.get("reason")
+        reason = (
+            reason_value.strip()
+            if isinstance(reason_value, str) and reason_value.strip()
+            else "rejected_relation_candidate"
+        )
+        reason_key = reason.lower()
+        if any(
+            blocked_reason in reason_key
+            for blocked_reason in _BLOCKED_GRAPH_FALLBACK_REASONS
+        ):
+            continue
+
         confidence_value = raw_payload.get("confidence")
         if isinstance(confidence_value, bool):
             normalized_confidence = 0.35
@@ -91,12 +111,6 @@ def extract_graph_fallback_relations_from_extraction_summary(  # noqa: C901, PLR
                 "Promoted from extraction-stage relation candidate as graph "
                 "fallback; review required."
             )
-        reason_value = raw_payload.get("reason")
-        reason = (
-            reason_value.strip()
-            if isinstance(reason_value, str) and reason_value.strip()
-            else "rejected_relation_candidate"
-        )
         validation_state_value = raw_payload.get("validation_state")
         validation_state = (
             validation_state_value.strip().upper()

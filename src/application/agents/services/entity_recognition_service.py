@@ -74,6 +74,12 @@ _DEFAULT_BATCH_MAX_CONCURRENCY = 2
 _DEFAULT_AGENT_TIMEOUT_RETRY_ATTEMPTS = 1
 _DEFAULT_AGENT_TIMEOUT_RETRY_BACKOFF_SECONDS = 0.5
 _DEFAULT_AGENT_RAW_RECORD_MAX_TEXT_CHARS = 20000
+_BLOCKED_GRAPH_FALLBACK_REASONS = frozenset(
+    {
+        "relation_evidence_span_missing",
+        "relation_endpoint_shape_rejected",
+    },
+)
 
 
 def _read_positive_timeout_seconds(
@@ -1086,6 +1092,19 @@ class EntityRecognitionService(
             known_seed_ids.append(normalized_seed)
 
         for detail in rejected_relation_details:
+            reason_value = detail.get("reason")
+            normalized_reason = (
+                reason_value.strip()
+                if isinstance(reason_value, str) and reason_value.strip()
+                else "rejected_relation_candidate"
+            )
+            reason_key = normalized_reason.lower()
+            if any(
+                blocked_reason in reason_key
+                for blocked_reason in _BLOCKED_GRAPH_FALLBACK_REASONS
+            ):
+                continue
+
             payload_value = detail.get("payload")
             if not isinstance(payload_value, dict):
                 continue
@@ -1113,12 +1132,6 @@ class EntityRecognitionService(
             if cls._try_parse_uuid(normalized_target) is None:
                 continue
 
-            reason_value = detail.get("reason")
-            normalized_reason = (
-                reason_value.strip()
-                if isinstance(reason_value, str) and reason_value.strip()
-                else "rejected_relation_candidate"
-            )
             validation_state_value = payload_value.get("validation_state")
             normalized_validation_state = (
                 validation_state_value.strip().upper()

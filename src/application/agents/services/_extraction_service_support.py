@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from src.domain.agents.ports.extraction_policy_agent_port import (
         ExtractionPolicyAgentPort,
     )
+    from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
     from src.domain.entities.source_document import SourceDocument
     from src.domain.ports.dictionary_port import DictionaryPort
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
@@ -49,6 +50,7 @@ class ExtractionServiceDependencies:
     extraction_agent: ExtractionAgentPort
     ingestion_pipeline: IngestionPipelinePort
     extraction_policy_agent: ExtractionPolicyAgentPort | None = None
+    endpoint_shape_judge: MappingJudgePort | None = None
     relation_repository: KernelRelationRepository | None = None
     relation_claim_repository: KernelRelationClaimRepository | None = None
     entity_repository: KernelEntityRepository | None = None

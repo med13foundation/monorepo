@@ -12,7 +12,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from src.type_definitions.common import RawRecord
 
 
-RELEVANCE_THRESHOLD: int = 5
+RELEVANCE_THRESHOLD: int = 4
 
 
 class PubMedRecordParserMixin:

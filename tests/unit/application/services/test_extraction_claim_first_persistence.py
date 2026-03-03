@@ -155,7 +155,11 @@ def _build_document(
             "raw_record": {
                 "pmid": "99999999",
                 "title": "Claim-first extraction persistence test",
-                "abstract": "Deterministic integration payload",
+                "abstract": (
+                    "MED13 is associated with cardiomyopathy in deterministic "
+                    "integration payloads. CNOT1 impairs DYRK1A signaling in "
+                    "deterministic mapping payloads."
+                ),
             },
         },
         created_at=datetime.now(UTC),
@@ -669,3 +673,223 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
         canonicalization_metadata.get("canonical_relation_type")
         == "GENETIC_INTERACTION_IMPAIRMENT"
     )
+
+
+@pytest.mark.database
+@pytest.mark.asyncio
+async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0915
+    db_session: Session,
+) -> None:
+    db_session.add(
+        DictionaryDomainContextModel(
+            id="clinical_span_gate",
+            display_name="Clinical",
+            description="Clinical domain for relation evidence-span gating tests",
+        ),
+    )
+    db_session.flush()
+
+    user = UserModel(
+        email=f"span-gate-{uuid4().hex}@example.com",
+        username=f"span-gate-{uuid4().hex}",
+        full_name="Evidence Span Tester",
+        hashed_password="hashed",
+        role=UserRole.RESEARCHER,
+        status=UserStatus.ACTIVE,
+    )
+    db_session.add(user)
+    db_session.flush()
+
+    space = ResearchSpaceModel(
+        slug=f"span-gate-space-{uuid4().hex[:12]}",
+        name="Evidence Span Gate Test Space",
+        description="Unit test space for relation evidence-span gate.",
+        owner_id=user.id,
+        status="active",
+    )
+    db_session.add(space)
+    db_session.flush()
+
+    source = UserDataSourceModel(
+        id=str(uuid4()),
+        owner_id=str(user.id),
+        research_space_id=str(space.id),
+        name="Evidence Span Source",
+        description="Source for evidence-span persistence tests",
+        source_type=SourceTypeEnum.PUBMED,
+        configuration={"query": "MED13"},
+        status=SourceStatusEnum.ACTIVE,
+        ingestion_schedule={},
+        quality_metrics={},
+        tags=[],
+        version="1.0",
+    )
+    db_session.add(source)
+    db_session.flush()
+
+    dictionary_repo = SqlAlchemyDictionaryRepository(db_session)
+    dictionary_service = DictionaryManagementService(
+        dictionary_repo=dictionary_repo,
+        dictionary_search_harness=_DeterministicHarness(dictionary_repo),
+        embedding_provider=None,
+    )
+    dictionary_service.create_entity_type(
+        entity_type="GENE",
+        display_name="Gene",
+        description="Gene entity type",
+        domain_context="clinical_span_gate",
+        created_by="manual:test",
+        source_ref="tests:span-gate",
+    )
+    dictionary_service.create_entity_type(
+        entity_type="PHENOTYPE",
+        display_name="Phenotype",
+        description="Phenotype entity type",
+        domain_context="clinical_span_gate",
+        created_by="manual:test",
+        source_ref="tests:span-gate",
+    )
+    dictionary_service.create_relation_type(
+        relation_type="ASSOCIATED_WITH",
+        display_name="Associated with",
+        description="Association relation type",
+        domain_context="clinical_span_gate",
+        created_by="manual:test",
+        source_ref="tests:span-gate",
+    )
+    dictionary_service.create_relation_constraint(
+        source_type="GENE",
+        relation_type="ASSOCIATED_WITH",
+        target_type="PHENOTYPE",
+        is_allowed=True,
+        requires_evidence=True,
+        created_by="manual:test",
+        source_ref="tests:span-gate",
+    )
+
+    entity_repo = SqlAlchemyKernelEntityRepository(db_session)
+    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
+    claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    _ = entity_repo.create(
+        research_space_id=str(space.id),
+        entity_type="GENE",
+        display_label="MED13",
+        metadata={},
+    )
+    _ = entity_repo.create(
+        research_space_id=str(space.id),
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        metadata={},
+    )
+
+    extraction_contract = ExtractionContract(
+        decision="generated",
+        confidence_score=0.92,
+        rationale="Exercise required evidence-span gate for allowed relation.",
+        evidence=[
+            EvidenceItem(
+                source_type="db",
+                locator="tests:span-gate",
+                excerpt="Deterministic relation candidate without cooccurrence span",
+                relevance=0.9,
+            ),
+        ],
+        source_type="pubmed",
+        document_id="span-gate-doc",
+        observations=[],
+        relations=[
+            ExtractedRelation(
+                source_type="GENE",
+                relation_type="ASSOCIATED_WITH",
+                target_type="PHENOTYPE",
+                source_label="MED13",
+                target_label="Cardiomyopathy",
+                confidence=0.9,
+            ),
+        ],
+        rejected_facts=[],
+        pipeline_payloads=[],
+        shadow_mode=False,
+        agent_run_id="span-gate-extraction-run",
+    )
+
+    queued_items: list[tuple[str, str, str | None, str]] = []
+
+    def submit_review_item(
+        entity_type: str,
+        entity_id: str,
+        research_space_id: str | None,
+        priority: str,
+    ) -> None:
+        queued_items.append((entity_type, entity_id, research_space_id, priority))
+
+    service = ExtractionService(
+        dependencies=ExtractionServiceDependencies(
+            extraction_agent=_FixedExtractionAgent(extraction_contract),
+            ingestion_pipeline=_NoopIngestionPipeline(),
+            relation_repository=relation_repo,
+            relation_claim_repository=claim_repo,
+            entity_repository=entity_repo,
+            dictionary_service=dictionary_service,
+            review_queue_submitter=submit_review_item,
+        ),
+    )
+
+    base_document = _build_document(
+        source_id=str(source.id),
+        research_space_id=str(space.id),
+    )
+    document = base_document.model_copy(
+        update={
+            "metadata": {
+                "raw_record": {
+                    "pmid": "99999999",
+                    "title": "Evidence span gate relation persistence test",
+                    "abstract": (
+                        "MED13 variants were analyzed in a deterministic setup. "
+                        "No phenotype target mention is present in this abstract."
+                    ),
+                },
+            },
+        },
+    )
+    recognition_contract = _build_recognition_contract(str(document.id))
+
+    outcome = await service.extract_from_entity_recognition(
+        document=document,
+        recognition_contract=recognition_contract,
+        research_space_settings={"relation_governance_mode": "HUMAN_IN_LOOP"},
+    )
+    db_session.commit()
+
+    assert outcome.status == "extracted"
+    assert outcome.persisted_relations_count == 0
+    assert "relation_evidence_span_missing" in outcome.rejected_relation_reasons
+    assert (
+        outcome.extraction_funnel.get("relation_candidates_evidence_span_missing") == 1
+    )
+
+    persisted_relations = relation_repo.find_by_research_space(
+        str(space.id),
+        limit=10,
+        offset=0,
+    )
+    assert len(persisted_relations) == 0
+
+    claims = claim_repo.find_by_research_space(str(space.id), limit=10, offset=0)
+    assert len(claims) == 1
+    claim = claims[0]
+    relation_evidence = claim.metadata_payload.get("relation_evidence")
+    assert isinstance(relation_evidence, dict)
+    assert relation_evidence.get("span_required") is True
+    assert relation_evidence.get("span_status") == "missing"
+    assert isinstance(relation_evidence.get("span_failure_reason"), str)
+
+    queued_relation_claims = [
+        item for item in queued_items if item[0] == "relation_claim"
+    ]
+    queued_relations = [item for item in queued_items if item[0] == "relation"]
+    assert len(queued_relation_claims) == 1
+    assert len(queued_relations) == 0
+    assert queued_relation_claims[0][3] == "high"

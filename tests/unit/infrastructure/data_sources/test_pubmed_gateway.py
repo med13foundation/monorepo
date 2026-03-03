@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
@@ -43,6 +44,48 @@ class StubPubMedRelevanceAgent:
 
     async def close(self) -> None:
         return
+
+
+@dataclass(frozen=True)
+class _StubFullTextFetchResult:
+    attempted_sources: tuple[str, ...]
+    content_text: str | None
+    acquisition_method: str
+    source_url: str | None
+
+
+class _RescueTestGateway(PubMedSourceGateway):
+    def __init__(
+        self,
+        *,
+        ingestor: AsyncMock,
+        relevance_agent: StubPubMedRelevanceAgent,
+        full_text_by_pubmed_id: dict[str, _StubFullTextFetchResult],
+    ) -> None:
+        super().__init__(ingestor=ingestor, relevance_agent=relevance_agent)
+        self._full_text_by_pubmed_id = full_text_by_pubmed_id
+
+    async def _fetch_open_access_full_text_for_record(  # type: ignore[override]
+        self,
+        record: dict[str, object],
+    ) -> _StubFullTextFetchResult:
+        pubmed_id_value = record.get("pubmed_id")
+        if not isinstance(pubmed_id_value, str):
+            return _StubFullTextFetchResult(
+                attempted_sources=(),
+                content_text=None,
+                acquisition_method="skipped",
+                source_url=None,
+            )
+        return self._full_text_by_pubmed_id.get(
+            pubmed_id_value,
+            _StubFullTextFetchResult(
+                attempted_sources=(),
+                content_text=None,
+                acquisition_method="skipped",
+                source_url=None,
+            ),
+        )
 
 
 def _relevance_contract(
@@ -344,3 +387,79 @@ async def test_gateway_semantic_checkpoint_includes_filtered_pubmed_ids() -> Non
     assert result.checkpoint_after["semantic_relevance_filtering"] is True
     assert result.checkpoint_after["filtered_out_count"] == 1
     assert result.checkpoint_after["filtered_out_pubmed_ids"] == ["222"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_semantic_relevance_rescue_lane_reinstates_full_text_hits() -> (
+    None
+):
+    """Low-relevance records should be rescued when full text matches anchor terms."""
+    ingestor = AsyncMock()
+    ingestor.fetch_page.return_value = PubMedFetchPage(
+        records=[
+            {
+                "pubmed_id": "111",
+                "title": "Core MED13 findings",
+                "abstract": "Directly relevant to MED13 signaling.",
+                "pmc_id": "PMC1111111",
+            },
+            {
+                "pubmed_id": "222",
+                "title": "General uterine biology review",
+                "abstract": "Broad review with limited abstract-level target detail.",
+                "pmc_id": "PMC2222222",
+            },
+        ],
+        total_count=2,
+        retstart=0,
+        retmax=2,
+        returned_count=2,
+    )
+    relevance_agent = StubPubMedRelevanceAgent(
+        outcomes={
+            "111": _relevance_contract(
+                relevance="relevant",
+                confidence=0.9,
+                rationale="Directly addresses MED13.",
+                query="MED13",
+                run_id="run-111",
+            ),
+            "222": _relevance_contract(
+                relevance="non_relevant",
+                confidence=0.95,
+                rationale="Abstract appears tangential.",
+                query="MED13",
+                run_id="run-222",
+            ),
+        },
+    )
+    gateway = _RescueTestGateway(
+        ingestor=ingestor,
+        relevance_agent=relevance_agent,
+        full_text_by_pubmed_id={
+            "222": _StubFullTextFetchResult(
+                attempted_sources=("pmc_oa:PMC2222222",),
+                content_text="... discussion of MED13 in the kinase module ...",
+                acquisition_method="pmc_oa",
+                source_url="https://example.org/pmc2222222",
+            ),
+        },
+    )
+    config = PubMedQueryConfig(
+        query="MED13",
+        date_from=None,
+        date_to=None,
+        relevance_threshold=5,
+        max_results=2,
+    )
+
+    result = await gateway.fetch_records_incremental(config, checkpoint=None)
+
+    assert len(result.records) == 2
+    assert {record["pubmed_id"] for record in result.records} == {"111", "222"}
+    assert result.checkpoint_after is not None
+    assert result.checkpoint_after["pre_rescue_filtered_out_count"] == 1
+    assert result.checkpoint_after["filtered_out_count"] == 0
+    assert result.checkpoint_after["full_text_rescue_attempted_count"] == 1
+    assert result.checkpoint_after["full_text_rescued_count"] == 1
+    assert result.checkpoint_after["full_text_rescued_pubmed_ids"] == ["222"]

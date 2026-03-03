@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 _MAX_PROMOTED_REJECTED_CANDIDATES = 3
 _MAX_EXTERNAL_FALLBACK_RELATIONS = 8
 _MAX_NEIGHBOURHOOD_FALLBACK_RELATIONS = 3
+_BLOCKED_GRAPH_FALLBACK_REASONS = frozenset(
+    {
+        "relation_evidence_span_missing",
+        "relation_endpoint_shape_rejected",
+    },
+)
 
 
 def resolve_relations_for_persistence(
@@ -74,6 +80,14 @@ def normalize_external_fallback_relations(
             UUID(target_id)
         except ValueError:
             continue
+        normalized_evidence_summary = relation.evidence_summary.strip()
+        normalized_reasoning = relation.reasoning.strip()
+        if _contains_blocked_reason(
+            normalized_evidence_summary,
+        ) or _contains_blocked_reason(
+            normalized_reasoning,
+        ):
+            continue
         triplet = (source_id, relation_type, target_id)
         if triplet in seen_triplets:
             continue
@@ -85,8 +99,8 @@ def normalize_external_fallback_relations(
                 target_id=target_id,
                 confidence=min(max(float(relation.confidence), 0.05), 0.49),
                 evidence_summary=(
-                    relation.evidence_summary.strip()[:2000]
-                    if relation.evidence_summary.strip()
+                    normalized_evidence_summary[:2000]
+                    if normalized_evidence_summary
                     else (
                         "Promoted from extraction-stage relation candidate for "
                         "graph fallback review."
@@ -103,8 +117,8 @@ def normalize_external_fallback_relations(
                     0,
                 ),
                 reasoning=(
-                    relation.reasoning.strip()[:4000]
-                    if relation.reasoning.strip()
+                    normalized_reasoning[:4000]
+                    if normalized_reasoning
                     else (
                         "Fail-open graph fallback using extraction-stage relation "
                         "candidate."
@@ -121,6 +135,8 @@ def promote_rejected_candidate(
     candidate: RejectedCandidate,
 ) -> ProposedRelation | None:
     """Convert a rejected candidate into a low-confidence fallback relation."""
+    if _contains_blocked_reason(candidate.reason):
+        return None
     source_id = candidate.source_id.strip()
     target_id = candidate.target_id.strip()
     relation_type = normalize_relation_type(candidate.relation_type)
@@ -152,6 +168,16 @@ def promote_rejected_candidate(
             "Fail-open promotion from rejected candidate to avoid silent graph "
             "drop; human review required."
         ),
+    )
+
+
+def _contains_blocked_reason(text: str) -> bool:
+    normalized_text = text.strip().lower()
+    if not normalized_text:
+        return False
+    return any(
+        blocked_reason in normalized_text
+        for blocked_reason in _BLOCKED_GRAPH_FALLBACK_REASONS
     )
 
 
