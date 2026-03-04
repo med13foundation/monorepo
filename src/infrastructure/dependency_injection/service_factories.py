@@ -50,6 +50,7 @@ from src.infrastructure.repositories import (
 )
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyGraphQueryRepository,
+    SqlAlchemyKernelClaimEvidenceRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationRepository,
@@ -232,6 +233,9 @@ class ApplicationServiceFactoryMixin(
                 relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
                     session,
                 ),
+                claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
+                    session,
+                ),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
                 dictionary_service=dictionary_service,
                 concept_service=concept_service,
@@ -280,6 +284,9 @@ class ApplicationServiceFactoryMixin(
                 ingestion_pipeline=create_ingestion_pipeline(session),
                 relation_repository=SqlAlchemyKernelRelationRepository(session),
                 relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
+                    session,
+                ),
+                claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
                     session,
                 ),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),

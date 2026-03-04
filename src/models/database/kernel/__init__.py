@@ -4,6 +4,7 @@
 # (``src/models/database/research_space.py``). The kernel itself provides
 # dictionary + fact tables (entities/observations/relations/provenance).
 
+from .claim_evidence import ClaimEvidenceModel
 from .concepts import (
     ConceptAliasModel,
     ConceptDecisionModel,
@@ -59,6 +60,7 @@ __all__ = [
     "ConceptMemberModel",
     "ConceptPolicyModel",
     "ConceptSetModel",
+    "ClaimEvidenceModel",
     # Core Data (Layer 2)
     "EntityModel",
     "EntityIdentifierModel",

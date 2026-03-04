@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import false, func, select
 
-from src.domain.entities.kernel.relation_claims import KernelRelationClaim
+from src.domain.entities.kernel.relation_claims import (
+    KernelRelationClaim,
+    KernelRelationConflictSummary,
+)
 from src.domain.repositories.kernel.relation_claim_repository import (
     CertaintyBand,
     KernelRelationClaimRepository,
@@ -21,6 +25,7 @@ if TYPE_CHECKING:
 
     from src.domain.entities.kernel.relation_claims import (
         RelationClaimPersistability,
+        RelationClaimPolarity,
         RelationClaimStatus,
         RelationClaimValidationState,
     )
@@ -68,6 +73,9 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
         validation_reason: str | None,
         persistability: RelationClaimPersistability,
         claim_status: RelationClaimStatus = "OPEN",
+        polarity: RelationClaimPolarity = "UNCERTAIN",
+        claim_text: str | None = None,
+        claim_section: str | None = None,
         linked_relation_id: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelRelationClaim:
@@ -86,6 +94,9 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
             validation_reason=validation_reason,
             persistability=persistability,
             claim_status=claim_status,
+            polarity=polarity,
+            claim_text=claim_text,
+            claim_section=claim_section,
             linked_relation_id=_try_as_uuid(linked_relation_id),
             metadata_payload=metadata or {},
         )
@@ -106,6 +117,7 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
         claim_status: RelationClaimStatus | None = None,
         validation_state: RelationClaimValidationState | None = None,
         persistability: RelationClaimPersistability | None = None,
+        polarity: RelationClaimPolarity | None = None,
         source_document_id: str | None = None,
         relation_type: str | None = None,
         linked_relation_id: str | None = None,
@@ -118,6 +130,7 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
             claim_status=claim_status,
             validation_state=validation_state,
             persistability=persistability,
+            polarity=polarity,
             source_document_id=source_document_id,
             relation_type=relation_type,
             linked_relation_id=linked_relation_id,
@@ -139,6 +152,7 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
         claim_status: RelationClaimStatus | None = None,
         validation_state: RelationClaimValidationState | None = None,
         persistability: RelationClaimPersistability | None = None,
+        polarity: RelationClaimPolarity | None = None,
         source_document_id: str | None = None,
         relation_type: str | None = None,
         linked_relation_id: str | None = None,
@@ -149,6 +163,7 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
             claim_status=claim_status,
             validation_state=validation_state,
             persistability=persistability,
+            polarity=polarity,
             source_document_id=source_document_id,
             relation_type=relation_type,
             linked_relation_id=linked_relation_id,
@@ -213,6 +228,7 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
         claim_status: RelationClaimStatus | None,
         validation_state: RelationClaimValidationState | None,
         persistability: RelationClaimPersistability | None,
+        polarity: RelationClaimPolarity | None,
         source_document_id: str | None,
         relation_type: str | None,
         linked_relation_id: str | None,
@@ -227,6 +243,8 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
             stmt = stmt.where(RelationClaimModel.validation_state == validation_state)
         if persistability is not None:
             stmt = stmt.where(RelationClaimModel.persistability == persistability)
+        if polarity is not None:
+            stmt = stmt.where(RelationClaimModel.polarity == polarity)
         if relation_type is not None:
             stmt = stmt.where(RelationClaimModel.relation_type == relation_type)
         source_document_uuid = _try_as_uuid(source_document_id)
@@ -257,6 +275,69 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
                 RelationClaimModel.confidence < self._MEDIUM_CONFIDENCE_THRESHOLD,
             )
         return stmt
+
+    def find_conflicts_by_research_space(
+        self,
+        research_space_id: str,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[KernelRelationConflictSummary]:
+        rows = self._session.scalars(
+            select(RelationClaimModel).where(
+                RelationClaimModel.research_space_id == _as_uuid(research_space_id),
+                RelationClaimModel.linked_relation_id.is_not(None),
+                RelationClaimModel.claim_status != "REJECTED",
+                RelationClaimModel.polarity.in_(("SUPPORT", "REFUTE")),
+            ),
+        ).all()
+
+        grouped_support: dict[UUID, list[UUID]] = defaultdict(list)
+        grouped_refute: dict[UUID, list[UUID]] = defaultdict(list)
+        for row in rows:
+            relation_id = row.linked_relation_id
+            if relation_id is None:
+                continue
+            if row.polarity == "SUPPORT":
+                grouped_support[relation_id].append(row.id)
+            elif row.polarity == "REFUTE":
+                grouped_refute[relation_id].append(row.id)
+
+        conflicts: list[KernelRelationConflictSummary] = []
+        relation_ids = set(grouped_support).intersection(set(grouped_refute))
+        for relation_id in relation_ids:
+            support_ids = tuple(grouped_support[relation_id])
+            refute_ids = tuple(grouped_refute[relation_id])
+            conflicts.append(
+                KernelRelationConflictSummary(
+                    relation_id=relation_id,
+                    support_count=len(support_ids),
+                    refute_count=len(refute_ids),
+                    support_claim_ids=support_ids,
+                    refute_claim_ids=refute_ids,
+                ),
+            )
+
+        conflicts.sort(
+            key=lambda conflict: (
+                -(conflict.support_count + conflict.refute_count),
+                str(conflict.relation_id),
+            ),
+        )
+        start = max(offset or 0, 0)
+        if limit is None:
+            return conflicts[start:]
+        return conflicts[start : start + max(limit, 0)]
+
+    def count_conflicts_by_research_space(
+        self,
+        research_space_id: str,
+    ) -> int:
+        return len(
+            self.find_conflicts_by_research_space(
+                research_space_id,
+            ),
+        )
 
 
 __all__ = ["SqlAlchemyKernelRelationClaimRepository"]

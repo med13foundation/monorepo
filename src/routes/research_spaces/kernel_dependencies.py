@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from src.application.services.kernel import (
     ConceptManagementService,
     DictionaryManagementService,
+    KernelClaimEvidenceService,
     KernelEntityService,
     KernelObservationService,
     KernelRelationClaimService,
@@ -30,6 +31,7 @@ from src.infrastructure.llm.adapters.dictionary_search_harness_adapter import (
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyConceptRepository,
     SqlAlchemyDictionaryRepository,
+    SqlAlchemyKernelClaimEvidenceRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
     SqlAlchemyKernelRelationClaimRepository,
@@ -141,6 +143,14 @@ def get_kernel_relation_claim_service(
     return KernelRelationClaimService(relation_claim_repo=relation_claim_repo)
 
 
+def get_kernel_claim_evidence_service(
+    session: Session = Depends(get_session),
+) -> KernelClaimEvidenceService:
+    """Kernel claim-evidence service (claim-level evidence rows)."""
+    claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(session)
+    return KernelClaimEvidenceService(claim_evidence_repo=claim_evidence_repo)
+
+
 def get_provenance_service(
     session: Session = Depends(get_session),
 ) -> ProvenanceService:
@@ -160,6 +170,7 @@ __all__ = [
     "get_concept_service",
     "get_dictionary_service",
     "get_kernel_entity_service",
+    "get_kernel_claim_evidence_service",
     "get_kernel_observation_service",
     "get_kernel_relation_service",
     "get_kernel_relation_claim_service",

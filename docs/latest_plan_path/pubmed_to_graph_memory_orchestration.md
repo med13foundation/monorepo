@@ -75,6 +75,10 @@ flowchart LR
 
 7. Relation candidates (triplet-like facts) are processed separately.
 - Every candidate is first written to `relation_claims` (claim ledger).
+- Claim semantics are first-class on each claim row:
+  - `polarity`: `SUPPORT | REFUTE | UNCERTAIN | HYPOTHESIS`
+  - `claim_text`: optional normalized claim sentence/span text
+  - `claim_section`: optional paper section hint (for example `results`, `discussion`)
 - Validation states classify each candidate:
   - `ALLOWED`, `FORBIDDEN`, `UNDEFINED`, `INVALID_COMPONENTS`, `ENDPOINT_UNRESOLVED`, `SELF_LOOP`.
 - Persistability decides graph write behavior:
@@ -84,6 +88,22 @@ flowchart LR
 
 8. Provenance/evidence is attached.
 - Every persisted memory item carries traceable source context.
+- Claim-level evidence is also persisted in `claim_evidence`:
+  - one row per created claim, including sentence/rationale metadata
+  - `sentence_source`: `verbatim_span | artana_generated`
+  - `sentence_confidence`: `low | medium | high`
+  - when no sentence is available, failure context is recorded in `metadata_payload`
+
+## Claim semantics and conflict signals
+
+Conflict detection is claim-driven and relation-scoped:
+
+- Canonical relation key: `linked_relation_id`
+- Conflict condition (v1): at least one `SUPPORT` claim and one `REFUTE` claim linked to the same canonical relation
+- Exposed API: `GET /research-spaces/{space_id}/relations/conflicts`
+- Returned summary includes counts and claim IDs by polarity for curation triage
+
+This keeps the canonical graph (`relations` + `relation_evidence`) stable while allowing richer scientific disagreement modeling in claim space.
 
 ## What changes with `FULL_AUTO`
 
@@ -127,8 +147,11 @@ Use this sentence:
 and confirm `PENDING_REVIEW remaining: 0`.
 3. Claim-first telemetry emitted by backend:
 - `claims_created_total`
+- `claims_by_polarity_total`
 - `claims_non_persistable_total`
+- `claim_evidence_rows_created_total`
 - `relations_draft_created_total`
+- `relations_conflict_detected_total`
 - `curation_queue_relation_claim_total`
 - `graph_filter_preset_usage`
 4. Non-persistable spike alert:

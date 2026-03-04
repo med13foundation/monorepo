@@ -23,6 +23,7 @@ from src.application.agents.services._relation_persistence_payload_helpers impor
     candidate_payload,
     normalize_run_id,
 )
+from src.application.services.claim_first_metrics import increment_metric
 
 if TYPE_CHECKING:
     from src.application.agents.services._extraction_relation_persistence_helpers import (
@@ -53,6 +54,7 @@ class _PersistCandidatesResult:
     persisted_relations_count: int = 0
     pending_review_relations_count: int = 0
     relation_claims_count: int = 0
+    claim_evidence_rows_created_count: int = 0
     relation_claims_queued_for_review_count: int = 0
     non_persistable_claims_count: int = 0
     forbidden_relations_count: int = 0
@@ -73,6 +75,7 @@ class _CandidateLoopState:
     persisted_count: int = 0
     pending_count: int = 0
     relation_claims_count: int = 0
+    claim_evidence_rows_created_count: int = 0
     relation_claims_queued_for_review_count: int = 0
     non_persistable_claims_count: int = 0
     forbidden_count: int = 0
@@ -502,6 +505,11 @@ def _create_relation_claim(  # noqa: PLR0913
     state: _CandidateLoopState,
     candidate: _ResolvedRelationCandidate,
     payload: JSONObject,
+    relation_evidence_metadata: JSONObject,
+    evidence_sentence: str | None,
+    evidence_sentence_source: str | None,
+    evidence_sentence_confidence: str | None,
+    evidence_sentence_rationale: str | None,
     index: int,
     should_log_candidate: bool,
 ) -> str | None:
@@ -522,10 +530,35 @@ def _create_relation_claim(  # noqa: PLR0913
             validation_reason=candidate.validation_reason,
             persistability=candidate.persistability,
             claim_status="OPEN",
+            polarity=candidate.polarity,
+            claim_text=candidate.claim_text,
+            claim_section=candidate.claim_section,
             linked_relation_id=None,
             metadata=payload,
         )
         state.relation_claims_count += 1
+        increment_metric(
+            "claims_by_polarity_total",
+            tags={
+                "research_space_id": context.research_space_id,
+                "source_document_id": str(context.document.id),
+                "polarity": candidate.polarity,
+            },
+        )
+        claim_evidence_errors = context.helper._create_claim_evidence_record(
+            claim_id=str(created_claim.id),
+            document=context.document,
+            run_id=context.run_id,
+            relation_evidence_metadata=relation_evidence_metadata,
+            evidence_sentence=evidence_sentence,
+            evidence_sentence_source=evidence_sentence_source,
+            evidence_sentence_confidence=evidence_sentence_confidence,
+            evidence_sentence_rationale=evidence_sentence_rationale,
+            candidate_confidence=candidate.confidence,
+        )
+        if not claim_evidence_errors:
+            state.claim_evidence_rows_created_count += 1
+        state.errors.extend(claim_evidence_errors)
         return str(created_claim.id)
     except (TypeError, ValueError, SQLAlchemyError) as exc:
         context.helper._rollback_after_persistence_error(
@@ -888,6 +921,11 @@ def _process_candidate(
         state=state,
         candidate=effective_candidate,
         payload=prepared.payload,
+        relation_evidence_metadata=prepared.relation_evidence_metadata,
+        evidence_sentence=prepared.evidence_sentence,
+        evidence_sentence_source=prepared.evidence_sentence_source,
+        evidence_sentence_confidence=prepared.evidence_sentence_confidence,
+        evidence_sentence_rationale=prepared.evidence_sentence_rationale,
         index=index,
         should_log_candidate=should_log_candidate,
     )
@@ -955,6 +993,7 @@ def _process_candidate(
         evidence_sentence_source=prepared.evidence_sentence_source,
         evidence_sentence_confidence=prepared.evidence_sentence_confidence,
         evidence_sentence_rationale=prepared.evidence_sentence_rationale,
+        relation_evidence_metadata=prepared.relation_evidence_metadata,
         claim_id=claim_id,
         payload=prepared.payload,
         candidate_signature=prepared.candidate_signature,
@@ -967,6 +1006,9 @@ def _process_candidate(
     state.persisted_count += write_outcome.persisted_relations_count
     state.pending_count += write_outcome.pending_review_relations_count
     state.relation_claims_count += write_outcome.relation_claims_count_delta
+    state.claim_evidence_rows_created_count += (
+        write_outcome.claim_evidence_rows_created_count_delta
+    )
     state.relation_claims_queued_for_review_count += (
         write_outcome.relation_claims_queued_for_review_count
     )
@@ -1044,6 +1086,9 @@ def persist_relation_candidates(  # noqa: PLR0913
             "persisted_relations_count": state.persisted_count,
             "pending_review_relations_count": state.pending_count,
             "relation_claims_count": state.relation_claims_count,
+            "claim_evidence_rows_created_count": (
+                state.claim_evidence_rows_created_count
+            ),
             "relation_claims_queued_for_review_count": (
                 state.relation_claims_queued_for_review_count
             ),
@@ -1063,6 +1108,7 @@ def persist_relation_candidates(  # noqa: PLR0913
         persisted_relations_count=state.persisted_count,
         pending_review_relations_count=state.pending_count,
         relation_claims_count=state.relation_claims_count,
+        claim_evidence_rows_created_count=state.claim_evidence_rows_created_count,
         relation_claims_queued_for_review_count=(
             state.relation_claims_queued_for_review_count
         ),

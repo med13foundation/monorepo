@@ -13,9 +13,11 @@ import type {
   KernelObservationCreateRequest,
   KernelObservationListResponse,
   KernelObservationResponse,
+  ClaimEvidenceListResponse,
   KernelProvenanceListResponse,
   KernelProvenanceResponse,
   KernelRelationCreateRequest,
+  RelationConflictListResponse,
   RelationClaimListResponse,
   RelationClaimResponse,
   RelationClaimTriageRequest,
@@ -249,6 +251,7 @@ export interface RelationClaimListParams {
   claim_status?: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'
   validation_state?: string
   persistability?: 'PERSISTABLE' | 'NON_PERSISTABLE'
+  polarity?: 'SUPPORT' | 'REFUTE' | 'UNCERTAIN' | 'HYPOTHESIS'
   source_document_id?: string
   relation_type?: string
   linked_relation_id?: string
@@ -272,6 +275,7 @@ export async function fetchRelationClaims(
       ...(params.claim_status ? { claim_status: params.claim_status } : {}),
       ...(params.validation_state ? { validation_state: params.validation_state } : {}),
       ...(params.persistability ? { persistability: params.persistability } : {}),
+      ...(params.polarity ? { polarity: params.polarity } : {}),
       ...(params.source_document_id ? { source_document_id: params.source_document_id } : {}),
       ...(params.relation_type ? { relation_type: params.relation_type } : {}),
       ...(params.linked_relation_id ? { linked_relation_id: params.linked_relation_id } : {}),
@@ -283,6 +287,46 @@ export async function fetchRelationClaims(
 
   return apiGet<RelationClaimListResponse>(
     `/research-spaces/${spaceId}/relation-claims`,
+    options,
+  )
+}
+
+export async function fetchRelationClaimEvidence(
+  spaceId: string,
+  claimId: string,
+  token?: string,
+): Promise<ClaimEvidenceListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchRelationClaimEvidence')
+  }
+  return apiGet<ClaimEvidenceListResponse>(
+    `/research-spaces/${spaceId}/relation-claims/${claimId}/evidence`,
+    { token },
+  )
+}
+
+export interface RelationConflictListParams {
+  offset?: number
+  limit?: number
+}
+
+export async function fetchRelationConflicts(
+  spaceId: string,
+  params: RelationConflictListParams = {},
+  token?: string,
+): Promise<RelationConflictListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchRelationConflicts')
+  }
+  const options: ApiRequestOptions<RelationConflictListResponse> = {
+    token,
+    params: {
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 50,
+    },
+  }
+  return apiGet<RelationConflictListResponse>(
+    `/research-spaces/${spaceId}/relations/conflicts`,
     options,
   )
 }

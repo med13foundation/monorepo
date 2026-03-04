@@ -53,10 +53,12 @@ from src.infrastructure.llm.adapters.concept_decision_harness_adapter import (
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyConceptRepository,
     SqlAlchemyDictionaryRepository,
+    SqlAlchemyKernelClaimEvidenceRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationRepository,
 )
+from src.models.database.kernel.claim_evidence import ClaimEvidenceModel
 from src.models.database.kernel.dictionary import DictionaryDomainContextModel
 from src.models.database.kernel.relations import RelationEvidenceModel
 from src.models.database.research_space import ResearchSpaceModel
@@ -341,6 +343,7 @@ def _build_optional_missing_span_harness_fixture(
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
     relation_repo = SqlAlchemyKernelRelationRepository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
     _ = entity_repo.create(
         research_space_id=str(space.id),
         entity_type="GENE",
@@ -401,6 +404,7 @@ def _build_optional_missing_span_harness_fixture(
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
             dictionary_service=dictionary_service,
             review_queue_submitter=submit_review_item,
@@ -527,6 +531,7 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
     relation_repo = SqlAlchemyKernelRelationRepository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
     _ = entity_repo.create(
         research_space_id=str(space.id),
         entity_type="GENE",
@@ -545,6 +550,9 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
             source_type="GENE",
             relation_type="ASSOCIATED_WITH",
             target_type="PHENOTYPE",
+            polarity="SUPPORT",
+            claim_text="MED13 variants are associated with cardiomyopathy.",
+            claim_section="results",
             source_label="MED13",
             target_label="Cardiomyopathy",
             confidence=0.92,
@@ -628,6 +636,7 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
             dictionary_service=dictionary_service,
             concept_service=concept_service,
@@ -656,6 +665,13 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
 
     claims = claim_repo.find_by_research_space(str(space.id), limit=20, offset=0)
     assert len(claims) == 6
+    assert any(claim.polarity == "SUPPORT" for claim in claims)
+    assert sum(claim.polarity == "UNCERTAIN" for claim in claims) >= 1
+    assert any(
+        claim.claim_text == "MED13 variants are associated with cardiomyopathy."
+        and claim.claim_section == "results"
+        for claim in claims
+    )
     states = {claim.validation_state for claim in claims}
     assert states == {
         "ALLOWED",
@@ -678,6 +694,12 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
         sum(claim.linked_relation_id is not None for claim in persistable_claims) == 1
     )
     assert all(claim.linked_relation_id is None for claim in non_persistable_claims)
+    claim_evidence_rows = db_session.scalars(
+        select(ClaimEvidenceModel).where(
+            ClaimEvidenceModel.claim_id.in_([claim.id for claim in claims]),
+        ),
+    ).all()
+    assert len(claim_evidence_rows) == len(claims)
 
     persisted_relations = relation_repo.find_by_research_space(
         str(space.id),
@@ -790,6 +812,7 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
     relation_repo = SqlAlchemyKernelRelationRepository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
     _ = entity_repo.create(
         research_space_id=str(space.id),
         entity_type="GENE",
@@ -869,6 +892,7 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
             dictionary_service=dictionary_service,
             concept_service=concept_service,
@@ -1000,6 +1024,17 @@ async def test_optional_missing_span_uses_harness_sentence_when_available(
 
     claims = claim_repo.find_by_research_space(str(space.id), limit=10, offset=0)
     assert len(claims) == 1
+    claim_evidence_rows = db_session.scalars(
+        select(ClaimEvidenceModel).where(ClaimEvidenceModel.claim_id == claims[0].id),
+    ).all()
+    assert len(claim_evidence_rows) == 1
+    assert claim_evidence_rows[0].sentence == generated_sentence
+    assert claim_evidence_rows[0].sentence_source == "artana_generated"
+    assert claim_evidence_rows[0].sentence_confidence == "medium"
+    assert (
+        claim_evidence_rows[0].sentence_rationale
+        == "No direct span found; inferred from extraction context."
+    )
     relation_evidence = claims[0].metadata_payload.get("relation_evidence")
     assert isinstance(relation_evidence, dict)
     assert relation_evidence.get("span_status") == "missing"
@@ -1074,6 +1109,21 @@ async def test_optional_missing_span_persists_fail_open_when_harness_errors(
 
     claims = claim_repo.find_by_research_space(str(space.id), limit=10, offset=0)
     assert len(claims) == 1
+    claim_evidence_rows = db_session.scalars(
+        select(ClaimEvidenceModel).where(ClaimEvidenceModel.claim_id == claims[0].id),
+    ).all()
+    assert len(claim_evidence_rows) == 1
+    assert claim_evidence_rows[0].sentence is None
+    assert claim_evidence_rows[0].sentence_source is None
+    assert claim_evidence_rows[0].sentence_confidence is None
+    assert claim_evidence_rows[0].sentence_rationale is None
+    claim_evidence_metadata = claim_evidence_rows[0].metadata_payload
+    assert isinstance(claim_evidence_metadata, dict)
+    stored_failure_reason = claim_evidence_metadata.get(
+        "evidence_sentence_failure_reason",
+    )
+    assert isinstance(stored_failure_reason, str)
+    assert stored_failure_reason.startswith("evidence_sentence_harness_error:")
     relation_evidence = claims[0].metadata_payload.get("relation_evidence")
     assert isinstance(relation_evidence, dict)
     assert relation_evidence.get("span_status") == "missing"
@@ -1177,6 +1227,7 @@ async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
     relation_repo = SqlAlchemyKernelRelationRepository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
     _ = entity_repo.create(
         research_space_id=str(space.id),
         entity_type="GENE",
@@ -1237,6 +1288,7 @@ async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
             dictionary_service=dictionary_service,
             review_queue_submitter=submit_review_item,
@@ -1287,6 +1339,11 @@ async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0
     claims = claim_repo.find_by_research_space(str(space.id), limit=10, offset=0)
     assert len(claims) == 1
     claim = claims[0]
+    claim_evidence_rows = db_session.scalars(
+        select(ClaimEvidenceModel).where(ClaimEvidenceModel.claim_id == claim.id),
+    ).all()
+    assert len(claim_evidence_rows) == 1
+    assert claim_evidence_rows[0].sentence is None
     relation_evidence = claim.metadata_payload.get("relation_evidence")
     assert isinstance(relation_evidence, dict)
     assert relation_evidence.get("span_required") is True

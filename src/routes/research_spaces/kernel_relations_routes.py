@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from src.application.services.claim_first_metrics import (
     emit_graph_filter_preset_usage,
+    increment_metric,
 )
 from src.database.session import get_session
 from src.domain.entities.user import User
@@ -24,11 +25,14 @@ from src.routes.research_spaces.dependencies import (
 )
 from src.routes.research_spaces.kernel_dependencies import (
     get_dictionary_service,
+    get_kernel_claim_evidence_service,
     get_kernel_entity_service,
     get_kernel_relation_claim_service,
     get_kernel_relation_service,
 )
 from src.routes.research_spaces.kernel_schemas import (
+    KernelClaimEvidenceListResponse,
+    KernelClaimEvidenceResponse,
     KernelEntityResponse,
     KernelGraphExportResponse,
     KernelGraphSubgraphMeta,
@@ -37,6 +41,8 @@ from src.routes.research_spaces.kernel_schemas import (
     KernelRelationClaimListResponse,
     KernelRelationClaimResponse,
     KernelRelationClaimTriageRequest,
+    KernelRelationConflictListResponse,
+    KernelRelationConflictResponse,
     KernelRelationCreateRequest,
     KernelRelationCurationUpdateRequest,
     KernelRelationListResponse,
@@ -54,6 +60,9 @@ from .router import (
 )
 
 if TYPE_CHECKING:
+    from src.application.services.kernel.kernel_claim_evidence_service import (
+        KernelClaimEvidenceService,
+    )
     from src.application.services.kernel.kernel_entity_service import (
         KernelEntityService,
     )
@@ -90,6 +99,7 @@ _CLAIM_VALIDATION_STATES = frozenset(
     },
 )
 _CLAIM_PERSISTABILITY = frozenset({"PERSISTABLE", "NON_PERSISTABLE"})
+_CLAIM_POLARITIES = frozenset({"SUPPORT", "REFUTE", "UNCERTAIN", "HYPOTHESIS"})
 _CERTAINTY_BANDS = frozenset({"HIGH", "MEDIUM", "LOW"})
 _STARTER_FETCH_MULTIPLIER = 6
 _ClaimStatus = Literal["OPEN", "NEEDS_MAPPING", "REJECTED", "RESOLVED"]
@@ -102,6 +112,7 @@ _ClaimValidationState = Literal[
     "SELF_LOOP",
 ]
 _ClaimPersistability = Literal["PERSISTABLE", "NON_PERSISTABLE"]
+_ClaimPolarity = Literal["SUPPORT", "REFUTE", "UNCERTAIN", "HYPOTHESIS"]
 _CertaintyBand = Literal["HIGH", "MEDIUM", "LOW"]
 _CLAIM_VALIDATION_STATE_MAP: dict[str, _ClaimValidationState] = {
     "ALLOWED": "ALLOWED",
@@ -175,17 +186,21 @@ def _claim_resolution_evidence_summary(claim: object) -> str:
     return f"Promoted from resolved extraction claim ({claim_id})."
 
 
-def _claim_resolution_evidence_sentence(claim: object) -> str | None:
-    metadata_payload = getattr(claim, "metadata_payload", None)
-    if not isinstance(metadata_payload, dict):
-        return None
-    relation_evidence_payload = metadata_payload.get("relation_evidence")
-    if not isinstance(relation_evidence_payload, dict):
-        return None
-    span_text = _normalize_optional_text(relation_evidence_payload.get("span_text"))
-    if span_text is None:
-        return None
-    return span_text[:2000]
+def _resolve_claim_resolution_evidence(
+    *,
+    claim_id: str,
+    claim_evidence_service: KernelClaimEvidenceService,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    evidence = claim_evidence_service.get_preferred_for_claim(claim_id)
+    if evidence is None:
+        return None, None, None, None
+    sentence = _normalize_optional_text(evidence.sentence)
+    if sentence is None:
+        return None, None, None, None
+    sentence_source = _normalize_optional_text(evidence.sentence_source)
+    sentence_confidence = _normalize_optional_text(evidence.sentence_confidence)
+    sentence_rationale = _normalize_optional_text(evidence.sentence_rationale)
+    return sentence[:2000], sentence_source, sentence_confidence, sentence_rationale
 
 
 def _activate_dictionary_dependencies_for_claim(  # noqa: PLR0913
@@ -351,6 +366,26 @@ def _normalize_claim_persistability(
     if normalized == "PERSISTABLE":
         return "PERSISTABLE"
     return "NON_PERSISTABLE"
+
+
+def _normalize_claim_polarity(
+    value: str | None,
+) -> _ClaimPolarity | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if not normalized:
+        return None
+    if normalized not in _CLAIM_POLARITIES:
+        msg = "polarity must be one of: SUPPORT, REFUTE, UNCERTAIN, HYPOTHESIS"
+        raise ValueError(msg)
+    if normalized == "SUPPORT":
+        return "SUPPORT"
+    if normalized == "REFUTE":
+        return "REFUTE"
+    if normalized == "UNCERTAIN":
+        return "UNCERTAIN"
+    return "HYPOTHESIS"
 
 
 def _normalize_certainty_band(value: str | None) -> _CertaintyBand | None:
@@ -918,6 +953,7 @@ def list_relation_claims(
     claim_status: str | None = Query(None),
     validation_state: str | None = Query(None),
     persistability: str | None = Query(None),
+    polarity: str | None = Query(None),
     source_document_id: str | None = Query(None),
     relation_type: str | None = Query(None),
     linked_relation_id: str | None = Query(None),
@@ -942,6 +978,7 @@ def list_relation_claims(
     normalized_claim_status = _normalize_claim_status_filter(claim_status)
     normalized_validation_state = _normalize_claim_validation_state(validation_state)
     normalized_persistability = _normalize_claim_persistability(persistability)
+    normalized_polarity = _normalize_claim_polarity(polarity)
     normalized_certainty_band = _normalize_certainty_band(certainty_band)
 
     claims = relation_claim_service.list_by_research_space(
@@ -949,6 +986,7 @@ def list_relation_claims(
         claim_status=normalized_claim_status,
         validation_state=normalized_validation_state,
         persistability=normalized_persistability,
+        polarity=normalized_polarity,
         source_document_id=source_document_id,
         relation_type=relation_type,
         linked_relation_id=linked_relation_id,
@@ -961,6 +999,7 @@ def list_relation_claims(
         claim_status=normalized_claim_status,
         validation_state=normalized_validation_state,
         persistability=normalized_persistability,
+        polarity=normalized_polarity,
         source_document_id=source_document_id,
         relation_type=relation_type,
         linked_relation_id=linked_relation_id,
@@ -968,6 +1007,92 @@ def list_relation_claims(
     )
     return KernelRelationClaimListResponse(
         claims=[KernelRelationClaimResponse.from_model(claim) for claim in claims],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@research_spaces_router.get(
+    "/{space_id}/relation-claims/{claim_id}/evidence",
+    response_model=KernelClaimEvidenceListResponse,
+    summary="List claim evidence rows for one relation claim",
+)
+def list_relation_claim_evidence(
+    space_id: UUID,
+    claim_id: UUID,
+    *,
+    current_user: User = Depends(get_current_active_user),
+    membership_service: MembershipManagementService = Depends(get_membership_service),
+    relation_claim_service: KernelRelationClaimService = Depends(
+        get_kernel_relation_claim_service,
+    ),
+    claim_evidence_service: KernelClaimEvidenceService = Depends(
+        get_kernel_claim_evidence_service,
+    ),
+    session: Session = Depends(get_session),
+) -> KernelClaimEvidenceListResponse:
+    verify_space_membership(
+        space_id,
+        current_user.id,
+        membership_service,
+        session,
+        current_user.role,
+    )
+    claim = relation_claim_service.get_claim(str(claim_id))
+    if claim is None or str(claim.research_space_id) != str(space_id):
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail="Relation claim not found",
+        )
+    evidence_rows = claim_evidence_service.list_for_claim(str(claim_id))
+    return KernelClaimEvidenceListResponse(
+        claim_id=claim_id,
+        evidence=[KernelClaimEvidenceResponse.from_model(row) for row in evidence_rows],
+        total=len(evidence_rows),
+    )
+
+
+@research_spaces_router.get(
+    "/{space_id}/relations/conflicts",
+    response_model=KernelRelationConflictListResponse,
+    summary="List mixed-polarity conflicts for canonical relations",
+)
+def list_relation_conflicts(
+    space_id: UUID,
+    *,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_active_user),
+    membership_service: MembershipManagementService = Depends(get_membership_service),
+    relation_claim_service: KernelRelationClaimService = Depends(
+        get_kernel_relation_claim_service,
+    ),
+    session: Session = Depends(get_session),
+) -> KernelRelationConflictListResponse:
+    verify_space_membership(
+        space_id,
+        current_user.id,
+        membership_service,
+        session,
+        current_user.role,
+    )
+    conflicts = relation_claim_service.list_conflicts_by_research_space(
+        str(space_id),
+        limit=limit,
+        offset=offset,
+    )
+    if conflicts:
+        increment_metric(
+            "relations_conflict_detected_total",
+            delta=len(conflicts),
+            tags={"research_space_id": str(space_id)},
+        )
+    total = relation_claim_service.count_conflicts_by_research_space(str(space_id))
+    return KernelRelationConflictListResponse(
+        conflicts=[
+            KernelRelationConflictResponse.from_model(item) for item in conflicts
+        ],
         total=total,
         offset=offset,
         limit=limit,
@@ -986,6 +1111,9 @@ def update_relation_claim_status(
     current_user: User = Depends(get_current_active_user),
     triage_dependencies: _RelationClaimTriageDependencies = Depends(
         _get_relation_claim_triage_dependencies,
+    ),
+    claim_evidence_service: KernelClaimEvidenceService = Depends(
+        get_kernel_claim_evidence_service,
     ),
 ) -> KernelRelationClaimResponse:
     membership_service = triage_dependencies.membership_service
@@ -1032,7 +1160,15 @@ def update_relation_claim_status(
             try:
                 reviewed_by = str(current_user.id)
                 source_ref = f"relation_claim:{existing.id}"
-                evidence_sentence = _claim_resolution_evidence_sentence(existing)
+                (
+                    evidence_sentence,
+                    evidence_sentence_source,
+                    evidence_sentence_confidence,
+                    evidence_sentence_rationale,
+                ) = _resolve_claim_resolution_evidence(
+                    claim_id=str(existing.id),
+                    claim_evidence_service=claim_evidence_service,
+                )
                 _activate_dictionary_dependencies_for_claim(
                     dictionary_service=dictionary_service,
                     source_type=existing.source_type,
@@ -1049,13 +1185,9 @@ def update_relation_claim_status(
                     confidence=float(existing.confidence),
                     evidence_summary=_claim_resolution_evidence_summary(existing),
                     evidence_sentence=evidence_sentence,
-                    evidence_sentence_source=(
-                        "verbatim_span" if evidence_sentence is not None else None
-                    ),
-                    evidence_sentence_confidence=(
-                        "high" if evidence_sentence is not None else None
-                    ),
-                    evidence_sentence_rationale=None,
+                    evidence_sentence_source=evidence_sentence_source,
+                    evidence_sentence_confidence=evidence_sentence_confidence,
+                    evidence_sentence_rationale=evidence_sentence_rationale,
                     evidence_tier="COMPUTATIONAL",
                     source_document_id=(
                         str(existing.source_document_id)

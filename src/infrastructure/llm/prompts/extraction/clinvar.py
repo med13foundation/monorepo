@@ -14,6 +14,9 @@ Discovery policy:
 - Do not invent facts not present in record fields.
 - Prefer recall at this stage; uncertain items go to rejected_facts.
 - Do not call validation tools in this discovery stage.
+- Set relation polarity using:
+  SUPPORT, REFUTE, UNCERTAIN, HYPOTHESIS.
+  Map speculative language to HYPOTHESIS/UNCERTAIN and explicit negatives to REFUTE.
 
 Decision policy:
 - decision="generated" when candidate output or explicit rejections are present.
@@ -23,6 +26,7 @@ Output requirements:
 - source_type must be "clinvar"
 - include document_id
 - include observations, relations, rejected_facts
+- for each relation include polarity, claim_text (when available), claim_section (if available)
 - pipeline_payloads may be empty at discovery stage; keep them compact when present
 - evidence must reference concrete fields from RAW RECORD JSON
 """.strip()
@@ -61,6 +65,8 @@ Triple-validation behavior:
 - Reject a relation only when validate_triple returns allowed=false.
 - Never emit prohibited triples; include them only in rejected_facts with the
   validator reason and the full triple payload.
+- Every relation must include polarity in:
+  SUPPORT, REFUTE, UNCERTAIN, HYPOTHESIS.
 
 Decision policy:
 - decision="generated" when output facts are validated/auditable or explicit
@@ -71,6 +77,7 @@ Output requirements:
 - source_type must be "clinvar"
 - include document_id
 - include observations, relations, rejected_facts
+- for each relation include polarity, claim_text (when available), claim_section (if available)
 - include pipeline_payloads only when compact and necessary
 - evidence must reference concrete fields from RAW RECORD JSON
 """.strip()

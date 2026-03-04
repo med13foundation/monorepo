@@ -6,6 +6,11 @@ observations, relations, provenance). They intentionally do NOT depend on
 SQLAlchemy models so that the domain layer remains infrastructure-agnostic.
 """
 
+from .claim_evidence import (
+    ClaimEvidenceSentenceConfidence,
+    ClaimEvidenceSentenceSource,
+    KernelClaimEvidence,
+)
 from .concepts import (
     ConceptAlias,
     ConceptDecision,
@@ -41,7 +46,9 @@ from .observations import KernelObservation
 from .provenance import KernelProvenanceRecord
 from .relation_claims import (
     KernelRelationClaim,
+    KernelRelationConflictSummary,
     RelationClaimPersistability,
+    RelationClaimPolarity,
     RelationClaimStatus,
     RelationClaimValidationState,
 )
@@ -70,6 +77,11 @@ __all__ = [
     "KernelObservation",
     "KernelProvenanceRecord",
     "KernelRelationClaim",
+    "KernelRelationConflictSummary",
+    "KernelClaimEvidence",
+    "ClaimEvidenceSentenceSource",
+    "ClaimEvidenceSentenceConfidence",
+    "RelationClaimPolarity",
     "RelationClaimPersistability",
     "RelationClaimStatus",
     "RelationClaimValidationState",

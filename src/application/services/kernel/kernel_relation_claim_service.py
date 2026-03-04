@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from src.domain.entities.kernel.relation_claims import (
         KernelRelationClaim,
+        KernelRelationConflictSummary,
         RelationClaimPersistability,
+        RelationClaimPolarity,
         RelationClaimStatus,
         RelationClaimValidationState,
     )
@@ -34,6 +36,7 @@ class KernelRelationClaimService:
         claim_status: RelationClaimStatus | None = None,
         validation_state: RelationClaimValidationState | None = None,
         persistability: RelationClaimPersistability | None = None,
+        polarity: RelationClaimPolarity | None = None,
         source_document_id: str | None = None,
         relation_type: str | None = None,
         linked_relation_id: str | None = None,
@@ -47,6 +50,7 @@ class KernelRelationClaimService:
             claim_status=claim_status,
             validation_state=validation_state,
             persistability=persistability,
+            polarity=polarity,
             source_document_id=source_document_id,
             relation_type=relation_type,
             linked_relation_id=linked_relation_id,
@@ -62,6 +66,7 @@ class KernelRelationClaimService:
         claim_status: RelationClaimStatus | None = None,
         validation_state: RelationClaimValidationState | None = None,
         persistability: RelationClaimPersistability | None = None,
+        polarity: RelationClaimPolarity | None = None,
         source_document_id: str | None = None,
         relation_type: str | None = None,
         linked_relation_id: str | None = None,
@@ -73,11 +78,30 @@ class KernelRelationClaimService:
             claim_status=claim_status,
             validation_state=validation_state,
             persistability=persistability,
+            polarity=polarity,
             source_document_id=source_document_id,
             relation_type=relation_type,
             linked_relation_id=linked_relation_id,
             certainty_band=certainty_band,
         )
+
+    def list_conflicts_by_research_space(
+        self,
+        research_space_id: str,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[KernelRelationConflictSummary]:
+        """List conflict summaries for one research space."""
+        return self._claims.find_conflicts_by_research_space(
+            research_space_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    def count_conflicts_by_research_space(self, research_space_id: str) -> int:
+        """Count conflict summaries for one research space."""
+        return self._claims.count_conflicts_by_research_space(research_space_id)
 
     def update_claim_status(
         self,

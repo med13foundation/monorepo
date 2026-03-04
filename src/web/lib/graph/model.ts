@@ -3,6 +3,7 @@ import type {
   KernelGraphExportResponse,
   KernelGraphSubgraphResponse,
   KernelRelationResponse,
+  RelationConflictResponse,
   RelationClaimResponse,
 } from '@/types/kernel'
 import type { JSONObject } from '@/types/generated'
@@ -28,6 +29,9 @@ export interface GraphEdge {
   updatedAt: string
   sourceCount: number
   highestEvidenceTier: string | null
+  hasConflict: boolean
+  supportClaimCount: number
+  refuteClaimCount: number
 }
 
 export interface GraphStats {
@@ -123,6 +127,9 @@ function normalizeEdge(edge: KernelRelationResponse): GraphEdge {
     updatedAt: edge.updated_at,
     sourceCount: edge.source_count ?? 0,
     highestEvidenceTier: edge.highest_evidence_tier ?? edge.evidence_tier ?? null,
+    hasConflict: false,
+    supportClaimCount: 0,
+    refuteClaimCount: 0,
   }
 }
 
@@ -281,6 +288,46 @@ function graphEdgesToKernelEdges(edges: GraphEdge[]): KernelRelationResponse[] {
     created_at: edge.createdAt,
     updated_at: edge.updatedAt,
   }))
+}
+
+export function annotateGraphModelWithConflicts(
+  base: GraphModel,
+  conflicts: ReadonlyArray<RelationConflictResponse>,
+): GraphModel {
+  if (conflicts.length === 0 || base.edges.length === 0) {
+    return base
+  }
+  const conflictByRelationId = new Map<
+    string,
+    { supportCount: number; refuteCount: number }
+  >()
+  for (const conflict of conflicts) {
+    conflictByRelationId.set(conflict.relation_id, {
+      supportCount: conflict.support_count,
+      refuteCount: conflict.refute_count,
+    })
+  }
+  const edges = base.edges.map((edge) => {
+    const conflict = conflictByRelationId.get(edge.id)
+    if (!conflict) {
+      return edge
+    }
+    return {
+      ...edge,
+      hasConflict: true,
+      supportClaimCount: conflict.supportCount,
+      refuteClaimCount: conflict.refuteCount,
+    }
+  })
+  const edgeById: Record<string, GraphEdge> = {}
+  for (const edge of edges) {
+    edgeById[edge.id] = edge
+  }
+  return {
+    ...base,
+    edges,
+    edgeById,
+  }
 }
 
 export function mergeGraphModelWithRelationClaims(

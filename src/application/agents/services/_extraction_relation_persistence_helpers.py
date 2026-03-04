@@ -21,6 +21,7 @@ from src.application.agents.services._extraction_relation_full_auto_helpers impo
     _ExtractionRelationFullAutoHelpers,
 )
 from src.application.agents.services._extraction_relation_policy_helpers import (
+    RelationClaimPolarity,
     _ExtractionRelationPolicyHelpers,
     _ResolvedRelationCandidate,
 )
@@ -39,6 +40,7 @@ from src.application.agents.services._relation_persistence_payload_helpers impor
 )
 from src.application.services.claim_first_metrics import (
     emit_claim_first_extraction_metrics,
+    increment_metric,
 )
 from src.domain.entities.kernel.relations import (
     EvidenceSentenceGenerationRequest,
@@ -61,10 +63,17 @@ if TYPE_CHECKING:
         RelationConstraintProposal,
         RelationTypeMappingProposal,
     )
+    from src.domain.entities.kernel.claim_evidence import (
+        ClaimEvidenceSentenceConfidence,
+        ClaimEvidenceSentenceSource,
+    )
     from src.domain.entities.source_document import SourceDocument
     from src.domain.ports.concept_port import ConceptPort
     from src.domain.ports.evidence_sentence_harness_port import (
         EvidenceSentenceHarnessPort,
+    )
+    from src.domain.repositories.kernel.claim_evidence_repository import (
+        KernelClaimEvidenceRepository,
     )
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
     from src.domain.repositories.kernel.relation_claim_repository import (
@@ -79,11 +88,45 @@ logger = logging.getLogger(__name__)
 _MIN_GENERATED_EVIDENCE_SENTENCE_LENGTH = 24
 
 
+def _normalize_claim_polarity_value(raw_polarity: str) -> RelationClaimPolarity:
+    normalized = raw_polarity.strip().upper()
+    if normalized == "SUPPORT":
+        return "SUPPORT"
+    if normalized == "REFUTE":
+        return "REFUTE"
+    if normalized == "HYPOTHESIS":
+        return "HYPOTHESIS"
+    return "UNCERTAIN"
+
+
+def _normalize_claim_evidence_sentence_source(
+    source: str | None,
+) -> ClaimEvidenceSentenceSource | None:
+    if source == "verbatim_span":
+        return "verbatim_span"
+    if source == "artana_generated":
+        return "artana_generated"
+    return None
+
+
+def _normalize_claim_evidence_sentence_confidence(
+    confidence: str | None,
+) -> ClaimEvidenceSentenceConfidence | None:
+    if confidence == "low":
+        return "low"
+    if confidence == "medium":
+        return "medium"
+    if confidence == "high":
+        return "high"
+    return None
+
+
 @dataclass(frozen=True)
 class RelationPersistenceResult:
     persisted_relations_count: int = 0
     pending_review_relations_count: int = 0
     relation_claims_count: int = 0
+    claim_evidence_rows_created_count: int = 0
     non_persistable_claims_count: int = 0
     forbidden_relations_count: int = 0
     undefined_relations_count: int = 0
@@ -115,6 +158,7 @@ class _RelationWriteOutcome:
     persisted_relations_count: int = 0
     pending_review_relations_count: int = 0
     relation_claims_count_delta: int = 0
+    claim_evidence_rows_created_count_delta: int = 0
     relation_claims_queued_for_review_count: int = 0
     persistence_failed_count: int = 0
     errors: tuple[str, ...] = ()
@@ -129,6 +173,7 @@ class _ExtractionRelationPersistenceHelpers(
 ):
     _relations: KernelRelationRepository | None
     _relation_claims: KernelRelationClaimRepository | None
+    _claim_evidences: KernelClaimEvidenceRepository | None
     _entities: KernelEntityRepository | None
     _concepts: ConceptPort | None
     _evidence_sentence_harness: EvidenceSentenceHarnessPort | None
@@ -276,6 +321,9 @@ class _ExtractionRelationPersistenceHelpers(
                     persist_result.pending_review_relations_count
                 ),
                 "relation_claims_count": persist_result.relation_claims_count,
+                "claim_evidence_rows_created_count": (
+                    persist_result.claim_evidence_rows_created_count
+                ),
                 "non_persistable_claims_count": (
                     persist_result.non_persistable_claims_count
                 ),
@@ -309,6 +357,7 @@ class _ExtractionRelationPersistenceHelpers(
             relation_claims_queued_for_review=(
                 persist_result.relation_claims_queued_for_review_count
             ),
+            claim_evidence_rows_created=persist_result.claim_evidence_rows_created_count,
             research_space_settings=research_space_settings,
         )
         logger.info(
@@ -321,6 +370,9 @@ class _ExtractionRelationPersistenceHelpers(
                 ),
                 "relation_candidates_input_count": len(contract.relations),
                 "relation_claims_count": persist_result.relation_claims_count,
+                "claim_evidence_rows_created_count": (
+                    persist_result.claim_evidence_rows_created_count
+                ),
                 "persisted_relations_count": persist_result.persisted_relations_count,
                 "non_persistable_claims_count": (
                     persist_result.non_persistable_claims_count
@@ -349,6 +401,9 @@ class _ExtractionRelationPersistenceHelpers(
             persisted_relations_count=persist_result.persisted_relations_count,
             pending_review_relations_count=persist_result.pending_review_relations_count,
             relation_claims_count=persist_result.relation_claims_count,
+            claim_evidence_rows_created_count=(
+                persist_result.claim_evidence_rows_created_count
+            ),
             non_persistable_claims_count=persist_result.non_persistable_claims_count,
             forbidden_relations_count=persist_result.forbidden_relations_count,
             undefined_relations_count=persist_result.undefined_relations_count,
@@ -412,6 +467,9 @@ class _ExtractionRelationPersistenceHelpers(
                     persist_result.concept_decisions_proposed_count
                 ),
                 "relation_claims_created": persist_result.relation_claims_count,
+                "claim_evidence_rows_created": (
+                    persist_result.claim_evidence_rows_created_count
+                ),
                 "relation_claims_queued_for_review": (
                     persist_result.relation_claims_queued_for_review_count
                 ),
@@ -463,6 +521,9 @@ class _ExtractionRelationPersistenceHelpers(
             normalized_target_type = self._normalize_component(relation.target_type)
             normalized_source_label = normalize_optional_text(relation.source_label)
             normalized_target_label = normalize_optional_text(relation.target_label)
+            normalized_polarity = _normalize_claim_polarity_value(relation.polarity)
+            normalized_claim_text = normalize_optional_text(relation.claim_text)
+            normalized_claim_section = normalize_optional_text(relation.claim_section)
             normalized_evidence_excerpt = normalize_optional_text(
                 relation.evidence_excerpt,
             )
@@ -505,6 +566,9 @@ class _ExtractionRelationPersistenceHelpers(
                         ),
                         evidence_excerpt=normalized_evidence_excerpt,
                         evidence_locator=normalized_evidence_locator,
+                        polarity=normalized_polarity,
+                        claim_text=normalized_claim_text,
+                        claim_section=normalized_claim_section,
                         persistability="NON_PERSISTABLE",
                     ),
                 )
@@ -564,6 +628,9 @@ class _ExtractionRelationPersistenceHelpers(
                         validation_reason=validation_reason,
                         evidence_excerpt=normalized_evidence_excerpt,
                         evidence_locator=normalized_evidence_locator,
+                        polarity=normalized_polarity,
+                        claim_text=normalized_claim_text,
+                        claim_section=normalized_claim_section,
                         persistability="NON_PERSISTABLE",
                     ),
                 )
@@ -596,6 +663,9 @@ class _ExtractionRelationPersistenceHelpers(
                         validation_reason="self-loop relations are not allowed",
                         evidence_excerpt=normalized_evidence_excerpt,
                         evidence_locator=normalized_evidence_locator,
+                        polarity=normalized_polarity,
+                        claim_text=normalized_claim_text,
+                        claim_section=normalized_claim_section,
                         persistability="NON_PERSISTABLE",
                     ),
                 )
@@ -623,6 +693,9 @@ class _ExtractionRelationPersistenceHelpers(
                     validation_reason=validation_reason,
                     evidence_excerpt=normalized_evidence_excerpt,
                     evidence_locator=normalized_evidence_locator,
+                    polarity=normalized_polarity,
+                    claim_text=normalized_claim_text,
+                    claim_section=normalized_claim_section,
                     persistability="PERSISTABLE",
                 ),
             )
@@ -841,6 +914,87 @@ class _ExtractionRelationPersistenceHelpers(
             metadata=result.metadata,
         )
 
+    @staticmethod
+    def _claim_evidence_reference_from_metadata(
+        *,
+        metadata: JSONObject,
+        primary_key: str,
+        fallback_key: str,
+    ) -> str | None:
+        primary_value = metadata.get(primary_key)
+        if isinstance(primary_value, str):
+            normalized_primary = normalize_optional_text(primary_value)
+            if normalized_primary is not None:
+                return normalized_primary
+        fallback_value = metadata.get(fallback_key)
+        if isinstance(fallback_value, str):
+            return normalize_optional_text(fallback_value)
+        return None
+
+    def _create_claim_evidence_record(  # noqa: PLR0913
+        self,
+        *,
+        claim_id: str,
+        document: SourceDocument,
+        run_id: str | None,
+        relation_evidence_metadata: JSONObject,
+        evidence_sentence: str | None,
+        evidence_sentence_source: str | None,
+        evidence_sentence_confidence: str | None,
+        evidence_sentence_rationale: str | None,
+        candidate_confidence: float,
+    ) -> tuple[str, ...]:
+        if self._claim_evidences is None:
+            return ("claim_evidence_repository_unavailable",)
+        metadata_copy: JSONObject = {
+            str(key): value for key, value in relation_evidence_metadata.items()
+        }
+        figure_reference = self._claim_evidence_reference_from_metadata(
+            metadata=metadata_copy,
+            primary_key="figure_reference",
+            fallback_key="figure_ref",
+        )
+        table_reference = self._claim_evidence_reference_from_metadata(
+            metadata=metadata_copy,
+            primary_key="table_reference",
+            fallback_key="table_ref",
+        )
+        normalized_sentence_source = _normalize_claim_evidence_sentence_source(
+            evidence_sentence_source,
+        )
+        normalized_sentence_confidence = _normalize_claim_evidence_sentence_confidence(
+            evidence_sentence_confidence,
+        )
+        try:
+            self._claim_evidences.create(
+                claim_id=claim_id,
+                source_document_id=str(document.id),
+                agent_run_id=run_id,
+                sentence=evidence_sentence,
+                sentence_source=normalized_sentence_source,
+                sentence_confidence=normalized_sentence_confidence,
+                sentence_rationale=evidence_sentence_rationale,
+                figure_reference=figure_reference,
+                table_reference=table_reference,
+                confidence=float(candidate_confidence),
+                metadata=metadata_copy,
+            )
+            increment_metric(
+                "claim_evidence_rows_created_total",
+                tags={
+                    "research_space_id": (
+                        str(document.research_space_id)
+                        if document.research_space_id is not None
+                        else "unknown"
+                    ),
+                    "source_document_id": str(document.id),
+                },
+            )
+        except (TypeError, ValueError, SQLAlchemyError) as exc:
+            error_code = self._map_relation_write_error_code(exc)
+            return (f"claim_evidence_create_failed:{error_code}",)
+        return ()
+
     def _persist_candidate_relation(  # noqa: C901, PLR0912, PLR0913
         self,
         *,
@@ -854,6 +1008,7 @@ class _ExtractionRelationPersistenceHelpers(
         evidence_sentence_source: str | None,
         evidence_sentence_confidence: str | None,
         evidence_sentence_rationale: str | None,
+        relation_evidence_metadata: JSONObject,
         claim_id: str | None,
         payload: JSONObject,
         candidate_signature: tuple[str, str, str, str, str],
@@ -865,6 +1020,7 @@ class _ExtractionRelationPersistenceHelpers(
     ) -> _RelationWriteOutcome:
         errors: list[str] = []
         relation_claims_count_delta = 0
+        claim_evidence_rows_created_count_delta = 0
         relation_claims_queued_for_review_count = 0
         if self._relations is None:
             return _RelationWriteOutcome(
@@ -943,11 +1099,28 @@ class _ExtractionRelationPersistenceHelpers(
                             if relation_governance_mode == "FULL_AUTO"
                             else "OPEN"
                         ),
+                        polarity=effective_candidate.polarity,
+                        claim_text=effective_candidate.claim_text,
+                        claim_section=effective_candidate.claim_section,
                         linked_relation_id=None,
                         metadata=payload,
                     )
                     claim_id = str(recreated_claim.id)
                     relation_claims_count_delta += 1
+                    claim_evidence_errors = self._create_claim_evidence_record(
+                        claim_id=claim_id,
+                        document=document,
+                        run_id=run_id,
+                        relation_evidence_metadata=relation_evidence_metadata,
+                        evidence_sentence=evidence_sentence,
+                        evidence_sentence_source=evidence_sentence_source,
+                        evidence_sentence_confidence=evidence_sentence_confidence,
+                        evidence_sentence_rationale=evidence_sentence_rationale,
+                        candidate_confidence=effective_candidate.confidence,
+                    )
+                    if not claim_evidence_errors:
+                        claim_evidence_rows_created_count_delta += 1
+                    errors.extend(claim_evidence_errors)
                     if relation_governance_mode == "FULL_AUTO":
                         full_auto_retry_index[candidate_signature] = (
                             dictionary_fingerprint
@@ -1015,6 +1188,9 @@ class _ExtractionRelationPersistenceHelpers(
                 )
             return _RelationWriteOutcome(
                 relation_claims_count_delta=relation_claims_count_delta,
+                claim_evidence_rows_created_count_delta=(
+                    claim_evidence_rows_created_count_delta
+                ),
                 relation_claims_queued_for_review_count=(
                     relation_claims_queued_for_review_count
                 ),
@@ -1049,6 +1225,9 @@ class _ExtractionRelationPersistenceHelpers(
             persisted_relations_count=1,
             pending_review_relations_count=1,
             relation_claims_count_delta=relation_claims_count_delta,
+            claim_evidence_rows_created_count_delta=(
+                claim_evidence_rows_created_count_delta
+            ),
             relation_claims_queued_for_review_count=(
                 relation_claims_queued_for_review_count
             ),

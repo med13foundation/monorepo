@@ -6,6 +6,7 @@ using SQLAlchemy ORM against the PostgreSQL database.
 """
 
 from .graph_query_repository import SqlAlchemyGraphQueryRepository
+from .kernel_claim_evidence_repository import SqlAlchemyKernelClaimEvidenceRepository
 from .kernel_concept_repository import SqlAlchemyConceptRepository
 from .kernel_dictionary_repository import SqlAlchemyDictionaryRepository
 from .kernel_entity_repository import SqlAlchemyKernelEntityRepository
@@ -18,6 +19,7 @@ __all__ = [
     "SqlAlchemyConceptRepository",
     "SqlAlchemyDictionaryRepository",
     "SqlAlchemyGraphQueryRepository",
+    "SqlAlchemyKernelClaimEvidenceRepository",
     "SqlAlchemyKernelEntityRepository",
     "SqlAlchemyKernelObservationRepository",
     "SqlAlchemyKernelRelationClaimRepository",

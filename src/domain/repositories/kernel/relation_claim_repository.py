@@ -7,7 +7,9 @@ from typing import Literal
 
 from src.domain.entities.kernel.relation_claims import (
     KernelRelationClaim,  # noqa: TC001
+    KernelRelationConflictSummary,  # noqa: TC001
     RelationClaimPersistability,  # noqa: TC001
+    RelationClaimPolarity,  # noqa: TC001
     RelationClaimStatus,  # noqa: TC001
     RelationClaimValidationState,  # noqa: TC001
 )
@@ -36,6 +38,9 @@ class KernelRelationClaimRepository(ABC):
         validation_reason: str | None,
         persistability: RelationClaimPersistability,
         claim_status: RelationClaimStatus = "OPEN",
+        polarity: RelationClaimPolarity = "UNCERTAIN",
+        claim_text: str | None = None,
+        claim_section: str | None = None,
         linked_relation_id: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelRelationClaim:
@@ -53,6 +58,7 @@ class KernelRelationClaimRepository(ABC):
         claim_status: RelationClaimStatus | None = None,
         validation_state: RelationClaimValidationState | None = None,
         persistability: RelationClaimPersistability | None = None,
+        polarity: RelationClaimPolarity | None = None,
         source_document_id: str | None = None,
         relation_type: str | None = None,
         linked_relation_id: str | None = None,
@@ -70,6 +76,7 @@ class KernelRelationClaimRepository(ABC):
         claim_status: RelationClaimStatus | None = None,
         validation_state: RelationClaimValidationState | None = None,
         persistability: RelationClaimPersistability | None = None,
+        polarity: RelationClaimPolarity | None = None,
         source_document_id: str | None = None,
         relation_type: str | None = None,
         linked_relation_id: str | None = None,
@@ -104,6 +111,23 @@ class KernelRelationClaimRepository(ABC):
         claim_status: RelationClaimStatus,
     ) -> KernelRelationClaim:
         """Set claim status as an automated pipeline action."""
+
+    @abstractmethod
+    def find_conflicts_by_research_space(
+        self,
+        research_space_id: str,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[KernelRelationConflictSummary]:
+        """List canonical relations with mixed SUPPORT and REFUTE claims."""
+
+    @abstractmethod
+    def count_conflicts_by_research_space(
+        self,
+        research_space_id: str,
+    ) -> int:
+        """Count canonical relations with mixed SUPPORT and REFUTE claims."""
 
 
 __all__ = ["CertaintyBand", "KernelRelationClaimRepository"]

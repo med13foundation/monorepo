@@ -31,6 +31,11 @@ class ExtractedRelation(BaseModel):
     source_type: str = Field(..., min_length=1, max_length=64)
     relation_type: str = Field(..., min_length=1, max_length=64)
     target_type: str = Field(..., min_length=1, max_length=64)
+    polarity: Literal["SUPPORT", "REFUTE", "UNCERTAIN", "HYPOTHESIS"] = Field(
+        default="UNCERTAIN",
+    )
+    claim_text: str | None = Field(default=None, max_length=2000)
+    claim_section: str | None = Field(default=None, max_length=64)
     source_label: str | None = Field(default=None, max_length=255)
     target_label: str | None = Field(default=None, max_length=255)
     evidence_excerpt: str | None = Field(

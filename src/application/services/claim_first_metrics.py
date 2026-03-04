@@ -2,9 +2,12 @@
 
 This module keeps lightweight in-process counters and emits structured logs for:
 - claim creation volume
+- claim polarity volume
+- claim evidence-row creation volume
 - non-persistable claim volume
 - draft relation creation volume
 - relation-claim queue volume
+- relation conflict detection volume
 - graph trust preset usage
 """
 
@@ -20,9 +23,12 @@ if TYPE_CHECKING:
 
 MetricName = Literal[
     "claims_created_total",
+    "claims_by_polarity_total",
+    "claim_evidence_rows_created_total",
     "claims_non_persistable_total",
     "relations_draft_created_total",
     "curation_queue_relation_claim_total",
+    "relations_conflict_detected_total",
     "graph_filter_preset_usage",
 ]
 GraphTrustPreset = Literal[
@@ -35,9 +41,12 @@ GraphTrustPreset = Literal[
 
 _METRIC_NAMES: tuple[MetricName, ...] = (
     "claims_created_total",
+    "claims_by_polarity_total",
+    "claim_evidence_rows_created_total",
     "claims_non_persistable_total",
     "relations_draft_created_total",
     "curation_queue_relation_claim_total",
+    "relations_conflict_detected_total",
     "graph_filter_preset_usage",
 )
 
@@ -80,6 +89,7 @@ def emit_claim_first_extraction_metrics(  # noqa: PLR0913
     claims_non_persistable: int,
     relations_draft_created: int,
     relation_claims_queued_for_review: int,
+    claim_evidence_rows_created: int = 0,
     research_space_settings: ResearchSpaceSettings | None,
 ) -> None:
     """Emit claim-first extraction counters and non-persistable ratio alerts."""
@@ -109,6 +119,12 @@ def emit_claim_first_extraction_metrics(  # noqa: PLR0913
         increment_metric(
             "curation_queue_relation_claim_total",
             delta=relation_claims_queued_for_review,
+            tags=common_tags,
+        )
+    if claim_evidence_rows_created > 0:
+        increment_metric(
+            "claim_evidence_rows_created_total",
+            delta=claim_evidence_rows_created,
             tags=common_tags,
         )
 

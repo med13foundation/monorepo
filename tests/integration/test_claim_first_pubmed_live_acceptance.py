@@ -38,6 +38,7 @@ from src.domain.ports.dictionary_search_harness_port import DictionarySearchHarn
 from src.infrastructure.data_sources.pubmed_gateway import PubMedSourceGateway
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyDictionaryRepository,
+    SqlAlchemyKernelClaimEvidenceRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationRepository,
@@ -213,6 +214,7 @@ async def test_claim_first_live_pubmed_three_pmids_end_to_end(  # noqa: PLR0915
         entity_repo = SqlAlchemyKernelEntityRepository(session)
         relation_repo = SqlAlchemyKernelRelationRepository(session)
         claim_repo = SqlAlchemyKernelRelationClaimRepository(session)
+        claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(session)
 
         seed_gene = entity_repo.create(
             research_space_id=str(space.id),
@@ -328,6 +330,7 @@ async def test_claim_first_live_pubmed_three_pmids_end_to_end(  # noqa: PLR0915
                     ingestion_pipeline=_NoopIngestionPipeline(),
                     relation_repository=relation_repo,
                     relation_claim_repository=claim_repo,
+                    claim_evidence_repository=claim_evidence_repo,
                     entity_repository=entity_repo,
                     dictionary_service=dictionary_service,
                 ),

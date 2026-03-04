@@ -20,6 +20,7 @@ RelationClaimValidationState = Literal[
 ]
 RelationClaimPersistability = Literal["PERSISTABLE", "NON_PERSISTABLE"]
 RelationClaimStatus = Literal["OPEN", "NEEDS_MAPPING", "REJECTED", "RESOLVED"]
+RelationClaimPolarity = Literal["SUPPORT", "REFUTE", "UNCERTAIN", "HYPOTHESIS"]
 
 
 class KernelRelationClaim(BaseModel):
@@ -41,6 +42,9 @@ class KernelRelationClaim(BaseModel):
     validation_reason: str | None = None
     persistability: RelationClaimPersistability
     claim_status: RelationClaimStatus = "OPEN"
+    polarity: RelationClaimPolarity = "UNCERTAIN"
+    claim_text: str | None = None
+    claim_section: str | None = Field(default=None, max_length=64)
     linked_relation_id: UUID | None = None
     metadata_payload: JSONObject = Field(default_factory=dict)
     triaged_by: UUID | None = None
@@ -49,9 +53,23 @@ class KernelRelationClaim(BaseModel):
     updated_at: datetime
 
 
+class KernelRelationConflictSummary(BaseModel):
+    """Conflict summary for one canonical relation with mixed claim polarity."""
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    relation_id: UUID
+    support_count: int = Field(default=0, ge=0)
+    refute_count: int = Field(default=0, ge=0)
+    support_claim_ids: tuple[UUID, ...] = ()
+    refute_claim_ids: tuple[UUID, ...] = ()
+
+
 __all__ = [
+    "KernelRelationConflictSummary",
     "KernelRelationClaim",
     "RelationClaimPersistability",
+    "RelationClaimPolarity",
     "RelationClaimStatus",
     "RelationClaimValidationState",
 ]

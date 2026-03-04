@@ -18,6 +18,8 @@ from src.infrastructure.ingestion.validation.observation_validator import (
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from src.domain.agents.contexts.extraction_context import ExtractionContext
     from src.domain.ports.dictionary_port import DictionaryPort
 
@@ -133,6 +135,7 @@ def build_heuristic_extraction_contract(
         ),
         None,
     )
+    claim_text = _best_claim_text_from_record(context.raw_record)
     if variant_entity and phenotype_entity:
         relation_allowed = _is_relation_allowed(
             source_type="VARIANT",
@@ -146,6 +149,9 @@ def build_heuristic_extraction_contract(
                     source_type="VARIANT",
                     relation_type="ASSOCIATED_WITH",
                     target_type="PHENOTYPE",
+                    polarity="UNCERTAIN",
+                    claim_text=claim_text,
+                    claim_section=None,
                     source_label=variant_entity.display_label,
                     target_label=phenotype_entity.display_label,
                     confidence=min(
@@ -217,6 +223,18 @@ def _resolve_variable_id(
     if resolved is None:
         return None
     return resolved.id
+
+
+def _best_claim_text_from_record(raw_record: Mapping[str, object]) -> str | None:
+    for field_name in ("abstract", "text", "full_text", "title"):
+        value = raw_record.get(field_name)
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip()
+        if not normalized:
+            continue
+        return normalized[:2000]
+    return None
 
 
 def _is_observation_valid(

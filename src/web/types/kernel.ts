@@ -148,6 +148,9 @@ export interface RelationClaimResponse {
   validation_reason: string | null
   persistability: 'PERSISTABLE' | 'NON_PERSISTABLE'
   claim_status: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'
+  polarity: 'SUPPORT' | 'REFUTE' | 'UNCERTAIN' | 'HYPOTHESIS'
+  claim_text: string | null
+  claim_section: string | null
   linked_relation_id: string | null
   metadata: JSONObject
   triaged_by: string | null
@@ -158,6 +161,43 @@ export interface RelationClaimResponse {
 
 export interface RelationClaimListResponse {
   claims: RelationClaimResponse[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export interface ClaimEvidenceResponse {
+  id: string
+  claim_id: string
+  source_document_id: string | null
+  agent_run_id: string | null
+  sentence: string | null
+  sentence_source: 'verbatim_span' | 'artana_generated' | null
+  sentence_confidence: 'low' | 'medium' | 'high' | null
+  sentence_rationale: string | null
+  figure_reference: string | null
+  table_reference: string | null
+  confidence: number
+  metadata: JSONObject
+  created_at: string
+}
+
+export interface ClaimEvidenceListResponse {
+  claim_id: string
+  evidence: ClaimEvidenceResponse[]
+  total: number
+}
+
+export interface RelationConflictResponse {
+  relation_id: string
+  support_count: number
+  refute_count: number
+  support_claim_ids: string[]
+  refute_claim_ids: string[]
+}
+
+export interface RelationConflictListResponse {
+  conflicts: RelationConflictResponse[]
   total: number
   offset: number
   limit: number

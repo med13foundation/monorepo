@@ -5,6 +5,7 @@ These define the abstract contracts for kernel data access,
 replacing the 7 entity-specific repository interfaces.
 """
 
+from .claim_evidence_repository import KernelClaimEvidenceRepository
 from .concept_repository import ConceptRepository
 from .dictionary_repository import DictionaryRepository
 from .entity_repository import KernelEntityRepository
@@ -16,6 +17,7 @@ from .relation_repository import KernelRelationRepository
 __all__ = [
     "ConceptRepository",
     "DictionaryRepository",
+    "KernelClaimEvidenceRepository",
     "KernelEntityRepository",
     "KernelObservationRepository",
     "KernelRelationClaimRepository",

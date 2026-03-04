@@ -4,12 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   fetchRelationClaims,
+  fetchRelationConflicts,
   fetchKernelGraphExport,
   fetchKernelNeighborhood,
   fetchKernelSubgraph,
   searchKernelGraph,
 } from '@/lib/api/kernel'
 import {
+  annotateGraphModelWithConflicts,
   buildGraphModel,
   emptyGraphModel,
   filterGraphModel,
@@ -267,13 +269,21 @@ export function useKnowledgeGraphController({
           return claims
         }
 
-        const [response, claimOverlay] = await Promise.all([
+        const [response, claimOverlay, conflictResponse] = await Promise.all([
           fetchKernelSubgraph(spaceId, payload, token),
           fetchClaimOverlay(),
+          fetchRelationConflicts(spaceId, { offset: 0, limit: 200 }, token),
         ])
         const persistedGraph = buildGraphModel(response)
+        const mergedGraph = mergeGraphModelWithRelationClaims(
+          persistedGraph,
+          claimOverlay,
+        )
         setRawGraph(
-          mergeGraphModelWithRelationClaims(persistedGraph, claimOverlay),
+          annotateGraphModelWithConflicts(
+            mergedGraph,
+            conflictResponse.conflicts,
+          ),
         )
         setSubgraphMeta(response.meta)
       } catch (error) {
@@ -304,15 +314,20 @@ export function useKnowledgeGraphController({
               return claims
             }
 
-            const [legacyGraph, claimOverlay] = await Promise.all([
+            const [legacyGraph, claimOverlay, conflictResponse] = await Promise.all([
               fetchKernelGraphExport(spaceId, token),
               fetchClaimOverlay(),
+              fetchRelationConflicts(spaceId, { offset: 0, limit: 200 }, token),
             ])
             const persistedGraph = buildGraphModel(legacyGraph)
+            const mergedGraph = mergeGraphModelWithRelationClaims(
+              persistedGraph,
+              claimOverlay,
+            )
             setRawGraph(
-              mergeGraphModelWithRelationClaims(
-                persistedGraph,
-                claimOverlay,
+              annotateGraphModelWithConflicts(
+                mergedGraph,
+                conflictResponse.conflicts,
               ),
             )
             setSubgraphMeta(null)

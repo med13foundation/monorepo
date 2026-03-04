@@ -35,6 +35,7 @@ import {
 import type {
   KernelRelationListResponse,
   KernelRelationResponse,
+  RelationConflictListResponse,
   RelationClaimListResponse,
   RelationClaimResponse,
 } from '@/types/kernel'
@@ -46,6 +47,7 @@ interface SpaceCurationClientProps {
   relationsError?: string | null
   claims: RelationClaimListResponse | null
   claimsError?: string | null
+  relationConflicts: RelationConflictListResponse | null
   entityLabelsById: Record<string, string>
   canCurate: boolean
   relationFilters: {
@@ -63,6 +65,7 @@ interface SpaceCurationClientProps {
     claimStatus: string
     validationState: string
     persistability: string
+    polarity: string
     relationType: string
     sourceDocumentId: string
     linkedRelationId: string
@@ -78,6 +81,7 @@ const NODE_SEARCH_LIMIT = 40
 
 const GRAPH_STATUSES = ['DRAFT', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'RETRACTED'] as const
 const CLAIM_STATUSES = ['OPEN', 'NEEDS_MAPPING', 'REJECTED', 'RESOLVED'] as const
+const CLAIM_POLARITIES = ['SUPPORT', 'REFUTE', 'UNCERTAIN', 'HYPOTHESIS'] as const
 const VALIDATION_STATES = [
   'ALLOWED',
   'FORBIDDEN',
@@ -146,6 +150,15 @@ function statusBadgeVariant(status: string): 'default' | 'secondary' | 'destruct
   return 'outline'
 }
 
+function polarityBadgeVariant(
+  polarity: RelationClaimResponse['polarity'],
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (polarity === 'SUPPORT') return 'default'
+  if (polarity === 'REFUTE') return 'destructive'
+  if (polarity === 'HYPOTHESIS') return 'secondary'
+  return 'outline'
+}
+
 function relationConnectorPhrase(relationType: string): string {
   const normalized = relationType.trim().toUpperCase()
   const predefined: Record<string, string> = {
@@ -203,6 +216,7 @@ export default function SpaceCurationClient({
   relationsError,
   claims,
   claimsError,
+  relationConflicts,
   entityLabelsById,
   canCurate,
   relationFilters,
@@ -225,6 +239,7 @@ export default function SpaceCurationClient({
   const [claimPersistability, setClaimPersistability] = useState(
     claimFilters.persistability || ALL_VALUE,
   )
+  const [claimPolarity, setClaimPolarity] = useState(claimFilters.polarity || ALL_VALUE)
   const [claimRelationType, setClaimRelationType] = useState(claimFilters.relationType)
   const [claimSourceDocumentId, setClaimSourceDocumentId] = useState(claimFilters.sourceDocumentId)
   const [claimLinkedRelationId, setClaimLinkedRelationId] = useState(claimFilters.linkedRelationId)
@@ -270,6 +285,7 @@ export default function SpaceCurationClient({
     setClaimStatus(claimFilters.claimStatus || ALL_VALUE)
     setClaimValidationState(claimFilters.validationState || ALL_VALUE)
     setClaimPersistability(claimFilters.persistability || ALL_VALUE)
+    setClaimPolarity(claimFilters.polarity || ALL_VALUE)
     setClaimRelationType(claimFilters.relationType)
     setClaimSourceDocumentId(claimFilters.sourceDocumentId)
     setClaimLinkedRelationId(claimFilters.linkedRelationId)
@@ -292,6 +308,17 @@ export default function SpaceCurationClient({
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds])
   const relationRows = relations?.relations ?? []
   const claimRows = claims?.claims ?? []
+  const conflictByRelationId = useMemo(() => {
+    const index = new Map<string, { supportCount: number; refuteCount: number }>()
+    const conflicts = relationConflicts?.conflicts ?? []
+    for (const conflict of conflicts) {
+      index.set(conflict.relation_id, {
+        supportCount: conflict.support_count,
+        refuteCount: conflict.refute_count,
+      })
+    }
+    return index
+  }, [relationConflicts])
 
   function resolveEntityLabel(entityId: string): string {
     const existing = nodeLabelsById[entityId]
@@ -449,6 +476,9 @@ export default function SpaceCurationClient({
     }
     if (claimPersistability !== ALL_VALUE) {
       appendIfValue(params, 'persistability', claimPersistability)
+    }
+    if (claimPolarity !== ALL_VALUE) {
+      appendIfValue(params, 'claim_polarity', claimPolarity)
     }
     appendIfValue(params, 'claim_relation_type', claimRelationType)
     appendIfValue(params, 'claim_source_document_id', claimSourceDocumentId)
@@ -823,6 +853,7 @@ export default function SpaceCurationClient({
                   {relationRows.map((relation) => {
                     const sourceLabel = resolveEntityLabel(relation.source_id)
                     const targetLabel = resolveEntityLabel(relation.target_id)
+                    const conflictSummary = conflictByRelationId.get(relation.id)
                     const confidence = confidencePercent(relation.confidence)
                     const certaintyLevel = confidenceCertaintyLevel(confidence)
                     const evidenceSummary = relation.evidence_summary?.trim() ?? ''
@@ -847,6 +878,11 @@ export default function SpaceCurationClient({
                               <Badge variant={statusBadgeVariant(relation.curation_status)}>
                                 {humanizeToken(relation.curation_status)}
                               </Badge>
+                              {conflictSummary ? (
+                                <Badge variant="destructive">
+                                  Conflict {conflictSummary.supportCount}/{conflictSummary.refuteCount}
+                                </Badge>
+                              ) : null}
                               <span className="font-mono text-xs text-muted-foreground">
                                 Relation {compactId(relation.id)}
                               </span>
@@ -1063,6 +1099,22 @@ export default function SpaceCurationClient({
                     </Select>
                   </div>
                   <div className="space-y-2">
+                    <Label className="font-semibold text-foreground">Polarity</Label>
+                    <Select value={claimPolarity} onValueChange={setClaimPolarity}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All polarities" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL_VALUE}>All</SelectItem>
+                        {CLAIM_POLARITIES.map((polarity) => (
+                          <SelectItem key={polarity} value={polarity}>
+                            {humanizeToken(polarity)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
                     <Label htmlFor="claim_relation_type" className="font-semibold text-foreground">
                       Relation Type
                     </Label>
@@ -1131,6 +1183,7 @@ export default function SpaceCurationClient({
                         setClaimStatus(ALL_VALUE)
                         setClaimValidationState(ALL_VALUE)
                         setClaimPersistability(ALL_VALUE)
+                        setClaimPolarity(ALL_VALUE)
                         setClaimRelationType('')
                         setClaimSourceDocumentId('')
                         setClaimLinkedRelationId('')
@@ -1173,6 +1226,9 @@ export default function SpaceCurationClient({
                               </Badge>
                               <Badge variant="outline">{humanizeToken(claim.validation_state)}</Badge>
                               <Badge variant="outline">{humanizeToken(claim.persistability)}</Badge>
+                              <Badge variant={polarityBadgeVariant(claim.polarity)}>
+                                {humanizeToken(claim.polarity)}
+                              </Badge>
                             </div>
                             <span className="text-xs text-muted-foreground">
                               Created {formatTimestamp(claim.created_at)}
@@ -1206,6 +1262,14 @@ export default function SpaceCurationClient({
                               <span className="text-xs text-muted-foreground">{claim.validation_reason}</span>
                             ) : null}
                           </div>
+                          {claim.claim_text ? (
+                            <p className="text-sm text-foreground/85">{claim.claim_text}</p>
+                          ) : null}
+                          {claim.claim_section ? (
+                            <p className="text-xs text-muted-foreground">
+                              Section: {humanizeToken(claim.claim_section)}
+                            </p>
+                          ) : null}
 
                           {canCurate ? (
                             <div className="flex flex-wrap items-center gap-2">

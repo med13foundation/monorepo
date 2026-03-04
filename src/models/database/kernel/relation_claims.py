@@ -55,6 +55,13 @@ class RelationClaimModel(Base):
         nullable=False,
         server_default="OPEN",
     )
+    polarity: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default="UNCERTAIN",
+    )
+    claim_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claim_section: Mapped[str | None] = mapped_column(String(64), nullable=True)
     linked_relation_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("relations.id", ondelete="SET NULL"),
@@ -89,6 +96,7 @@ class RelationClaimModel(Base):
     __table_args__ = (
         Index("idx_relation_claims_space", "research_space_id"),
         Index("idx_relation_claims_status", "claim_status"),
+        Index("idx_relation_claims_space_polarity", "research_space_id", "polarity"),
         Index("idx_relation_claims_validation_state", "validation_state"),
         Index("idx_relation_claims_persistability", "persistability"),
         Index("idx_relation_claims_source_document_id", "source_document_id"),

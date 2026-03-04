@@ -1,6 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import KnowledgeGraphClient from '@/app/(dashboard)/spaces/[spaceId]/knowledge-graph-client'
-import { fetchKernelSubgraph, fetchRelationClaims, searchKernelGraph } from '@/lib/api/kernel'
+import {
+  fetchKernelSubgraph,
+  fetchRelationClaims,
+  fetchRelationConflicts,
+  searchKernelGraph,
+} from '@/lib/api/kernel'
 import { useSession } from 'next-auth/react'
 import type { GraphSearchResponse, KernelGraphSubgraphResponse } from '@/types/kernel'
 
@@ -21,6 +26,7 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/lib/api/kernel', () => ({
   fetchKernelSubgraph: jest.fn(),
   fetchRelationClaims: jest.fn(),
+  fetchRelationConflicts: jest.fn(),
   searchKernelGraph: jest.fn(),
 }))
 
@@ -171,12 +177,21 @@ describe('KnowledgeGraphClient', () => {
   const mockFetchRelationClaims = fetchRelationClaims as jest.MockedFunction<
     typeof fetchRelationClaims
   >
+  const mockFetchRelationConflicts = fetchRelationConflicts as jest.MockedFunction<
+    typeof fetchRelationConflicts
+  >
   const mockSearchKernelGraph = searchKernelGraph as jest.MockedFunction<typeof searchKernelGraph>
 
   beforeEach(() => {
     jest.clearAllMocks()
     mockFetchRelationClaims.mockResolvedValue({
       claims: [],
+      total: 0,
+      offset: 0,
+      limit: 200,
+    })
+    mockFetchRelationConflicts.mockResolvedValue({
+      conflicts: [],
       total: 0,
       offset: 0,
       limit: 200,

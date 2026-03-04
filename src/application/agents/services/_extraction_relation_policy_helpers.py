@@ -44,6 +44,7 @@ type RelationValidationState = Literal[
     "SELF_LOOP",
 ]
 type RelationPersistability = Literal["PERSISTABLE", "NON_PERSISTABLE"]
+type RelationClaimPolarity = Literal["SUPPORT", "REFUTE", "UNCERTAIN", "HYPOTHESIS"]
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,9 @@ class _ResolvedRelationCandidate:
     validation_reason: str
     evidence_excerpt: str | None = None
     evidence_locator: str | None = None
+    polarity: RelationClaimPolarity = "UNCERTAIN"
+    claim_text: str | None = None
+    claim_section: str | None = None
     persistability: RelationPersistability = "PERSISTABLE"
 
 

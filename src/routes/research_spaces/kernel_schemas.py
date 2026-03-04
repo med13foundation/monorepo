@@ -8,10 +8,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.domain.entities.kernel.claim_evidence import KernelClaimEvidence
 from src.domain.entities.kernel.entities import KernelEntity
 from src.domain.entities.kernel.observations import KernelObservation
 from src.domain.entities.kernel.provenance import KernelProvenanceRecord
-from src.domain.entities.kernel.relation_claims import KernelRelationClaim
+from src.domain.entities.kernel.relation_claims import (
+    KernelRelationClaim,
+    KernelRelationConflictSummary,
+)
 from src.domain.entities.kernel.relations import KernelRelation
 from src.type_definitions.common import JSONObject, JSONValue
 
@@ -336,6 +340,9 @@ class KernelRelationClaimResponse(BaseModel):
     validation_reason: str | None
     persistability: str
     claim_status: str
+    polarity: str
+    claim_text: str | None
+    claim_section: str | None
     linked_relation_id: UUID | None
     metadata: JSONObject
     triaged_by: UUID | None
@@ -368,6 +375,9 @@ class KernelRelationClaimResponse(BaseModel):
             validation_reason=model.validation_reason,
             persistability=str(model.persistability),
             claim_status=str(model.claim_status),
+            polarity=str(model.polarity),
+            claim_text=model.claim_text,
+            claim_section=model.claim_section,
             linked_relation_id=(
                 _to_uuid(linked_relation_id_raw)
                 if linked_relation_id_raw is not None
@@ -389,6 +399,100 @@ class KernelRelationClaimListResponse(BaseModel):
     model_config = ConfigDict(strict=True)
 
     claims: list[KernelRelationClaimResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class KernelClaimEvidenceResponse(BaseModel):
+    """Response model for one claim evidence row."""
+
+    model_config = ConfigDict(strict=True)
+
+    id: UUID
+    claim_id: UUID
+    source_document_id: UUID | None
+    agent_run_id: str | None
+    sentence: str | None
+    sentence_source: str | None
+    sentence_confidence: str | None
+    sentence_rationale: str | None
+    figure_reference: str | None
+    table_reference: str | None
+    confidence: float
+    metadata: JSONObject
+    created_at: datetime
+
+    @classmethod
+    def from_model(cls, model: KernelClaimEvidence) -> KernelClaimEvidenceResponse:
+        source_document_id_raw = getattr(model, "source_document_id", None)
+        metadata_payload = getattr(model, "metadata_payload", {}) or {}
+        return cls(
+            id=_to_uuid(model.id),
+            claim_id=_to_uuid(model.claim_id),
+            source_document_id=(
+                _to_uuid(source_document_id_raw)
+                if source_document_id_raw is not None
+                else None
+            ),
+            agent_run_id=model.agent_run_id,
+            sentence=model.sentence,
+            sentence_source=model.sentence_source,
+            sentence_confidence=model.sentence_confidence,
+            sentence_rationale=model.sentence_rationale,
+            figure_reference=model.figure_reference,
+            table_reference=model.table_reference,
+            confidence=float(model.confidence),
+            metadata=dict(metadata_payload),
+            created_at=model.created_at,
+        )
+
+
+class KernelClaimEvidenceListResponse(BaseModel):
+    """List response for claim evidence rows."""
+
+    model_config = ConfigDict(strict=True)
+
+    claim_id: UUID
+    evidence: list[KernelClaimEvidenceResponse]
+    total: int
+
+
+class KernelRelationConflictResponse(BaseModel):
+    """Conflict summary for one canonical relation."""
+
+    model_config = ConfigDict(strict=True)
+
+    relation_id: UUID
+    support_count: int
+    refute_count: int
+    support_claim_ids: list[UUID]
+    refute_claim_ids: list[UUID]
+
+    @classmethod
+    def from_model(
+        cls,
+        model: KernelRelationConflictSummary,
+    ) -> KernelRelationConflictResponse:
+        return cls(
+            relation_id=_to_uuid(model.relation_id),
+            support_count=int(model.support_count),
+            refute_count=int(model.refute_count),
+            support_claim_ids=[
+                _to_uuid(claim_id) for claim_id in model.support_claim_ids
+            ],
+            refute_claim_ids=[
+                _to_uuid(claim_id) for claim_id in model.refute_claim_ids
+            ],
+        )
+
+
+class KernelRelationConflictListResponse(BaseModel):
+    """List response for mixed-polarity relation conflicts."""
+
+    model_config = ConfigDict(strict=True)
+
+    conflicts: list[KernelRelationConflictResponse]
     total: int
     offset: int
     limit: int

@@ -37,6 +37,9 @@ if TYPE_CHECKING:
     from src.domain.ports.evidence_sentence_harness_port import (
         EvidenceSentenceHarnessPort,
     )
+    from src.domain.repositories.kernel.claim_evidence_repository import (
+        KernelClaimEvidenceRepository,
+    )
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
     from src.domain.repositories.kernel.relation_claim_repository import (
         KernelRelationClaimRepository,
@@ -57,6 +60,7 @@ class ExtractionServiceDependencies:
     endpoint_shape_judge: MappingJudgePort | None = None
     relation_repository: KernelRelationRepository | None = None
     relation_claim_repository: KernelRelationClaimRepository | None = None
+    claim_evidence_repository: KernelClaimEvidenceRepository | None = None
     entity_repository: KernelEntityRepository | None = None
     dictionary_service: DictionaryPort | None = None
     concept_service: ConceptPort | None = None

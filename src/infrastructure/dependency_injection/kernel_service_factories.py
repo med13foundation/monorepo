@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from src.application.services.kernel import (
+        KernelClaimEvidenceService,
         KernelEntityService,
         KernelObservationService,
         KernelRelationClaimService,
@@ -124,6 +125,18 @@ class KernelServiceFactoryMixin:
 
         relation_claim_repo = SqlAlchemyKernelRelationClaimRepository(session)
         return KernelRelationClaimService(relation_claim_repo=relation_claim_repo)
+
+    def create_kernel_claim_evidence_service(
+        self,
+        session: Session,
+    ) -> KernelClaimEvidenceService:
+        from src.application.services.kernel import KernelClaimEvidenceService
+        from src.infrastructure.repositories.kernel import (
+            SqlAlchemyKernelClaimEvidenceRepository,
+        )
+
+        claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(session)
+        return KernelClaimEvidenceService(claim_evidence_repo=claim_evidence_repo)
 
     def create_dictionary_management_service(
         self,

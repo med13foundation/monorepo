@@ -22,6 +22,7 @@ from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
 from src.infrastructure.security.jwt_provider import JWTProvider
 from src.main import create_app
 from src.models.database.base import Base
+from src.models.database.kernel.claim_evidence import ClaimEvidenceModel
 from src.models.database.kernel.dictionary import TransformRegistryModel
 from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.kernel.relations import RelationEvidenceModel
@@ -780,6 +781,9 @@ def test_relation_claims_list_and_triage_membership_guards(
             validation_reason="Constraint mismatch",
             persistability="NON_PERSISTABLE",
             claim_status="OPEN",
+            polarity="REFUTE",
+            claim_text="No significant association was observed.",
+            claim_section="results",
             linked_relation_id=None,
             metadata_payload={"test": True},
             triaged_by=None,
@@ -800,6 +804,15 @@ def test_relation_claims_list_and_triage_membership_guards(
     assert list_payload["total"] == 1
     assert len(list_payload["claims"]) == 1
     assert list_payload["claims"][0]["id"] == str(claim_id)
+    assert list_payload["claims"][0]["polarity"] == "REFUTE"
+
+    polarity_filter_response = test_client.get(
+        f"/research-spaces/{space.id}/relation-claims",
+        headers=owner_headers,
+        params={"polarity": "REFUTE"},
+    )
+    assert polarity_filter_response.status_code == 200, polarity_filter_response.text
+    assert polarity_filter_response.json()["total"] == 1
 
     forbidden_patch = test_client.patch(
         f"/research-spaces/{space.id}/relation-claims/{claim_id}",
@@ -817,6 +830,139 @@ def test_relation_claims_list_and_triage_membership_guards(
     patch_payload = patch_response.json()
     assert patch_payload["claim_status"] == "NEEDS_MAPPING"
     assert patch_payload["triaged_by"] == str(researcher_user.id)
+
+
+def test_relation_claim_evidence_and_conflict_endpoints(
+    postgres_required,
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    assert postgres_required is None
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    relation_id = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=source_id,
+        target_id=target_id,
+    )
+
+    claim_id: UUID
+    with _session_for_api(db_session) as session:
+        support_claim = RelationClaimModel(
+            research_space_id=space.id,
+            source_document_id=None,
+            agent_run_id="run-conflict-support",
+            source_type="GENE",
+            relation_type="ASSOCIATED_WITH",
+            target_type="PHENOTYPE",
+            source_label="MED13",
+            target_label="Cardiomyopathy",
+            confidence=0.81,
+            validation_state="ALLOWED",
+            validation_reason=None,
+            persistability="PERSISTABLE",
+            claim_status="OPEN",
+            polarity="SUPPORT",
+            claim_text="MED13 variants are associated with cardiomyopathy.",
+            claim_section="results",
+            linked_relation_id=relation_id,
+            metadata_payload={},
+            triaged_by=None,
+            triaged_at=None,
+        )
+        refute_claim = RelationClaimModel(
+            research_space_id=space.id,
+            source_document_id=None,
+            agent_run_id="run-conflict-refute",
+            source_type="GENE",
+            relation_type="ASSOCIATED_WITH",
+            target_type="PHENOTYPE",
+            source_label="MED13",
+            target_label="Cardiomyopathy",
+            confidence=0.77,
+            validation_state="ALLOWED",
+            validation_reason=None,
+            persistability="PERSISTABLE",
+            claim_status="OPEN",
+            polarity="REFUTE",
+            claim_text="No association was observed for MED13 variants.",
+            claim_section="results",
+            linked_relation_id=relation_id,
+            metadata_payload={},
+            triaged_by=None,
+            triaged_at=None,
+        )
+        session.add(support_claim)
+        session.add(refute_claim)
+        session.commit()
+        session.refresh(support_claim)
+        claim_id = support_claim.id
+        session.add(
+            ClaimEvidenceModel(
+                claim_id=support_claim.id,
+                source_document_id=None,
+                agent_run_id="run-conflict-support",
+                sentence=(
+                    "MED13 variants were associated with cardiomyopathy "
+                    "in a curated cohort analysis."
+                ),
+                sentence_source="verbatim_span",
+                sentence_confidence="high",
+                sentence_rationale=None,
+                figure_reference=None,
+                table_reference=None,
+                confidence=0.81,
+                metadata_payload={},
+            ),
+        )
+        session.commit()
+
+    evidence_response = test_client.get(
+        f"/research-spaces/{space.id}/relation-claims/{claim_id}/evidence",
+        headers=headers,
+    )
+    assert evidence_response.status_code == 200, evidence_response.text
+    evidence_payload = evidence_response.json()
+    assert evidence_payload["claim_id"] == str(claim_id)
+    assert evidence_payload["total"] == 1
+    assert evidence_payload["evidence"][0]["sentence_source"] == "verbatim_span"
+
+    conflict_response = test_client.get(
+        f"/research-spaces/{space.id}/relations/conflicts",
+        headers=headers,
+        params={"offset": 0, "limit": 50},
+    )
+    assert conflict_response.status_code == 200, conflict_response.text
+    conflict_payload = conflict_response.json()
+    assert conflict_payload["total"] >= 1
+    relation_ids = {row["relation_id"] for row in conflict_payload["conflicts"]}
+    assert str(relation_id) in relation_ids
 
 
 def test_create_relation_persists_evidence_sentence(
@@ -918,7 +1064,7 @@ def test_create_relation_persists_evidence_sentence(
     )
 
 
-def test_relation_claim_resolution_persists_evidence_sentence_from_claim_metadata(
+def test_relation_claim_resolution_persists_evidence_sentence_from_claim_evidence(
     postgres_required,
     test_client,
     db_session,
@@ -967,16 +1113,13 @@ def test_relation_claim_resolution_persists_evidence_sentence_from_claim_metadat
             validation_reason="allowed_by_active_constraint",
             persistability="PERSISTABLE",
             claim_status="OPEN",
+            polarity="SUPPORT",
+            claim_text="MED13 variants are associated with cardiomyopathy.",
+            claim_section="results",
             linked_relation_id=None,
             metadata_payload={
                 "source_entity_id": str(source_entity_id),
                 "target_entity_id": str(target_entity_id),
-                "relation_evidence": {
-                    "span_text": (
-                        "MED13 variants were associated with cardiomyopathy "
-                        "in a curated cohort analysis."
-                    ),
-                },
             },
             triaged_by=None,
             triaged_at=None,
@@ -985,6 +1128,25 @@ def test_relation_claim_resolution_persists_evidence_sentence_from_claim_metadat
         session.commit()
         session.refresh(claim)
         claim_id = claim.id
+        session.add(
+            ClaimEvidenceModel(
+                claim_id=claim_id,
+                source_document_id=None,
+                agent_run_id="run-claim-resolution-span",
+                sentence=(
+                    "MED13 variants were associated with cardiomyopathy "
+                    "in a curated cohort analysis."
+                ),
+                sentence_source="verbatim_span",
+                sentence_confidence="high",
+                sentence_rationale=None,
+                figure_reference=None,
+                table_reference=None,
+                confidence=0.72,
+                metadata_payload={},
+            ),
+        )
+        session.commit()
 
     patch_response = test_client.patch(
         f"/research-spaces/{space.id}/relation-claims/{claim_id}",

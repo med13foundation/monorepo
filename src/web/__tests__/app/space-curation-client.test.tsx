@@ -80,6 +80,9 @@ describe('SpaceCurationClient', () => {
           validation_reason: 'Out of ontology constraints',
           persistability: 'NON_PERSISTABLE' as const,
           claim_status: 'OPEN' as const,
+          polarity: 'UNCERTAIN' as const,
+          claim_text: 'MED13 was associated with cardiomyopathy in one cohort.',
+          claim_section: 'results',
           linked_relation_id: null,
           metadata: {},
           triaged_by: null,
@@ -93,6 +96,12 @@ describe('SpaceCurationClient', () => {
       limit: 25,
     },
     claimsError: null,
+    relationConflicts: {
+      conflicts: [],
+      total: 0,
+      offset: 0,
+      limit: 50,
+    },
     entityLabelsById: {
       'ent-1': 'MED13',
       'ent-2': 'Cardiomyopathy',
@@ -113,6 +122,7 @@ describe('SpaceCurationClient', () => {
       claimStatus: '',
       validationState: '',
       persistability: '',
+      polarity: '',
       relationType: '',
       sourceDocumentId: '',
       linkedRelationId: '',
@@ -138,9 +148,35 @@ describe('SpaceCurationClient', () => {
     expect(screen.getByText('AI Low certainty')).toBeInTheDocument()
     expect(screen.getByText('Claim Status')).toBeInTheDocument()
     expect(screen.getByText('Validation State')).toBeInTheDocument()
+    expect(screen.getByText('Polarity')).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /Needs mapping/i }),
     ).toBeInTheDocument()
+  })
+
+  it('renders conflict badge on graph cards when relation is conflicting', () => {
+    render(
+      <SpaceCurationClient
+        {...baseProps}
+        activeTab="graph"
+        relationConflicts={{
+          conflicts: [
+            {
+              relation_id: 'rel-1',
+              support_count: 3,
+              refute_count: 1,
+              support_claim_ids: ['claim-a', 'claim-b', 'claim-c'],
+              refute_claim_ids: ['claim-d'],
+            },
+          ],
+          total: 1,
+          offset: 0,
+          limit: 50,
+        }}
+      />,
+    )
+
+    expect(screen.getByText('Conflict 3/1')).toBeInTheDocument()
   })
 
   it('renders evidence sentence details and paper links in graph cards', () => {

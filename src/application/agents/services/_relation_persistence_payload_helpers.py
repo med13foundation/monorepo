@@ -34,6 +34,9 @@ def relation_payload(relation: ExtractedRelation) -> JSONObject:
         "source_type": relation.source_type,
         "relation_type": relation.relation_type,
         "target_type": relation.target_type,
+        "polarity": relation.polarity,
+        "claim_text": relation.claim_text,
+        "claim_section": relation.claim_section,
         "source_label": relation.source_label,
         "target_label": relation.target_label,
         "evidence_excerpt": relation.evidence_excerpt,
@@ -48,6 +51,7 @@ def candidate_payload(candidate: _ResolvedRelationCandidate) -> JSONObject:
         "source_type": candidate.source_type,
         "relation_type": candidate.relation_type,
         "target_type": candidate.target_type,
+        "polarity": candidate.polarity,
         "confidence": candidate.confidence,
         "validation_state": candidate.validation_state,
         "validation_reason": candidate.validation_reason,
@@ -65,6 +69,10 @@ def candidate_payload(candidate: _ResolvedRelationCandidate) -> JSONObject:
         payload["evidence_excerpt"] = candidate.evidence_excerpt
     if candidate.evidence_locator is not None:
         payload["evidence_locator"] = candidate.evidence_locator
+    if candidate.claim_text is not None:
+        payload["claim_text"] = candidate.claim_text
+    if candidate.claim_section is not None:
+        payload["claim_section"] = candidate.claim_section
     return payload
 
 
