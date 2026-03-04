@@ -129,6 +129,8 @@ Set these in staging/prod (prefer Secret Manager):
 - `MED13_RATE_LIMIT_REDIS_URL`
 - `MED13_ENV=staging` or `MED13_ENV=production`
 - `DATABASE_URL` and `ASYNC_DATABASE_URL` (Postgres with TLS)
+- `MED13_ENABLE_ENTITY_EMBEDDINGS=0|1` (keep `0` until embeddings are refreshed)
+- `MED13_ENABLE_RELATION_SUGGESTIONS=0|1` (keep `0` until similarity is validated)
 
 For local only, `MED13_ALLOW_MISSING_API_KEYS=1` may be used during development.
 

@@ -7,18 +7,46 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.application.services.kernel import (
+    ConceptManagementService,
+    DictionaryManagementService,
+    KernelClaimEvidenceService,
+    KernelEntityService,
+    KernelEntitySimilarityService,
+    KernelObservationService,
+    KernelRelationClaimService,
+    KernelRelationService,
+    KernelRelationSuggestionService,
+    ProvenanceService,
+)
+from src.infrastructure.embeddings import HybridTextEmbeddingProvider
+from src.infrastructure.llm.adapters import (
+    ArtanaDictionarySearchHarnessAdapter,
+    DeterministicConceptDecisionHarnessAdapter,
+)
+from src.infrastructure.repositories.kernel import (
+    SqlAlchemyConceptRepository,
+    SqlAlchemyDictionaryRepository,
+    SqlAlchemyEntityEmbeddingRepository,
+    SqlAlchemyKernelClaimEvidenceRepository,
+    SqlAlchemyKernelEntityRepository,
+    SqlAlchemyKernelObservationRepository,
+    SqlAlchemyKernelRelationClaimRepository,
+    SqlAlchemyKernelRelationRepository,
+    SqlAlchemyProvenanceRepository,
+)
+from src.infrastructure.security.phi_encryption import (
+    build_phi_encryption_service_from_env,
+    is_phi_encryption_enabled,
+)
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from src.application.services.kernel import (
-        KernelClaimEvidenceService,
-        KernelEntityService,
-        KernelObservationService,
-        KernelRelationClaimService,
-        KernelRelationService,
-        ProvenanceService,
-    )
     from src.domain.ports import ConceptPort, DictionaryPort
+    from src.domain.repositories.kernel.entity_embedding_repository import (
+        EntityEmbeddingRepository,
+    )
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
 
 
@@ -27,14 +55,6 @@ class KernelServiceFactoryMixin:
 
     @staticmethod
     def _build_entity_repository(session: Session) -> KernelEntityRepository:
-        from src.infrastructure.repositories.kernel import (
-            SqlAlchemyKernelEntityRepository,
-        )
-        from src.infrastructure.security.phi_encryption import (
-            build_phi_encryption_service_from_env,
-            is_phi_encryption_enabled,
-        )
-
         enable_phi_encryption = is_phi_encryption_enabled()
         phi_encryption_service = (
             build_phi_encryption_service_from_env() if enable_phi_encryption else None
@@ -49,11 +69,6 @@ class KernelServiceFactoryMixin:
         self,
         session: Session,
     ) -> KernelEntityService:
-        from src.application.services.kernel import KernelEntityService
-        from src.infrastructure.repositories.kernel import (
-            SqlAlchemyDictionaryRepository,
-        )
-
         entity_repo = self._build_entity_repository(session)
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
         return KernelEntityService(
@@ -61,21 +76,29 @@ class KernelServiceFactoryMixin:
             dictionary_repo=dictionary_repo,
         )
 
+    @staticmethod
+    def _build_entity_embedding_repository(
+        session: Session,
+    ) -> EntityEmbeddingRepository:
+        return SqlAlchemyEntityEmbeddingRepository(session)
+
+    def create_kernel_entity_similarity_service(
+        self,
+        session: Session,
+    ) -> KernelEntitySimilarityService:
+        entity_repo = self._build_entity_repository(session)
+        entity_embedding_repo = self._build_entity_embedding_repository(session)
+        embedding_provider = HybridTextEmbeddingProvider()
+        return KernelEntitySimilarityService(
+            entity_repo=entity_repo,
+            embedding_repo=entity_embedding_repo,
+            embedding_provider=embedding_provider,
+        )
+
     def create_kernel_observation_service(
         self,
         session: Session,
     ) -> KernelObservationService:
-        from src.application.services.kernel import (
-            DictionaryManagementService,
-            KernelObservationService,
-        )
-        from src.infrastructure.embeddings import HybridTextEmbeddingProvider
-        from src.infrastructure.llm.adapters import ArtanaDictionarySearchHarnessAdapter
-        from src.infrastructure.repositories.kernel import (
-            SqlAlchemyDictionaryRepository,
-            SqlAlchemyKernelObservationRepository,
-        )
-
         observation_repo = SqlAlchemyKernelObservationRepository(session)
         entity_repo = self._build_entity_repository(session)
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
@@ -99,12 +122,6 @@ class KernelServiceFactoryMixin:
         self,
         session: Session,
     ) -> KernelRelationService:
-        from src.application.services.kernel import KernelRelationService
-        from src.infrastructure.repositories.kernel import (
-            SqlAlchemyDictionaryRepository,
-            SqlAlchemyKernelRelationRepository,
-        )
-
         relation_repo = SqlAlchemyKernelRelationRepository(session)
         entity_repo = self._build_entity_repository(session)
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
@@ -114,15 +131,25 @@ class KernelServiceFactoryMixin:
             dictionary_repo=dictionary_repo,
         )
 
+    def create_kernel_relation_suggestion_service(
+        self,
+        session: Session,
+    ) -> KernelRelationSuggestionService:
+        relation_repo = SqlAlchemyKernelRelationRepository(session)
+        entity_repo = self._build_entity_repository(session)
+        dictionary_repo = SqlAlchemyDictionaryRepository(session)
+        embedding_repo = self._build_entity_embedding_repository(session)
+        return KernelRelationSuggestionService(
+            entity_repo=entity_repo,
+            relation_repo=relation_repo,
+            dictionary_repo=dictionary_repo,
+            embedding_repo=embedding_repo,
+        )
+
     def create_kernel_relation_claim_service(
         self,
         session: Session,
     ) -> KernelRelationClaimService:
-        from src.application.services.kernel import KernelRelationClaimService
-        from src.infrastructure.repositories.kernel import (
-            SqlAlchemyKernelRelationClaimRepository,
-        )
-
         relation_claim_repo = SqlAlchemyKernelRelationClaimRepository(session)
         return KernelRelationClaimService(relation_claim_repo=relation_claim_repo)
 
@@ -130,11 +157,6 @@ class KernelServiceFactoryMixin:
         self,
         session: Session,
     ) -> KernelClaimEvidenceService:
-        from src.application.services.kernel import KernelClaimEvidenceService
-        from src.infrastructure.repositories.kernel import (
-            SqlAlchemyKernelClaimEvidenceRepository,
-        )
-
         claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(session)
         return KernelClaimEvidenceService(claim_evidence_repo=claim_evidence_repo)
 
@@ -142,13 +164,6 @@ class KernelServiceFactoryMixin:
         self,
         session: Session,
     ) -> DictionaryPort:
-        from src.application.services.kernel import DictionaryManagementService
-        from src.infrastructure.embeddings import HybridTextEmbeddingProvider
-        from src.infrastructure.llm.adapters import ArtanaDictionarySearchHarnessAdapter
-        from src.infrastructure.repositories.kernel import (
-            SqlAlchemyDictionaryRepository,
-        )
-
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
         embedding_provider = HybridTextEmbeddingProvider()
         search_harness = ArtanaDictionarySearchHarnessAdapter(
@@ -165,12 +180,6 @@ class KernelServiceFactoryMixin:
         self,
         session: Session,
     ) -> ConceptPort:
-        from src.application.services.kernel import ConceptManagementService
-        from src.infrastructure.llm.adapters import (
-            DeterministicConceptDecisionHarnessAdapter,
-        )
-        from src.infrastructure.repositories.kernel import SqlAlchemyConceptRepository
-
         concept_repo = SqlAlchemyConceptRepository(session)
         concept_harness = DeterministicConceptDecisionHarnessAdapter()
         return ConceptManagementService(
@@ -182,10 +191,5 @@ class KernelServiceFactoryMixin:
         self,
         session: Session,
     ) -> ProvenanceService:
-        from src.application.services.kernel import ProvenanceService
-        from src.infrastructure.repositories.kernel import (
-            SqlAlchemyProvenanceRepository,
-        )
-
         provenance_repo = SqlAlchemyProvenanceRepository(session)
         return ProvenanceService(provenance_repo=provenance_repo)

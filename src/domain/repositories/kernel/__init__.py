@@ -8,6 +8,7 @@ replacing the 7 entity-specific repository interfaces.
 from .claim_evidence_repository import KernelClaimEvidenceRepository
 from .concept_repository import ConceptRepository
 from .dictionary_repository import DictionaryRepository
+from .entity_embedding_repository import EntityEmbeddingRepository
 from .entity_repository import KernelEntityRepository
 from .observation_repository import KernelObservationRepository
 from .provenance_repository import ProvenanceRepository
@@ -17,6 +18,7 @@ from .relation_repository import KernelRelationRepository
 __all__ = [
     "ConceptRepository",
     "DictionaryRepository",
+    "EntityEmbeddingRepository",
     "KernelClaimEvidenceRepository",
     "KernelEntityRepository",
     "KernelObservationRepository",

@@ -18,6 +18,7 @@ import type {
 import { ConceptDecisionsPanel } from './concepts/concept-decisions-panel'
 import { ConceptMembersPanel } from './concepts/concept-members-panel'
 import { ConceptPolicyPanel } from './concepts/concept-policy-panel'
+import { ConceptResearchTriagePanel } from './concepts/concept-research-triage-panel'
 import { ConceptSetsPanel } from './concepts/concept-sets-panel'
 
 interface SpaceConceptsClientProps {
@@ -90,6 +91,7 @@ export default function SpaceConceptsClient({
           <TabsTrigger value="members">Members & Aliases</TabsTrigger>
           <TabsTrigger value="policy">Policy</TabsTrigger>
           <TabsTrigger value="decisions">Decisions</TabsTrigger>
+          <TabsTrigger value="research-triage">Research Triage</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sets" className="mt-4">
@@ -130,6 +132,14 @@ export default function SpaceConceptsClient({
             conceptMembers={data.members?.concept_members ?? []}
             conceptDecisions={data.decisions?.concept_decisions ?? []}
             error={errors.decisions}
+          />
+        </TabsContent>
+
+        <TabsContent value="research-triage" className="mt-4">
+          <ConceptResearchTriagePanel
+            spaceId={spaceId}
+            canEdit={canEditConcepts}
+            conceptMembers={data.members?.concept_members ?? []}
           />
         </TabsContent>
       </Tabs>

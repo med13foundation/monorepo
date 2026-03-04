@@ -10,9 +10,11 @@ from src.application.services.kernel import (
     DictionaryManagementService,
     KernelClaimEvidenceService,
     KernelEntityService,
+    KernelEntitySimilarityService,
     KernelObservationService,
     KernelRelationClaimService,
     KernelRelationService,
+    KernelRelationSuggestionService,
     ProvenanceService,
 )
 from src.database.session import get_session
@@ -31,6 +33,7 @@ from src.infrastructure.llm.adapters.dictionary_search_harness_adapter import (
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyConceptRepository,
     SqlAlchemyDictionaryRepository,
+    SqlAlchemyEntityEmbeddingRepository,
     SqlAlchemyKernelClaimEvidenceRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
@@ -97,6 +100,20 @@ def get_kernel_entity_service(
     )
 
 
+def get_kernel_entity_similarity_service(
+    session: Session = Depends(get_session),
+) -> KernelEntitySimilarityService:
+    """Kernel entity similarity service (hybrid graph + embeddings)."""
+    entity_repo = _build_entity_repository(session)
+    embedding_repo = SqlAlchemyEntityEmbeddingRepository(session)
+    embedding_provider = HybridTextEmbeddingProvider()
+    return KernelEntitySimilarityService(
+        entity_repo=entity_repo,
+        embedding_repo=embedding_repo,
+        embedding_provider=embedding_provider,
+    )
+
+
 def get_kernel_observation_service(
     session: Session = Depends(get_session),
 ) -> KernelObservationService:
@@ -135,6 +152,22 @@ def get_kernel_relation_service(
     )
 
 
+def get_kernel_relation_suggestion_service(
+    session: Session = Depends(get_session),
+) -> KernelRelationSuggestionService:
+    """Kernel relation suggestion service (dictionary-constrained hybrid scoring)."""
+    relation_repo = SqlAlchemyKernelRelationRepository(session)
+    entity_repo = _build_entity_repository(session)
+    dictionary_repo = SqlAlchemyDictionaryRepository(session)
+    embedding_repo = SqlAlchemyEntityEmbeddingRepository(session)
+    return KernelRelationSuggestionService(
+        entity_repo=entity_repo,
+        relation_repo=relation_repo,
+        dictionary_repo=dictionary_repo,
+        embedding_repo=embedding_repo,
+    )
+
+
 def get_kernel_relation_claim_service(
     session: Session = Depends(get_session),
 ) -> KernelRelationClaimService:
@@ -170,9 +203,11 @@ __all__ = [
     "get_concept_service",
     "get_dictionary_service",
     "get_kernel_entity_service",
+    "get_kernel_entity_similarity_service",
     "get_kernel_claim_evidence_service",
     "get_kernel_observation_service",
     "get_kernel_relation_service",
+    "get_kernel_relation_suggestion_service",
     "get_kernel_relation_claim_service",
     "get_provenance_service",
     "get_ingestion_pipeline",

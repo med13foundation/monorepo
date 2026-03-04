@@ -30,7 +30,7 @@ from .dictionary import (
     VariableDefinitionModel,
     VariableSynonymModel,
 )
-from .entities import EntityIdentifierModel, EntityModel
+from .entities import EntityEmbeddingModel, EntityIdentifierModel, EntityModel
 from .observations import ObservationModel
 from .provenance import ProvenanceModel
 from .relation_claims import RelationClaimModel
@@ -64,6 +64,7 @@ __all__ = [
     # Core Data (Layer 2)
     "EntityModel",
     "EntityIdentifierModel",
+    "EntityEmbeddingModel",
     "ObservationModel",
     "RelationEvidenceModel",
     "RelationClaimModel",

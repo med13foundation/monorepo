@@ -22,6 +22,22 @@ jest.mock('@/app/actions/kernel-relations', () => ({
   updateRelationClaimStatusAction: jest.fn().mockResolvedValue({ success: true, data: {} }),
 }))
 
+jest.mock('@/app/actions/kernel-hybrid-duplicates', () => ({
+  listHypothesisClaimsAction: jest.fn().mockResolvedValue({
+    success: true,
+    data: [],
+  }),
+  createUserHypothesisAction: jest.fn().mockResolvedValue({
+    success: true,
+    data: { decisionId: 'decision-1' },
+  }),
+}))
+
+jest.mock('@/app/(dashboard)/spaces/[spaceId]/curation/curation-hypotheses-card', () => ({
+  __esModule: true,
+  default: () => <div>Hypotheses</div>,
+}))
+
 jest.mock('sonner', () => ({
   toast: {
     error: jest.fn(),
@@ -145,6 +161,7 @@ describe('SpaceCurationClient', () => {
   it('renders extraction claims tab with certainty and claim filters', () => {
     render(<SpaceCurationClient {...baseProps} activeTab="claims" />)
 
+    expect(screen.getByText('Hypotheses')).toBeInTheDocument()
     expect(screen.getByText('AI Low certainty')).toBeInTheDocument()
     expect(screen.getByText('Claim Status')).toBeInTheDocument()
     expect(screen.getByText('Validation State')).toBeInTheDocument()

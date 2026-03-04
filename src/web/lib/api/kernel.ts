@@ -1,8 +1,11 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut, type ApiRequestOptions } from '@/lib/api/client'
 import type {
+  KernelEntityEmbeddingRefreshRequest,
+  KernelEntityEmbeddingRefreshResponse,
   KernelEntityCreateRequest,
   KernelEntityListResponse,
   KernelEntityResponse,
+  KernelEntitySimilarityListResponse,
   KernelEntityUpdateRequest,
   KernelEntityUpsertResponse,
   KernelGraphExportResponse,
@@ -17,6 +20,8 @@ import type {
   KernelProvenanceListResponse,
   KernelProvenanceResponse,
   KernelRelationCreateRequest,
+  KernelRelationSuggestionListResponse,
+  KernelRelationSuggestionRequest,
   RelationConflictListResponse,
   RelationClaimListResponse,
   RelationClaimResponse,
@@ -89,6 +94,54 @@ export async function fetchKernelEntity(
     throw new Error('Authentication token is required for fetchKernelEntity')
   }
   return apiGet<KernelEntityResponse>(`/research-spaces/${spaceId}/entities/${entityId}`, { token })
+}
+
+export interface KernelEntitySimilarParams {
+  limit?: number
+  min_similarity?: number
+  target_entity_types?: string[]
+}
+
+export async function fetchKernelSimilarEntities(
+  spaceId: string,
+  entityId: string,
+  params: KernelEntitySimilarParams = {},
+  token?: string,
+): Promise<KernelEntitySimilarityListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchKernelSimilarEntities')
+  }
+
+  const options: ApiRequestOptions<KernelEntitySimilarityListResponse> = {
+    token,
+    params: {
+      limit: params.limit ?? 20,
+      min_similarity: params.min_similarity ?? 0.72,
+      ...(params.target_entity_types && params.target_entity_types.length > 0
+        ? { target_entity_types: params.target_entity_types.join(',') }
+        : {}),
+    },
+  }
+
+  return apiGet<KernelEntitySimilarityListResponse>(
+    `/research-spaces/${spaceId}/entities/${entityId}/similar`,
+    options,
+  )
+}
+
+export async function refreshKernelEntityEmbeddings(
+  spaceId: string,
+  payload: KernelEntityEmbeddingRefreshRequest,
+  token?: string,
+): Promise<KernelEntityEmbeddingRefreshResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for refreshKernelEntityEmbeddings')
+  }
+  return apiPost<KernelEntityEmbeddingRefreshResponse>(
+    `/research-spaces/${spaceId}/entities/embeddings/refresh`,
+    payload,
+    { token },
+  )
 }
 
 export async function updateKernelEntity(
@@ -229,6 +282,21 @@ export async function createKernelRelation(
     throw new Error('Authentication token is required for createKernelRelation')
   }
   return apiPost<KernelRelationResponse>(`/research-spaces/${spaceId}/relations`, payload, { token })
+}
+
+export async function suggestKernelRelations(
+  spaceId: string,
+  payload: KernelRelationSuggestionRequest,
+  token?: string,
+): Promise<KernelRelationSuggestionListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for suggestKernelRelations')
+  }
+  return apiPost<KernelRelationSuggestionListResponse>(
+    `/research-spaces/${spaceId}/graph/relation-suggestions`,
+    payload,
+    { token },
+  )
 }
 
 export async function updateKernelRelationCurationStatus(

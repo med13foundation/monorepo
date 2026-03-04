@@ -35,6 +35,42 @@ export interface KernelEntityListResponse {
   limit: number
 }
 
+export interface KernelEntitySimilarityScoreBreakdown {
+  vector_score: number
+  graph_overlap_score: number
+}
+
+export interface KernelEntitySimilarityResponse {
+  entity_id: string
+  entity_type: string
+  display_label: string | null
+  similarity_score: number
+  score_breakdown: KernelEntitySimilarityScoreBreakdown
+}
+
+export interface KernelEntitySimilarityListResponse {
+  source_entity_id: string
+  results: KernelEntitySimilarityResponse[]
+  total: number
+  limit: number
+  min_similarity: number
+}
+
+export interface KernelEntityEmbeddingRefreshRequest {
+  entity_ids?: string[]
+  limit?: number
+  model_name?: string
+  embedding_version?: number
+}
+
+export interface KernelEntityEmbeddingRefreshResponse {
+  requested: number
+  processed: number
+  refreshed: number
+  unchanged: number
+  missing_entities: string[]
+}
+
 export interface KernelObservationCreateRequest {
   subject_id: string
   variable_id: string
@@ -131,6 +167,44 @@ export interface KernelRelationListResponse {
   total: number
   offset: number
   limit: number
+}
+
+export interface KernelRelationSuggestionRequest {
+  source_entity_ids: string[]
+  limit_per_source?: number
+  min_score?: number
+  allowed_relation_types?: string[]
+  target_entity_types?: string[]
+  exclude_existing_relations?: boolean
+}
+
+export interface KernelRelationSuggestionScoreBreakdown {
+  vector_score: number
+  graph_overlap_score: number
+  relation_prior_score: number
+}
+
+export interface KernelRelationSuggestionConstraintCheck {
+  passed: boolean
+  source_entity_type: string
+  relation_type: string
+  target_entity_type: string
+}
+
+export interface KernelRelationSuggestionResponse {
+  source_entity_id: string
+  target_entity_id: string
+  relation_type: string
+  final_score: number
+  score_breakdown: KernelRelationSuggestionScoreBreakdown
+  constraint_check: KernelRelationSuggestionConstraintCheck
+}
+
+export interface KernelRelationSuggestionListResponse {
+  suggestions: KernelRelationSuggestionResponse[]
+  total: number
+  limit_per_source: number
+  min_score: number
 }
 
 export interface RelationClaimResponse {

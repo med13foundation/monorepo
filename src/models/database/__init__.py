@@ -34,6 +34,7 @@ from .kernel import (
     ConceptMemberModel,
     ConceptPolicyModel,
     ConceptSetModel,
+    EntityEmbeddingModel,
     EntityIdentifierModel,
     EntityModel,
     EntityResolutionPolicyModel,
@@ -107,6 +108,7 @@ __all__ = [
     # Kernel: Data (Layer 2)
     "EntityModel",
     "EntityIdentifierModel",
+    "EntityEmbeddingModel",
     "ObservationModel",
     "RelationClaimModel",
     "RelationEvidenceModel",

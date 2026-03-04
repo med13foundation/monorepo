@@ -41,6 +41,15 @@ from .dictionary import (
     VariableDefinition,
     VariableSynonym,
 )
+from .embeddings import (
+    KernelEntityEmbedding,
+    KernelEntitySimilarityCandidate,
+    KernelEntitySimilarityResult,
+    KernelEntitySimilarityScoreBreakdown,
+    KernelRelationSuggestionConstraintCheck,
+    KernelRelationSuggestionResult,
+    KernelRelationSuggestionScoreBreakdown,
+)
 from .entities import KernelEntity, KernelEntityIdentifier
 from .observations import KernelObservation
 from .provenance import KernelProvenanceRecord
@@ -72,8 +81,12 @@ __all__ = [
     "DictionarySearchResult",
     "DictionarySensitivityLevel",
     "EntityResolutionPolicy",
+    "KernelEntityEmbedding",
     "KernelEntity",
     "KernelEntityIdentifier",
+    "KernelEntitySimilarityCandidate",
+    "KernelEntitySimilarityResult",
+    "KernelEntitySimilarityScoreBreakdown",
     "KernelObservation",
     "KernelProvenanceRecord",
     "KernelRelationClaim",
@@ -99,6 +112,9 @@ __all__ = [
     "ValueSetItem",
     "VariableDefinition",
     "VariableSynonym",
+    "KernelRelationSuggestionConstraintCheck",
+    "KernelRelationSuggestionResult",
+    "KernelRelationSuggestionScoreBreakdown",
     "ConceptAlias",
     "ConceptDecision",
     "ConceptDecisionProposal",

@@ -26,6 +26,10 @@ jest.mock('@/app/(dashboard)/spaces/[spaceId]/concepts/concept-decisions-panel',
   ConceptDecisionsPanel: () => <div>Decisions Panel</div>,
 }))
 
+jest.mock('@/app/(dashboard)/spaces/[spaceId]/concepts/concept-research-triage-panel', () => ({
+  ConceptResearchTriagePanel: () => <div>Research Triage Panel</div>,
+}))
+
 describe('SpaceConceptsClient', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -86,6 +90,7 @@ describe('SpaceConceptsClient', () => {
     expect(screen.getByText('Members & Aliases')).toBeInTheDocument()
     expect(screen.getByText('Policy')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Decisions' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Research Triage' })).toBeInTheDocument()
   })
 
   it('shows read-only note when user cannot edit concepts', () => {

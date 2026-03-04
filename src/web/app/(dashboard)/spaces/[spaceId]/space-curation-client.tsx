@@ -39,6 +39,7 @@ import type {
   RelationClaimListResponse,
   RelationClaimResponse,
 } from '@/types/kernel'
+import CurationHypothesesCard from './curation/curation-hypotheses-card'
 
 interface SpaceCurationClientProps {
   spaceId: string
@@ -1011,6 +1012,11 @@ export default function SpaceCurationClient({
             </>
           ) : (
             <>
+              <CurationHypothesesCard
+                spaceId={spaceId}
+                canEdit={canCurate}
+              />
+
               <Card className="border-border/80 bg-card">
                 <CardContent className="border-b border-border/70 py-4">
                   <div className="flex flex-wrap items-center gap-2">

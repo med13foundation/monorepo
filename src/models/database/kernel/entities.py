@@ -10,12 +10,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.database.base import Base
+from src.models.database.types import VectorEmbedding
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
 
@@ -179,3 +180,64 @@ class EntityIdentifierModel(Base):
             f"<EntityIdentifierModel(entity={self.entity_id}, "
             f"ns={self.namespace}, val={self.identifier_value})>"
         )
+
+
+class EntityEmbeddingModel(Base):
+    """Embedding vectors for kernel entities used by hybrid graph retrieval."""
+
+    __tablename__ = "entity_embeddings"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    research_space_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("research_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    entity_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("entities.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    embedding: Mapped[list[float]] = mapped_column(
+        VectorEmbedding(1536),
+        nullable=False,
+        doc="pgvector embedding for kernel entity similarity and link prediction",
+    )
+    embedding_model: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+    embedding_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="1",
+    )
+    source_fingerprint: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("entity_id", name="uq_entity_embeddings_entity_id"),
+        UniqueConstraint(
+            "research_space_id",
+            "entity_id",
+            name="uq_entity_embeddings_space_entity",
+        ),
+        Index("idx_entity_embeddings_space", "research_space_id"),
+        Index("idx_entity_embeddings_entity", "entity_id"),
+        {"comment": "Entity-level embeddings for hybrid graph + vector workflows"},
+    )

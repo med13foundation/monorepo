@@ -22,6 +22,7 @@ import { ConstraintsTableCard } from './constraints-table-card'
 import { EntityTypesTableCard } from './entity-types-table-card'
 import { RelationTypesTableCard } from './relation-types-table-card'
 import { DictionaryCurationCard } from './dictionary-curation-card'
+import { EdgeSuggestionsCard } from './edge-suggestions-card'
 
 interface DictionaryClientData {
   variables: VariableDefinitionListResponse | null
@@ -73,6 +74,7 @@ export default function DictionaryClient({
           <TabsTrigger value="entity-types">Entity Types</TabsTrigger>
           <TabsTrigger value="relation-types">Relation Types</TabsTrigger>
           <TabsTrigger value="curation">Curation</TabsTrigger>
+          <TabsTrigger value="edge-suggestions">Edge Suggestions</TabsTrigger>
           <TabsTrigger value="transforms">Transforms</TabsTrigger>
           <TabsTrigger value="policies">Resolution Policies</TabsTrigger>
           <TabsTrigger value="constraints">Relation Constraints</TabsTrigger>
@@ -103,6 +105,10 @@ export default function DictionaryClient({
             entityTypes={data.entityTypes?.entity_types ?? []}
             relationTypes={data.relationTypes?.relation_types ?? []}
           />
+        </TabsContent>
+
+        <TabsContent value="edge-suggestions" className="mt-4">
+          <EdgeSuggestionsCard />
         </TabsContent>
 
         <TabsContent value="transforms" className="mt-4">
