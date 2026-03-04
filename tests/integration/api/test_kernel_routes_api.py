@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from src.database import session as session_module
 from src.database.seeds.seeder import (
@@ -23,6 +24,7 @@ from src.main import create_app
 from src.models.database.base import Base
 from src.models.database.kernel.dictionary import TransformRegistryModel
 from src.models.database.kernel.relation_claims import RelationClaimModel
+from src.models.database.kernel.relations import RelationEvidenceModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
 from src.models.database.user_data_source import (
@@ -105,6 +107,7 @@ def _create_kernel_relation_for_space(
     relation_type: str = "ASSOCIATED_WITH",
     confidence: float = 0.8,
     evidence_summary: str = "Test evidence",
+    evidence_sentence: str | None = None,
     evidence_tier: str = "LITERATURE",
 ) -> UUID:
     response = test_client.post(
@@ -116,6 +119,7 @@ def _create_kernel_relation_for_space(
             "target_id": str(target_id),
             "confidence": confidence,
             "evidence_summary": evidence_summary,
+            "evidence_sentence": evidence_sentence,
             "evidence_tier": evidence_tier,
             "provenance_id": None,
         },
@@ -341,7 +345,12 @@ def test_kernel_entity_observation_relation_flow(
         headers=headers,
     )
     assert list_rel.status_code == 200
-    assert list_rel.json()["total"] == 1
+    list_rel_payload = list_rel.json()
+    assert list_rel_payload["total"] == 1
+    relation_row = list_rel_payload["relations"][0]
+    assert relation_row["evidence_summary"] == "Test evidence"
+    assert relation_row["evidence_sentence"] is None
+    assert relation_row["paper_links"] == []
 
     # 6) Graph export includes nodes + edge
     graph = test_client.get(
@@ -808,6 +817,201 @@ def test_relation_claims_list_and_triage_membership_guards(
     patch_payload = patch_response.json()
     assert patch_payload["claim_status"] == "NEEDS_MAPPING"
     assert patch_payload["triaged_by"] == str(researcher_user.id)
+
+
+def test_create_relation_persists_evidence_sentence(
+    postgres_required,
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    assert postgres_required is None
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    relation_response = test_client.post(
+        f"/research-spaces/{space.id}/relations",
+        headers=headers,
+        json={
+            "source_id": str(source_id),
+            "relation_type": "ASSOCIATED_WITH",
+            "target_id": str(target_id),
+            "confidence": 0.82,
+            "evidence_summary": "Curated relation from deterministic test.",
+            "evidence_sentence": (
+                "MED13 variation was associated with cardiomyopathy "
+                "in the study cohort."
+            ),
+            "evidence_sentence_source": "artana_generated",
+            "evidence_sentence_confidence": "low",
+            "evidence_sentence_rationale": (
+                "No direct span was found; sentence generated from extraction context."
+            ),
+            "evidence_tier": "LITERATURE",
+            "provenance_id": None,
+        },
+    )
+    assert relation_response.status_code == 201, relation_response.text
+    relation_id = UUID(relation_response.json()["id"])
+
+    list_response = test_client.get(
+        f"/research-spaces/{space.id}/relations",
+        headers=headers,
+    )
+    assert list_response.status_code == 200, list_response.text
+    listed_relations = list_response.json()["relations"]
+    matching = [row for row in listed_relations if row["id"] == str(relation_id)]
+    assert len(matching) == 1
+    relation_row = matching[0]
+    assert (
+        relation_row["evidence_sentence"]
+        == "MED13 variation was associated with cardiomyopathy in the study cohort."
+    )
+    assert relation_row["evidence_sentence_source"] == "artana_generated"
+    assert relation_row["evidence_sentence_confidence"] == "low"
+    assert (
+        relation_row["evidence_sentence_rationale"]
+        == "No direct span was found; sentence generated from extraction context."
+    )
+    assert relation_row["paper_links"] == []
+
+    with _session_for_api(db_session) as session:
+        evidence_rows = session.scalars(
+            select(RelationEvidenceModel).where(
+                RelationEvidenceModel.relation_id == relation_id,
+            ),
+        ).all()
+
+    assert len(evidence_rows) == 1
+    assert (
+        evidence_rows[0].evidence_sentence
+        == "MED13 variation was associated with cardiomyopathy in the study cohort."
+    )
+    assert evidence_rows[0].evidence_sentence_source == "artana_generated"
+    assert evidence_rows[0].evidence_sentence_confidence == "low"
+    assert (
+        evidence_rows[0].evidence_sentence_rationale
+        == "No direct span was found; sentence generated from extraction context."
+    )
+
+
+def test_relation_claim_resolution_persists_evidence_sentence_from_claim_metadata(
+    postgres_required,
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    assert postgres_required is None
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_entity_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_entity_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    claim_id: UUID
+    with _session_for_api(db_session) as session:
+        claim = RelationClaimModel(
+            research_space_id=space.id,
+            source_document_id=None,
+            agent_run_id="run-claim-resolution-span",
+            source_type="GENE",
+            relation_type="ASSOCIATED_WITH",
+            target_type="PHENOTYPE",
+            source_label="MED13",
+            target_label="Cardiomyopathy",
+            confidence=0.72,
+            validation_state="ALLOWED",
+            validation_reason="allowed_by_active_constraint",
+            persistability="PERSISTABLE",
+            claim_status="OPEN",
+            linked_relation_id=None,
+            metadata_payload={
+                "source_entity_id": str(source_entity_id),
+                "target_entity_id": str(target_entity_id),
+                "relation_evidence": {
+                    "span_text": (
+                        "MED13 variants were associated with cardiomyopathy "
+                        "in a curated cohort analysis."
+                    ),
+                },
+            },
+            triaged_by=None,
+            triaged_at=None,
+        )
+        session.add(claim)
+        session.commit()
+        session.refresh(claim)
+        claim_id = claim.id
+
+    patch_response = test_client.patch(
+        f"/research-spaces/{space.id}/relation-claims/{claim_id}",
+        headers=headers,
+        json={"claim_status": "RESOLVED"},
+    )
+    assert patch_response.status_code == 200, patch_response.text
+    patch_payload = patch_response.json()
+    assert patch_payload["claim_status"] == "RESOLVED"
+    linked_relation_id = patch_payload["linked_relation_id"]
+    assert isinstance(linked_relation_id, str)
+
+    with _session_for_api(db_session) as session:
+        evidence_rows = session.scalars(
+            select(RelationEvidenceModel).where(
+                RelationEvidenceModel.relation_id == UUID(linked_relation_id),
+            ),
+        ).all()
+
+    assert len(evidence_rows) == 1
+    assert (
+        evidence_rows[0].evidence_sentence
+        == "MED13 variants were associated with cardiomyopathy in a curated cohort analysis."
+    )
+    assert evidence_rows[0].evidence_sentence_source == "verbatim_span"
+    assert evidence_rows[0].evidence_sentence_confidence == "high"
+    assert evidence_rows[0].evidence_sentence_rationale is None
 
 
 def test_graph_search_respects_curation_status_filters(

@@ -178,6 +178,9 @@ class _EntityRecognitionProcessingContext(Protocol):
         ingestion_entities_created: int = 0,
         ingestion_observations_created: int = 0,
         persisted_relations_count: int = 0,
+        concept_members_created_count: int = 0,
+        concept_aliases_created_count: int = 0,
+        concept_decisions_proposed_count: int = 0,
         seed_entity_ids: tuple[str, ...] = (),
         graph_fallback_relation_payloads: tuple[JSONObject, ...] = (),
         errors: tuple[str, ...] = (),
@@ -952,6 +955,15 @@ class _EntityRecognitionProcessingHelpers:
                 persisted_relations_count=(
                     extraction_outcome.persisted_relations_count
                 ),
+                concept_members_created_count=(
+                    extraction_outcome.concept_members_created_count
+                ),
+                concept_aliases_created_count=(
+                    extraction_outcome.concept_aliases_created_count
+                ),
+                concept_decisions_proposed_count=(
+                    extraction_outcome.concept_decisions_proposed_count
+                ),
                 seed_entity_ids=extraction_outcome.seed_entity_ids,
                 graph_fallback_relation_payloads=graph_fallback_relation_payloads,
                 errors=extraction_outcome.errors,
@@ -978,6 +990,15 @@ class _EntityRecognitionProcessingHelpers:
                 extraction_outcome.ingestion_observations_created
             ),
             persisted_relations_count=extraction_outcome.persisted_relations_count,
+            concept_members_created_count=(
+                extraction_outcome.concept_members_created_count
+            ),
+            concept_aliases_created_count=(
+                extraction_outcome.concept_aliases_created_count
+            ),
+            concept_decisions_proposed_count=(
+                extraction_outcome.concept_decisions_proposed_count
+            ),
             seed_entity_ids=extraction_outcome.seed_entity_ids,
             graph_fallback_relation_payloads=graph_fallback_relation_payloads,
             errors=extraction_outcome.errors,

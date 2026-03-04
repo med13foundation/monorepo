@@ -6,6 +6,18 @@ observations, relations, provenance). They intentionally do NOT depend on
 SQLAlchemy models so that the domain layer remains infrastructure-agnostic.
 """
 
+from .concepts import (
+    ConceptAlias,
+    ConceptDecision,
+    ConceptDecisionProposal,
+    ConceptHarnessCheck,
+    ConceptHarnessResult,
+    ConceptHarnessVerdict,
+    ConceptLink,
+    ConceptMember,
+    ConceptPolicy,
+    ConceptSet,
+)
 from .dictionary import (
     DictionaryChangelog,
     DictionaryDataType,
@@ -33,7 +45,15 @@ from .relation_claims import (
     RelationClaimStatus,
     RelationClaimValidationState,
 )
-from .relations import KernelRelation, KernelRelationEvidence
+from .relations import (
+    EvidenceSentenceConfidence,
+    EvidenceSentenceGenerationRequest,
+    EvidenceSentenceGenerationResult,
+    EvidenceSentenceHarnessOutcome,
+    EvidenceSentenceSource,
+    KernelRelation,
+    KernelRelationEvidence,
+)
 
 __all__ = [
     "DictionaryChangelog",
@@ -55,6 +75,11 @@ __all__ = [
     "RelationClaimValidationState",
     "KernelRelation",
     "KernelRelationEvidence",
+    "EvidenceSentenceSource",
+    "EvidenceSentenceConfidence",
+    "EvidenceSentenceHarnessOutcome",
+    "EvidenceSentenceGenerationRequest",
+    "EvidenceSentenceGenerationResult",
     "RelationConstraint",
     "TransformRegistry",
     "TransformVerificationResult",
@@ -62,4 +87,14 @@ __all__ = [
     "ValueSetItem",
     "VariableDefinition",
     "VariableSynonym",
+    "ConceptAlias",
+    "ConceptDecision",
+    "ConceptDecisionProposal",
+    "ConceptHarnessCheck",
+    "ConceptHarnessResult",
+    "ConceptHarnessVerdict",
+    "ConceptLink",
+    "ConceptMember",
+    "ConceptPolicy",
+    "ConceptSet",
 ]

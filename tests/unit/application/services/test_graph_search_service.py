@@ -146,6 +146,7 @@ class StubGraphQueryService:
             relation_id=self.valid_relation.id,
             confidence=0.92,
             evidence_summary="Support from source document",
+            evidence_sentence="MED13 is associated with cardiomyopathy in the cited cohort.",
             evidence_tier="LITERATURE",
             provenance_id=uuid4(),
             source_document_id=uuid4(),
@@ -370,6 +371,11 @@ async def test_graph_search_service_returns_ranked_results() -> None:
     assert contract.executed_path == "deterministic"
     assert contract.total_results == 1
     assert contract.results[0].entity_id == str(graph_query_service.entity.id)
+    assert contract.results[0].evidence_chain
+    assert (
+        contract.results[0].evidence_chain[0].evidence_sentence
+        == "MED13 is associated with cardiomyopathy in the cited cohort."
+    )
 
 
 async def test_graph_search_force_agent_falls_back_when_unconfigured() -> None:

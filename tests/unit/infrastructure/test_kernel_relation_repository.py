@@ -197,6 +197,7 @@ def test_create_skips_duplicate_evidence_rows(
     )
     repository = SqlAlchemyKernelRelationRepository(db_session)
 
+    source_document_id = str(uuid4())
     first = repository.create(
         research_space_id=str(research_space_id),
         source_id=str(source_entity_id),
@@ -204,7 +205,9 @@ def test_create_skips_duplicate_evidence_rows(
         target_id=str(target_entity_id),
         confidence=0.91,
         evidence_summary="Same supporting statement",
+        evidence_sentence="MED13 is associated with disease in cohort A.",
         evidence_tier="LITERATURE",
+        source_document_id=source_document_id,
     )
     second = repository.create(
         research_space_id=str(research_space_id),
@@ -213,7 +216,9 @@ def test_create_skips_duplicate_evidence_rows(
         target_id=str(target_entity_id),
         confidence=0.91,
         evidence_summary="Same supporting statement",
+        evidence_sentence="MED13 is associated with disease in cohort A.",
         evidence_tier="LITERATURE",
+        source_document_id=source_document_id,
     )
 
     assert first.id == second.id
@@ -224,6 +229,164 @@ def test_create_skips_duplicate_evidence_rows(
         ),
     ).all()
     assert len(evidence_rows) == 1
+
+
+def test_create_dedupe_does_not_collapse_distinct_source_documents(
+    db_session: Session,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+
+    first = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.91,
+        evidence_summary="Same supporting statement",
+        evidence_sentence="MED13 is associated with disease in cohort A.",
+        evidence_tier="LITERATURE",
+        source_document_id=str(uuid4()),
+    )
+    second = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.91,
+        evidence_summary="Same supporting statement",
+        evidence_sentence="MED13 is associated with disease in cohort A.",
+        evidence_tier="LITERATURE",
+        source_document_id=str(uuid4()),
+    )
+
+    assert first.id == second.id
+    assert second.source_count == 2
+    evidence_rows = db_session.scalars(
+        select(RelationEvidenceModel).where(
+            RelationEvidenceModel.relation_id == second.id,
+        ),
+    ).all()
+    assert len(evidence_rows) == 2
+
+
+def test_create_dedupe_includes_evidence_sentence(
+    db_session: Session,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+    source_document_id = str(uuid4())
+
+    first = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.75,
+        evidence_summary="Shared summary",
+        evidence_sentence="Sentence A: MED13 is associated with disease.",
+        evidence_tier="LITERATURE",
+        source_document_id=source_document_id,
+    )
+    second = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.75,
+        evidence_summary="Shared summary",
+        evidence_sentence="Sentence A: MED13 is associated with disease.",
+        evidence_tier="LITERATURE",
+        source_document_id=source_document_id,
+    )
+    third = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.75,
+        evidence_summary="Shared summary",
+        evidence_sentence="Sentence B: MED13 variants are implicated in disease.",
+        evidence_tier="LITERATURE",
+        source_document_id=source_document_id,
+    )
+
+    assert first.id == second.id == third.id
+    assert third.source_count == 2
+    evidence_rows = db_session.scalars(
+        select(RelationEvidenceModel).where(
+            RelationEvidenceModel.relation_id == third.id,
+        ),
+    ).all()
+    assert len(evidence_rows) == 2
+
+
+def test_create_dedupe_includes_evidence_sentence_provenance_fields(
+    db_session: Session,
+) -> None:
+    research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
+        db_session,
+    )
+    repository = SqlAlchemyKernelRelationRepository(db_session)
+    source_document_id = str(uuid4())
+
+    first = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.64,
+        evidence_summary="Shared summary",
+        evidence_sentence="Generated sentence for optional relation.",
+        evidence_sentence_source="artana_generated",
+        evidence_sentence_confidence="low",
+        evidence_sentence_rationale="No direct cooccurrence span found in source text.",
+        evidence_tier="COMPUTATIONAL",
+        source_document_id=source_document_id,
+    )
+    second = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.64,
+        evidence_summary="Shared summary",
+        evidence_sentence="Generated sentence for optional relation.",
+        evidence_sentence_source="artana_generated",
+        evidence_sentence_confidence="low",
+        evidence_sentence_rationale="No direct cooccurrence span found in source text.",
+        evidence_tier="COMPUTATIONAL",
+        source_document_id=source_document_id,
+    )
+    third = repository.create(
+        research_space_id=str(research_space_id),
+        source_id=str(source_entity_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_entity_id),
+        confidence=0.64,
+        evidence_summary="Shared summary",
+        evidence_sentence="Generated sentence for optional relation.",
+        evidence_sentence_source="artana_generated",
+        evidence_sentence_confidence="medium",
+        evidence_sentence_rationale=(
+            "Generated from relation context and abstract fallback for reviewer aid."
+        ),
+        evidence_tier="COMPUTATIONAL",
+        source_document_id=source_document_id,
+    )
+
+    assert first.id == second.id == third.id
+    assert third.source_count == 2
+    evidence_rows = db_session.scalars(
+        select(RelationEvidenceModel).where(
+            RelationEvidenceModel.relation_id == third.id,
+        ),
+    ).all()
+    assert len(evidence_rows) == 2
 
 
 def test_create_persists_non_uuid_agent_run_id(db_session: Session) -> None:

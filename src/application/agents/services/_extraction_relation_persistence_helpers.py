@@ -40,6 +40,10 @@ from src.application.agents.services._relation_persistence_payload_helpers impor
 from src.application.services.claim_first_metrics import (
     emit_claim_first_extraction_metrics,
 )
+from src.domain.entities.kernel.relations import (
+    EvidenceSentenceGenerationRequest,
+    EvidenceSentenceGenerationResult,
+)
 from src.domain.value_objects.relation_types import normalize_relation_type
 
 if TYPE_CHECKING:
@@ -58,6 +62,10 @@ if TYPE_CHECKING:
         RelationTypeMappingProposal,
     )
     from src.domain.entities.source_document import SourceDocument
+    from src.domain.ports.concept_port import ConceptPort
+    from src.domain.ports.evidence_sentence_harness_port import (
+        EvidenceSentenceHarnessPort,
+    )
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
     from src.domain.repositories.kernel.relation_claim_repository import (
         KernelRelationClaimRepository,
@@ -68,6 +76,7 @@ if TYPE_CHECKING:
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
+_MIN_GENERATED_EVIDENCE_SENTENCE_LENGTH = 24
 
 
 @dataclass(frozen=True)
@@ -78,6 +87,9 @@ class RelationPersistenceResult:
     non_persistable_claims_count: int = 0
     forbidden_relations_count: int = 0
     undefined_relations_count: int = 0
+    concept_members_created_count: int = 0
+    concept_aliases_created_count: int = 0
+    concept_decisions_proposed_count: int = 0
     policy_proposals_count: int = 0
     policy_run_id: str | None = None
     rejected_relation_reasons: tuple[str, ...] = ()
@@ -118,6 +130,8 @@ class _ExtractionRelationPersistenceHelpers(
     _relations: KernelRelationRepository | None
     _relation_claims: KernelRelationClaimRepository | None
     _entities: KernelEntityRepository | None
+    _concepts: ConceptPort | None
+    _evidence_sentence_harness: EvidenceSentenceHarnessPort | None
     _rollback_on_error: Callable[[], None] | None
 
     async def _persist_extracted_relations(
@@ -270,6 +284,15 @@ class _ExtractionRelationPersistenceHelpers(
                 ),
                 "forbidden_relations_count": persist_result.forbidden_relations_count,
                 "undefined_relations_count": persist_result.undefined_relations_count,
+                "concept_members_created_count": (
+                    persist_result.concept_members_created_count
+                ),
+                "concept_aliases_created_count": (
+                    persist_result.concept_aliases_created_count
+                ),
+                "concept_decisions_proposed_count": (
+                    persist_result.concept_decisions_proposed_count
+                ),
                 "persistence_failed_count": persist_result.persistence_failed_count,
                 "full_auto_retry_skipped_count": (
                     persist_result.full_auto_retry_skipped_count
@@ -302,6 +325,15 @@ class _ExtractionRelationPersistenceHelpers(
                 "non_persistable_claims_count": (
                     persist_result.non_persistable_claims_count
                 ),
+                "concept_members_created_count": (
+                    persist_result.concept_members_created_count
+                ),
+                "concept_aliases_created_count": (
+                    persist_result.concept_aliases_created_count
+                ),
+                "concept_decisions_proposed_count": (
+                    persist_result.concept_decisions_proposed_count
+                ),
                 "full_auto_retry_skipped_count": (
                     persist_result.full_auto_retry_skipped_count
                 ),
@@ -320,6 +352,11 @@ class _ExtractionRelationPersistenceHelpers(
             non_persistable_claims_count=persist_result.non_persistable_claims_count,
             forbidden_relations_count=persist_result.forbidden_relations_count,
             undefined_relations_count=persist_result.undefined_relations_count,
+            concept_members_created_count=persist_result.concept_members_created_count,
+            concept_aliases_created_count=persist_result.concept_aliases_created_count,
+            concept_decisions_proposed_count=(
+                persist_result.concept_decisions_proposed_count
+            ),
             policy_proposals_count=proposal_count,
             policy_run_id=normalize_run_id(
                 (
@@ -364,6 +401,15 @@ class _ExtractionRelationPersistenceHelpers(
                 ),
                 "relation_candidates_undefined": (
                     persist_result.undefined_relations_count
+                ),
+                "concept_members_created": (
+                    persist_result.concept_members_created_count
+                ),
+                "concept_aliases_created": (
+                    persist_result.concept_aliases_created_count
+                ),
+                "concept_decisions_proposed": (
+                    persist_result.concept_decisions_proposed_count
                 ),
                 "relation_claims_created": persist_result.relation_claims_count,
                 "relation_claims_queued_for_review": (
@@ -674,8 +720,6 @@ class _ExtractionRelationPersistenceHelpers(
             constraint_proposal=constraint_proposal,
             mapping_proposal=mapping_proposal,
         )
-        if not requires_evidence_span:
-            return base_summary, {"span_required": False}, None
         raw_record = self._extract_raw_record(document)
         span_result = resolve_relation_evidence_span(
             source_label=candidate.source_label,
@@ -685,24 +729,116 @@ class _ExtractionRelationPersistenceHelpers(
             raw_record=raw_record,
         )
         metadata: JSONObject = {
-            "span_required": True,
+            "span_required": requires_evidence_span,
             **span_result.metadata,
         }
         if span_result.failure_reason is not None:
             metadata["span_status"] = "missing"
             metadata["span_failure_reason"] = span_result.failure_reason
-            return base_summary, metadata, span_result.failure_reason
+            if requires_evidence_span:
+                return base_summary, metadata, span_result.failure_reason
+            return base_summary, metadata, None
         span_text = span_result.span_text
         if span_text is None:
             metadata["span_status"] = "missing"
             metadata["span_failure_reason"] = "span_unavailable"
-            return base_summary, metadata, "span_unavailable"
+            if requires_evidence_span:
+                return base_summary, metadata, "span_unavailable"
+            return base_summary, metadata, None
         metadata["span_status"] = "resolved"
         metadata["span_text"] = span_text
         return (
             append_span_to_summary(base_summary=base_summary, span_text=span_text),
             metadata,
             None,
+        )
+
+    def _generate_optional_relation_evidence_sentence(
+        self,
+        *,
+        document: SourceDocument,
+        candidate: _ResolvedRelationCandidate,
+        evidence_summary: str,
+        relation_evidence_metadata: JSONObject,
+        run_id: str | None,
+    ) -> EvidenceSentenceGenerationResult:
+        harness = self._evidence_sentence_harness
+        if harness is None:
+            return EvidenceSentenceGenerationResult(
+                outcome="failed",
+                failure_reason="evidence_sentence_harness_unavailable",
+            )
+
+        raw_record = self._extract_raw_record(document)
+        document_text: str | None = None
+        for field_name in ("full_text", "text", "abstract", "title"):
+            field_value = raw_record.get(field_name)
+            if not isinstance(field_value, str):
+                continue
+            normalized_value = normalize_optional_text(field_value)
+            if normalized_value is None:
+                continue
+            document_text = normalized_value[:120000]
+            break
+
+        request = EvidenceSentenceGenerationRequest(
+            research_space_id=(
+                str(document.research_space_id)
+                if document.research_space_id is not None
+                else "unknown"
+            ),
+            source_type=document.source_type.value,
+            relation_type=candidate.relation_type,
+            source_label=candidate.source_label,
+            target_label=candidate.target_label,
+            evidence_summary=evidence_summary[:2000],
+            evidence_excerpt=normalize_optional_text(candidate.evidence_excerpt),
+            evidence_locator=normalize_optional_text(candidate.evidence_locator),
+            document_text=document_text,
+            document_id=str(document.id),
+            run_id=run_id,
+            metadata={
+                "relation_evidence": relation_evidence_metadata,
+                "confidence": candidate.confidence,
+                "validation_state": candidate.validation_state,
+            },
+        )
+        try:
+            result = harness.generate(request)
+        except Exception as exc:  # noqa: BLE001 - fail-open for optional sentence path
+            return EvidenceSentenceGenerationResult(
+                outcome="failed",
+                failure_reason=f"evidence_sentence_harness_error:{type(exc).__name__}",
+                metadata={"error": str(exc)},
+            )
+
+        normalized_sentence = normalize_optional_text(result.sentence)
+        if result.outcome != "generated":
+            failure_reason = normalize_optional_text(result.failure_reason)
+            return EvidenceSentenceGenerationResult(
+                outcome="failed",
+                failure_reason=failure_reason or "evidence_sentence_generation_failed",
+                metadata=result.metadata,
+            )
+        if normalized_sentence is None:
+            return EvidenceSentenceGenerationResult(
+                outcome="failed",
+                failure_reason="generated_sentence_empty",
+                metadata=result.metadata,
+            )
+        if len(normalized_sentence) < _MIN_GENERATED_EVIDENCE_SENTENCE_LENGTH:
+            return EvidenceSentenceGenerationResult(
+                outcome="failed",
+                failure_reason="generated_sentence_too_short",
+                metadata=result.metadata,
+            )
+        return EvidenceSentenceGenerationResult(
+            outcome="generated",
+            sentence=normalized_sentence[:2000],
+            source="artana_generated",
+            confidence=result.confidence or "low",
+            rationale=normalize_optional_text(result.rationale),
+            metadata=result.metadata,
         )
 
     def _persist_candidate_relation(  # noqa: C901, PLR0912, PLR0913
@@ -714,6 +850,10 @@ class _ExtractionRelationPersistenceHelpers(
         relation_governance_mode: RelationGovernanceMode,
         effective_candidate: _ResolvedRelationCandidate,
         evidence_summary: str,
+        evidence_sentence: str | None,
+        evidence_sentence_source: str | None,
+        evidence_sentence_confidence: str | None,
+        evidence_sentence_rationale: str | None,
         claim_id: str | None,
         payload: JSONObject,
         candidate_signature: tuple[str, str, str, str, str],
@@ -746,6 +886,10 @@ class _ExtractionRelationPersistenceHelpers(
                 target_id=target_entity_id,
                 confidence=effective_candidate.confidence,
                 evidence_summary=evidence_summary,
+                evidence_sentence=evidence_sentence,
+                evidence_sentence_source=evidence_sentence_source,
+                evidence_sentence_confidence=evidence_sentence_confidence,
+                evidence_sentence_rationale=evidence_sentence_rationale,
                 evidence_tier="COMPUTATIONAL",
                 curation_status="DRAFT",
                 source_document_id=str(document.id),

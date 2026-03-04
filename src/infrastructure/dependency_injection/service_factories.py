@@ -35,6 +35,7 @@ from src.infrastructure.factories.ingestion_pipeline_factory import (
 from src.infrastructure.llm.adapters import (
     ArtanaContentEnrichmentAdapter,
     ArtanaEntityRecognitionAdapter,
+    ArtanaEvidenceSentenceHarnessAdapter,
     ArtanaExtractionAdapter,
     ArtanaExtractionPolicyAdapter,
     ArtanaGraphConnectionAdapter,
@@ -67,6 +68,9 @@ if TYPE_CHECKING:
         QueryAgentPort,
     )
     from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
+    from src.domain.ports.evidence_sentence_harness_port import (
+        EvidenceSentenceHarnessPort,
+    )
     from src.domain.services import storage_metrics, storage_providers
 
 
@@ -198,6 +202,7 @@ class ApplicationServiceFactoryMixin(
         session: Session,
     ) -> EntityRecognitionService:
         dictionary_service = self.create_dictionary_management_service(session)
+        concept_service = self.create_concept_management_service(session)
         governance_service = GovernanceService()
         ingestion_pipeline = create_ingestion_pipeline(session)
         registry = get_model_registry()
@@ -215,6 +220,9 @@ class ApplicationServiceFactoryMixin(
         extraction_policy_agent = ArtanaExtractionPolicyAdapter(
             model=model_spec.model_id,
         )
+        evidence_sentence_harness = self._create_evidence_sentence_harness(
+            model_id=model_spec.model_id,
+        )
         extraction_service = ExtractionService(
             dependencies=ExtractionServiceDependencies(
                 extraction_agent=extraction_agent,
@@ -226,6 +234,8 @@ class ApplicationServiceFactoryMixin(
                 ),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
                 dictionary_service=dictionary_service,
+                concept_service=concept_service,
+                evidence_sentence_harness=evidence_sentence_harness,
                 endpoint_shape_judge=self.get_mapping_judge_agent(),
                 governance_service=governance_service,
                 review_queue_submitter=self._build_review_queue_submitter(session),
@@ -248,6 +258,7 @@ class ApplicationServiceFactoryMixin(
 
     def create_extraction_service(self, session: Session) -> ExtractionService:
         dictionary_service = self.create_dictionary_management_service(session)
+        concept_service = self.create_concept_management_service(session)
         registry = get_model_registry()
         model_spec = registry.get_default_model(
             ModelCapability.EVIDENCE_EXTRACTION,
@@ -258,6 +269,9 @@ class ApplicationServiceFactoryMixin(
         )
         extraction_policy_agent = ArtanaExtractionPolicyAdapter(
             model=model_spec.model_id,
+        )
+        evidence_sentence_harness = self._create_evidence_sentence_harness(
+            model_id=model_spec.model_id,
         )
         return ExtractionService(
             dependencies=ExtractionServiceDependencies(
@@ -270,12 +284,28 @@ class ApplicationServiceFactoryMixin(
                 ),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
                 dictionary_service=dictionary_service,
+                concept_service=concept_service,
+                evidence_sentence_harness=evidence_sentence_harness,
                 endpoint_shape_judge=self.get_mapping_judge_agent(),
                 governance_service=GovernanceService(),
                 review_queue_submitter=self._build_review_queue_submitter(session),
                 rollback_on_error=session.rollback,
             ),
         )
+
+    def _create_evidence_sentence_harness(
+        self,
+        *,
+        model_id: str | None,
+    ) -> EvidenceSentenceHarnessPort | None:
+        try:
+            return ArtanaEvidenceSentenceHarnessAdapter(model=model_id)
+        except Exception as exc:  # noqa: BLE001 - fail-open for optional path
+            self._logger.warning(
+                "Evidence sentence harness unavailable; optional relation sentence fallback disabled: %s",
+                exc,
+            )
+            return None
 
     def create_graph_connection_service(
         self,

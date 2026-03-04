@@ -358,6 +358,8 @@ class ResearchSpaceSettings(TypedDict, total=False):
     claim_non_persistable_baseline_ratio: float
     claim_non_persistable_alert_ratio: float
     dictionary_agent_creation_policy: Literal["ACTIVE", "PENDING_REVIEW"]
+    concept_agent_creation_policy: Literal["ACTIVE", "PENDING_REVIEW"]
+    concept_policy_mode: Literal["PRECISION", "BALANCED", "DISCOVERY"]
 
     # Data source settings
     max_data_sources: int

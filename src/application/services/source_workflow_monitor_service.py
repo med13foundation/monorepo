@@ -135,11 +135,14 @@ class SourceWorkflowMonitorService(
         relation_review_payload = self._build_relation_review_payload(
             space_id=space_id,
             document_ids=document_ids,
-            document_external_record_id_by_id={
-                str(item["id"]): str(item["external_record_id"])
+            document_context_by_id={
+                str(item["id"]): {
+                    "external_record_id": item.get("external_record_id"),
+                    "source_type": item.get("source_type"),
+                    "metadata": item.get("metadata"),
+                }
                 for item in documents
                 if isinstance(item.get("id"), str)
-                and isinstance(item.get("external_record_id"), str)
             },
             queue_id_to_document_id=queue_id_to_document_id,
             extraction_rows=extraction_rows,

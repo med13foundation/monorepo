@@ -825,6 +825,19 @@ export default function SpaceCurationClient({
                     const targetLabel = resolveEntityLabel(relation.target_id)
                     const confidence = confidencePercent(relation.confidence)
                     const certaintyLevel = confidenceCertaintyLevel(confidence)
+                    const evidenceSummary = relation.evidence_summary?.trim() ?? ''
+                    const evidenceSentence = relation.evidence_sentence?.trim() ?? ''
+                    const paperLinks =
+                      relation.paper_links?.filter(
+                        (link) =>
+                          typeof link.url === 'string' &&
+                          link.url.trim().length > 0 &&
+                          typeof link.label === 'string' &&
+                          link.label.trim().length > 0,
+                      ) ?? []
+                    const showsAiGeneratedBadge =
+                      relation.evidence_sentence_source === 'artana_generated' &&
+                      evidenceSentence.length > 0
 
                     return (
                       <Card key={relation.id} className="border-border bg-card shadow-sm">
@@ -862,11 +875,41 @@ export default function SpaceCurationClient({
                             </Badge>
                           </div>
 
-                          {relation.evidence_summary ? (
-                            <p className="text-sm text-foreground/80">{relation.evidence_summary}</p>
-                          ) : (
-                            <p className="text-sm text-muted-foreground">No evidence summary available.</p>
-                          )}
+                          <div className="space-y-2">
+                            {evidenceSentence.length > 0 ? (
+                              <p className="text-sm text-foreground/80">{evidenceSentence}</p>
+                            ) : null}
+                            {showsAiGeneratedBadge ? (
+                              <Badge variant="secondary">AI-generated (not verbatim span)</Badge>
+                            ) : null}
+                            {evidenceSummary.length > 0 && evidenceSummary !== evidenceSentence ? (
+                              <p className="text-sm text-muted-foreground">{evidenceSummary}</p>
+                            ) : null}
+                            {evidenceSentence.length === 0 && evidenceSummary.length === 0 ? (
+                              <p className="text-sm text-muted-foreground">No evidence summary available.</p>
+                            ) : null}
+
+                            <div className="text-xs text-muted-foreground">
+                              {paperLinks.length > 0 ? (
+                                <span className="inline-flex flex-wrap items-center gap-2">
+                                  <span>Paper(s):</span>
+                                  {paperLinks.map((link) => (
+                                    <a
+                                      key={`${link.url}-${link.source}`}
+                                      href={link.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+                                    >
+                                      {link.label}
+                                    </a>
+                                  ))}
+                                </span>
+                              ) : (
+                                'No source links'
+                              )}
+                            </div>
+                          </div>
 
                           {canCurate ? (
                             <div className="flex flex-wrap items-center gap-2">

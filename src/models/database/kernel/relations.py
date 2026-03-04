@@ -200,6 +200,26 @@ class RelationEvidenceModel(Base):
         nullable=True,
         doc="Human-readable evidence summary",
     )
+    evidence_sentence: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Supporting sentence/span text for this evidence row",
+    )
+    evidence_sentence_source: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Sentence provenance: verbatim_span or artana_generated",
+    )
+    evidence_sentence_confidence: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Confidence bucket for sentence provenance",
+    )
+    evidence_sentence_rationale: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Rationale for generated sentence or generation failure context",
+    )
     evidence_tier: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

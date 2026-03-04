@@ -111,6 +111,22 @@ class _FakeDocumentOutcomeSession:
         return _FakeDocumentOutcomeExecuteResult(self._rows)
 
 
+class _FakeRelationRowsExecuteResult:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[tuple[object, ...]]:
+        return self._rows
+
+
+class _FakeRelationRowsSession:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self._rows = rows
+
+    def execute(self, _statement: object) -> _FakeRelationRowsExecuteResult:
+        return _FakeRelationRowsExecuteResult(self._rows)
+
+
 class _PrefetchCaptureService(SourceWorkflowMonitorService):
     def __init__(self) -> None:
         super().__init__(session=Mock(), run_progress=None)
@@ -277,14 +293,14 @@ class _RunScopedFilterCaptureService(SourceWorkflowMonitorService):
         *,
         space_id: UUID,
         document_ids: set[str],
-        document_external_record_id_by_id: dict[str, str],
+        document_context_by_id: dict[str, JSONObject],
         queue_id_to_document_id: dict[str, str],
         extraction_rows: list[JSONObject],
         limit: int,
     ) -> JSONObject:
         del space_id
         del document_ids
-        del document_external_record_id_by_id
+        del document_context_by_id
         del queue_id_to_document_id
         del extraction_rows
         del limit
@@ -641,3 +657,93 @@ def test_count_document_extraction_outcomes_reports_timeout_failures() -> None:
     assert failed == 3
     assert skipped == 1
     assert timeout_failed == 2
+
+
+def test_resolve_paper_links_dedupes_and_orders_supported_identifiers() -> None:
+    service = SourceWorkflowMonitorService(session=Mock(), run_progress=None)
+
+    links = service._resolve_paper_links(
+        source_type="pubmed",
+        external_record_id="pmid:40214304",
+        metadata={
+            "doi": "10.1000/j.jmb.2026.01.001",
+            "pmcid": "PMC12419501",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/40214304/",
+        },
+    )
+
+    labels = [str(link.get("label")) for link in links]
+    urls = [str(link.get("url")) for link in links]
+
+    assert labels == ["PubMed", "PMC", "DOI"]
+    assert urls == [
+        "https://pubmed.ncbi.nlm.nih.gov/40214304/",
+        "https://pmc.ncbi.nlm.nih.gov/articles/PMC12419501/",
+        "https://doi.org/10.1000/j.jmb.2026.01.001",
+    ]
+
+
+def test_load_document_relations_includes_sentence_provenance_and_paper_links() -> None:
+    document_uuid = uuid4()
+    relation_uuid = uuid4()
+    source_uuid = uuid4()
+    target_uuid = uuid4()
+    evidence_uuid = uuid4()
+
+    service = SourceWorkflowMonitorService(
+        session=cast(
+            "Session",
+            _FakeRelationRowsSession(
+                [
+                    (
+                        document_uuid,
+                        relation_uuid,
+                        "ASSOCIATED_WITH",
+                        "DRAFT",
+                        0.73,
+                        source_uuid,
+                        target_uuid,
+                        evidence_uuid,
+                        0.73,
+                        "Optional relation summary.",
+                        "Generated reviewer-aid sentence.",
+                        "artana_generated",
+                        "low",
+                        "No direct span found; inferred from extraction context.",
+                        "run:test",
+                        "MED13",
+                        "Cardiomyopathy",
+                    ),
+                ],
+            ),
+        ),
+        run_progress=None,
+    )
+
+    rows = service._load_document_relations(
+        space_id=uuid4(),
+        document_ids={str(document_uuid)},
+        document_context_by_id={
+            str(document_uuid): {
+                "external_record_id": "pmid:40214304",
+                "source_type": "pubmed",
+                "metadata": {},
+            },
+        },
+        limit=20,
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["evidence_sentence_source"] == "artana_generated"
+    assert row["evidence_sentence_confidence"] == "low"
+    assert (
+        row["evidence_sentence_rationale"]
+        == "No direct span found; inferred from extraction context."
+    )
+    links = row["paper_links"]
+    assert isinstance(links, list)
+    assert len(links) == 1
+    first_link = links[0]
+    assert first_link["label"] == "PubMed"
+    assert first_link["url"] == "https://pubmed.ncbi.nlm.nih.gov/40214304/"

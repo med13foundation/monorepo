@@ -137,6 +137,15 @@ class _EntityRecognitionMetadataHelpers:
             "extraction_stage_undefined_relations": (
                 extraction_outcome.undefined_relations_count
             ),
+            "extraction_stage_concept_members_created": (
+                extraction_outcome.concept_members_created_count
+            ),
+            "extraction_stage_concept_aliases_created": (
+                extraction_outcome.concept_aliases_created_count
+            ),
+            "extraction_stage_concept_decisions_proposed": (
+                extraction_outcome.concept_decisions_proposed_count
+            ),
             "extraction_stage_policy_run_id": extraction_outcome.policy_step_run_id,
             "extraction_stage_policy_proposals": (
                 extraction_outcome.policy_proposals_count

@@ -80,14 +80,10 @@ define ensure_python_version
 	fi
 endef
 
-# Warn if venv is not active but exists
+# Keep command execution stable even when the virtual environment is not
+# explicitly activated, since commands already use the venv interpreter
+# when available.
 define check_venv
-	@if [ "$(VENV_ACTIVE)" = "false" ] && [ -d "$(VENV)" ] && [ "$(SUPPRESS_VENV_WARNING)" != "1" ]; then \
-		echo "⚠️  Virtual environment exists but not activated."; \
-		echo "   Run: source $(VENV)/bin/activate"; \
-		echo "   Or use: make activate"; \
-		echo ""; \
-	fi
 	$(call ensure_python_version)
 endef
 

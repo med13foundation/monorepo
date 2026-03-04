@@ -27,6 +27,13 @@ from . import (
     user_data_source,
 )
 from .kernel import (
+    ConceptAliasModel,
+    ConceptDecisionModel,
+    ConceptHarnessResultModel,
+    ConceptLinkModel,
+    ConceptMemberModel,
+    ConceptPolicyModel,
+    ConceptSetModel,
     EntityIdentifierModel,
     EntityModel,
     EntityResolutionPolicyModel,
@@ -89,6 +96,14 @@ __all__ = [
     "TransformRegistryModel",
     "EntityResolutionPolicyModel",
     "RelationConstraintModel",
+    # Kernel: Concept Manager
+    "ConceptSetModel",
+    "ConceptMemberModel",
+    "ConceptAliasModel",
+    "ConceptLinkModel",
+    "ConceptPolicyModel",
+    "ConceptDecisionModel",
+    "ConceptHarnessResultModel",
     # Kernel: Data (Layer 2)
     "EntityModel",
     "EntityIdentifierModel",

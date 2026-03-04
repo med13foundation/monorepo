@@ -447,6 +447,7 @@ class GraphSearchService:
                         observation_id=None,
                         evidence_tier=relation.highest_evidence_tier,
                         confidence=_clamp(relation.aggregate_confidence),
+                        evidence_sentence=None,
                         source_ref=f"relation:{relation.id}",
                     ),
                 )
@@ -464,6 +465,12 @@ class GraphSearchService:
                         observation_id=None,
                         evidence_tier=evidence.evidence_tier,
                         confidence=_clamp(float(evidence.confidence)),
+                        evidence_sentence=(
+                            evidence.evidence_sentence.strip()[:2000]
+                            if isinstance(evidence.evidence_sentence, str)
+                            and evidence.evidence_sentence.strip()
+                            else None
+                        ),
                         source_ref=(
                             str(evidence.source_document_id)
                             if evidence.source_document_id is not None
@@ -486,6 +493,7 @@ class GraphSearchService:
                     observation_id=str(observation.id),
                     evidence_tier=None,
                     confidence=_clamp(observation.confidence),
+                    evidence_sentence=None,
                     source_ref=f"observation:{observation.id}",
                 )
                 for observation in observations[:3]

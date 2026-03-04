@@ -37,6 +37,8 @@ export interface ResearchSpaceSettings {
   relation_default_review_threshold?: number
   relation_review_thresholds?: Record<string, number>
   dictionary_agent_creation_policy?: 'ACTIVE' | 'PENDING_REVIEW'
+  concept_agent_creation_policy?: 'ACTIVE' | 'PENDING_REVIEW'
+  concept_policy_mode?: 'PRECISION' | 'BALANCED' | 'DISCOVERY'
   max_data_sources?: number
   allowed_source_types?: string[]
   public_read?: boolean

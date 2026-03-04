@@ -51,6 +51,8 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         self._relation_claims = dependencies.relation_claim_repository
         self._entities = dependencies.entity_repository
         self._dictionary = dependencies.dictionary_service
+        self._concepts = dependencies.concept_service
+        self._evidence_sentence_harness = dependencies.evidence_sentence_harness
         self._endpoint_shape_judge = dependencies.endpoint_shape_judge
         self._governance = dependencies.governance_service or GovernanceService()
         self._review_queue_submitter = dependencies.review_queue_submitter
@@ -392,6 +394,15 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 "undefined_relations_count": (
                     relation_persistence_result.undefined_relations_count
                 ),
+                "concept_members_created_count": (
+                    relation_persistence_result.concept_members_created_count
+                ),
+                "concept_aliases_created_count": (
+                    relation_persistence_result.concept_aliases_created_count
+                ),
+                "concept_decisions_proposed_count": (
+                    relation_persistence_result.concept_decisions_proposed_count
+                ),
                 "error_count": len(relation_persistence_result.errors),
             },
         )
@@ -440,6 +451,15 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             ),
             undefined_relations_count=(
                 relation_persistence_result.undefined_relations_count
+            ),
+            concept_members_created_count=(
+                relation_persistence_result.concept_members_created_count
+            ),
+            concept_aliases_created_count=(
+                relation_persistence_result.concept_aliases_created_count
+            ),
+            concept_decisions_proposed_count=(
+                relation_persistence_result.concept_decisions_proposed_count
             ),
             policy_step_run_id=relation_persistence_result.policy_run_id,
             policy_proposals_count=relation_persistence_result.policy_proposals_count,

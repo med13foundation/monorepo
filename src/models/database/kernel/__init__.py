@@ -4,6 +4,15 @@
 # (``src/models/database/research_space.py``). The kernel itself provides
 # dictionary + fact tables (entities/observations/relations/provenance).
 
+from .concepts import (
+    ConceptAliasModel,
+    ConceptDecisionModel,
+    ConceptHarnessResultModel,
+    ConceptLinkModel,
+    ConceptMemberModel,
+    ConceptPolicyModel,
+    ConceptSetModel,
+)
 from .dictionary import (
     DictionaryChangelogModel,
     DictionaryDataTypeModel,
@@ -42,6 +51,14 @@ __all__ = [
     "ValueSetItemModel",
     "EntityResolutionPolicyModel",
     "RelationConstraintModel",
+    # Concept Manager
+    "ConceptAliasModel",
+    "ConceptDecisionModel",
+    "ConceptHarnessResultModel",
+    "ConceptLinkModel",
+    "ConceptMemberModel",
+    "ConceptPolicyModel",
+    "ConceptSetModel",
     # Core Data (Layer 2)
     "EntityModel",
     "EntityIdentifierModel",

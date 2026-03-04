@@ -174,6 +174,15 @@ class SourceWorkflowMonitorPipelineMixin:
             "extraction_persisted_relations": safe_int(
                 graph_progress.get("extraction_persisted_relations"),
             ),
+            "extraction_concept_members_created": safe_int(
+                graph_progress.get("extraction_concept_members_created"),
+            ),
+            "extraction_concept_aliases_created": safe_int(
+                graph_progress.get("extraction_concept_aliases_created"),
+            ),
+            "extraction_concept_decisions_proposed": safe_int(
+                graph_progress.get("extraction_concept_decisions_proposed"),
+            ),
             "graph_stage_persisted_relations": safe_int(
                 graph_progress.get("graph_stage_persisted_relations"),
             ),

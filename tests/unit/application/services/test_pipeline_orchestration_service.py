@@ -71,6 +71,9 @@ class StubExtractionSummary:
     extracted: int = 3
     failed: int = 0
     persisted_relations_count: int = 0
+    concept_members_created_count: int = 0
+    concept_aliases_created_count: int = 0
+    concept_decisions_proposed_count: int = 0
     derived_graph_seed_entity_ids: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
@@ -506,7 +509,12 @@ async def test_run_for_source_records_ingestion_scope_and_total_persisted_relati
     )
     enrichment_service = StubContentEnrichmentService(StubEnrichmentSummary())
     extraction_service = StubEntityRecognitionService(
-        StubExtractionSummary(persisted_relations_count=5),
+        StubExtractionSummary(
+            persisted_relations_count=5,
+            concept_members_created_count=4,
+            concept_aliases_created_count=6,
+            concept_decisions_proposed_count=1,
+        ),
     )
     graph_service = StubGraphConnectionService(
         StubGraphOutcome(persisted_relations_count=2),
@@ -541,6 +549,9 @@ async def test_run_for_source_records_ingestion_scope_and_total_persisted_relati
     assert run_scope.get("ingestion_job_id") == str(ingestion_job_id)
     assert graph_progress.get("persisted_relations") == 7
     assert graph_progress.get("extraction_persisted_relations") == 5
+    assert graph_progress.get("extraction_concept_members_created") == 4
+    assert graph_progress.get("extraction_concept_aliases_created") == 6
+    assert graph_progress.get("extraction_concept_decisions_proposed") == 1
     assert graph_progress.get("graph_stage_persisted_relations") == 2
 
 

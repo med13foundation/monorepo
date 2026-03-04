@@ -190,6 +190,10 @@ class KernelRelationCreateRequest(BaseModel):
     target_id: UUID
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     evidence_summary: str | None = None
+    evidence_sentence: str | None = Field(default=None, max_length=2000)
+    evidence_sentence_source: str | None = Field(default=None, max_length=64)
+    evidence_sentence_confidence: str | None = Field(default=None, max_length=32)
+    evidence_sentence_rationale: str | None = Field(default=None, max_length=2000)
     evidence_tier: str | None = Field(None, max_length=32)
     provenance_id: UUID | None = None
 
@@ -210,6 +214,16 @@ class KernelRelationClaimTriageRequest(BaseModel):
     claim_status: str = Field(..., min_length=1, max_length=32)
 
 
+class KernelRelationPaperLinkResponse(BaseModel):
+    """One source-paper link for relation evidence review."""
+
+    model_config = ConfigDict(strict=True)
+
+    label: str
+    url: str
+    source: str
+
+
 class KernelRelationResponse(BaseModel):
     """Response model for a kernel relation."""
 
@@ -226,6 +240,12 @@ class KernelRelationResponse(BaseModel):
     source_count: int
     highest_evidence_tier: str | None
     curation_status: str
+    evidence_summary: str | None = None
+    evidence_sentence: str | None = None
+    evidence_sentence_source: str | None = None
+    evidence_sentence_confidence: str | None = None
+    evidence_sentence_rationale: str | None = None
+    paper_links: list[KernelRelationPaperLinkResponse] = Field(default_factory=list)
 
     provenance_id: UUID | None
     reviewed_by: UUID | None
@@ -235,7 +255,26 @@ class KernelRelationResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, model: KernelRelation) -> KernelRelationResponse:
+    def _normalize_paper_links(
+        cls,
+        paper_links: list[KernelRelationPaperLinkResponse] | None,
+    ) -> list[KernelRelationPaperLinkResponse]:
+        if paper_links is None:
+            return []
+        return paper_links
+
+    @classmethod
+    def from_model(  # noqa: PLR0913
+        cls,
+        model: KernelRelation,
+        *,
+        evidence_summary: str | None = None,
+        evidence_sentence: str | None = None,
+        evidence_sentence_source: str | None = None,
+        evidence_sentence_confidence: str | None = None,
+        evidence_sentence_rationale: str | None = None,
+        paper_links: list[KernelRelationPaperLinkResponse] | None = None,
+    ) -> KernelRelationResponse:
         provenance_id_raw = model.provenance_id
         reviewed_by_raw = model.reviewed_by
         return cls(
@@ -249,6 +288,12 @@ class KernelRelationResponse(BaseModel):
             source_count=int(model.source_count),
             highest_evidence_tier=model.highest_evidence_tier,
             curation_status=str(model.curation_status),
+            evidence_summary=evidence_summary,
+            evidence_sentence=evidence_sentence,
+            evidence_sentence_source=evidence_sentence_source,
+            evidence_sentence_confidence=evidence_sentence_confidence,
+            evidence_sentence_rationale=evidence_sentence_rationale,
+            paper_links=cls._normalize_paper_links(paper_links),
             provenance_id=(
                 _to_uuid(provenance_id_raw) if provenance_id_raw is not None else None
             ),

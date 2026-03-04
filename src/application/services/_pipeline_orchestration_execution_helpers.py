@@ -274,6 +274,9 @@ class _PipelineOrchestrationExecutionHelpers(
         extraction_extracted = 0
         extraction_failed = 0
         extraction_persisted_relations = 0
+        extraction_concept_members_created = 0
+        extraction_concept_aliases_created = 0
+        extraction_concept_decisions_proposed = 0
         extraction_failure_ratio = 0.0
         extraction_failure_ratio_threshold: float | None = None
         extraction_quality_gate_failed = False
@@ -722,6 +725,42 @@ class _PipelineOrchestrationExecutionHelpers(
                     )
                 else:
                     extraction_persisted_relations = 0
+                extraction_concept_members_created_raw = getattr(
+                    extraction_summary,
+                    "concept_members_created_count",
+                    0,
+                )
+                if isinstance(extraction_concept_members_created_raw, int):
+                    extraction_concept_members_created = max(
+                        extraction_concept_members_created_raw,
+                        0,
+                    )
+                else:
+                    extraction_concept_members_created = 0
+                extraction_concept_aliases_created_raw = getattr(
+                    extraction_summary,
+                    "concept_aliases_created_count",
+                    0,
+                )
+                if isinstance(extraction_concept_aliases_created_raw, int):
+                    extraction_concept_aliases_created = max(
+                        extraction_concept_aliases_created_raw,
+                        0,
+                    )
+                else:
+                    extraction_concept_aliases_created = 0
+                extraction_concept_decisions_proposed_raw = getattr(
+                    extraction_summary,
+                    "concept_decisions_proposed_count",
+                    0,
+                )
+                if isinstance(extraction_concept_decisions_proposed_raw, int):
+                    extraction_concept_decisions_proposed = max(
+                        extraction_concept_decisions_proposed_raw,
+                        0,
+                    )
+                else:
+                    extraction_concept_decisions_proposed = 0
                 total_persisted_relations = extraction_persisted_relations
                 derived_graph_seed_entity_ids = (
                     self._extract_seed_entity_ids_from_extraction_summary(
@@ -797,6 +836,15 @@ class _PipelineOrchestrationExecutionHelpers(
                     "extraction_extracted": extraction_extracted,
                     "extraction_failed": extraction_failed,
                     "extraction_persisted_relations": extraction_persisted_relations,
+                    "extraction_concept_members_created": (
+                        extraction_concept_members_created
+                    ),
+                    "extraction_concept_aliases_created": (
+                        extraction_concept_aliases_created
+                    ),
+                    "extraction_concept_decisions_proposed": (
+                        extraction_concept_decisions_proposed
+                    ),
                     "extraction_failure_ratio": extraction_failure_ratio,
                     "extraction_failure_ratio_threshold": (
                         extraction_failure_ratio_threshold
@@ -938,6 +986,15 @@ class _PipelineOrchestrationExecutionHelpers(
                     "processed": graph_processed,
                     "persisted_relations": total_persisted_relations,
                     "extraction_persisted_relations": extraction_persisted_relations,
+                    "extraction_concept_members_created": (
+                        extraction_concept_members_created
+                    ),
+                    "extraction_concept_aliases_created": (
+                        extraction_concept_aliases_created
+                    ),
+                    "extraction_concept_decisions_proposed": (
+                        extraction_concept_decisions_proposed
+                    ),
                     "graph_stage_persisted_relations": (
                         graph_stage_persisted_relations
                     ),
@@ -1130,6 +1187,15 @@ class _PipelineOrchestrationExecutionHelpers(
                         "extraction_persisted_relations": (
                             extraction_persisted_relations
                         ),
+                        "extraction_concept_members_created": (
+                            extraction_concept_members_created
+                        ),
+                        "extraction_concept_aliases_created": (
+                            extraction_concept_aliases_created
+                        ),
+                        "extraction_concept_decisions_proposed": (
+                            extraction_concept_decisions_proposed
+                        ),
                         "graph_stage_persisted_relations": (
                             graph_stage_persisted_relations
                         ),
@@ -1162,6 +1228,15 @@ class _PipelineOrchestrationExecutionHelpers(
                     "processed": graph_processed,
                     "persisted_relations": total_persisted_relations,
                     "extraction_persisted_relations": extraction_persisted_relations,
+                    "extraction_concept_members_created": (
+                        extraction_concept_members_created
+                    ),
+                    "extraction_concept_aliases_created": (
+                        extraction_concept_aliases_created
+                    ),
+                    "extraction_concept_decisions_proposed": (
+                        extraction_concept_decisions_proposed
+                    ),
                     "graph_stage_persisted_relations": (
                         graph_stage_persisted_relations
                     ),
@@ -1302,6 +1377,15 @@ class _PipelineOrchestrationExecutionHelpers(
                 "extraction_status": extraction_status,
                 "graph_status": graph_status,
                 "extraction_persisted_relations": extraction_persisted_relations,
+                "extraction_concept_members_created": (
+                    extraction_concept_members_created
+                ),
+                "extraction_concept_aliases_created": (
+                    extraction_concept_aliases_created
+                ),
+                "extraction_concept_decisions_proposed": (
+                    extraction_concept_decisions_proposed
+                ),
                 "graph_stage_persisted_relations": (graph_stage_persisted_relations),
                 "total_persisted_relations": total_persisted_relations,
                 "extraction_quality_gate_failed": extraction_quality_gate_failed,

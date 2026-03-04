@@ -1,5 +1,3 @@
-"""Relation/graph/review helpers for source workflow monitor."""
-
 from __future__ import annotations
 
 from collections import Counter
@@ -19,6 +17,7 @@ from src.models.database.kernel.relations import RelationEvidenceModel, Relation
 from src.models.database.review import ReviewRecord
 from src.models.database.source_document import SourceDocumentModel
 
+from ._source_workflow_monitor_paper_links import resolve_paper_links
 from ._source_workflow_monitor_quality_helpers import (
     SourceWorkflowMonitorQualityMixin,
 )
@@ -58,7 +57,7 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
         *,
         space_id: UUID,
         document_ids: set[str],
-        document_external_record_id_by_id: dict[str, str],
+        document_context_by_id: dict[str, JSONObject],
         queue_id_to_document_id: dict[str, str],
         extraction_rows: list[JSONObject],
         limit: int,
@@ -66,7 +65,7 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
         persisted = self._load_document_relations(
             space_id=space_id,
             document_ids=document_ids,
-            document_external_record_id_by_id=document_external_record_id_by_id,
+            document_context_by_id=document_context_by_id,
             limit=limit,
         )
         pending_relation_ids = {
@@ -106,7 +105,7 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
         *,
         space_id: UUID,
         document_ids: set[str],
-        document_external_record_id_by_id: dict[str, str],
+        document_context_by_id: dict[str, JSONObject],
         limit: int,
     ) -> list[JSONObject]:
         if not document_ids:
@@ -133,6 +132,10 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
                 RelationEvidenceModel.id,
                 RelationEvidenceModel.confidence,
                 RelationEvidenceModel.evidence_summary,
+                RelationEvidenceModel.evidence_sentence,
+                RelationEvidenceModel.evidence_sentence_source,
+                RelationEvidenceModel.evidence_sentence_confidence,
+                RelationEvidenceModel.evidence_sentence_rationale,
                 RelationEvidenceModel.agent_run_id,
                 source_entity.display_label,
                 target_entity.display_label,
@@ -149,27 +152,59 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
             .limit(max(limit, 1) * 20)
         )
         rows = self._session.execute(statement).all()
-        return [
-            {
-                "document_id": document_uuid_to_id.get(row[0], str(row[0])),
-                "external_record_id": document_external_record_id_by_id.get(
-                    document_uuid_to_id.get(row[0], str(row[0])),
-                ),
-                "relation_id": str(row[1]),
-                "relation_type": row[2],
-                "curation_status": row[3],
-                "aggregate_confidence": float(row[4] or 0.0),
-                "source_entity_id": str(row[5]),
-                "target_entity_id": str(row[6]),
-                "evidence_id": str(row[7]),
-                "evidence_confidence": float(row[8] or 0.0),
-                "evidence_summary": row[9],
-                "agent_run_id": row[10],
-                "source_entity_label": row[11],
-                "target_entity_label": row[12],
-            }
-            for row in rows
-        ]
+        payload_rows: list[JSONObject] = []
+        for row in rows:
+            document_id = document_uuid_to_id.get(row[0], str(row[0]))
+            document_context = coerce_json_object(
+                document_context_by_id.get(document_id),
+            )
+            external_record_id = normalize_optional_string(
+                document_context.get("external_record_id"),
+            )
+            source_type = normalize_optional_string(document_context.get("source_type"))
+            metadata = coerce_json_object(document_context.get("metadata"))
+            paper_links = self._resolve_paper_links(
+                source_type=source_type,
+                external_record_id=external_record_id,
+                metadata=metadata,
+            )
+            payload_rows.append(
+                {
+                    "document_id": document_id,
+                    "external_record_id": external_record_id,
+                    "relation_id": str(row[1]),
+                    "relation_type": row[2],
+                    "curation_status": row[3],
+                    "aggregate_confidence": float(row[4] or 0.0),
+                    "source_entity_id": str(row[5]),
+                    "target_entity_id": str(row[6]),
+                    "evidence_id": str(row[7]),
+                    "evidence_confidence": float(row[8] or 0.0),
+                    "evidence_summary": row[9],
+                    "evidence_sentence": row[10],
+                    "evidence_sentence_source": row[11],
+                    "evidence_sentence_confidence": row[12],
+                    "evidence_sentence_rationale": row[13],
+                    "agent_run_id": row[14],
+                    "source_entity_label": row[15],
+                    "target_entity_label": row[16],
+                    "paper_links": paper_links,
+                },
+            )
+        return payload_rows
+
+    def _resolve_paper_links(
+        self,
+        *,
+        source_type: str | None,
+        external_record_id: str | None,
+        metadata: JSONObject,
+    ) -> list[JSONObject]:
+        return resolve_paper_links(
+            source_type=source_type,
+            external_record_id=external_record_id,
+            metadata=metadata,
+        )
 
     def _extract_rejected_relation_details(
         self,

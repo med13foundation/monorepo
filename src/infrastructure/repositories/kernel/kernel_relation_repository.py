@@ -53,7 +53,7 @@ class SqlAlchemyKernelRelationRepository(
             auto_promotion_policy or AutoPromotionPolicy.from_environment()
         )
 
-    def create(  # noqa: PLR0913
+    def create(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self,
         *,
         research_space_id: str,
@@ -62,6 +62,10 @@ class SqlAlchemyKernelRelationRepository(
         target_id: str,
         confidence: float = 0.5,
         evidence_summary: str | None = None,
+        evidence_sentence: str | None = None,
+        evidence_sentence_source: str | None = None,
+        evidence_sentence_confidence: str | None = None,
+        evidence_sentence_rationale: str | None = None,
         evidence_tier: str | None = None,
         curation_status: str = "DRAFT",
         provenance_id: str | None = None,
@@ -94,6 +98,24 @@ class SqlAlchemyKernelRelationRepository(
             self._session.flush()
         normalized_confidence = _clamp_confidence(confidence)
         normalized_tier = _normalize_evidence_tier(evidence_tier)
+        normalized_sentence_source = (
+            evidence_sentence_source.strip().lower()
+            if isinstance(evidence_sentence_source, str)
+            and evidence_sentence_source.strip()
+            else None
+        )
+        normalized_sentence_confidence = (
+            evidence_sentence_confidence.strip().lower()
+            if isinstance(evidence_sentence_confidence, str)
+            and evidence_sentence_confidence.strip()
+            else None
+        )
+        normalized_sentence_rationale = (
+            evidence_sentence_rationale.strip()[:2000]
+            if isinstance(evidence_sentence_rationale, str)
+            and evidence_sentence_rationale.strip()
+            else None
+        )
         source_document_uuid: UUID | None = None
         if source_document_id is not None:
             try:
@@ -122,6 +144,41 @@ class SqlAlchemyKernelRelationRepository(
             duplicate_stmt = duplicate_stmt.where(
                 RelationEvidenceModel.evidence_summary == evidence_summary,
             )
+        if evidence_sentence is None:
+            duplicate_stmt = duplicate_stmt.where(
+                RelationEvidenceModel.evidence_sentence.is_(None),
+            )
+        else:
+            duplicate_stmt = duplicate_stmt.where(
+                RelationEvidenceModel.evidence_sentence == evidence_sentence,
+            )
+        if normalized_sentence_source is None:
+            duplicate_stmt = duplicate_stmt.where(
+                RelationEvidenceModel.evidence_sentence_source.is_(None),
+            )
+        else:
+            duplicate_stmt = duplicate_stmt.where(
+                RelationEvidenceModel.evidence_sentence_source
+                == normalized_sentence_source,
+            )
+        if normalized_sentence_confidence is None:
+            duplicate_stmt = duplicate_stmt.where(
+                RelationEvidenceModel.evidence_sentence_confidence.is_(None),
+            )
+        else:
+            duplicate_stmt = duplicate_stmt.where(
+                RelationEvidenceModel.evidence_sentence_confidence
+                == normalized_sentence_confidence,
+            )
+        if normalized_sentence_rationale is None:
+            duplicate_stmt = duplicate_stmt.where(
+                RelationEvidenceModel.evidence_sentence_rationale.is_(None),
+            )
+        else:
+            duplicate_stmt = duplicate_stmt.where(
+                RelationEvidenceModel.evidence_sentence_rationale
+                == normalized_sentence_rationale,
+            )
         if provenance_uuid is None:
             duplicate_stmt = duplicate_stmt.where(
                 RelationEvidenceModel.provenance_id.is_(None),
@@ -129,6 +186,14 @@ class SqlAlchemyKernelRelationRepository(
         else:
             duplicate_stmt = duplicate_stmt.where(
                 RelationEvidenceModel.provenance_id == provenance_uuid,
+            )
+        if source_document_uuid is None:
+            duplicate_stmt = duplicate_stmt.where(
+                RelationEvidenceModel.source_document_id.is_(None),
+            )
+        else:
+            duplicate_stmt = duplicate_stmt.where(
+                RelationEvidenceModel.source_document_id == source_document_uuid,
             )
         duplicate_evidence_id = self._session.scalar(duplicate_stmt.limit(1))
 
@@ -138,6 +203,10 @@ class SqlAlchemyKernelRelationRepository(
                 relation_id=relation.id,
                 confidence=normalized_confidence,
                 evidence_summary=evidence_summary,
+                evidence_sentence=evidence_sentence,
+                evidence_sentence_source=normalized_sentence_source,
+                evidence_sentence_confidence=normalized_sentence_confidence,
+                evidence_sentence_rationale=normalized_sentence_rationale,
                 evidence_tier=normalized_tier,
                 provenance_id=provenance_uuid,
                 source_document_id=source_document_uuid,

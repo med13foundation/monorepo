@@ -80,7 +80,7 @@
     },
     {
       "path": "src/application/services/_pipeline_orchestration_execution_helpers.py",
-      "max_lines": 1360,
+      "max_lines": 1500,
       "reason": "Unified pipeline execution helpers stay co-located during orchestration hardening; split into stage-specific modules is planned after run-quality and monitor-scope stabilization.",
       "expires_on": "2026-12-31"
     },
@@ -148,6 +148,48 @@
       "path": "src/database/seeds/seeder.py",
       "max_lines": 800,
       "reason": "Seeder orchestration remains consolidated pending seeding package split by domain.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/routes/research_spaces/concept_routes.py",
+      "max_lines": 750,
+      "reason": "Concept routes were delivered together for the initial Concept Manager surface; split by sets/members/aliases/policy/decisions is tracked as follow-up.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/infrastructure/data_sources/pubmed_gateway.py",
+      "max_lines": 850,
+      "reason": "PubMed gateway currently centralizes ESearch/ESummary/EFetch and enrichment parsing while source gateway extraction by API concern is scheduled.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/services/_source_workflow_monitor_pipeline.py",
+      "max_lines": 650,
+      "reason": "Workflow monitor pipeline helpers remain co-located during quality-gate and event-contract stabilization; split by stage is planned.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/services/kernel/concept_management_service.py",
+      "max_lines": 700,
+      "reason": "Concept management orchestration remains centralized during initial rollout; decomposition by policy, decision, and membership workflows is planned.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/agents/services/_relation_endpoint_entity_resolution_helpers.py",
+      "max_lines": 650,
+      "reason": "Relation endpoint resolution helpers are grouped to preserve deterministic matching behavior while extraction submodules are being finalized.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/agents/services/_extraction_relation_candidate_write_flow.py",
+      "max_lines": 1300,
+      "reason": "Candidate write flow currently centralizes claim-first ordering, evidence-sentence fallback/provenance handling, and conflict recovery; split into smaller flow modules is planned.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/models/database/kernel/concepts.py",
+      "max_lines": 850,
+      "reason": "Concept ORM models and typed payload contracts are temporarily co-located for schema coherence; model-package split is planned.",
       "expires_on": "2026-12-31"
     }
   ],

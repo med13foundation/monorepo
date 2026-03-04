@@ -143,6 +143,48 @@ describe('SpaceCurationClient', () => {
     ).toBeInTheDocument()
   })
 
+  it('renders evidence sentence details and paper links in graph cards', () => {
+    const propsWithSentence = {
+      ...baseProps,
+      relations: {
+        ...baseProps.relations,
+        relations: [
+          {
+            ...baseProps.relations.relations[0],
+            evidence_summary: null,
+            evidence_sentence:
+              'MED13 variation was associated with cardiomyopathy in the study cohort.',
+            evidence_sentence_source: 'artana_generated',
+            paper_links: [
+              {
+                label: 'PubMed',
+                url: 'https://pubmed.ncbi.nlm.nih.gov/12345678/',
+                source: 'external_record_id',
+              },
+            ],
+          },
+        ],
+      },
+    }
+
+    render(<SpaceCurationClient {...propsWithSentence} activeTab="graph" />)
+
+    expect(
+      screen.getByText(
+        'MED13 variation was associated with cardiomyopathy in the study cohort.',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('AI-generated (not verbatim span)'),
+    ).toBeInTheDocument()
+    const sourceLink = screen.getByRole('link', { name: 'PubMed' })
+    expect(sourceLink).toHaveAttribute(
+      'href',
+      'https://pubmed.ncbi.nlm.nih.gov/12345678/',
+    )
+    expect(sourceLink).toHaveAttribute('target', '_blank')
+  })
+
   it('routes to claims tab when tab button is selected', () => {
     render(<SpaceCurationClient {...baseProps} activeTab="graph" />)
 

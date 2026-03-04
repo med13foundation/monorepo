@@ -199,6 +199,9 @@ class EntityRecognitionDocumentOutcome:
     ingestion_entities_created: int = 0
     ingestion_observations_created: int = 0
     persisted_relations_count: int = 0
+    concept_members_created_count: int = 0
+    concept_aliases_created_count: int = 0
+    concept_decisions_proposed_count: int = 0
     seed_entity_ids: tuple[str, ...] = ()
     graph_fallback_relation_payloads: tuple[JSONObject, ...] = ()
     errors: tuple[str, ...] = ()
@@ -225,6 +228,9 @@ class EntityRecognitionRunSummary:
     started_at: datetime
     completed_at: datetime
     persisted_relations_count: int = 0
+    concept_members_created_count: int = 0
+    concept_aliases_created_count: int = 0
+    concept_decisions_proposed_count: int = 0
     derived_graph_fallback_relation_payloads: tuple[JSONObject, ...] = ()
 
 
@@ -505,6 +511,15 @@ class EntityRecognitionService(
                 "review_required": summary.review_required,
                 "shadow_runs": summary.shadow_runs,
                 "persisted_relations_count": summary.persisted_relations_count,
+                "concept_members_created_count": (
+                    summary.concept_members_created_count
+                ),
+                "concept_aliases_created_count": (
+                    summary.concept_aliases_created_count
+                ),
+                "concept_decisions_proposed_count": (
+                    summary.concept_decisions_proposed_count
+                ),
                 "error_count": len(summary.errors),
                 "duration_ms": int(
                     (completed_at - started_at).total_seconds() * 1000,
@@ -556,6 +571,9 @@ class EntityRecognitionService(
         ingestion_entities_created: int = 0,
         ingestion_observations_created: int = 0,
         persisted_relations_count: int = 0,
+        concept_members_created_count: int = 0,
+        concept_aliases_created_count: int = 0,
+        concept_decisions_proposed_count: int = 0,
         seed_entity_ids: tuple[str, ...] = (),
         graph_fallback_relation_payloads: tuple[JSONObject, ...] = (),
         errors: tuple[str, ...] = (),
@@ -574,6 +592,9 @@ class EntityRecognitionService(
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
             persisted_relations_count=persisted_relations_count,
+            concept_members_created_count=concept_members_created_count,
+            concept_aliases_created_count=concept_aliases_created_count,
+            concept_decisions_proposed_count=concept_decisions_proposed_count,
             seed_entity_ids=seed_entity_ids,
             graph_fallback_relation_payloads=graph_fallback_relation_payloads,
             errors=errors,
@@ -976,6 +997,15 @@ class EntityRecognitionService(
         persisted_relations_count = sum(
             outcome.persisted_relations_count for outcome in outcomes
         )
+        concept_members_created_count = sum(
+            outcome.concept_members_created_count for outcome in outcomes
+        )
+        concept_aliases_created_count = sum(
+            outcome.concept_aliases_created_count for outcome in outcomes
+        )
+        concept_decisions_proposed_count = sum(
+            outcome.concept_decisions_proposed_count for outcome in outcomes
+        )
 
         errors: list[str] = []
         for outcome in outcomes:
@@ -1061,6 +1091,9 @@ class EntityRecognitionService(
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
             persisted_relations_count=persisted_relations_count,
+            concept_members_created_count=concept_members_created_count,
+            concept_aliases_created_count=concept_aliases_created_count,
+            concept_decisions_proposed_count=concept_decisions_proposed_count,
             derived_graph_seed_entity_ids=tuple(derived_graph_seed_entity_ids),
             derived_graph_fallback_relation_payloads=tuple(
                 derived_graph_fallback_relation_payloads,

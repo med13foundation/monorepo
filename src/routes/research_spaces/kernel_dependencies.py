@@ -6,6 +6,7 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from src.application.services.kernel import (
+    ConceptManagementService,
     DictionaryManagementService,
     KernelEntityService,
     KernelObservationService,
@@ -14,16 +15,20 @@ from src.application.services.kernel import (
     ProvenanceService,
 )
 from src.database.session import get_session
-from src.domain.ports import DictionaryPort
+from src.domain.ports import ConceptPort, DictionaryPort
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
 from src.infrastructure.ingestion.pipeline import IngestionPipeline
+from src.infrastructure.llm.adapters.concept_decision_harness_adapter import (
+    DeterministicConceptDecisionHarnessAdapter,
+)
 from src.infrastructure.llm.adapters.dictionary_search_harness_adapter import (
     ArtanaDictionarySearchHarnessAdapter,
 )
 from src.infrastructure.repositories.kernel import (
+    SqlAlchemyConceptRepository,
     SqlAlchemyDictionaryRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
@@ -63,6 +68,18 @@ def get_dictionary_service(
         dictionary_repo=dictionary_repo,
         dictionary_search_harness=search_harness,
         embedding_provider=embedding_provider,
+    )
+
+
+def get_concept_service(
+    session: Session = Depends(get_session),
+) -> ConceptPort:
+    """Kernel concept manager service (read/write)."""
+    concept_repo = SqlAlchemyConceptRepository(session)
+    concept_harness = DeterministicConceptDecisionHarnessAdapter()
+    return ConceptManagementService(
+        concept_repo=concept_repo,
+        concept_harness=concept_harness,
     )
 
 
@@ -140,6 +157,7 @@ def get_ingestion_pipeline(
 
 
 __all__ = [
+    "get_concept_service",
     "get_dictionary_service",
     "get_kernel_entity_service",
     "get_kernel_observation_service",

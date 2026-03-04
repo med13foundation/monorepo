@@ -80,12 +80,22 @@ export interface KernelRelationCreateRequest {
   target_id: string
   confidence?: number
   evidence_summary?: string | null
+  evidence_sentence?: string | null
+  evidence_sentence_source?: string | null
+  evidence_sentence_confidence?: string | null
+  evidence_sentence_rationale?: string | null
   evidence_tier?: string | null
   provenance_id?: string | null
 }
 
 export interface KernelRelationCurationUpdateRequest {
   curation_status: string
+}
+
+export interface KernelRelationPaperLink {
+  label: string
+  url: string
+  source: string
 }
 
 export interface KernelRelationResponse {
@@ -97,6 +107,11 @@ export interface KernelRelationResponse {
 
   confidence?: number
   evidence_summary?: string | null
+  evidence_sentence?: string | null
+  evidence_sentence_source?: string | null
+  evidence_sentence_confidence?: string | null
+  evidence_sentence_rationale?: string | null
+  paper_links?: KernelRelationPaperLink[]
   evidence_tier?: string | null
   aggregate_confidence?: number
   source_count?: number
@@ -402,6 +417,7 @@ export interface GraphSearchEvidenceChainItem {
   observation_id: string | null
   evidence_tier: string | null
   confidence: number | null
+  evidence_sentence: string | null
   source_ref: string | null
 }
 

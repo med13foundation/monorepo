@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_HEAD_REVISION = "024_claim_first_orchestration"
-CURRENT_HEAD_REVISION = "025_graph_dict_hard_guarantees"
+CURRENT_HEAD_REVISION = "028_evidence_sentence_prov"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"
@@ -102,6 +102,135 @@ def test_022_run_id_columns_are_textual_after_upgrade(tmp_path: Path) -> None:
     assert source_doc_columns["extraction_agent_run_id"].startswith(("VARCHAR", "TEXT"))
     assert relation_evidence_columns["agent_run_id"].startswith(("VARCHAR", "TEXT"))
     assert provenance_columns["extraction_run_id"].startswith(("VARCHAR", "TEXT"))
+
+
+def _run_alembic_downgrade(*, database_url: str, revision: str) -> None:
+    env = dict(os.environ)
+    env["ALEMBIC_DATABASE_URL"] = database_url
+    venv_alembic = Path(sys.executable).with_name("alembic")
+    command = [str(venv_alembic), "downgrade", revision]
+    if not venv_alembic.exists():
+        fallback_alembic = which("alembic")
+        if fallback_alembic is None:
+            msg = "alembic executable not found on PATH"
+            raise RuntimeError(msg)
+        command = [fallback_alembic, "downgrade", revision]
+    subprocess.run(
+        command,
+        check=True,
+        cwd=REPOSITORY_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_027_relation_evidence_sentence_upgrade_and_downgrade(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'relation_evidence_sentence_migration.db'}"
+    engine = create_engine(database_url, future=True)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "026_concept_manager_foundation"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relation_evidence ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "evidence_summary TEXT"
+                ")",
+            ),
+        )
+
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision="027_relation_evidence_sentence",
+    )
+    inspector = inspect(engine)
+    upgraded_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspector.get_columns("relation_evidence")
+    }
+    assert "evidence_sentence" in upgraded_columns
+    assert upgraded_columns["evidence_sentence"].startswith(("VARCHAR", "TEXT"))
+
+    _run_alembic_downgrade(
+        database_url=database_url,
+        revision="026_concept_manager_foundation",
+    )
+    downgraded_columns = {
+        column["name"] for column in inspect(engine).get_columns("relation_evidence")
+    }
+    assert "evidence_sentence" not in downgraded_columns
+
+
+def test_028_relation_evidence_sentence_provenance_upgrade_and_downgrade(
+    tmp_path: Path,
+) -> None:
+    database_url = (
+        f"sqlite:///{tmp_path / 'relation_evidence_sentence_provenance_migration.db'}"
+    )
+    engine = create_engine(database_url, future=True)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "027_relation_evidence_sentence"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relation_evidence ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "evidence_summary TEXT, "
+                "evidence_sentence TEXT"
+                ")",
+            ),
+        )
+
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision="028_evidence_sentence_prov",
+    )
+    upgraded_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspect(engine).get_columns("relation_evidence")
+    }
+    assert "evidence_sentence_source" in upgraded_columns
+    assert "evidence_sentence_confidence" in upgraded_columns
+    assert "evidence_sentence_rationale" in upgraded_columns
+    assert upgraded_columns["evidence_sentence_source"].startswith(("VARCHAR", "TEXT"))
+    assert upgraded_columns["evidence_sentence_confidence"].startswith(
+        ("VARCHAR", "TEXT"),
+    )
+    assert upgraded_columns["evidence_sentence_rationale"].startswith(
+        ("VARCHAR", "TEXT"),
+    )
+
+    _run_alembic_downgrade(
+        database_url=database_url,
+        revision="027_relation_evidence_sentence",
+    )
+    downgraded_columns = {
+        column["name"] for column in inspect(engine).get_columns("relation_evidence")
+    }
+    assert "evidence_sentence_source" not in downgraded_columns
+    assert "evidence_sentence_confidence" not in downgraded_columns
+    assert "evidence_sentence_rationale" not in downgraded_columns
 
 
 def test_006_backfills_extraction_queue_payload_reference_columns(

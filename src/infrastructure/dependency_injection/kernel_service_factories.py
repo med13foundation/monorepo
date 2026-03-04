@@ -17,7 +17,7 @@ if TYPE_CHECKING:
         KernelRelationService,
         ProvenanceService,
     )
-    from src.domain.ports import DictionaryPort
+    from src.domain.ports import ConceptPort, DictionaryPort
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
 
 
@@ -146,6 +146,23 @@ class KernelServiceFactoryMixin:
             dictionary_repo=dictionary_repo,
             dictionary_search_harness=search_harness,
             embedding_provider=embedding_provider,
+        )
+
+    def create_concept_management_service(
+        self,
+        session: Session,
+    ) -> ConceptPort:
+        from src.application.services.kernel import ConceptManagementService
+        from src.infrastructure.llm.adapters import (
+            DeterministicConceptDecisionHarnessAdapter,
+        )
+        from src.infrastructure.repositories.kernel import SqlAlchemyConceptRepository
+
+        concept_repo = SqlAlchemyConceptRepository(session)
+        concept_harness = DeterministicConceptDecisionHarnessAdapter()
+        return ConceptManagementService(
+            concept_repo=concept_repo,
+            concept_harness=concept_harness,
         )
 
     def create_provenance_service(

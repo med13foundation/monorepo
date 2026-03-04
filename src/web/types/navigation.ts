@@ -232,6 +232,7 @@ export const SPACE_ROUTES = {
   DATA_SOURCES: "/spaces/:spaceId/data-sources",
   DATA_CURATION: "/spaces/:spaceId/curation",
   KNOWLEDGE_GRAPH: "/spaces/:spaceId/graph",
+  CONCEPTS: "/spaces/:spaceId/concepts",
   MEMBERS: "/spaces/:spaceId/members",
   SETTINGS: "/spaces/:spaceId/settings",
 } as const

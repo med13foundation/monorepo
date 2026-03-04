@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query
@@ -14,20 +13,8 @@ from sqlalchemy.orm import Session
 from src.application.services.claim_first_metrics import (
     emit_graph_filter_preset_usage,
 )
-from src.application.services.kernel.kernel_entity_service import KernelEntityService
-from src.application.services.kernel.kernel_relation_claim_service import (
-    KernelRelationClaimService,
-)
-from src.application.services.kernel.kernel_relation_service import (
-    KernelRelationService,
-)
-from src.application.services.membership_management_service import (
-    MembershipManagementService,
-)
 from src.database.session import get_session
-from src.domain.entities.kernel.relations import KernelRelation
 from src.domain.entities.user import User
-from src.domain.ports.dictionary_port import DictionaryPort
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
@@ -56,6 +43,7 @@ from src.routes.research_spaces.kernel_schemas import (
     KernelRelationResponse,
 )
 
+from ._kernel_relation_evidence_presenter import load_relation_evidence_presentation
 from .router import (
     HTTP_201_CREATED,
     HTTP_400_BAD_REQUEST,
@@ -64,6 +52,22 @@ from .router import (
     HTTP_500_INTERNAL_SERVER_ERROR,
     research_spaces_router,
 )
+
+if TYPE_CHECKING:
+    from src.application.services.kernel.kernel_entity_service import (
+        KernelEntityService,
+    )
+    from src.application.services.kernel.kernel_relation_claim_service import (
+        KernelRelationClaimService,
+    )
+    from src.application.services.kernel.kernel_relation_service import (
+        KernelRelationService,
+    )
+    from src.application.services.membership_management_service import (
+        MembershipManagementService,
+    )
+    from src.domain.entities.kernel.relations import KernelRelation
+    from src.domain.ports.dictionary_port import DictionaryPort
 
 _CURATION_STATUS_PRIORITY: dict[str, int] = {
     "APPROVED": 5,
@@ -109,8 +113,7 @@ _CLAIM_VALIDATION_STATE_MAP: dict[str, _ClaimValidationState] = {
 }
 
 
-@dataclass(frozen=True)
-class _RelationClaimTriageDependencies:
+class _RelationClaimTriageDependencies(NamedTuple):
     membership_service: MembershipManagementService
     relation_claim_service: KernelRelationClaimService
     relation_service: KernelRelationService
@@ -170,6 +173,19 @@ def _claim_resolution_evidence_summary(claim: object) -> str:
     if claim_id is None:
         return "Promoted from resolved extraction claim."
     return f"Promoted from resolved extraction claim ({claim_id})."
+
+
+def _claim_resolution_evidence_sentence(claim: object) -> str | None:
+    metadata_payload = getattr(claim, "metadata_payload", None)
+    if not isinstance(metadata_payload, dict):
+        return None
+    relation_evidence_payload = metadata_payload.get("relation_evidence")
+    if not isinstance(relation_evidence_payload, dict):
+        return None
+    span_text = _normalize_optional_text(relation_evidence_payload.get("span_text"))
+    if span_text is None:
+        return None
+    return span_text[:2000]
 
 
 def _activate_dictionary_dependencies_for_claim(  # noqa: PLR0913
@@ -534,9 +550,33 @@ def list_kernel_relations(
         node_query=node_query,
         node_ids=parsed_node_ids,
     )
+    evidence_by_relation_id = load_relation_evidence_presentation(
+        session=session,
+        relation_ids=[relation.id for relation in relations],
+    )
+    relation_rows: list[KernelRelationResponse] = []
+    for relation in relations:
+        evidence = evidence_by_relation_id.get(str(relation.id))
+        relation_rows.append(
+            KernelRelationResponse.from_model(
+                relation,
+                evidence_summary=evidence.evidence_summary if evidence else None,
+                evidence_sentence=evidence.evidence_sentence if evidence else None,
+                evidence_sentence_source=(
+                    evidence.evidence_sentence_source if evidence else None
+                ),
+                evidence_sentence_confidence=(
+                    evidence.evidence_sentence_confidence if evidence else None
+                ),
+                evidence_sentence_rationale=(
+                    evidence.evidence_sentence_rationale if evidence else None
+                ),
+                paper_links=evidence.paper_links if evidence else [],
+            ),
+        )
 
     return KernelRelationListResponse(
-        relations=[KernelRelationResponse.from_model(r) for r in relations],
+        relations=relation_rows,
         total=total,
         offset=offset,
         limit=limit,
@@ -573,6 +613,10 @@ def create_kernel_relation(
             target_id=str(request.target_id),
             confidence=request.confidence,
             evidence_summary=request.evidence_summary,
+            evidence_sentence=request.evidence_sentence,
+            evidence_sentence_source=request.evidence_sentence_source,
+            evidence_sentence_confidence=request.evidence_sentence_confidence,
+            evidence_sentence_rationale=request.evidence_sentence_rationale,
             evidence_tier=request.evidence_tier,
             provenance_id=str(request.provenance_id) if request.provenance_id else None,
         )
@@ -988,6 +1032,7 @@ def update_relation_claim_status(
             try:
                 reviewed_by = str(current_user.id)
                 source_ref = f"relation_claim:{existing.id}"
+                evidence_sentence = _claim_resolution_evidence_sentence(existing)
                 _activate_dictionary_dependencies_for_claim(
                     dictionary_service=dictionary_service,
                     source_type=existing.source_type,
@@ -1003,6 +1048,14 @@ def update_relation_claim_status(
                     target_id=target_entity_id,
                     confidence=float(existing.confidence),
                     evidence_summary=_claim_resolution_evidence_summary(existing),
+                    evidence_sentence=evidence_sentence,
+                    evidence_sentence_source=(
+                        "verbatim_span" if evidence_sentence is not None else None
+                    ),
+                    evidence_sentence_confidence=(
+                        "high" if evidence_sentence is not None else None
+                    ),
+                    evidence_sentence_rationale=None,
                     evidence_tier="COMPUTATIONAL",
                     source_document_id=(
                         str(existing.source_document_id)
