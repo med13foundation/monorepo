@@ -73,6 +73,20 @@ function errorMessage(error: unknown): string {
   return 'Unable to load relations for this space.'
 }
 
+function errorStatusCode(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null) {
+    return null
+  }
+  if (!('response' in error)) {
+    return null
+  }
+  const response = (error as { response?: { status?: unknown } }).response
+  if (!response || typeof response.status !== 'number') {
+    return null
+  }
+  return response.status
+}
+
 export default async function SpaceCurationPage({ params, searchParams }: SpaceCurationPageProps) {
   const { spaceId } = await params
   const resolvedSearchParams = searchParams ? await searchParams : undefined
@@ -205,7 +219,17 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
       token,
     )
   } catch (error) {
-    console.warn('[SpaceCurationPage] Relation conflicts lookup failed', error)
+    const statusCode = errorStatusCode(error)
+    if (statusCode === 404 || statusCode === 405) {
+      relationConflicts = {
+        conflicts: [],
+        total: 0,
+        offset: 0,
+        limit: 200,
+      }
+    } else {
+      console.warn('[SpaceCurationPage] Relation conflicts lookup failed', error)
+    }
   }
 
   try {

@@ -25,6 +25,7 @@ import type {
   GraphSearchResponse,
   KernelGraphSubgraphMeta,
   KernelGraphSubgraphRequest,
+  RelationConflictListResponse,
   RelationClaimResponse,
 } from '@/types/kernel'
 
@@ -98,6 +99,65 @@ function errorStatusCode(error: unknown): number | null {
     return null
   }
   return response.status
+}
+
+async function fetchRelationConflictsSafe(
+  spaceId: string,
+  token: string,
+): Promise<RelationConflictListResponse> {
+  try {
+    return await fetchRelationConflicts(spaceId, { offset: 0, limit: 200 }, token)
+  } catch (error) {
+    const statusCode = errorStatusCode(error)
+    if (statusCode === 404 || statusCode === 405 || statusCode === 500) {
+      return {
+        conflicts: [],
+        total: 0,
+        offset: 0,
+        limit: 200,
+      }
+    }
+    console.warn('[KnowledgeGraphController] Relation conflicts overlay unavailable', error)
+    return {
+      conflicts: [],
+      total: 0,
+      offset: 0,
+      limit: 200,
+    }
+  }
+}
+
+async function fetchRelationClaimsOverlaySafe(
+  spaceId: string,
+  token: string,
+): Promise<RelationClaimResponse[]> {
+  const claims: RelationClaimResponse[] = []
+  let offset = 0
+  let total = 0
+
+  try {
+    do {
+      const page = await fetchRelationClaims(
+        spaceId,
+        {
+          offset,
+          limit: CLAIM_OVERLAY_PAGE_LIMIT,
+        },
+        token,
+      )
+      claims.push(...page.claims)
+      total = page.total
+      if (page.claims.length === 0) {
+        break
+      }
+      offset += page.claims.length
+    } while (offset < total && offset < CLAIM_OVERLAY_MAX_TOTAL)
+
+    return claims
+  } catch (error) {
+    console.warn('[KnowledgeGraphController] Relation claims overlay unavailable', error)
+    return []
+  }
 }
 
 function updateQueryParams(
@@ -244,35 +304,10 @@ export function useKnowledgeGraphController({
       setGraphNotice(null)
 
       try {
-        const fetchClaimOverlay = async (): Promise<RelationClaimResponse[]> => {
-          const claims: RelationClaimResponse[] = []
-          let offset = 0
-          let total = 0
-
-          do {
-            const page = await fetchRelationClaims(
-              spaceId,
-              {
-                offset,
-                limit: CLAIM_OVERLAY_PAGE_LIMIT,
-              },
-              token,
-            )
-            claims.push(...page.claims)
-            total = page.total
-            if (page.claims.length === 0) {
-              break
-            }
-            offset += page.claims.length
-          } while (offset < total && offset < CLAIM_OVERLAY_MAX_TOTAL)
-
-          return claims
-        }
-
         const [response, claimOverlay, conflictResponse] = await Promise.all([
           fetchKernelSubgraph(spaceId, payload, token),
-          fetchClaimOverlay(),
-          fetchRelationConflicts(spaceId, { offset: 0, limit: 200 }, token),
+          fetchRelationClaimsOverlaySafe(spaceId, token),
+          fetchRelationConflictsSafe(spaceId, token),
         ])
         const persistedGraph = buildGraphModel(response)
         const mergedGraph = mergeGraphModelWithRelationClaims(
@@ -289,35 +324,10 @@ export function useKnowledgeGraphController({
       } catch (error) {
         if (errorStatusCode(error) === 404) {
           try {
-            const fetchClaimOverlay = async (): Promise<RelationClaimResponse[]> => {
-              const claims: RelationClaimResponse[] = []
-              let offset = 0
-              let total = 0
-
-              do {
-                const page = await fetchRelationClaims(
-                  spaceId,
-                  {
-                    offset,
-                    limit: CLAIM_OVERLAY_PAGE_LIMIT,
-                  },
-                  token,
-                )
-                claims.push(...page.claims)
-                total = page.total
-                if (page.claims.length === 0) {
-                  break
-                }
-                offset += page.claims.length
-              } while (offset < total && offset < CLAIM_OVERLAY_MAX_TOTAL)
-
-              return claims
-            }
-
             const [legacyGraph, claimOverlay, conflictResponse] = await Promise.all([
               fetchKernelGraphExport(spaceId, token),
-              fetchClaimOverlay(),
-              fetchRelationConflicts(spaceId, { offset: 0, limit: 200 }, token),
+              fetchRelationClaimsOverlaySafe(spaceId, token),
+              fetchRelationConflictsSafe(spaceId, token),
             ])
             const persistedGraph = buildGraphModel(legacyGraph)
             const mergedGraph = mergeGraphModelWithRelationClaims(

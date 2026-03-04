@@ -366,4 +366,43 @@ describe('KnowledgeGraphClient', () => {
       )
     })
   })
+
+  it('renders graph when relation conflict endpoint returns 405', async () => {
+    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
+    mockFetchRelationConflicts.mockRejectedValueOnce({ response: { status: 405 } })
+
+    render(<KnowledgeGraphClient spaceId="space-1" />)
+
+    await waitFor(() => {
+      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('mock-graph-node-count')).toHaveTextContent('3')
+      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
+    })
+  })
+
+  it('renders graph when relation conflict endpoint returns 500', async () => {
+    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
+    mockFetchRelationConflicts.mockRejectedValueOnce({ response: { status: 500 } })
+
+    render(<KnowledgeGraphClient spaceId="space-1" />)
+
+    await waitFor(() => {
+      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('mock-graph-node-count')).toHaveTextContent('3')
+      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
+    })
+  })
+
+  it('renders graph when relation claims overlay endpoint returns 500', async () => {
+    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
+    mockFetchRelationClaims.mockRejectedValueOnce({ response: { status: 500 } })
+
+    render(<KnowledgeGraphClient spaceId="space-1" />)
+
+    await waitFor(() => {
+      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('mock-graph-node-count')).toHaveTextContent('3')
+      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
+    })
+  })
 })
