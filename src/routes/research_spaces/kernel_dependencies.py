@@ -5,6 +5,9 @@ from __future__ import annotations
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from src.application.agents.services.hypothesis_generation_service import (
+    HypothesisGenerationService,
+)
 from src.application.services.kernel import (
     ConceptManagementService,
     DictionaryManagementService,
@@ -19,6 +22,9 @@ from src.application.services.kernel import (
 )
 from src.database.session import get_session
 from src.domain.ports import ConceptPort, DictionaryPort
+from src.infrastructure.dependency_injection.dependencies import (
+    get_legacy_dependency_container,
+)
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
@@ -199,6 +205,14 @@ def get_ingestion_pipeline(
     return create_ingestion_pipeline(session)
 
 
+def get_hypothesis_generation_service(
+    session: Session = Depends(get_session),
+) -> HypothesisGenerationService:
+    """Graph-based hypothesis generation service."""
+    container = get_legacy_dependency_container()
+    return container.create_hypothesis_generation_service(session)
+
+
 __all__ = [
     "get_concept_service",
     "get_dictionary_service",
@@ -211,4 +225,5 @@ __all__ = [
     "get_kernel_relation_claim_service",
     "get_provenance_service",
     "get_ingestion_pipeline",
+    "get_hypothesis_generation_service",
 ]

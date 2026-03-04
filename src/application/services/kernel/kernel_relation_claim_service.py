@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         CertaintyBand,
         KernelRelationClaimRepository,
     )
+    from src.type_definitions.common import JSONObject
 
 
 class KernelRelationClaimService:
@@ -139,6 +140,47 @@ class KernelRelationClaimService:
         return self._claims.set_system_status(
             claim_id,
             claim_status=claim_status,
+        )
+
+    def create_hypothesis_claim(  # noqa: PLR0913
+        self,
+        *,
+        research_space_id: str,
+        source_type: str,
+        relation_type: str,
+        target_type: str,
+        source_label: str | None,
+        target_label: str | None,
+        confidence: float,
+        validation_state: RelationClaimValidationState,
+        validation_reason: str | None,
+        persistability: RelationClaimPersistability,
+        claim_text: str | None,
+        metadata: JSONObject | None = None,
+        source_document_id: str | None = None,
+        agent_run_id: str | None = None,
+        claim_status: RelationClaimStatus = "OPEN",
+    ) -> KernelRelationClaim:
+        """Create one hypothesis claim in the relation-claim ledger."""
+        return self._claims.create(
+            research_space_id=research_space_id,
+            source_document_id=source_document_id,
+            agent_run_id=agent_run_id,
+            source_type=source_type,
+            relation_type=relation_type,
+            target_type=target_type,
+            source_label=source_label,
+            target_label=target_label,
+            confidence=confidence,
+            validation_state=validation_state,
+            validation_reason=validation_reason,
+            persistability=persistability,
+            claim_status=claim_status,
+            polarity="HYPOTHESIS",
+            claim_text=claim_text,
+            claim_section=None,
+            linked_relation_id=None,
+            metadata=metadata,
         )
 
     @staticmethod

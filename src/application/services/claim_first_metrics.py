@@ -30,6 +30,10 @@ MetricName = Literal[
     "curation_queue_relation_claim_total",
     "relations_conflict_detected_total",
     "graph_filter_preset_usage",
+    "hypotheses_manual_created_total",
+    "hypotheses_auto_generated_total",
+    "hypotheses_deduped_total",
+    "hypotheses_generation_failed_total",
 ]
 GraphTrustPreset = Literal[
     "ALL",
@@ -48,6 +52,10 @@ _METRIC_NAMES: tuple[MetricName, ...] = (
     "curation_queue_relation_claim_total",
     "relations_conflict_detected_total",
     "graph_filter_preset_usage",
+    "hypotheses_manual_created_total",
+    "hypotheses_auto_generated_total",
+    "hypotheses_deduped_total",
+    "hypotheses_generation_failed_total",
 )
 
 _logger = logging.getLogger("med13.metrics.claim_first")

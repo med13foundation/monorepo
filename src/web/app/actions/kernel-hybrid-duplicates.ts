@@ -6,7 +6,6 @@ import {
   fetchKernelEntity,
   fetchKernelRelations,
   fetchKernelSimilarEntities,
-  fetchRelationClaims,
   refreshKernelEntityEmbeddings,
 } from '@/lib/api/kernel'
 import type { RelationClaimResponse } from '@/types/kernel'
@@ -24,6 +23,10 @@ import {
   revalidateHybridPaths,
   toJsonObject,
 } from './kernel-hybrid-shared'
+import {
+  createManualHypothesisAction,
+  listHypothesesAction,
+} from './kernel-hypotheses'
 
 async function fetchNeighborIndex(
   spaceId: string,
@@ -212,18 +215,37 @@ export async function submitNearDuplicateDecisionAction(
 }
 
 export async function listHypothesisClaimsAction(spaceId: string): Promise<ActionResult<RelationClaimResponse[]>> {
-  try {
-    const token = await requireAccessToken()
-    const claims = await fetchRelationClaims(spaceId, { polarity: 'HYPOTHESIS', limit: 50 }, token)
-    return { success: true, data: claims.claims }
-  } catch (error: unknown) {
-    if (process.env.NODE_ENV !== 'test') {
-      console.error('[ServerAction] listHypothesisClaimsAction failed:', error)
-    }
-    return {
-      success: false,
-      error: getActionErrorMessage(error, 'Failed to load hypotheses'),
-    }
+  const result = await listHypothesesAction(spaceId)
+  if (!result.success) {
+    return result
+  }
+  return {
+    success: true,
+    data: result.data.map((hypothesis) => ({
+      id: hypothesis.claim_id,
+      research_space_id: spaceId,
+      source_document_id: null,
+      agent_run_id: null,
+      source_type: 'HYPOTHESIS',
+      relation_type: hypothesis.relation_type,
+      target_type: 'HYPOTHESIS',
+      source_label: hypothesis.source_label,
+      target_label: hypothesis.target_label,
+      confidence: hypothesis.confidence,
+      validation_state: hypothesis.validation_state,
+      validation_reason: null,
+      persistability: hypothesis.persistability,
+      claim_status: hypothesis.claim_status,
+      polarity: hypothesis.polarity,
+      claim_text: hypothesis.claim_text,
+      claim_section: null,
+      linked_relation_id: null,
+      metadata: hypothesis.metadata,
+      triaged_by: null,
+      triaged_at: null,
+      created_at: hypothesis.created_at,
+      updated_at: hypothesis.created_at,
+    })),
   }
 }
 
@@ -232,34 +254,13 @@ export async function createUserHypothesisAction(
   statement: string,
   rationale: string,
 ): Promise<ActionResult<{ decisionId: string }>> {
-  const normalizedStatement = statement.trim()
-  const normalizedRationale = rationale.trim()
-  if (normalizedStatement.length === 0 || normalizedRationale.length === 0) {
-    return { success: false, error: 'Hypothesis statement and rationale are required.' }
+  const result = await createManualHypothesisAction(spaceId, {
+    statement,
+    rationale,
+  })
+  if (!result.success) {
+    return { success: false, error: result.error }
   }
-  try {
-    const token = await requireAccessToken()
-    const decision = await proposeSpaceConceptDecision(
-      spaceId,
-      {
-        decision_type: 'CREATE',
-        rationale: normalizedRationale,
-        decision_payload: {
-          workflow: 'hypothesis',
-          statement: normalizedStatement,
-        },
-      },
-      token,
-    )
-    revalidateHybridPaths(spaceId)
-    return { success: true, data: { decisionId: decision.id } }
-  } catch (error: unknown) {
-    if (process.env.NODE_ENV !== 'test') {
-      console.error('[ServerAction] createUserHypothesisAction failed:', error)
-    }
-    return {
-      success: false,
-      error: getActionErrorMessage(error, 'Failed to create hypothesis'),
-    }
-  }
+  const decisionId = String(result.data.metadata?.concept_decision_id ?? result.data.claim_id)
+  return { success: true, data: { decisionId } }
 }

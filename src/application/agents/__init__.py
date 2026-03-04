@@ -43,6 +43,11 @@ from src.application.agents.services.graph_search_service import (
     GraphSearchService,
     GraphSearchServiceDependencies,
 )
+from src.application.agents.services.hypothesis_generation_service import (
+    HypothesisGenerationResult,
+    HypothesisGenerationService,
+    HypothesisGenerationServiceDependencies,
+)
 from src.application.agents.services.query_agent_service import (
     QueryAgentService,
     QueryAgentServiceDependencies,
@@ -65,6 +70,9 @@ __all__ = [
     "GraphConnectionServiceDependencies",
     "GraphSearchService",
     "GraphSearchServiceDependencies",
+    "HypothesisGenerationResult",
+    "HypothesisGenerationService",
+    "HypothesisGenerationServiceDependencies",
     "GovernanceDecision",
     "GovernancePolicy",
     "GovernanceService",

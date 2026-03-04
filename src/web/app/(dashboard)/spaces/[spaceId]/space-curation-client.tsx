@@ -51,6 +51,7 @@ interface SpaceCurationClientProps {
   relationConflicts: RelationConflictListResponse | null
   entityLabelsById: Record<string, string>
   canCurate: boolean
+  hypothesisGenerationEnabled: boolean
   relationFilters: {
     relationType: string
     curationStatus: string
@@ -220,6 +221,7 @@ export default function SpaceCurationClient({
   relationConflicts,
   entityLabelsById,
   canCurate,
+  hypothesisGenerationEnabled,
   relationFilters,
   claimFilters,
 }: SpaceCurationClientProps) {
@@ -1015,6 +1017,7 @@ export default function SpaceCurationClient({
               <CurationHypothesesCard
                 spaceId={spaceId}
                 canEdit={canCurate}
+                autoGenerationEnabled={hypothesisGenerationEnabled}
               />
 
               <Card className="border-border/80 bg-card">

@@ -123,6 +123,7 @@ describe('SpaceCurationClient', () => {
       'ent-2': 'Cardiomyopathy',
     },
     canCurate: true,
+    hypothesisGenerationEnabled: true,
     relationFilters: {
       relationType: '',
       curationStatus: '',

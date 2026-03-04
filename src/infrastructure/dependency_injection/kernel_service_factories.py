@@ -7,6 +7,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.application.agents.services.hypothesis_generation_service import (
+    HypothesisGenerationService,
+    HypothesisGenerationServiceDependencies,
+)
 from src.application.services.kernel import (
     ConceptManagementService,
     DictionaryManagementService,
@@ -19,15 +23,19 @@ from src.application.services.kernel import (
     KernelRelationSuggestionService,
     ProvenanceService,
 )
+from src.domain.agents.models import ModelCapability
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 from src.infrastructure.llm.adapters import (
     ArtanaDictionarySearchHarnessAdapter,
+    ArtanaGraphConnectionAdapter,
     DeterministicConceptDecisionHarnessAdapter,
 )
+from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyConceptRepository,
     SqlAlchemyDictionaryRepository,
     SqlAlchemyEntityEmbeddingRepository,
+    SqlAlchemyGraphQueryRepository,
     SqlAlchemyKernelClaimEvidenceRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
@@ -193,3 +201,32 @@ class KernelServiceFactoryMixin:
     ) -> ProvenanceService:
         provenance_repo = SqlAlchemyProvenanceRepository(session)
         return ProvenanceService(provenance_repo=provenance_repo)
+
+    def create_hypothesis_generation_service(
+        self,
+        session: Session,
+    ) -> HypothesisGenerationService:
+        dictionary_service = self.create_dictionary_management_service(session)
+        relation_repository = SqlAlchemyKernelRelationRepository(session)
+        graph_query_service = SqlAlchemyGraphQueryRepository(session)
+        registry = get_model_registry()
+        model_spec = registry.get_default_model(
+            ModelCapability.EVIDENCE_EXTRACTION,
+        )
+        graph_connection_agent = ArtanaGraphConnectionAdapter(
+            model=model_spec.model_id,
+            dictionary_service=dictionary_service,
+            graph_query_service=graph_query_service,
+            relation_repository=relation_repository,
+        )
+        return HypothesisGenerationService(
+            dependencies=HypothesisGenerationServiceDependencies(
+                graph_connection_agent=graph_connection_agent,
+                relation_claim_service=self.create_kernel_relation_claim_service(
+                    session,
+                ),
+                entity_repository=self._build_entity_repository(session),
+                relation_repository=relation_repository,
+                dictionary_service=dictionary_service,
+            ),
+        )

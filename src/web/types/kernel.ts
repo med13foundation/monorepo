@@ -240,6 +240,58 @@ export interface RelationClaimListResponse {
   limit: number
 }
 
+export interface CreateManualHypothesisRequest {
+  statement: string
+  rationale: string
+  seed_entity_ids?: string[]
+  source_type?: string
+}
+
+export interface GenerateHypothesesRequest {
+  seed_entity_ids?: string[] | null
+  source_type?: string
+  relation_types?: string[] | null
+  max_depth?: number
+  max_hypotheses?: number
+  model_id?: string | null
+}
+
+export interface HypothesisResponse {
+  claim_id: string
+  polarity: 'HYPOTHESIS' | 'SUPPORT' | 'REFUTE' | 'UNCERTAIN'
+  claim_status: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'
+  validation_state: string
+  persistability: 'PERSISTABLE' | 'NON_PERSISTABLE'
+  confidence: number
+  source_label: string | null
+  relation_type: string
+  target_label: string | null
+  claim_text: string | null
+  origin: string
+  seed_entity_ids: string[]
+  supporting_provenance_ids: string[]
+  created_at: string
+  metadata: JSONObject
+}
+
+export interface HypothesisListResponse {
+  hypotheses: HypothesisResponse[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export interface GenerateHypothesesResponse {
+  run_id: string
+  requested_seed_count: number
+  used_seed_count: number
+  candidates_seen: number
+  created_count: number
+  deduped_count: number
+  errors: string[]
+  hypotheses: HypothesisResponse[]
+}
+
 export interface ClaimEvidenceResponse {
   id: string
   claim_id: string

@@ -17,6 +17,11 @@ import type {
   KernelObservationListResponse,
   KernelObservationResponse,
   ClaimEvidenceListResponse,
+  CreateManualHypothesisRequest,
+  GenerateHypothesesRequest,
+  GenerateHypothesesResponse,
+  HypothesisListResponse,
+  HypothesisResponse,
   KernelProvenanceListResponse,
   KernelProvenanceResponse,
   KernelRelationCreateRequest,
@@ -356,6 +361,62 @@ export async function fetchRelationClaims(
   return apiGet<RelationClaimListResponse>(
     `/research-spaces/${spaceId}/relation-claims`,
     options,
+  )
+}
+
+export interface HypothesisListParams {
+  offset?: number
+  limit?: number
+}
+
+export async function fetchHypotheses(
+  spaceId: string,
+  params: HypothesisListParams = {},
+  token?: string,
+): Promise<HypothesisListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchHypotheses')
+  }
+  const options: ApiRequestOptions<HypothesisListResponse> = {
+    token,
+    params: {
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 50,
+    },
+  }
+  return apiGet<HypothesisListResponse>(
+    `/research-spaces/${spaceId}/hypotheses`,
+    options,
+  )
+}
+
+export async function createManualHypothesis(
+  spaceId: string,
+  payload: CreateManualHypothesisRequest,
+  token?: string,
+): Promise<HypothesisResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for createManualHypothesis')
+  }
+  return apiPost<HypothesisResponse>(
+    `/research-spaces/${spaceId}/hypotheses/manual`,
+    payload,
+    { token },
+  )
+}
+
+export async function generateHypotheses(
+  spaceId: string,
+  payload: GenerateHypothesesRequest,
+  token?: string,
+): Promise<GenerateHypothesesResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for generateHypotheses')
+  }
+  return apiPost<GenerateHypothesesResponse>(
+    `/research-spaces/${spaceId}/hypotheses/generate`,
+    payload,
+    { token, timeout: 0 },
   )
 }
 
