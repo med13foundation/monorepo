@@ -56,8 +56,9 @@ export function DataDiscoveryContent({
   const viewContext = state?.view_context
 
   const groupedCatalog = useMemo(() => {
+    const catalogEntries = Array.isArray(catalog) ? catalog : []
     const groups: Record<string, SourceCatalogEntry[]> = {}
-    catalog.forEach((entry) => {
+    catalogEntries.forEach((entry) => {
       const key = entry.category || 'Uncategorized'
       if (!groups[key]) {
         groups[key] = []
@@ -157,7 +158,7 @@ export function DataDiscoveryContent({
       )
     }
 
-    if (catalog.length === 0) {
+    if (!Array.isArray(catalog) || catalog.length === 0) {
       return <div className="p-4 text-center text-muted-foreground">No sources available</div>
     }
 
