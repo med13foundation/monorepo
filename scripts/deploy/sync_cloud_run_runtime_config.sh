@@ -7,7 +7,9 @@ log() {
 
 is_true() {
   local value="${1:-}"
-  case "${value,,}" in
+  local normalized
+  normalized="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]')"
+  case "${normalized}" in
     1|true|yes|y|on) return 0 ;;
     *) return 1 ;;
   esac
