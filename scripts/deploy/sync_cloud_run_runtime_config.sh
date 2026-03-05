@@ -21,6 +21,46 @@ require_var() {
   fi
 }
 
+get_service_status_url() {
+  local service_name="$1"
+  gcloud run services describe "${service_name}" \
+    --project "${PROJECT_ID}" \
+    --region "${REGION}" \
+    --format='value(status.url)'
+}
+
+get_service_primary_url() {
+  local service_name="$1"
+  local urls_json=""
+
+  urls_json="$(gcloud run services describe "${service_name}" \
+    --project "${PROJECT_ID}" \
+    --region "${REGION}" \
+    --format='value(metadata.annotations."run.googleapis.com/urls")' 2>/dev/null || true)"
+
+  if [[ "${urls_json}" =~ ^\[[[:space:]]*\"([^\"]+)\" ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  get_service_status_url "${service_name}"
+}
+
+to_websocket_url() {
+  local http_url="$1"
+  case "${http_url}" in
+    https://*)
+      echo "wss://${http_url#https://}"
+      ;;
+    http://*)
+      echo "ws://${http_url#http://}"
+      ;;
+    *)
+      echo "${http_url}"
+      ;;
+  esac
+}
+
 set_public_access() {
   local service_name="$1"
   local public_flag="$2"
@@ -105,21 +145,15 @@ fi
 
 # Optionally sync admin runtime wiring to the API URL.
 if [[ -z "${ADMIN_PUBLIC_URL:-}" ]]; then
-  ADMIN_PUBLIC_URL="$(gcloud run services describe "${ADMIN_SERVICE}" \
-    --project "${PROJECT_ID}" \
-    --region "${REGION}" \
-    --format='value(status.url)')"
+  ADMIN_PUBLIC_URL="$(get_service_primary_url "${ADMIN_SERVICE}")"
 fi
 
 if [[ -z "${API_PUBLIC_URL:-}" ]]; then
-  API_PUBLIC_URL="$(gcloud run services describe "${API_SERVICE}" \
-    --project "${PROJECT_ID}" \
-    --region "${REGION}" \
-    --format='value(status.url)')"
+  API_PUBLIC_URL="$(get_service_primary_url "${API_SERVICE}")"
 fi
 
 if [[ -z "${API_PUBLIC_WS_URL:-}" ]]; then
-  API_PUBLIC_WS_URL="${API_PUBLIC_URL/https:/wss:}"
+  API_PUBLIC_WS_URL="$(to_websocket_url "${API_PUBLIC_URL}")"
 fi
 
 if is_true "${SYNC_ADMIN_URLS:-}"; then

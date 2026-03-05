@@ -1,14 +1,30 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
-const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.trim() || ''
+const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_URL?.trim() || ''
+
+const isLocalApiUrl = (value) =>
+  value.startsWith('http://localhost') || value.startsWith('https://localhost')
+
+const isLocalWsUrl = (value) =>
+  value.startsWith('ws://localhost') || value.startsWith('wss://localhost')
+
 const buildCspHeader = () => {
   const isDevelopment = process.env.NODE_ENV === 'development'
-  const connectSources = ["'self'", API_BASE_URL]
-  if (WS_BASE_URL) {
-    connectSources.push(WS_BASE_URL)
+  const connectSources = new Set(["'self'"])
+  if (API_BASE_URL && (isDevelopment || !isLocalApiUrl(API_BASE_URL))) {
+    connectSources.add(API_BASE_URL)
   }
-  // Allow Next.js HMR WebSocket in development
+  if (WS_BASE_URL && (isDevelopment || !isLocalWsUrl(WS_BASE_URL))) {
+    connectSources.add(WS_BASE_URL)
+  }
+
   if (isDevelopment) {
-    connectSources.push('ws://localhost:3000')
+    connectSources.add('http://localhost:8080')
+    connectSources.add('ws://localhost:8080')
+    connectSources.add('ws://localhost:3000')
+  } else {
+    // Keep production connect-src resilient even when build-time public URLs are not injected.
+    connectSources.add('https:')
+    connectSources.add('wss:')
   }
   // Enhanced CSP for better security
   // Note: 'unsafe-inline' and 'unsafe-eval' are required for Next.js HMR and some features
@@ -21,7 +37,7 @@ const buildCspHeader = () => {
     // Next.js requires 'unsafe-inline' for styles and 'unsafe-eval' for HMR
     // Consider using nonces in production for stricter security
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-    `connect-src ${connectSources.join(' ')}`,
+    `connect-src ${Array.from(connectSources).join(' ')}`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     // Prevent base tag injection attacks
