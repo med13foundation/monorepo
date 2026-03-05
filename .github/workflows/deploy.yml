@@ -26,6 +26,8 @@ concurrency:
 env:
   REGION: us-central1
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+  GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
   PYTHON_VERSION: "3.13"
   NODE_VERSION: "20"
 
@@ -177,11 +179,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate Google Cloud deploy config
+        run: |
+          missing=()
+          [ -n "${PROJECT_ID}" ] || missing+=("secrets.GCP_PROJECT_ID")
+          [ -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ] || missing+=("vars.GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [ -n "${GCP_DEPLOYER_SERVICE_ACCOUNT}" ] || missing+=("vars.GCP_DEPLOYER_SERVICE_ACCOUNT")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub Actions deploy configuration:\n' >&2
+            printf ' - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
@@ -239,11 +253,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate Google Cloud deploy config
+        run: |
+          missing=()
+          [ -n "${PROJECT_ID}" ] || missing+=("secrets.GCP_PROJECT_ID")
+          [ -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ] || missing+=("vars.GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [ -n "${GCP_DEPLOYER_SERVICE_ACCOUNT}" ] || missing+=("vars.GCP_DEPLOYER_SERVICE_ACCOUNT")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub Actions deploy configuration:\n' >&2
+            printf ' - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
@@ -299,11 +325,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate Google Cloud deploy config
+        run: |
+          missing=()
+          [ -n "${PROJECT_ID}" ] || missing+=("secrets.GCP_PROJECT_ID")
+          [ -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ] || missing+=("vars.GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [ -n "${GCP_DEPLOYER_SERVICE_ACCOUNT}" ] || missing+=("vars.GCP_DEPLOYER_SERVICE_ACCOUNT")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub Actions deploy configuration:\n' >&2
+            printf ' - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
