@@ -40,10 +40,6 @@ jobs:
   test:
     name: Test & Container Gate
     runs-on: ubuntu-latest
-    outputs:
-      target_env: ${{ steps.image_refs.outputs.target_env }}
-      api_image: ${{ steps.image_refs.outputs.api_image }}
-      admin_image: ${{ steps.image_refs.outputs.admin_image }}
     steps:
       - uses: actions/checkout@v4
 
@@ -293,8 +289,8 @@ jobs:
 
       - name: Validate prebuilt image refs (Dev)
         env:
-          API_IMAGE: ${{ needs.test.outputs.api_image }}
-          ADMIN_IMAGE: ${{ needs.test.outputs.admin_image }}
+          API_IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library-dev:${{ github.sha }}
+          ADMIN_IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin-dev:${{ github.sha }}
         run: |
           [ -n "${API_IMAGE}" ] || { echo "Missing API image ref from test job" >&2; exit 1; }
           [ -n "${ADMIN_IMAGE}" ] || { echo "Missing Admin image ref from test job" >&2; exit 1; }
@@ -303,7 +299,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-resource-library-dev
-          image: ${{ needs.test.outputs.api_image }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library-dev:${{ github.sha }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
@@ -312,7 +308,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-admin-dev
-          image: ${{ needs.test.outputs.admin_image }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin-dev:${{ github.sha }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
@@ -375,8 +371,8 @@ jobs:
 
       - name: Validate prebuilt image refs (Staging)
         env:
-          API_IMAGE: ${{ needs.test.outputs.api_image }}
-          ADMIN_IMAGE: ${{ needs.test.outputs.admin_image }}
+          API_IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library-staging:${{ github.sha }}
+          ADMIN_IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin-staging:${{ github.sha }}
         run: |
           [ -n "${API_IMAGE}" ] || { echo "Missing API image ref from test job" >&2; exit 1; }
           [ -n "${ADMIN_IMAGE}" ] || { echo "Missing Admin image ref from test job" >&2; exit 1; }
@@ -385,7 +381,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-resource-library-staging
-          image: ${{ needs.test.outputs.api_image }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library-staging:${{ github.sha }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
@@ -394,7 +390,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-admin-staging
-          image: ${{ needs.test.outputs.admin_image }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin-staging:${{ github.sha }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
@@ -455,8 +451,8 @@ jobs:
 
       - name: Validate prebuilt image refs (Production)
         env:
-          API_IMAGE: ${{ needs.test.outputs.api_image }}
-          ADMIN_IMAGE: ${{ needs.test.outputs.admin_image }}
+          API_IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library:${{ github.sha }}
+          ADMIN_IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin:${{ github.sha }}
         run: |
           [ -n "${API_IMAGE}" ] || { echo "Missing API image ref from test job" >&2; exit 1; }
           [ -n "${ADMIN_IMAGE}" ] || { echo "Missing Admin image ref from test job" >&2; exit 1; }
@@ -465,7 +461,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-resource-library
-          image: ${{ needs.test.outputs.api_image }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library:${{ github.sha }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
@@ -474,7 +470,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-admin
-          image: ${{ needs.test.outputs.admin_image }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin:${{ github.sha }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
