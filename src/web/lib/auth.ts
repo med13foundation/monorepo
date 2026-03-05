@@ -58,8 +58,56 @@ interface AuthenticatedUser extends BackendUser {
   expires_at: number
 }
 
+const LOCAL_API_BASE_URL = "http://localhost:8080"
+const ADMIN_HOST_PREFIX = "med13-admin"
+const API_HOST_PREFIX = "med13-resource-library"
+
+function inferApiBaseUrlFromHostname(hostname: string): string | null {
+  if (!hostname.startsWith(ADMIN_HOST_PREFIX)) {
+    return null
+  }
+
+  const apiHostname = hostname.replace(ADMIN_HOST_PREFIX, API_HOST_PREFIX)
+  return `https://${apiHostname}`
+}
+
+function inferApiBaseUrlFromNextAuthUrl(nextAuthUrl: string): string | null {
+  try {
+    const nextAuthHostname = new URL(nextAuthUrl).hostname
+    return inferApiBaseUrlFromHostname(nextAuthHostname)
+  } catch {
+    return null
+  }
+}
+
+function resolveAuthApiBaseUrl(): string {
+  const runtimeApiUrl =
+    process.env.API_BASE_URL || process.env.INTERNAL_API_URL
+  if (typeof runtimeApiUrl === "string" && runtimeApiUrl.trim().length > 0) {
+    return runtimeApiUrl
+  }
+
+  const nextAuthUrl = process.env.NEXTAUTH_URL
+  if (typeof nextAuthUrl === "string" && nextAuthUrl.trim().length > 0) {
+    const inferredFromNextAuth = inferApiBaseUrlFromNextAuthUrl(nextAuthUrl)
+    if (inferredFromNextAuth) {
+      return inferredFromNextAuth
+    }
+  }
+
+  const configuredPublicApiUrl = process.env.NEXT_PUBLIC_API_URL
+  if (
+    typeof configuredPublicApiUrl === "string" &&
+    configuredPublicApiUrl.trim().length > 0
+  ) {
+    return configuredPublicApiUrl
+  }
+
+  return LOCAL_API_BASE_URL
+}
+
 // FastAPI backend URL
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
+const API_BASE_URL = resolveAuthApiBaseUrl()
 const authApiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
