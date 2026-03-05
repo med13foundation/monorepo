@@ -455,7 +455,11 @@ def _unique_attempts(attempts: list[str]) -> tuple[str, ...]:
 def _http_get_text(url: str, *, timeout_seconds: int) -> str:
     response = requests.get(url, timeout=timeout_seconds)
     response.raise_for_status()
-    return response.content.decode("utf-8", errors="replace")
+    payload = response.content
+    if not isinstance(payload, bytes | bytearray):
+        msg = "Expected bytes payload from HTTP response."
+        raise TypeError(msg)
+    return bytes(payload).decode("utf-8", errors="replace")
 
 
 def _extract_article_body_text(xml_content: str) -> str | None:
