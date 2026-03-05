@@ -22,11 +22,6 @@ _ALLOW_MISSING_KEYS = (
     or ("1" if _ENVIRONMENT == "development" else "0")
 ) == "1"
 logger = logging.getLogger(__name__)
-_DEV_DEFAULT_KEYS = {
-    "ADMIN_API_KEY": "admin-key-123",
-    "WRITE_API_KEY": "write-key-789",
-    "READ_API_KEY": "read-key-456",
-}
 
 
 class APIKeyAuth:
@@ -55,13 +50,6 @@ class APIKeyAuth:
     def _register_api_key(self, env_var: str, role: str) -> None:
         """Register an API key from environment variables."""
         api_key = os.getenv(env_var)
-        if not api_key and _ALLOW_MISSING_KEYS:
-            api_key = _DEV_DEFAULT_KEYS.get(env_var)
-            if api_key:
-                logger.warning(
-                    "Using development default for %s. Do not use in production.",
-                    env_var,
-                )
         if not api_key:
             return
         self.valid_api_keys[api_key] = role

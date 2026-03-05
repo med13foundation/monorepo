@@ -146,8 +146,8 @@ $(VENV):
 		@python3 - <<'PY'
 	import platform
 	import sys
-	if sys.version_info < (3, 12):
-	    raise SystemExit(f"Python 3.12+ required to create virtualenv (found {platform.python_version()})")
+		if sys.version_info < (3, 13):
+		    raise SystemExit(f"Python 3.13+ required to create virtualenv (found {platform.python_version()})")
 	PY
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
