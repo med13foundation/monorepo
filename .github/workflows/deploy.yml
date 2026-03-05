@@ -40,8 +40,59 @@ jobs:
   test:
     name: Test & Container Gate
     runs-on: ubuntu-latest
+    outputs:
+      target_env: ${{ steps.image_refs.outputs.target_env }}
+      api_image: ${{ steps.image_refs.outputs.api_image }}
+      admin_image: ${{ steps.image_refs.outputs.admin_image }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Compute deploy image refs
+        id: image_refs
+        shell: bash
+        run: |
+          target_env="none"
+          dispatch_env="${{ github.event.inputs.environment }}"
+          event_action="${{ github.event.action }}"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            target_env="staging"
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/develop" ]]; then
+            target_env="dev"
+          elif [[ "${GITHUB_EVENT_NAME}" == "release" && "${event_action}" == "published" ]]; then
+            target_env="prod"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${dispatch_env}" != "none" ]]; then
+            target_env="${dispatch_env}"
+          fi
+
+          api_image=""
+          admin_image=""
+          case "${target_env}" in
+            dev)
+              api_repo="med13-resource-library-dev"
+              admin_repo="med13-admin-dev"
+              ;;
+            staging)
+              api_repo="med13-resource-library-staging"
+              admin_repo="med13-admin-staging"
+              ;;
+            prod)
+              api_repo="med13-resource-library"
+              admin_repo="med13-admin"
+              ;;
+            *)
+              target_env="none"
+              ;;
+          esac
+
+          if [[ "${target_env}" != "none" && -n "${PROJECT_ID}" ]]; then
+            api_image="${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/${api_repo}:${GITHUB_SHA}"
+            admin_image="${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/${admin_repo}:${GITHUB_SHA}"
+          fi
+
+          echo "target_env=${target_env}" >> "${GITHUB_OUTPUT}"
+          echo "api_image=${api_image}" >> "${GITHUB_OUTPUT}"
+          echo "admin_image=${admin_image}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -134,8 +185,8 @@ jobs:
           file: ./Dockerfile
           load: true
           tags: med13-resource-library:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=api-test
+          cache-to: type=gha,mode=max,scope=api-test
 
       - name: Build Admin image
         uses: docker/build-push-action@v5
@@ -144,8 +195,8 @@ jobs:
           file: ./src/web/Dockerfile
           load: true
           tags: med13-admin:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=admin-test
+          cache-to: type=gha,mode=max,scope=admin-test
 
       - name: Container Scan API (Trivy)
         uses: aquasecurity/trivy-action@0.34.2
@@ -166,6 +217,46 @@ jobs:
           ignore-unfixed: true
           trivyignores: .trivyignore
           exit-code: 1
+
+      - name: Validate Google Cloud image publish config
+        if: steps.image_refs.outputs.target_env != 'none'
+        run: |
+          missing=()
+          [ -n "${PROJECT_ID}" ] || missing+=("secrets.GCP_PROJECT_ID")
+          [ -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ] || missing+=("vars.GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [ -n "${GCP_DEPLOYER_SERVICE_ACCOUNT}" ] || missing+=("vars.GCP_DEPLOYER_SERVICE_ACCOUNT")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub Actions image publish configuration:\n' >&2
+            printf ' - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud (Image Publish)
+        if: steps.image_refs.outputs.target_env != 'none'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI (Image Publish)
+        if: steps.image_refs.outputs.target_env != 'none'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry (Image Publish)
+        if: steps.image_refs.outputs.target_env != 'none'
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Push API image
+        if: steps.image_refs.outputs.api_image != ''
+        run: |
+          docker tag med13-resource-library:test "${{ steps.image_refs.outputs.api_image }}"
+          docker push "${{ steps.image_refs.outputs.api_image }}"
+
+      - name: Push Admin image
+        if: steps.image_refs.outputs.admin_image != ''
+        run: |
+          docker tag med13-admin:test "${{ steps.image_refs.outputs.admin_image }}"
+          docker push "${{ steps.image_refs.outputs.admin_image }}"
 
   deploy-dev:
     name: Deploy to Dev
@@ -200,37 +291,19 @@ jobs:
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
-
-      - name: Build and push API image (Dev)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library-dev:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Admin image (Dev)
-        uses: docker/build-push-action@v5
-        with:
-          context: ./src/web
-          file: ./src/web/Dockerfile
-          push: true
-          tags: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin-dev:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Validate prebuilt image refs (Dev)
+        env:
+          API_IMAGE: ${{ needs.test.outputs.api_image }}
+          ADMIN_IMAGE: ${{ needs.test.outputs.admin_image }}
+        run: |
+          [ -n "${API_IMAGE}" ] || { echo "Missing API image ref from test job" >&2; exit 1; }
+          [ -n "${ADMIN_IMAGE}" ] || { echo "Missing Admin image ref from test job" >&2; exit 1; }
 
       - name: Deploy API to Cloud Run (Dev)
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-resource-library-dev
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library-dev:${{ github.sha }}
+          image: ${{ needs.test.outputs.api_image }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
@@ -239,7 +312,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-admin-dev
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin-dev:${{ github.sha }}
+          image: ${{ needs.test.outputs.admin_image }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
@@ -300,37 +373,19 @@ jobs:
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
-
-      - name: Build and push API image (Staging)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library-staging:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Admin image (Staging)
-        uses: docker/build-push-action@v5
-        with:
-          context: ./src/web
-          file: ./src/web/Dockerfile
-          push: true
-          tags: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin-staging:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Validate prebuilt image refs (Staging)
+        env:
+          API_IMAGE: ${{ needs.test.outputs.api_image }}
+          ADMIN_IMAGE: ${{ needs.test.outputs.admin_image }}
+        run: |
+          [ -n "${API_IMAGE}" ] || { echo "Missing API image ref from test job" >&2; exit 1; }
+          [ -n "${ADMIN_IMAGE}" ] || { echo "Missing Admin image ref from test job" >&2; exit 1; }
 
       - name: Deploy API to Cloud Run (Staging)
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-resource-library-staging
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library-staging:${{ github.sha }}
+          image: ${{ needs.test.outputs.api_image }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
@@ -339,7 +394,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-admin-staging
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin-staging:${{ github.sha }}
+          image: ${{ needs.test.outputs.admin_image }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
@@ -398,37 +453,19 @@ jobs:
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
-
-      - name: Build and push API image (Production)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Admin image (Production)
-        uses: docker/build-push-action@v5
-        with:
-          context: ./src/web
-          file: ./src/web/Dockerfile
-          push: true
-          tags: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Validate prebuilt image refs (Production)
+        env:
+          API_IMAGE: ${{ needs.test.outputs.api_image }}
+          ADMIN_IMAGE: ${{ needs.test.outputs.admin_image }}
+        run: |
+          [ -n "${API_IMAGE}" ] || { echo "Missing API image ref from test job" >&2; exit 1; }
+          [ -n "${ADMIN_IMAGE}" ] || { echo "Missing Admin image ref from test job" >&2; exit 1; }
 
       - name: Deploy API to Cloud Run (Production)
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-resource-library
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-resource-library:${{ github.sha }}
+          image: ${{ needs.test.outputs.api_image }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
@@ -437,7 +474,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: med13-admin
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-admin:${{ github.sha }}
+          image: ${{ needs.test.outputs.admin_image }}
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
