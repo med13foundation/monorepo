@@ -146,7 +146,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Container Scan API (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.34.2
         with:
           image-ref: med13-resource-library:test
           format: table
@@ -156,7 +156,7 @@ jobs:
           exit-code: 1
 
       - name: Container Scan Admin (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.34.2
         with:
           image-ref: med13-admin:test
           format: table
