@@ -6,10 +6,9 @@ import json
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import urlopen
 
+import requests
 from defusedxml import ElementTree
 
 if TYPE_CHECKING:
@@ -71,7 +70,7 @@ def fetch_pmc_open_access_full_text(
     attempt = f"pmc_oa:{normalized_pmcid}"
     try:
         xml_content = _http_get_text(url, timeout_seconds=timeout_seconds)
-    except (HTTPError, URLError, OSError, UnicodeDecodeError) as exc:
+    except (requests.RequestException, OSError, UnicodeDecodeError) as exc:
         return FullTextFetchResult(
             found=False,
             acquisition_method="pmc_oa",
@@ -131,7 +130,7 @@ def fetch_europe_pmc_full_text(
     attempt = f"europe_pmc:{normalized_identifier}"
     try:
         xml_content = _http_get_text(url, timeout_seconds=timeout_seconds)
-    except (HTTPError, URLError, OSError, UnicodeDecodeError) as exc:
+    except (requests.RequestException, OSError, UnicodeDecodeError) as exc:
         return FullTextFetchResult(
             found=False,
             acquisition_method="europe_pmc",
@@ -331,7 +330,7 @@ def _fetch_idconv_response(
     )
     try:
         return _http_get_text(url, timeout_seconds=timeout_seconds), None
-    except (HTTPError, URLError, OSError, UnicodeDecodeError) as exc:
+    except (requests.RequestException, OSError, UnicodeDecodeError) as exc:
         return None, f"PMCID idconv failed for {id_type}:{identifier}: {exc!s}"
 
 
@@ -454,12 +453,9 @@ def _unique_attempts(attempts: list[str]) -> tuple[str, ...]:
 
 
 def _http_get_text(url: str, *, timeout_seconds: int) -> str:
-    with urlopen(url, timeout=timeout_seconds) as response:  # noqa: S310
-        payload = response.read()
-    if not isinstance(payload, bytes | bytearray):
-        msg = "Expected bytes payload from HTTP response."
-        raise TypeError(msg)
-    return bytes(payload).decode("utf-8", errors="replace")
+    response = requests.get(url, timeout=timeout_seconds)
+    response.raise_for_status()
+    return response.content.decode("utf-8", errors="replace")
 
 
 def _extract_article_body_text(xml_content: str) -> str | None:
