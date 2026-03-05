@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 import aiohttp
 import requests
-from requests.adapters import BaseAdapter, HTTPAdapter
+from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from src.domain.entities.data_discovery_parameters import (
@@ -36,7 +36,7 @@ class SessionLike(Protocol):
 
     headers: MutableMapping[str, str | bytes]
 
-    def mount(self, prefix: str | bytes, adapter: BaseAdapter) -> None:
+    def mount(self, prefix: str | bytes, adapter: HTTPAdapter) -> None:
         """Attach an adapter for the specified prefix."""
 
     def close(self) -> None:
