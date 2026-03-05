@@ -7,7 +7,6 @@ for programmatic sources, following Clean Architecture principles.
 
 import asyncio
 import logging
-from collections.abc import MutableMapping
 from typing import TYPE_CHECKING, assert_never
 from urllib.parse import quote
 
@@ -37,16 +36,16 @@ class SessionLike:
     def __init__(self) -> None:
         self._session = requests.Session()
 
-    @property
-    def headers(self) -> MutableMapping[str, str | bytes]:
-        return self._session.headers
-
     def mount(self, prefix: str | bytes, adapter: object) -> None:
         """Attach an adapter for the specified prefix."""
         if not isinstance(adapter, HTTPAdapter):
             msg = "adapter must be an HTTPAdapter instance"
             raise TypeError(msg)
         self._session.mount(prefix, adapter)
+
+    def update_headers(self, headers: dict[str, str]) -> None:
+        """Update default session headers."""
+        self._session.headers.update(headers)
 
     def close(self) -> None:
         """Close the session."""
@@ -108,7 +107,7 @@ class HTTPQueryClient(SourceQueryClient):
         session.mount("https://", adapter)
 
         # Set default headers
-        session.headers.update(
+        session.update_headers(
             {
                 "User-Agent": self.user_agent,
                 "Accept": "application/json, text/plain, */*",
