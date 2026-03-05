@@ -163,7 +163,7 @@ if is_true "${SYNC_ADMIN_URLS:-}"; then
   gcloud run services update "${ADMIN_SERVICE}" \
     --project "${PROJECT_ID}" \
     --region "${REGION}" \
-    --update-env-vars "^@^NEXT_PUBLIC_API_URL=${API_PUBLIC_URL}@NEXT_PUBLIC_WS_URL=${API_PUBLIC_WS_URL}@NEXTAUTH_URL=${ADMIN_PUBLIC_URL}" \
+    --update-env-vars "^@^NEXT_PUBLIC_API_URL=${API_PUBLIC_URL}@NEXT_PUBLIC_WS_URL=${API_PUBLIC_WS_URL}@NEXTAUTH_URL=${ADMIN_PUBLIC_URL}@API_BASE_URL=${API_PUBLIC_URL}" \
     --quiet >/dev/null
 fi
 
