@@ -3,6 +3,11 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { fetchResearchSpaces } from '@/lib/api/research-spaces'
 import { redirect } from 'next/navigation'
+import type { ResearchSpace } from '@/types/research-space'
+
+function normalizeSpaces(value: unknown): ResearchSpace[] {
+  return Array.isArray(value) ? (value as ResearchSpace[]) : []
+}
 
 export default async function SpacesIndexPage() {
   const session = await getServerSession(authOptions)
@@ -18,8 +23,8 @@ export default async function SpacesIndexPage() {
 
   try {
     const response = await fetchResearchSpaces(undefined, token)
-    initialSpaces = response.spaces
-    initialTotal = response.total
+    initialSpaces = normalizeSpaces(response.spaces)
+    initialTotal = typeof response.total === 'number' ? response.total : initialSpaces.length
   } catch (error) {
     console.error('[SpacesIndexPage] Failed to fetch research spaces', error)
     errorMessage =

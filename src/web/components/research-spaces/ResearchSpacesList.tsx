@@ -16,8 +16,8 @@ interface ResearchSpacesListProps {
 
 export function ResearchSpacesList({ spaces, total, errorMessage }: ResearchSpacesListProps) {
   const [searchQuery, setSearchQuery] = useState('')
-  const resolvedSpaces = spaces
-  const resolvedTotal = total
+  const resolvedSpaces = Array.isArray(spaces) ? spaces : []
+  const resolvedTotal = Number.isFinite(total) ? total : resolvedSpaces.length
 
   const filteredSpaces = resolvedSpaces.filter((space) => {
     if (!searchQuery) return true
@@ -25,7 +25,7 @@ export function ResearchSpacesList({ spaces, total, errorMessage }: ResearchSpac
     return (
       space.name.toLowerCase().includes(query) ||
       space.slug.toLowerCase().includes(query) ||
-      space.description.toLowerCase().includes(query)
+      (space.description ?? '').toLowerCase().includes(query)
     )
   })
 
