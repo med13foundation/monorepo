@@ -1,21 +1,22 @@
 # MED13 Resource Library 🏥
 
-A comprehensive biomedical data platform for MED13 genetic variants, phenotypes, and evidence. Features a **dual-service architecture** with a FastAPI backend and a Next.js admin interface (Dash UI sunset). Built for Google Cloud Run deployment with enterprise-grade quality assurance.
+A comprehensive biomedical data platform for MED13 genetic variants, phenotypes, and evidence. Features a **three-service architecture** with a FastAPI backend, a Next.js admin interface, and a public front door website. Built for Google Cloud Run deployment with enterprise-grade quality assurance.
 
 ## 📋 Overview
 
-A **two-service architecture** biomedical data platform featuring Clean Architecture principles, type safety, and a modern Next.js interface. The Dash curation client has been retired in favor of the unified Next.js experience.
+A **three-service architecture** biomedical data platform featuring Clean Architecture principles, type safety, and modern Next.js interfaces. The Dash curation client has been retired in favor of the unified Next.js experience.
 
 ### 🏗️ Architecture
 
 ```
 MED13 Resource Library
-├── FastAPI Backend (med13-api)      # REST API & business logic
-└── Next.js Admin (med13-admin)      # Modern admin dashboard
+├── FastAPI Backend (med13-api)         # REST API & business logic
+├── Next.js Admin (med13-admin)         # Authenticated admin dashboard
+└── Next.js Front Door (med13-frontdoor) # Public website and onboarding
 ```
 
 ### 🎯 Key Features
-- **Dual-Service Architecture**: Independent scaling of admin UI and API services
+- **Three-Service Architecture**: Independent scaling of public site, admin UI, and API services
 - **Clean Architecture**: Domain-driven design with clear separation of concerns
 - **Type Safety**: 100% MyPy compliance with shared TypeScript types
 - **Modern Admin UI**: Next.js 14 with Tailwind CSS and shadcn/ui components
@@ -28,6 +29,7 @@ MED13 Resource Library
 ### Documentation and roadmap
 - The current graph implementation path is Postgres-backed with NetworkX traversal. TypeDB is an optional future migration.
 - Start with `docs/README.md` for the canonical documentation order and status.
+- Front door product requirements and implementation scope: `docs/frontend/frontdoor_website_prd.md`.
 
 ## 🚀 How To Work (Local, Dev, Prod)
 
@@ -156,6 +158,12 @@ med13-resource-library/
 │   ├── types/                  # Frontend type definitions
 │   ├── package.json            # Node.js dependencies
 │   └── tailwind.config.ts      # Tailwind CSS configuration
+├── apps/frontdoor/              # Next.js public front door website
+│   ├── app/                    # Public routes and API handlers
+│   ├── components/             # Marketing/onboarding components
+│   ├── lib/                    # SEO, analytics, validation helpers
+│   ├── tests/                  # Front door unit tests
+│   └── Dockerfile              # Independent container build
 ├── tests/                      # Backend test suite
 ├── docs/                       # Documentation
 ├── .github/workflows/          # CI/CD pipelines
@@ -183,10 +191,12 @@ make install           # Install Python production dependencies
 make install-dev       # Install Python development dependencies
 make setup-dev         # Complete Python development setup
 make web-install       # Install Next.js dependencies
+make frontdoor-install # Install front door dependencies
 
 # Development Servers
 make run-local         # Start FastAPI backend (port 8080)
 make run-web           # Start Next.js admin interface (port 3000)
+make frontdoor-dev     # Start public front door (default: port 3010)
 
 # Code Quality
 make lint              # Python linting (flake8, ruff, mypy, bandit)
@@ -200,9 +210,11 @@ make test              # Python tests
 make test-cov          # Python tests with coverage
 make test-verbose      # Python tests with verbose output
 make web-test          # Next.js tests
+make frontdoor-test    # Front door tests
 
 # Building
 make web-build         # Build Next.js for production
+make frontdoor-build   # Build front door for production
 
 # Database
 make db-migrate        # Run database migrations

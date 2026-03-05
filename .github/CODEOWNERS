@@ -1,0 +1,5 @@
+# Default owner
+* @me13foundation/platform-team
+
+# Front door public website
+/apps/frontdoor/** @me13foundation/platform-team

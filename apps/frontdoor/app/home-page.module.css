@@ -1,0 +1,396 @@
+.heroSection {
+  overflow: hidden;
+  padding: 6.5rem 0 6rem;
+  position: relative;
+}
+
+.heroBackground {
+  background-image: url('/hero-background.webp');
+  background-position: center;
+  background-size: cover;
+  inset: 0;
+  position: absolute;
+}
+
+.heroOverlay {
+  background: linear-gradient(135deg, rgba(18, 76, 94, 0.9) 0%, rgba(21, 88, 78, 0.86) 48%, rgba(176, 104, 74, 0.82) 100%);
+  inset: 0;
+  position: absolute;
+}
+
+.heroInner {
+  margin: 0 auto;
+  max-width: 860px;
+  position: relative;
+  text-align: center;
+  z-index: 1;
+}
+
+.kicker {
+  color: rgba(255, 255, 255, 0.9);
+  font-family: var(--font-heading), 'Nunito Sans', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.heroTitle {
+  color: #ffffff;
+  font-size: clamp(2.2rem, 5.4vw, 4rem);
+  letter-spacing: -0.03em;
+  line-height: 1.07;
+  margin-top: 1rem;
+}
+
+.heroSubtitle {
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 1.12rem;
+  line-height: 1.72;
+  margin: 1.3rem auto 0;
+  max-width: 62ch;
+}
+
+.heroActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.72rem;
+  justify-content: center;
+  margin-top: 2rem;
+}
+
+.sectionLight,
+.sectionImage,
+.sectionMuted,
+.sectionDark,
+.finalCta {
+  padding: 4.7rem 0;
+}
+
+.sectionLight {
+  background: #fafafa;
+}
+
+.sectionImage {
+  overflow: hidden;
+  position: relative;
+}
+
+.communityBackground {
+  background-image: url('/community-background.webp');
+  background-position: center;
+  background-size: cover;
+  inset: 0;
+  position: absolute;
+}
+
+.communityOverlay {
+  background: linear-gradient(135deg, rgba(251, 247, 239, 0.95) 0%, rgba(251, 248, 244, 0.93) 52%, rgba(245, 242, 251, 0.93) 100%);
+  inset: 0;
+  position: absolute;
+}
+
+.sectionContent {
+  position: relative;
+  z-index: 1;
+}
+
+.sectionIntro {
+  margin-bottom: 1.7rem;
+  text-align: center;
+}
+
+.sectionIntro h2 {
+  color: #2c2c2c;
+  font-size: clamp(1.75rem, 3.9vw, 2.65rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.sectionIntro p {
+  color: #636363;
+  font-size: 1rem;
+  line-height: 1.7;
+  margin: 0.9rem auto 0;
+  max-width: 66ch;
+}
+
+.dualCards,
+.pathwayGrid,
+.roadmapGrid,
+.factsGrid,
+.securityBadgeGrid,
+.devLayout,
+.securityLayout {
+  display: grid;
+  gap: 1rem;
+}
+
+.dualCards {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.infoCard,
+.pathwayCard,
+.roadmapCard,
+.factCard {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  border-radius: 12px;
+  box-shadow: 0 6px 16px rgba(18, 34, 42, 0.05);
+  padding: 1.2rem;
+}
+
+.infoCard h3,
+.pathwayCard h3,
+.roadmapCard h3 {
+  color: #2d2d2d;
+  font-size: 1.12rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.infoCard p,
+.pathwayCard p,
+.roadmapCard p {
+  color: #666666;
+  font-size: 0.95rem;
+  line-height: 1.68;
+  margin-top: 0.55rem;
+}
+
+.pathwayGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.inlineLink {
+  color: #478b85;
+  display: inline-flex;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-top: 0.85rem;
+  text-decoration: none;
+}
+
+.inlineLink:hover,
+.inlineLink:focus-visible {
+  text-decoration: underline;
+}
+
+.roadmapGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.phaseTag,
+.phaseTagActive {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0.24rem 0.52rem;
+  text-transform: uppercase;
+}
+
+.phaseTag {
+  background: #f0f0f0;
+  color: #6a6a6a;
+}
+
+.phaseTagActive {
+  background: rgba(101, 176, 171, 0.18);
+  color: #367a75;
+}
+
+.sectionMuted {
+  background: #f3f3f3;
+}
+
+.factsGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.factCard {
+  align-items: flex-start;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.factCard strong {
+  color: #2f2f2f;
+  font-size: 1.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.factCard span {
+  color: #6a6a6a;
+  font-size: 0.89rem;
+}
+
+.sectionDark {
+  background: #1f3034;
+}
+
+.securityLayout {
+  align-items: center;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+}
+
+.securityLayout h2 {
+  color: #ffffff;
+  font-size: clamp(1.6rem, 3.6vw, 2.45rem);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.securityLayout ul {
+  color: rgba(255, 255, 255, 0.92);
+  display: grid;
+  gap: 0.5rem;
+  line-height: 1.65;
+  margin-top: 1rem;
+  padding-left: 1.2rem;
+}
+
+.securityActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.72rem;
+  margin-top: 1.3rem;
+}
+
+.darkGhostCta {
+  color: #c8d7d5;
+  font-size: 0.94rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.darkGhostCta:hover,
+.darkGhostCta:focus-visible {
+  color: #ffffff;
+  text-decoration: underline;
+}
+
+.securityBadgeGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.securityBadgeGrid p {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  color: #f7f7f7;
+  display: flex;
+  font-size: 0.88rem;
+  font-weight: 600;
+  justify-content: center;
+  min-height: 78px;
+  padding: 0.6rem;
+  text-align: center;
+}
+
+.devLayout {
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.devLayout h2 {
+  color: #2d2d2d;
+  font-size: clamp(1.6rem, 3.2vw, 2.4rem);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.devLayout p {
+  color: #666666;
+  line-height: 1.7;
+  margin-top: 0.85rem;
+}
+
+.codeCard {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.codeCard header {
+  border-bottom: 1px solid #1e293b;
+  color: #94a3b8;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 0.65rem 0.9rem;
+}
+
+.codeCard pre {
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.76rem;
+  line-height: 1.58;
+  margin: 0;
+  overflow: auto;
+  padding: 0.9rem;
+}
+
+.finalCta {
+  background: #fff4ed;
+  text-align: center;
+}
+
+.finalCta h2 {
+  color: #2f2f2f;
+  font-size: clamp(1.95rem, 4.2vw, 3.1rem);
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.finalCta p {
+  color: #666666;
+  font-size: 1rem;
+  line-height: 1.72;
+  margin: 0.85rem auto 0;
+  max-width: 64ch;
+}
+
+@media (max-width: 1120px) {
+  .pathwayGrid,
+  .roadmapGrid,
+  .factsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .securityLayout,
+  .devLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .heroSection,
+  .sectionLight,
+  .sectionImage,
+  .sectionMuted,
+  .sectionDark,
+  .finalCta {
+    padding: 4rem 0;
+  }
+
+  .dualCards,
+  .pathwayGrid,
+  .roadmapGrid,
+  .factsGrid,
+  .securityBadgeGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .heroActions,
+  .securityActions {
+    justify-content: center;
+  }
+}

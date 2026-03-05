@@ -26,5 +26,6 @@ data
 tests
 docs
 src/web
+apps/frontdoor
 *.log
 .DS_Store

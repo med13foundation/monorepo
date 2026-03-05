@@ -1,0 +1,175 @@
+name: Front Door Deploy
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'apps/frontdoor/**'
+      - '.github/workflows/frontdoor-deploy.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/frontdoor/**'
+      - '.github/workflows/frontdoor-deploy.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Optional deployment target for manual runs'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - dev
+          - staging
+          - production
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGION: us-central1
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  NODE_VERSION: '20'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  frontdoor-checks:
+    name: Frontdoor Quality Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: apps/frontdoor/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/frontdoor
+        run: npm ci
+
+      - name: Lint
+        working-directory: apps/frontdoor
+        run: npm run lint
+
+      - name: Type-check
+        working-directory: apps/frontdoor
+        run: npm run type-check
+
+      - name: Unit tests
+        working-directory: apps/frontdoor
+        run: npm run test -- --ci
+
+      - name: Build
+        working-directory: apps/frontdoor
+        run: npm run build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build frontdoor image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./apps/frontdoor
+          file: ./apps/frontdoor/Dockerfile
+          load: true
+          tags: med13-frontdoor:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container scan (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: med13-frontdoor:test
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: 1
+
+  deploy-dev:
+    name: Deploy Frontdoor to Dev
+    needs: frontdoor-checks
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
+    environment:
+      name: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_DEV }}
+
+      - name: Deploy frontdoor to Cloud Run (Dev)
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: med13-frontdoor-dev
+          source: apps/frontdoor
+          region: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+          flags: --allow-unauthenticated
+
+  deploy-staging:
+    name: Deploy Frontdoor to Staging
+    needs: frontdoor-checks
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment:
+      name: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_STAGING }}
+
+      - name: Deploy frontdoor to Cloud Run (Staging)
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: med13-frontdoor-staging
+          source: apps/frontdoor
+          region: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+          flags: --allow-unauthenticated
+
+  deploy-production:
+    name: Deploy Frontdoor to Production
+    needs: frontdoor-checks
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'release' && github.event.action == 'published') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_PROD }}
+
+      - name: Deploy frontdoor to Cloud Run (Production)
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: med13-frontdoor
+          source: apps/frontdoor
+          region: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+          flags: --allow-unauthenticated
