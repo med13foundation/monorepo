@@ -96,17 +96,19 @@ def test_claim_evidence_repository_create_list_and_preferred(db_session) -> None
         metadata={"rank": 2},
     )
     # Ensure deterministic ordering by created_at for preferred row.
+    older_created_at = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    newer_created_at = datetime.now(UTC).isoformat()
     db_session.execute(
         text("UPDATE claim_evidence SET created_at = :created_at WHERE id = :id"),
         {
-            "created_at": datetime.now(UTC) - timedelta(minutes=5),
+            "created_at": older_created_at,
             "id": str(first.id),
         },
     )
     db_session.execute(
         text("UPDATE claim_evidence SET created_at = :created_at WHERE id = :id"),
         {
-            "created_at": datetime.now(UTC),
+            "created_at": newer_created_at,
             "id": str(second.id),
         },
     )

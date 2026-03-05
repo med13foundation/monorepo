@@ -191,6 +191,24 @@
       "max_lines": 850,
       "reason": "Concept ORM models and typed payload contracts are temporarily co-located for schema coherence; model-package split is planned.",
       "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/routes/research_spaces/kernel_schemas.py",
+      "max_lines": 900,
+      "reason": "Kernel API schema surface remains centralized while claim-graph overlay response contracts stabilize; split by entity/relation/claim schema modules is planned.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/routes/research_spaces/kernel_entities_routes.py",
+      "max_lines": 650,
+      "reason": "Kernel entity routes remain co-located while hybrid-search and similarity API contracts stabilize; extraction by command/query route module is planned.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/application/agents/services/hypothesis_generation_service.py",
+      "max_lines": 900,
+      "reason": "Hypothesis generation service currently centralizes seed resolution, scoring, deduping, and claim write orchestration; staged helper-module decomposition is planned.",
+      "expires_on": "2026-12-31"
     }
   ],
   "class_size": [
@@ -276,6 +294,12 @@
       "path": "src/application/services/_pubmed_ingestion_helpers.py",
       "max_imports": 25,
       "reason": "PubMed ingestion helper remains broad while ingestion subflows are being separated.",
+      "expires_on": "2026-12-31"
+    },
+    {
+      "path": "src/routes/research_spaces/graph_connection_routes.py",
+      "max_imports": 20,
+      "reason": "Graph-connection routes aggregate discovery, feature-flag, and constrained suggestion APIs while endpoint decomposition is planned.",
       "expires_on": "2026-12-31"
     }
   ]

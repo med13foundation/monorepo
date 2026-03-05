@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from fastapi import Depends, HTTPException
@@ -17,9 +18,6 @@ from src.application.services.kernel import KernelRelationSuggestionService
 from src.application.services.kernel.hybrid_graph_errors import (
     ConstraintConfigMissingError,
     EmbeddingNotReadyError,
-)
-from src.application.services.membership_management_service import (
-    MembershipManagementService,
 )
 from src.database.session import get_session
 from src.domain.entities.user import User
@@ -48,6 +46,11 @@ from .router import (
     HTTP_500_INTERNAL_SERVER_ERROR,
     research_spaces_router,
 )
+
+if TYPE_CHECKING:
+    from src.application.services.membership_management_service import (
+        MembershipManagementService,
+    )
 
 _BLANK_SEED_ENTITY_IDS_ERROR = "seed_entity_ids cannot contain blank values"
 _RELATION_SUGGESTIONS_ENABLED_ENV = "MED13_ENABLE_RELATION_SUGGESTIONS"

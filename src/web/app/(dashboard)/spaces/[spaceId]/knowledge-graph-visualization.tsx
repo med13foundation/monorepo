@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -254,6 +254,13 @@ export function KnowledgeGraphVisualization({
         : [],
     [neighborhood.edgeIds, renderGraph.edgeById, selectedNodeId],
   )
+  const handleCanvasHoverChange = useCallback(
+    (hover: { nodeId: string | null; edgeId: string | null }) => {
+      onHoverNodeChange(hover.nodeId)
+      onHoverEdgeChange(hover.edgeId)
+    },
+    [onHoverEdgeChange, onHoverNodeChange],
+  )
 
   return (
     <>
@@ -264,8 +271,7 @@ export function KnowledgeGraphVisualization({
           highlightedEdgeIds={neighborhood.edgeIds}
           onNodeClick={onNodeClick}
           onEdgeClick={onEdgeClick}
-          onHoverNodeChange={onHoverNodeChange}
-          onHoverEdgeChange={onHoverEdgeChange}
+          onHoverChange={handleCanvasHoverChange}
           claimEvidenceByClaimId={claimEvidenceByClaimId}
           onCanvasTap={onCanvasTap}
           chrome="minimal"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query
@@ -13,19 +14,10 @@ from src.application.agents.services.hypothesis_generation_service import (
     HypothesisGenerationService,
 )
 from src.application.services.claim_first_metrics import increment_metric
-from src.application.services.kernel import (
-    KernelEntityService,
-    KernelRelationClaimService,
-)
 from src.application.services.kernel.kernel_claim_participant_service import (
     KernelClaimParticipantService,
 )
-from src.application.services.membership_management_service import (
-    MembershipManagementService,
-)
 from src.database.session import get_session
-from src.domain.entities.user import User
-from src.domain.ports import ConceptPort
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
@@ -53,6 +45,17 @@ from .router import (
     HTTP_500_INTERNAL_SERVER_ERROR,
     research_spaces_router,
 )
+
+if TYPE_CHECKING:
+    from src.application.services.kernel import (
+        KernelEntityService,
+        KernelRelationClaimService,
+    )
+    from src.application.services.membership_management_service import (
+        MembershipManagementService,
+    )
+    from src.domain.entities.user import User
+    from src.domain.ports import ConceptPort
 
 _HYPOTHESIS_GENERATION_ENABLED_ENV = "MED13_ENABLE_HYPOTHESIS_GENERATION"
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -126,6 +129,7 @@ def list_hypotheses(
 def create_manual_hypothesis(  # noqa: PLR0912
     space_id: UUID,
     request: CreateManualHypothesisRequest,
+    *,
     current_user: User = Depends(get_current_active_user),
     membership_service: MembershipManagementService = Depends(get_membership_service),
     concept_service: ConceptPort = Depends(get_concept_service),

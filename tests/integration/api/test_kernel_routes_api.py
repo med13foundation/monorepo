@@ -1046,6 +1046,7 @@ def test_relation_claim_evidence_and_conflict_endpoints(
             version="1.0",
         )
         session.add(source)
+        session.flush()
         source_document_id = str(uuid4())
         session.add(
             SourceDocumentModel(

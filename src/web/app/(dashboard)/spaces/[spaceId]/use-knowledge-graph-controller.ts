@@ -53,6 +53,13 @@ const EVIDENCE_MODE_MAX_ROWS_PER_CLAIM = 4
 const EVIDENCE_MODE_FETCH_CONCURRENCY = 8
 const ALL_GRAPH_STATUSES = ['APPROVED', 'UNDER_REVIEW', 'DRAFT', 'REJECTED', 'RETRACTED'] as const
 
+function logControllerWarning(message: string, error: unknown): void {
+  if (process.env.NODE_ENV === 'test') {
+    return
+  }
+  console.warn(message, error)
+}
+
 export type GraphTrustPreset = 'ALL' | 'APPROVED_ONLY' | 'PENDING_REVIEW' | 'REJECTED'
 export const DEFAULT_GRAPH_DISPLAY_MODE: GraphDisplayMode = 'CLAIMS'
 
@@ -206,7 +213,7 @@ async function fetchRelationConflictsSafe(
         limit: 200,
       }
     }
-    console.warn('[KnowledgeGraphController] Relation conflicts overlay unavailable', error)
+    logControllerWarning('[KnowledgeGraphController] Relation conflicts overlay unavailable', error)
     return {
       conflicts: [],
       total: 0,
@@ -244,7 +251,7 @@ async function fetchRelationClaimsOverlaySafe(
 
     return claims
   } catch (error) {
-    console.warn('[KnowledgeGraphController] Relation claims overlay unavailable', error)
+    logControllerWarning('[KnowledgeGraphController] Relation claims overlay unavailable', error)
     return []
   }
 }
@@ -269,7 +276,7 @@ async function fetchClaimParticipantsOverlaySafe(
         try {
           return await fetchClaimParticipants(spaceId, claimId, token)
         } catch (error) {
-          console.warn(
+          logControllerWarning(
             `[KnowledgeGraphController] Claim participants overlay unavailable for claim ${claimId}`,
             error,
           )
@@ -946,7 +953,7 @@ export function useKnowledgeGraphController({
                 rows: response.evidence.slice(0, EVIDENCE_MODE_MAX_ROWS_PER_CLAIM),
               }
             } catch (error) {
-              console.warn(
+              logControllerWarning(
                 `[KnowledgeGraphController] Evidence mode evidence lookup failed for claim ${claimId}`,
                 error,
               )
@@ -1049,7 +1056,7 @@ export function useKnowledgeGraphController({
         if (!isMountedRef.current) {
           return
         }
-        console.warn('[KnowledgeGraphController] Claim evidence preview lookup failed', error)
+        logControllerWarning('[KnowledgeGraphController] Claim evidence preview lookup failed', error)
         setClaimEvidenceByClaimId((current) => ({
           ...current,
           [claimId]: {

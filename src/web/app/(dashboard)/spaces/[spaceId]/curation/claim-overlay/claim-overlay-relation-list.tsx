@@ -66,10 +66,12 @@ interface ClaimOverlayRelationListProps {
   openClaimsTab: () => void
   openCanonicalGraphRelation: (relationId: string) => void
   selectClaimParticipants: (claimId: string) => void
-  updateReviewStatus: (
-    relation: ClaimRelationResponse,
-    reviewStatus: ClaimRelationReviewStatus,
-  ) => void
+  updateReviewStatus: (input: ClaimOverlayReviewUpdate) => void
+}
+
+interface ClaimOverlayReviewUpdate {
+  relation: ClaimRelationResponse
+  reviewStatus: ClaimRelationReviewStatus
 }
 
 export function ClaimOverlayRelationList({
@@ -248,7 +250,7 @@ export function ClaimOverlayRelationList({
                       size="sm"
                       variant="outline"
                       disabled={isPending || relation.review_status === 'PROPOSED'}
-                      onClick={() => updateReviewStatus(relation, 'PROPOSED')}
+                      onClick={() => updateReviewStatus({ relation, reviewStatus: 'PROPOSED' })}
                     >
                       Proposed
                     </Button>
@@ -256,7 +258,7 @@ export function ClaimOverlayRelationList({
                       type="button"
                       size="sm"
                       disabled={isPending || relation.review_status === 'ACCEPTED'}
-                      onClick={() => updateReviewStatus(relation, 'ACCEPTED')}
+                      onClick={() => updateReviewStatus({ relation, reviewStatus: 'ACCEPTED' })}
                     >
                       Accept
                     </Button>
@@ -265,7 +267,7 @@ export function ClaimOverlayRelationList({
                       size="sm"
                       variant="destructive"
                       disabled={isPending || relation.review_status === 'REJECTED'}
-                      onClick={() => updateReviewStatus(relation, 'REJECTED')}
+                      onClick={() => updateReviewStatus({ relation, reviewStatus: 'REJECTED' })}
                     >
                       Reject
                     </Button>
