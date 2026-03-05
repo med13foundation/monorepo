@@ -146,7 +146,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Container Scan API (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.34.2
         with:
           image-ref: med13-resource-library:test
           format: table
@@ -156,7 +156,7 @@ jobs:
           exit-code: 1
 
       - name: Container Scan Admin (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.34.2
         with:
           image-ref: med13-admin:test
           format: table
@@ -182,6 +182,9 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_DEV }}
 
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
       - name: Deploy API to Cloud Run (Dev)
         uses: google-github-actions/deploy-cloudrun@v2
         with:
@@ -200,6 +203,26 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
 
+      - name: Sync Cloud Run Runtime Config (Dev)
+        env:
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          API_SERVICE: med13-resource-library-dev
+          ADMIN_SERVICE: med13-admin-dev
+          CLOUDSQL_CONNECTION_NAME: ${{ vars.CLOUDSQL_CONNECTION_NAME_DEV }}
+          DATABASE_URL_SECRET_NAME: ${{ vars.DATABASE_URL_SECRET_NAME_DEV }}
+          MED13_DEV_JWT_SECRET_NAME: ${{ vars.MED13_DEV_JWT_SECRET_NAME_DEV }}
+          ADMIN_API_KEY_SECRET_NAME: ${{ vars.ADMIN_API_KEY_SECRET_NAME_DEV }}
+          WRITE_API_KEY_SECRET_NAME: ${{ vars.WRITE_API_KEY_SECRET_NAME_DEV }}
+          READ_API_KEY_SECRET_NAME: ${{ vars.READ_API_KEY_SECRET_NAME_DEV }}
+          MED13_ALLOWED_ORIGINS: ${{ vars.MED13_ALLOWED_ORIGINS_DEV }}
+          NEXTAUTH_SECRET_SECRET_NAME: ${{ vars.NEXTAUTH_SECRET_SECRET_NAME_DEV }}
+          API_PUBLIC: ${{ vars.API_PUBLIC_DEV }}
+          ADMIN_PUBLIC: ${{ vars.ADMIN_PUBLIC_DEV }}
+          MIGRATION_JOB_NAME: ${{ vars.MIGRATION_JOB_NAME_DEV }}
+          SYNC_ADMIN_URLS: ${{ vars.SYNC_ADMIN_URLS_DEV }}
+        run: bash scripts/deploy/sync_cloud_run_runtime_config.sh
+
   deploy-staging:
     name: Deploy to Staging
     needs: test
@@ -216,6 +239,9 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_STAGING }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy API to Cloud Run (Staging)
         uses: google-github-actions/deploy-cloudrun@v2
@@ -235,6 +261,26 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
 
+      - name: Sync Cloud Run Runtime Config (Staging)
+        env:
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          API_SERVICE: med13-resource-library-staging
+          ADMIN_SERVICE: med13-admin-staging
+          CLOUDSQL_CONNECTION_NAME: ${{ vars.CLOUDSQL_CONNECTION_NAME_STAGING }}
+          DATABASE_URL_SECRET_NAME: ${{ vars.DATABASE_URL_SECRET_NAME_STAGING }}
+          MED13_DEV_JWT_SECRET_NAME: ${{ vars.MED13_DEV_JWT_SECRET_NAME_STAGING }}
+          ADMIN_API_KEY_SECRET_NAME: ${{ vars.ADMIN_API_KEY_SECRET_NAME_STAGING }}
+          WRITE_API_KEY_SECRET_NAME: ${{ vars.WRITE_API_KEY_SECRET_NAME_STAGING }}
+          READ_API_KEY_SECRET_NAME: ${{ vars.READ_API_KEY_SECRET_NAME_STAGING }}
+          MED13_ALLOWED_ORIGINS: ${{ vars.MED13_ALLOWED_ORIGINS_STAGING }}
+          NEXTAUTH_SECRET_SECRET_NAME: ${{ vars.NEXTAUTH_SECRET_SECRET_NAME_STAGING }}
+          API_PUBLIC: ${{ vars.API_PUBLIC_STAGING }}
+          ADMIN_PUBLIC: ${{ vars.ADMIN_PUBLIC_STAGING }}
+          MIGRATION_JOB_NAME: ${{ vars.MIGRATION_JOB_NAME_STAGING }}
+          SYNC_ADMIN_URLS: ${{ vars.SYNC_ADMIN_URLS_STAGING }}
+        run: bash scripts/deploy/sync_cloud_run_runtime_config.sh
+
   deploy-production:
     name: Deploy to Production
     needs: test
@@ -249,6 +295,9 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_PROD }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy API to Cloud Run (Production)
         uses: google-github-actions/deploy-cloudrun@v2
@@ -267,3 +316,23 @@ jobs:
           region: ${{ env.REGION }}
           project_id: ${{ env.PROJECT_ID }}
           flags: --no-allow-unauthenticated
+
+      - name: Sync Cloud Run Runtime Config (Production)
+        env:
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          API_SERVICE: med13-resource-library
+          ADMIN_SERVICE: med13-admin
+          CLOUDSQL_CONNECTION_NAME: ${{ vars.CLOUDSQL_CONNECTION_NAME_PROD }}
+          DATABASE_URL_SECRET_NAME: ${{ vars.DATABASE_URL_SECRET_NAME_PROD }}
+          MED13_DEV_JWT_SECRET_NAME: ${{ vars.MED13_DEV_JWT_SECRET_NAME_PROD }}
+          ADMIN_API_KEY_SECRET_NAME: ${{ vars.ADMIN_API_KEY_SECRET_NAME_PROD }}
+          WRITE_API_KEY_SECRET_NAME: ${{ vars.WRITE_API_KEY_SECRET_NAME_PROD }}
+          READ_API_KEY_SECRET_NAME: ${{ vars.READ_API_KEY_SECRET_NAME_PROD }}
+          MED13_ALLOWED_ORIGINS: ${{ vars.MED13_ALLOWED_ORIGINS_PROD }}
+          NEXTAUTH_SECRET_SECRET_NAME: ${{ vars.NEXTAUTH_SECRET_SECRET_NAME_PROD }}
+          API_PUBLIC: ${{ vars.API_PUBLIC_PROD }}
+          ADMIN_PUBLIC: ${{ vars.ADMIN_PUBLIC_PROD }}
+          MIGRATION_JOB_NAME: ${{ vars.MIGRATION_JOB_NAME_PROD }}
+          SYNC_ADMIN_URLS: ${{ vars.SYNC_ADMIN_URLS_PROD }}
+        run: bash scripts/deploy/sync_cloud_run_runtime_config.sh

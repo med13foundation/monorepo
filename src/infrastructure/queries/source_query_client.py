@@ -7,13 +7,12 @@ for programmatic sources, following Clean Architecture principles.
 
 import asyncio
 import logging
-from collections.abc import MutableMapping
-from typing import TYPE_CHECKING, Protocol, assert_never
+from typing import TYPE_CHECKING, assert_never
 from urllib.parse import quote
 
 import aiohttp
 import requests
-from requests.adapters import BaseAdapter, HTTPAdapter
+from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from src.domain.entities.data_discovery_parameters import (
@@ -31,16 +30,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SessionLike(Protocol):
-    """Minimal protocol for the HTTP session used by the query client."""
+class SessionLike:
+    """Thin wrapper around requests.Session with a locally typed surface."""
 
-    headers: MutableMapping[str, str | bytes]
+    def __init__(self) -> None:
+        self._session = requests.Session()
 
-    def mount(self, prefix: str | bytes, adapter: BaseAdapter) -> None:
+    def mount(self, prefix: str | bytes, adapter: object) -> None:
         """Attach an adapter for the specified prefix."""
+        if not isinstance(adapter, HTTPAdapter):
+            msg = "adapter must be an HTTPAdapter instance"
+            raise TypeError(msg)
+        self._session.mount(prefix, adapter)
+
+    def update_headers(self, headers: dict[str, str]) -> None:
+        """Update default session headers."""
+        self._session.headers.update(headers)
 
     def close(self) -> None:
         """Close the session."""
+        self._session.close()
 
 
 class QueryExecutionError(Exception):
@@ -83,7 +92,7 @@ class HTTPQueryClient(SourceQueryClient):
 
     def _create_session(self) -> SessionLike:
         """Create a requests session with retry strategy."""
-        session: SessionLike = requests.Session()
+        session = SessionLike()
 
         # Configure retry strategy
         retry_strategy = Retry(
@@ -98,7 +107,7 @@ class HTTPQueryClient(SourceQueryClient):
         session.mount("https://", adapter)
 
         # Set default headers
-        session.headers.update(
+        session.update_headers(
             {
                 "User-Agent": self.user_agent,
                 "Accept": "application/json, text/plain, */*",

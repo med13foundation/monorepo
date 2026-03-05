@@ -17,7 +17,7 @@ class LoginRequest(BaseModel):
         json_schema_extra={
             "example": {
                 "email": "user@example.com",
-                "password": "SecurePassword123!",
+                "password": "SecurePassword123!",  # nosec B105
             },
         },
     )
@@ -38,7 +38,7 @@ class RegisterUserRequest(BaseModel):
                 "email": "newuser@example.com",
                 "username": "new_user",
                 "full_name": "New User",
-                "password": "SecurePassword123!",
+                "password": "SecurePassword123!",  # nosec B105
                 "role": "researcher",
             },
         },
@@ -65,8 +65,8 @@ class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "old_password": "OldPassword123!",
-                "new_password": "NewSecurePassword456!",
+                "old_password": "OldPassword123!",  # nosec B105
+                "new_password": "NewSecurePassword456!",  # nosec B105
             },
         },
     )
@@ -91,8 +91,8 @@ class ResetPasswordRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "token": "reset-token-from-email",
-                "new_password": "NewSecurePassword456!",
+                "token": "reset-token-from-email",  # nosec B105
+                "new_password": "NewSecurePassword456!",  # nosec B105
             },
         },
     )
@@ -106,7 +106,7 @@ class RefreshTokenRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",  # nosec B105
             },
         },
     )
@@ -137,7 +137,7 @@ class CreateUserRequest(BaseModel):
                 "email": "admin-created@example.com",
                 "username": "admin_created",
                 "full_name": "Admin Created User",
-                "password": "SecurePassword123!",
+                "password": "SecurePassword123!",  # nosec B105
                 "role": "researcher",
             },
         },

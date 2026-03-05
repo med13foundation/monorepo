@@ -335,6 +335,29 @@ make cloud-logs
 
 Note: always deploy to staging first, run smoke checks, then deploy to production.
 
+### CI Runtime Config Sync
+The deploy workflow now applies runtime Cloud Run configuration after source deploy
+using `scripts/deploy/sync_cloud_run_runtime_config.sh`.
+
+Configure GitHub **Environment Variables** per environment suffix
+(`DEV`, `STAGING`, `PROD`) as needed:
+
+- `CLOUDSQL_CONNECTION_NAME_<ENV>`
+- `DATABASE_URL_SECRET_NAME_<ENV>`
+- `MED13_DEV_JWT_SECRET_NAME_<ENV>`
+- `ADMIN_API_KEY_SECRET_NAME_<ENV>`
+- `WRITE_API_KEY_SECRET_NAME_<ENV>`
+- `READ_API_KEY_SECRET_NAME_<ENV>`
+- `NEXTAUTH_SECRET_SECRET_NAME_<ENV>`
+- `MED13_ALLOWED_ORIGINS_<ENV>`
+- `API_PUBLIC_<ENV>` (`true`/`false`)
+- `ADMIN_PUBLIC_<ENV>` (`true`/`false`)
+- `MIGRATION_JOB_NAME_<ENV>`
+- `SYNC_ADMIN_URLS_<ENV>` (`true`/`false`, defaults to disabled)
+
+Secrets referenced above must exist in Google Secret Manager in the target GCP
+project, and the deploying service account must have access.
+
 ## 🔒 Security & Quality
 
 ### Multi-Service Quality Gates
