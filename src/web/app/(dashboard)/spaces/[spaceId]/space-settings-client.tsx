@@ -45,9 +45,12 @@ interface AdvancedSettingsState {
   requireReview: boolean
   reviewThreshold: number
   relationGovernanceMode: 'FULL_AUTO' | 'HUMAN_IN_LOOP'
+  relationAutoPromotionEnabled: boolean
   relationDefaultReviewThreshold: number
   relationReviewThresholdsText: string
   dictionaryAgentCreationPolicy: 'ACTIVE' | 'PENDING_REVIEW'
+  conceptAgentCreationPolicy: 'ACTIVE' | 'PENDING_REVIEW'
+  conceptPolicyMode: 'PRECISION' | 'BALANCED' | 'DISCOVERY'
   maxDataSources: number
   allowedSourceTypes: string
   publicRead: boolean
@@ -72,12 +75,24 @@ const toAdvancedState = (settings?: ResearchSpaceSettings): AdvancedSettingsStat
     settings?.relation_governance_mode === 'HUMAN_IN_LOOP'
       ? 'HUMAN_IN_LOOP'
       : 'FULL_AUTO',
+  relationAutoPromotionEnabled:
+    settings?.relation_auto_promotion?.enabled === true,
   relationDefaultReviewThreshold: settings?.relation_default_review_threshold ?? 0.7,
   relationReviewThresholdsText: toThresholdText(settings?.relation_review_thresholds),
   dictionaryAgentCreationPolicy:
     settings?.dictionary_agent_creation_policy === 'PENDING_REVIEW'
       ? 'PENDING_REVIEW'
       : 'ACTIVE',
+  conceptAgentCreationPolicy:
+    settings?.concept_agent_creation_policy === 'PENDING_REVIEW'
+      ? 'PENDING_REVIEW'
+      : 'ACTIVE',
+  conceptPolicyMode:
+    settings?.concept_policy_mode === 'PRECISION'
+      ? 'PRECISION'
+      : settings?.concept_policy_mode === 'DISCOVERY'
+        ? 'DISCOVERY'
+        : 'BALANCED',
   maxDataSources: settings?.max_data_sources ?? 25,
   allowedSourceTypes: (settings?.allowed_source_types ?? []).join(', '),
   publicRead: settings?.public_read ?? false,
@@ -415,6 +430,49 @@ export default function SpaceSettingsClient({ spaceId, space }: SpaceSettingsCli
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-1">
+                  <Label htmlFor="concept-agent-creation-policy">
+                    Concept agent creation policy
+                  </Label>
+                  <Select
+                    value={advancedSettings.conceptAgentCreationPolicy}
+                    onValueChange={(value) =>
+                      handleAdvancedChange(
+                        'conceptAgentCreationPolicy',
+                        value as AdvancedSettingsState['conceptAgentCreationPolicy'],
+                      )
+                    }
+                  >
+                    <SelectTrigger id="concept-agent-creation-policy">
+                      <SelectValue placeholder="Select policy" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ACTIVE">ACTIVE</SelectItem>
+                      <SelectItem value="PENDING_REVIEW">PENDING_REVIEW</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="concept-policy-mode">Concept policy mode</Label>
+                  <Select
+                    value={advancedSettings.conceptPolicyMode}
+                    onValueChange={(value) =>
+                      handleAdvancedChange(
+                        'conceptPolicyMode',
+                        value as AdvancedSettingsState['conceptPolicyMode'],
+                      )
+                    }
+                  >
+                    <SelectTrigger id="concept-policy-mode">
+                      <SelectValue placeholder="Select concept mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PRECISION">PRECISION</SelectItem>
+                      <SelectItem value="BALANCED">BALANCED</SelectItem>
+                      <SelectItem value="DISCOVERY">DISCOVERY</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </CardContent>
             </Card>
 
@@ -543,9 +601,14 @@ function buildSettingsPayload(state: AdvancedSettingsState): ResearchSpaceSettin
     require_review: state.requireReview,
     review_threshold: state.reviewThreshold,
     relation_governance_mode: state.relationGovernanceMode,
+    relation_auto_promotion: {
+      enabled: state.relationAutoPromotionEnabled,
+    },
     relation_default_review_threshold: state.relationDefaultReviewThreshold,
     relation_review_thresholds: parseThresholdText(state.relationReviewThresholdsText),
     dictionary_agent_creation_policy: state.dictionaryAgentCreationPolicy,
+    concept_agent_creation_policy: state.conceptAgentCreationPolicy,
+    concept_policy_mode: state.conceptPolicyMode,
     max_data_sources: state.maxDataSources,
     allowed_source_types: state.allowedSourceTypes
       .split(',')

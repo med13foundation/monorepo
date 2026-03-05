@@ -5,15 +5,22 @@ Observation validator for the ingestion pipeline.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+
 from src.infrastructure.ingestion.types import NormalizedObservation
+from src.type_definitions.dictionary import (
+    CodedConstraints,
+    is_value_compatible_with_data_type,
+    value_satisfies_dictionary_constraints,
+)
 
 if TYPE_CHECKING:
     from src.domain.entities.kernel.dictionary import VariableDefinition
     from src.domain.ports.dictionary_port import DictionaryPort
     from src.infrastructure.ingestion.types import IngestedValue
+    from src.type_definitions.common import JSONObject
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +48,9 @@ class ObservationValidator:
             )
             return None
 
-        if not self._validate_value_type(
-            observation.value,
-            variable,
+        if not is_value_compatible_with_data_type(
+            data_type=variable.data_type,
+            value=observation.value,
         ):
             return None
 
@@ -66,39 +73,7 @@ class ObservationValidator:
             provenance=observation.provenance,
         )
 
-    def _validate_value_type(
-        self,
-        value: IngestedValue,
-        variable: VariableDefinition,
-    ) -> bool:
-        # ValueCaster should already cast based on dictionary definitions, but we
-        # validate again to ensure we never persist an invalid type.
-        if value is None:
-            return False
-
-        data_type = variable.data_type
-
-        is_valid = True
-        if data_type in ("INTEGER", "FLOAT"):
-            # bool is an int subclass; reject it explicitly.
-            is_valid = isinstance(value, int | float) and not isinstance(value, bool)
-        elif data_type == "BOOLEAN":
-            is_valid = isinstance(value, bool)
-        elif data_type in ("STRING", "CODED"):
-            is_valid = isinstance(value, str)
-        elif data_type == "DATE":
-            is_valid = isinstance(value, date | datetime)
-        elif data_type == "JSON":
-            # JSON values may be primitives, lists, or dicts; we rely on the mapper
-            # and dictionary for shape constraints.
-            is_valid = True
-        else:
-            # Unknown types are treated permissively for now.
-            is_valid = True
-
-        return is_valid
-
-    def _validate_constraints(  # noqa: C901, PLR0911
+    def _validate_constraints(
         self,
         value: IngestedValue,
         variable: VariableDefinition,
@@ -106,66 +81,55 @@ class ObservationValidator:
         constraints = variable.constraints
         normalized_coded_value: str | None = None
 
-        if variable.data_type == "CODED":
+        variable_data_type = variable.data_type
+        variable_id = variable.id
+
+        if variable_data_type == "CODED":
             coded_valid, normalized_coded_value = self._validate_coded_value_set(
                 value=value,
-                variable_id=variable.id,
+                variable_id=variable_id,
+                constraints=constraints,
             )
             if not coded_valid:
                 return False, None
 
-        if not constraints:
-            return True, normalized_coded_value
+        value_for_constraints = (
+            normalized_coded_value if normalized_coded_value is not None else value
+        )
 
-        try:
-            # Handle min/max for numbers
-            if variable.data_type in ("INTEGER", "FLOAT"):
-                min_val = constraints.get("min")
-                max_val = constraints.get("max")
-
-                if (
-                    min_val is not None
-                    and isinstance(min_val, int | float)
-                    and isinstance(value, int | float)
-                    and value < min_val
-                ):
-                    return False, None
-                if (
-                    max_val is not None
-                    and isinstance(max_val, int | float)
-                    and isinstance(value, int | float)
-                    and value > max_val
-                ):
-                    return False, None
-
-            # Handle legacy enums for STRING and CODED variables without value sets.
-            if variable.data_type == "STRING" or (
-                variable.data_type == "CODED" and normalized_coded_value is None
-            ):
-                allowed_values_obj = constraints.get("allowed_values")
-                if (
-                    isinstance(allowed_values_obj, list)
-                    and value not in allowed_values_obj
-                ):
-                    return False, None
-
-            # Handle regex pattern
-            pattern = constraints.get("pattern")
-            if pattern and variable.data_type == "STRING":
-                # import re; if not re.match(pattern, value): return False
-                pass
-
-        except Exception:
-            logger.exception("Error validating constraints for %s", variable.id)
+        if not value_satisfies_dictionary_constraints(
+            data_type=variable_data_type,
+            constraints=constraints,
+            value=value_for_constraints,
+        ):
+            logger.warning(
+                "Value failed dictionary constraint validation for variable %s",
+                variable_id,
+            )
             return False, None
 
         return True, normalized_coded_value
 
-    def _validate_coded_value_set(
+    @staticmethod
+    def _resolve_coded_constraints(constraints: JSONObject) -> CodedConstraints | None:
+        coded_payload: JSONObject = {}
+        value_set_id = constraints.get("value_set_id")
+        allow_other = constraints.get("allow_other")
+        if value_set_id is not None:
+            coded_payload["value_set_id"] = value_set_id
+        if allow_other is not None:
+            coded_payload["allow_other"] = allow_other
+        try:
+            return CodedConstraints.model_validate(coded_payload)
+        except ValidationError:
+            return None
+
+    def _validate_coded_value_set(  # noqa: C901, PLR0911, PLR0912
         self,
         *,
         value: IngestedValue,
         variable_id: str,
+        constraints: JSONObject,
     ) -> tuple[bool, str | None]:
         """
         Validate CODED values against active value-set items when configured.
@@ -175,14 +139,40 @@ class ObservationValidator:
             - (True, None) when no value set exists for the variable.
             - (False, None) when value sets exist but no active match is found.
         """
+        coded_constraints = self._resolve_coded_constraints(constraints)
+        if coded_constraints is None:
+            logger.warning(
+                "Invalid CODED constraints for variable %s; rejecting observation",
+                variable_id,
+            )
+            return False, None
+        allow_other = coded_constraints.allow_other
+
         value_sets = self.dictionary_repo.list_value_sets(variable_id=variable_id)
+        configured_value_set_id = coded_constraints.value_set_id
+        if configured_value_set_id is not None:
+            value_sets = [
+                value_set
+                for value_set in value_sets
+                if value_set.id == configured_value_set_id
+            ]
+
         if not value_sets:
+            if configured_value_set_id is not None:
+                logger.warning(
+                    "Configured value_set_id %s for variable %s not found",
+                    configured_value_set_id,
+                    variable_id,
+                )
+                return allow_other, None
             return True, None
 
         active_value_sets = [
             value_set for value_set in value_sets if value_set.review_status == "ACTIVE"
         ]
         if not active_value_sets:
+            if allow_other:
+                return True, None
             logger.warning(
                 "Variable %s has no active value set available for CODED validation",
                 variable_id,
@@ -207,4 +197,6 @@ class ObservationValidator:
                     if lookup_value == synonym.casefold():
                         return True, item.code
 
+        if allow_other:
+            return True, None
         return False, None

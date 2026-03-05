@@ -192,3 +192,44 @@ def test_llm_judge_mapper_returns_empty_when_judge_declines_match() -> None:
     observations = mapper.map(record)
 
     assert observations == []
+
+
+def test_llm_judge_mapper_inferrs_domain_from_source_type() -> None:
+    dictionary_service = StubDictionaryService(
+        search_results_by_term={
+            "cardiomegaly markr": [
+                _build_search_result(
+                    variable_id="VAR_CARDIOMEGALY_MARKER",
+                    method="fuzzy",
+                    score=0.62,
+                ),
+            ],
+        },
+    )
+    judge_decision = MappingJudgeContract(
+        decision="no_match",
+        selected_variable_id=None,
+        candidate_count=1,
+        selection_rationale="No confident selection.",
+        selected_candidate=None,
+        confidence_score=0.2,
+        rationale="Declined for safety.",
+        evidence=[],
+        agent_run_id="run-789",
+    )
+    mapper = LLMJudgeMapper(
+        dictionary_service,
+        StubMappingJudgeAgent(decision=judge_decision),
+        candidate_floor=0.4,
+        vector_threshold=0.7,
+        top_k=5,
+    )
+    record = RawRecord(
+        source_id="source-1",
+        data={"cardiomegaly markr": True},
+        metadata={"type": "pubmed", "entity_type": "PUBLICATION"},
+    )
+
+    _ = mapper.map(record)
+
+    assert dictionary_service.search_calls[0]["domain_context"] == "clinical"

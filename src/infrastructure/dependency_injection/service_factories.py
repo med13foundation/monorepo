@@ -35,10 +35,12 @@ from src.infrastructure.factories.ingestion_pipeline_factory import (
 from src.infrastructure.llm.adapters import (
     ArtanaContentEnrichmentAdapter,
     ArtanaEntityRecognitionAdapter,
+    ArtanaEvidenceSentenceHarnessAdapter,
     ArtanaExtractionAdapter,
     ArtanaExtractionPolicyAdapter,
     ArtanaGraphConnectionAdapter,
     ArtanaGraphSearchAdapter,
+    ArtanaMappingJudgeAdapter,
     ArtanaQueryAgentAdapter,
 )
 from src.infrastructure.llm.config.model_registry import get_model_registry
@@ -48,7 +50,10 @@ from src.infrastructure.repositories import (
 )
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyGraphQueryRepository,
+    SqlAlchemyKernelClaimEvidenceRepository,
+    SqlAlchemyKernelClaimParticipantRepository,
     SqlAlchemyKernelEntityRepository,
+    SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationRepository,
 )
 
@@ -63,6 +68,10 @@ if TYPE_CHECKING:
         ExtractionAgentPort,
         GraphConnectionPort,
         QueryAgentPort,
+    )
+    from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
+    from src.domain.ports.evidence_sentence_harness_port import (
+        EvidenceSentenceHarnessPort,
     )
     from src.domain.services import storage_metrics, storage_providers
 
@@ -80,6 +89,7 @@ class ApplicationServiceFactoryMixin(
         _storage_metrics_recorder: storage_metrics.StorageMetricsRecorder
         _entity_recognition_agent: EntityRecognitionPort | None
         _extraction_agent: ExtractionAgentPort | None
+        _mapping_judge_agent: MappingJudgePort | None
         _graph_connection_agent: GraphConnectionPort | None
         _query_agent: QueryAgentPort | None
 
@@ -168,11 +178,33 @@ class ApplicationServiceFactoryMixin(
             )
         return self._extraction_agent
 
+    def get_mapping_judge_agent(self) -> MappingJudgePort | None:
+        if not self._is_stage_enabled("MED13_ENABLE_ENDPOINT_SHAPE_AGENT"):
+            return None
+        if self._mapping_judge_agent is not None:
+            return self._mapping_judge_agent
+        registry = get_model_registry()
+        model_spec = registry.get_default_model(
+            ModelCapability.EVIDENCE_EXTRACTION,
+        )
+        try:
+            self._mapping_judge_agent = ArtanaMappingJudgeAdapter(
+                model=model_spec.model_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail-closed to deterministic guard
+            self._logger.warning(
+                "Endpoint-shape mapping judge unavailable, using deterministic guard only: %s",
+                exc,
+            )
+            self._mapping_judge_agent = None
+        return self._mapping_judge_agent
+
     def create_entity_recognition_service(
         self,
         session: Session,
     ) -> EntityRecognitionService:
         dictionary_service = self.create_dictionary_management_service(session)
+        concept_service = self.create_concept_management_service(session)
         governance_service = GovernanceService()
         ingestion_pipeline = create_ingestion_pipeline(session)
         registry = get_model_registry()
@@ -190,16 +222,32 @@ class ApplicationServiceFactoryMixin(
         extraction_policy_agent = ArtanaExtractionPolicyAdapter(
             model=model_spec.model_id,
         )
+        evidence_sentence_harness = self._create_evidence_sentence_harness(
+            model_id=model_spec.model_id,
+        )
         extraction_service = ExtractionService(
             dependencies=ExtractionServiceDependencies(
                 extraction_agent=extraction_agent,
                 extraction_policy_agent=extraction_policy_agent,
                 ingestion_pipeline=ingestion_pipeline,
                 relation_repository=SqlAlchemyKernelRelationRepository(session),
+                relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
+                    session,
+                ),
+                claim_participant_repository=(
+                    SqlAlchemyKernelClaimParticipantRepository(session)
+                ),
+                claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
+                    session,
+                ),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
                 dictionary_service=dictionary_service,
+                concept_service=concept_service,
+                evidence_sentence_harness=evidence_sentence_harness,
+                endpoint_shape_judge=self.get_mapping_judge_agent(),
                 governance_service=governance_service,
                 review_queue_submitter=self._build_review_queue_submitter(session),
+                rollback_on_error=session.rollback,
             ),
         )
 
@@ -218,6 +266,7 @@ class ApplicationServiceFactoryMixin(
 
     def create_extraction_service(self, session: Session) -> ExtractionService:
         dictionary_service = self.create_dictionary_management_service(session)
+        concept_service = self.create_concept_management_service(session)
         registry = get_model_registry()
         model_spec = registry.get_default_model(
             ModelCapability.EVIDENCE_EXTRACTION,
@@ -229,18 +278,48 @@ class ApplicationServiceFactoryMixin(
         extraction_policy_agent = ArtanaExtractionPolicyAdapter(
             model=model_spec.model_id,
         )
+        evidence_sentence_harness = self._create_evidence_sentence_harness(
+            model_id=model_spec.model_id,
+        )
         return ExtractionService(
             dependencies=ExtractionServiceDependencies(
                 extraction_agent=extraction_agent,
                 extraction_policy_agent=extraction_policy_agent,
                 ingestion_pipeline=create_ingestion_pipeline(session),
                 relation_repository=SqlAlchemyKernelRelationRepository(session),
+                relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
+                    session,
+                ),
+                claim_participant_repository=(
+                    SqlAlchemyKernelClaimParticipantRepository(session)
+                ),
+                claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
+                    session,
+                ),
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
                 dictionary_service=dictionary_service,
+                concept_service=concept_service,
+                evidence_sentence_harness=evidence_sentence_harness,
+                endpoint_shape_judge=self.get_mapping_judge_agent(),
                 governance_service=GovernanceService(),
                 review_queue_submitter=self._build_review_queue_submitter(session),
+                rollback_on_error=session.rollback,
             ),
         )
+
+    def _create_evidence_sentence_harness(
+        self,
+        *,
+        model_id: str | None,
+    ) -> EvidenceSentenceHarnessPort | None:
+        try:
+            return ArtanaEvidenceSentenceHarnessAdapter(model=model_id)
+        except Exception as exc:  # noqa: BLE001 - fail-open for optional path
+            self._logger.warning(
+                "Evidence sentence harness unavailable; optional relation sentence fallback disabled: %s",
+                exc,
+            )
+            return None
 
     def create_graph_connection_service(
         self,

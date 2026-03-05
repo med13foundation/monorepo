@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
@@ -67,11 +68,40 @@ class StubEntityRecognitionAgent(EntityRecognitionPort):
         return None
 
 
+class SlowEntityRecognitionAgent(EntityRecognitionPort):
+    """Agent stub that intentionally exceeds configured timeout."""
+
+    def __init__(
+        self,
+        *,
+        contract: EntityRecognitionContract,
+        delay_seconds: float,
+    ) -> None:
+        self._contract = contract
+        self._delay_seconds = delay_seconds
+        self.calls: list[EntityRecognitionContext] = []
+
+    async def recognize(
+        self,
+        context: EntityRecognitionContext,
+        *,
+        model_id: str | None = None,
+    ) -> EntityRecognitionContract:
+        _ = model_id
+        self.calls.append(context)
+        await asyncio.sleep(self._delay_seconds)
+        return self._contract
+
+    async def close(self) -> None:
+        return None
+
+
 class StubSourceDocumentRepository(SourceDocumentRepository):
     """In-memory SourceDocument repository for service tests."""
 
     def __init__(self, documents: list[SourceDocument]) -> None:
         self._documents: dict[UUID, SourceDocument] = {doc.id: doc for doc in documents}
+        self.recovery_calls: list[dict[str, object]] = []
 
     def get_by_id(self, document_id: UUID) -> SourceDocument | None:
         return self._documents.get(document_id)
@@ -108,9 +138,13 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         _ = source_id
         _ = research_space_id
+        _ = ingestion_job_id
+        _ = source_type
         return list(self._documents.values())[: max(limit, 1)]
 
     def list_pending_extraction(
@@ -119,6 +153,8 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         pending = [
             document
@@ -135,7 +171,75 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
                 for document in pending
                 if document.research_space_id == research_space_id
             ]
+        if ingestion_job_id is not None:
+            pending = [
+                document
+                for document in pending
+                if document.ingestion_job_id == ingestion_job_id
+            ]
+        if isinstance(source_type, str) and source_type.strip():
+            normalized_source_type = source_type.strip().lower()
+            pending = [
+                document
+                for document in pending
+                if document.source_type.value.strip().lower() == normalized_source_type
+            ]
         return pending[: max(limit, 1)]
+
+    def recover_stale_in_progress_extraction(
+        self,
+        *,
+        stale_before: datetime,
+        source_id: UUID | None = None,
+        research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        limit: int = 500,
+    ) -> int:
+        self.recovery_calls.append(
+            {
+                "stale_before": stale_before,
+                "source_id": source_id,
+                "research_space_id": research_space_id,
+                "ingestion_job_id": ingestion_job_id,
+                "limit": limit,
+            },
+        )
+        candidates = sorted(
+            self._documents.values(),
+            key=lambda document: document.updated_at,
+        )[: max(limit, 1)]
+        recovered = 0
+        for document in candidates:
+            if document.extraction_status != DocumentExtractionStatus.IN_PROGRESS:
+                continue
+            if source_id is not None and document.source_id != source_id:
+                continue
+            if (
+                research_space_id is not None
+                and document.research_space_id != research_space_id
+            ):
+                continue
+            if (
+                ingestion_job_id is not None
+                and document.ingestion_job_id != ingestion_job_id
+            ):
+                continue
+            if document.updated_at >= stale_before:
+                continue
+            metadata = dict(document.metadata)
+            metadata["extraction_stale_recovery_reason"] = (
+                "in_progress_timeout_recovered_to_pending"
+            )
+            self._documents[document.id] = document.model_copy(
+                update={
+                    "extraction_status": DocumentExtractionStatus.PENDING,
+                    "extraction_agent_run_id": None,
+                    "updated_at": datetime.now(UTC),
+                    "metadata": metadata,
+                },
+            )
+            recovered += 1
+        return recovered
 
     def delete_by_source(self, source_id: UUID) -> int:
         existing_ids = [
@@ -193,9 +297,40 @@ class StubExtractionService:
         return None
 
 
+class SlowExtractionService(StubExtractionService):
+    """Extraction service stub that intentionally exceeds timeout."""
+
+    def __init__(
+        self,
+        outcome: ExtractionDocumentOutcome,
+        *,
+        delay_seconds: float,
+    ) -> None:
+        super().__init__(outcome)
+        self._delay_seconds = delay_seconds
+
+    async def extract_from_entity_recognition(
+        self,
+        *,
+        document: SourceDocument,
+        recognition_contract: EntityRecognitionContract,
+        research_space_settings: object,
+        model_id: str | None = None,
+        shadow_mode: bool | None = None,
+    ) -> ExtractionDocumentOutcome:
+        _ = research_space_settings
+        _ = model_id
+        _ = shadow_mode
+        self.calls.append((document, recognition_contract))
+        await asyncio.sleep(self._delay_seconds)
+        return self.outcome
+
+
 @dataclass(frozen=True)
 class _DictionaryEntityType:
     id: str
+    is_active: bool = True
+    review_status: str = "ACTIVE"
 
 
 @dataclass(frozen=True)
@@ -212,6 +347,8 @@ class _DictionarySynonym:
 @dataclass(frozen=True)
 class _DictionaryRelationType:
     id: str
+    is_active: bool = True
+    review_status: str = "ACTIVE"
 
 
 @dataclass(frozen=True)
@@ -246,7 +383,13 @@ class StubDictionaryService:
         if isinstance(raw_policy, str) and raw_policy.strip():
             self.creation_policies.append(raw_policy.strip().upper())
 
-    def get_entity_type(self, entity_type_id: str) -> _DictionaryEntityType | None:
+    def get_entity_type(
+        self,
+        entity_type_id: str,
+        *,
+        include_inactive: bool = False,
+    ) -> _DictionaryEntityType | None:
+        _ = include_inactive
         return self.entity_types.get(entity_type_id)
 
     def create_entity_type(self, **kwargs: object) -> _DictionaryEntityType:
@@ -256,6 +399,26 @@ class StubDictionaryService:
         self.entity_types[entity_type] = created
         self.created_entity_types += 1
         return created
+
+    def set_entity_type_review_status(
+        self,
+        entity_type_id: str,
+        *,
+        review_status: str,
+        reviewed_by: str,
+    ) -> _DictionaryEntityType:
+        _ = reviewed_by
+        existing = self.entity_types.get(entity_type_id)
+        if existing is None:
+            msg = f"Unknown entity type: {entity_type_id}"
+            raise ValueError(msg)
+        updated = _DictionaryEntityType(
+            id=existing.id,
+            is_active=review_status.upper() == "ACTIVE",
+            review_status=review_status.upper(),
+        )
+        self.entity_types[entity_type_id] = updated
+        return updated
 
     def get_variable(self, variable_id: str) -> _DictionaryVariable | None:
         return self.variables.get(variable_id)
@@ -268,7 +431,15 @@ class StubDictionaryService:
         self.created_variables += 1
         return created
 
-    def resolve_synonym(self, synonym: str) -> _DictionaryVariable | None:
+    def resolve_synonym(
+        self,
+        synonym: str,
+        *,
+        domain_context: str | None = None,
+        include_inactive: bool = False,
+    ) -> _DictionaryVariable | None:
+        _ = domain_context
+        _ = include_inactive
         variable_id = self.synonyms.get(synonym)
         if variable_id is None:
             return None
@@ -315,6 +486,26 @@ class StubDictionaryService:
         self.created_relation_types += 1
         self._domain_has_entries = True
         return created
+
+    def set_relation_type_review_status(
+        self,
+        relation_type_id: str,
+        *,
+        review_status: str,
+        reviewed_by: str,
+    ) -> _DictionaryRelationType:
+        _ = reviewed_by
+        existing = self.relation_types.get(relation_type_id)
+        if existing is None:
+            msg = f"Unknown relation type: {relation_type_id}"
+            raise ValueError(msg)
+        updated = _DictionaryRelationType(
+            id=existing.id,
+            is_active=review_status.upper() == "ACTIVE",
+            review_status=review_status.upper(),
+        )
+        self.relation_types[relation_type_id] = updated
+        return updated
 
     def get_constraints(
         self,
@@ -679,4 +870,142 @@ async def test_process_document_bootstraps_domain_when_dictionary_is_empty() -> 
     assert outcome.dictionary_variables_created >= 2
     assert dictionary.created_relation_types >= 1
     assert dictionary.created_constraints >= 1
-    assert "PENDING_REVIEW" in dictionary.creation_policies
+    assert "ACTIVE" in dictionary.creation_policies
+
+
+@pytest.mark.asyncio
+async def test_process_document_fails_when_agent_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MED13_ENTITY_RECOGNITION_AGENT_TIMEOUT_SECONDS", "0.01")
+    document = _build_document(include_raw_record=True)
+    repository = StubSourceDocumentRepository([document])
+    contract = _build_contract(document.id)
+    agent = SlowEntityRecognitionAgent(contract=contract, delay_seconds=0.05)
+    dictionary = StubDictionaryService()
+    ingestion = StubIngestionPipeline(
+        IngestResult(success=True, entities_created=1, observations_created=1),
+    )
+    service = EntityRecognitionService(
+        dependencies=EntityRecognitionServiceDependencies(
+            entity_recognition_agent=agent,
+            source_document_repository=repository,
+            ingestion_pipeline=ingestion,
+            dictionary_service=cast("DictionaryPort", dictionary),
+            governance_service=_build_governance_service(),
+        ),
+        default_shadow_mode=False,
+    )
+
+    outcome = await service.process_document(document_id=document.id)
+
+    assert outcome.status == "failed"
+    assert outcome.reason == "agent_execution_timeout"
+    persisted_document = repository.get_by_id(document.id)
+    assert persisted_document is not None
+    assert persisted_document.extraction_status == DocumentExtractionStatus.FAILED
+    assert (
+        persisted_document.metadata.get("entity_recognition_failure_reason")
+        == "agent_execution_timeout"
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_document_fails_when_extraction_stage_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "MED13_ENTITY_RECOGNITION_EXTRACTION_STAGE_TIMEOUT_SECONDS",
+        "0.01",
+    )
+    document = _build_document(include_raw_record=True)
+    repository = StubSourceDocumentRepository([document])
+    contract = _build_contract(document.id)
+    agent = StubEntityRecognitionAgent(contract=contract)
+    dictionary = StubDictionaryService()
+    ingestion = StubIngestionPipeline(
+        IngestResult(success=True, entities_created=1, observations_created=1),
+    )
+    extraction_service = SlowExtractionService(
+        ExtractionDocumentOutcome(
+            document_id=document.id,
+            status="extracted",
+            reason="processed",
+            review_required=False,
+            shadow_mode=False,
+            wrote_to_kernel=True,
+            run_id="extract:timeout-test",
+        ),
+        delay_seconds=0.05,
+    )
+    service = EntityRecognitionService(
+        dependencies=EntityRecognitionServiceDependencies(
+            entity_recognition_agent=agent,
+            source_document_repository=repository,
+            ingestion_pipeline=ingestion,
+            dictionary_service=cast("DictionaryPort", dictionary),
+            extraction_service=cast("ExtractionService", extraction_service),
+            governance_service=_build_governance_service(),
+        ),
+        default_shadow_mode=False,
+    )
+
+    outcome = await service.process_document(document_id=document.id)
+
+    assert outcome.status == "failed"
+    assert outcome.reason == "extraction_stage_timeout"
+    persisted_document = repository.get_by_id(document.id)
+    assert persisted_document is not None
+    assert persisted_document.extraction_status == DocumentExtractionStatus.FAILED
+    assert (
+        persisted_document.metadata.get("extraction_stage_failure_reason")
+        == "extraction_stage_timeout"
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_pending_documents_recovers_stale_in_progress_documents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MED13_ENTITY_RECOGNITION_STALE_IN_PROGRESS_SECONDS", "30")
+    stale_document = _build_document(include_raw_record=True).model_copy(
+        update={
+            "extraction_status": DocumentExtractionStatus.IN_PROGRESS,
+            "updated_at": datetime.now(UTC) - timedelta(minutes=5),
+            "extraction_agent_run_id": "stale-run-id",
+        },
+    )
+    repository = StubSourceDocumentRepository([stale_document])
+    contract = _build_contract(stale_document.id)
+    agent = StubEntityRecognitionAgent(contract=contract)
+    dictionary = StubDictionaryService()
+    ingestion = StubIngestionPipeline(
+        IngestResult(success=True, entities_created=1, observations_created=1),
+    )
+    service = EntityRecognitionService(
+        dependencies=EntityRecognitionServiceDependencies(
+            entity_recognition_agent=agent,
+            source_document_repository=repository,
+            ingestion_pipeline=ingestion,
+            dictionary_service=cast("DictionaryPort", dictionary),
+            governance_service=_build_governance_service(),
+        ),
+        default_shadow_mode=False,
+    )
+
+    summary = await service.process_pending_documents(
+        limit=1,
+        source_id=stale_document.source_id,
+        research_space_id=stale_document.research_space_id,
+    )
+
+    assert len(repository.recovery_calls) == 1
+    assert summary.processed == 1
+    assert summary.extracted == 1
+    persisted_document = repository.get_by_id(stale_document.id)
+    assert persisted_document is not None
+    assert persisted_document.extraction_status == DocumentExtractionStatus.EXTRACTED
+    assert (
+        persisted_document.metadata.get("extraction_stale_recovery_reason")
+        == "in_progress_timeout_recovered_to_pending"
+    )

@@ -30,9 +30,23 @@ if TYPE_CHECKING:
     from src.domain.agents.ports.extraction_policy_agent_port import (
         ExtractionPolicyAgentPort,
     )
+    from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
     from src.domain.entities.source_document import SourceDocument
+    from src.domain.ports.concept_port import ConceptPort
     from src.domain.ports.dictionary_port import DictionaryPort
+    from src.domain.ports.evidence_sentence_harness_port import (
+        EvidenceSentenceHarnessPort,
+    )
+    from src.domain.repositories.kernel.claim_evidence_repository import (
+        KernelClaimEvidenceRepository,
+    )
+    from src.domain.repositories.kernel.claim_participant_repository import (
+        KernelClaimParticipantRepository,
+    )
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
+    from src.domain.repositories.kernel.relation_claim_repository import (
+        KernelRelationClaimRepository,
+    )
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
@@ -46,11 +60,18 @@ class ExtractionServiceDependencies:
     extraction_agent: ExtractionAgentPort
     ingestion_pipeline: IngestionPipelinePort
     extraction_policy_agent: ExtractionPolicyAgentPort | None = None
+    endpoint_shape_judge: MappingJudgePort | None = None
     relation_repository: KernelRelationRepository | None = None
+    relation_claim_repository: KernelRelationClaimRepository | None = None
+    claim_participant_repository: KernelClaimParticipantRepository | None = None
+    claim_evidence_repository: KernelClaimEvidenceRepository | None = None
     entity_repository: KernelEntityRepository | None = None
     dictionary_service: DictionaryPort | None = None
+    concept_service: ConceptPort | None = None
+    evidence_sentence_harness: EvidenceSentenceHarnessPort | None = None
     governance_service: GovernanceService | None = None
     review_queue_submitter: Callable[[str, str, str | None, str], None] | None = None
+    rollback_on_error: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +96,9 @@ class ExtractionDocumentOutcome:
     pending_review_relations_count: int = 0
     forbidden_relations_count: int = 0
     undefined_relations_count: int = 0
+    concept_members_created_count: int = 0
+    concept_aliases_created_count: int = 0
+    concept_decisions_proposed_count: int = 0
     policy_step_run_id: str | None = None
     policy_proposals_count: int = 0
     seed_entity_ids: tuple[str, ...] = ()
@@ -143,6 +167,9 @@ def build_extraction_outcome(  # noqa: PLR0913
     pending_review_relations_count: int = 0,
     forbidden_relations_count: int = 0,
     undefined_relations_count: int = 0,
+    concept_members_created_count: int = 0,
+    concept_aliases_created_count: int = 0,
+    concept_decisions_proposed_count: int = 0,
     policy_step_run_id: str | None = None,
     policy_proposals_count: int = 0,
     relation_rejected_reasons: tuple[str, ...] = (),
@@ -183,6 +210,9 @@ def build_extraction_outcome(  # noqa: PLR0913
         pending_review_relations_count=pending_review_relations_count,
         forbidden_relations_count=forbidden_relations_count,
         undefined_relations_count=undefined_relations_count,
+        concept_members_created_count=concept_members_created_count,
+        concept_aliases_created_count=concept_aliases_created_count,
+        concept_decisions_proposed_count=concept_decisions_proposed_count,
         policy_step_run_id=policy_step_run_id,
         policy_proposals_count=policy_proposals_count,
         seed_entity_ids=seed_entity_ids,

@@ -22,6 +22,7 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
     func,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -392,6 +393,109 @@ class DictionaryRelationTypeModel(Base):
             name="ck_dictionary_relation_types_active_validity",
         ),
         {"comment": "First-class relation types with semantic metadata"},
+    )
+
+
+class DictionaryRelationSynonymModel(Base):
+    """Reference table for relation-type synonyms."""
+
+    __tablename__ = "dictionary_relation_synonyms"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+    relation_type: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("dictionary_relation_types.id", ondelete="CASCADE"),
+        nullable=False,
+        doc="Canonical relation type ID this synonym resolves to",
+    )
+    synonym: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        doc="Normalized synonym label, e.g. DRIVES",
+    )
+    source: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Optional source of this synonym mapping",
+    )
+    created_by: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        server_default="seed",
+        doc="Entry creator: seed, manual:{user_id}, or agent:{run_id}",
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=true(),
+        doc="Soft-delete flag for temporal validity",
+    )
+    valid_from: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        doc="Timestamp when this row became valid",
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when this row stopped being valid",
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        doc="Replacement relation type identifier when superseded",
+    )
+    source_ref: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+        doc="Optional source reference for entry creation",
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default="ACTIVE",
+        doc="Review status: ACTIVE, PENDING_REVIEW, REVOKED",
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        doc="Reviewer identifier",
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        nullable=True,
+        doc="Timestamp when review status was updated",
+    )
+    revocation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Reason for revocation when review_status is REVOKED",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_rel_syn_relation_type", "relation_type"),
+        Index(
+            "uq_relation_synonyms_active_synonym",
+            func.lower(synonym),
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+        CheckConstraint(
+            "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
+            name="ck_dictionary_relation_synonyms_active_validity",
+        ),
+        {"comment": "Synonym labels that resolve to canonical relation types"},
     )
 
 
@@ -803,6 +907,13 @@ class VariableSynonymModel(Base):
     )
 
     __table_args__ = (
+        Index(
+            "uq_variable_synonyms_active_synonym",
+            text("lower(synonym)"),
+            unique=True,
+            postgresql_where=text("is_active"),
+            sqlite_where=text("is_active = 1"),
+        ),
         Index(
             "idx_synonym_variable_unique",
             "variable_id",

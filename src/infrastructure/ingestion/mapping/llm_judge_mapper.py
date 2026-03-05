@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from src.domain.agents.contexts.mapping_judge_context import MappingJudgeContext
 from src.domain.agents.contracts.mapping_judge import MappingJudgeCandidate
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.infrastructure.ingestion.types import MappedObservation, RawRecord
 
 if TYPE_CHECKING:
@@ -62,8 +62,6 @@ LLM_JUDGE_MAPPER_TOP_K = _read_top_k()
 LLM_JUDGE_VECTOR_THRESHOLD = _read_vector_threshold()
 _VALUE_PREVIEW_LIMIT = 2000
 
-logger = logging.getLogger(__name__)
-
 
 class LLMJudgeMapper:
     """Maps ambiguous fields using a judge agent over dictionary candidates."""
@@ -114,15 +112,7 @@ class LLMJudgeMapper:
                 candidates=candidates,
                 request_source="ingestion_pipeline",
             )
-            try:
-                decision = self.mapping_judge_agent.judge(context)
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "LLM judge mapper failed for source_id=%s key=%s",
-                    record.source_id,
-                    key,
-                )
-                continue
+            decision = self.mapping_judge_agent.judge(context)
             if (
                 decision.decision != "matched"
                 or decision.selected_variable_id is None
@@ -223,11 +213,11 @@ class LLMJudgeMapper:
         return f"{rendered[:_VALUE_PREVIEW_LIMIT - 3]}..."
 
     def _extract_domain_context(self, record: RawRecord) -> str | None:
-        for key in ("domain_context", "domain"):
-            raw_value = record.metadata.get(key)
-            if isinstance(raw_value, str) and raw_value.strip():
-                return raw_value.strip()
-        return None
+        return DomainContextResolver.resolve(
+            metadata=record.metadata,
+            source_type=self._extract_source_type(record),
+            fallback=None,
+        )
 
     def _extract_source_type(self, record: RawRecord) -> str | None:
         raw_value = record.metadata.get("type")

@@ -3,24 +3,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
+  fetchClaimParticipants,
+  fetchRelationClaimEvidence,
+  fetchRelationClaims,
+  fetchRelationConflicts,
   fetchKernelGraphExport,
   fetchKernelNeighborhood,
   fetchKernelSubgraph,
   searchKernelGraph,
 } from '@/lib/api/kernel'
 import {
+  augmentGraphModelWithClaimEvidence,
+  annotateGraphModelWithConflicts,
   buildGraphModel,
   emptyGraphModel,
   filterGraphModel,
   getNeighborhood,
+  mergeGraphModelWithRelationClaims,
   mergeGraphModels,
+  projectGraphByDisplayMode,
   pruneGraphModelForRender,
+  type GraphDisplayMode,
   type GraphModel,
 } from '@/lib/graph/model'
 import type {
+  ClaimEvidenceResponse,
+  ClaimParticipantResponse,
   GraphSearchResponse,
   KernelGraphSubgraphMeta,
   KernelGraphSubgraphRequest,
+  RelationConflictListResponse,
+  RelationClaimResponse,
 } from '@/types/kernel'
 
 const DEFAULT_STARTER_TOP_K = 25
@@ -31,9 +44,39 @@ const MIN_DEPTH = 1
 const MIN_TOP_K = 1
 const MAX_RENDER_NODES = 180
 const MAX_RENDER_EDGES = 260
-const DEFAULT_VISIBLE_CURATION_STATUSES = ['APPROVED', 'UNDER_REVIEW', 'DRAFT']
 const MAX_SEEDED_SEARCH_RESULTS = 5
 const DEFAULT_EXPAND_TOP_K = 25
+const CLAIM_OVERLAY_PAGE_LIMIT = 200
+const CLAIM_OVERLAY_MAX_TOTAL = 2000
+const EVIDENCE_MODE_MAX_CLAIMS = 80
+const EVIDENCE_MODE_MAX_ROWS_PER_CLAIM = 4
+const EVIDENCE_MODE_FETCH_CONCURRENCY = 8
+const ALL_GRAPH_STATUSES = ['APPROVED', 'UNDER_REVIEW', 'DRAFT', 'REJECTED', 'RETRACTED'] as const
+
+function logControllerWarning(message: string, error: unknown): void {
+  if (process.env.NODE_ENV === 'test') {
+    return
+  }
+  console.warn(message, error)
+}
+
+export type GraphTrustPreset = 'ALL' | 'APPROVED_ONLY' | 'PENDING_REVIEW' | 'REJECTED'
+export const DEFAULT_GRAPH_DISPLAY_MODE: GraphDisplayMode = 'CLAIMS'
+
+export type ClaimEvidencePreviewState = 'loading' | 'ready' | 'empty' | 'error'
+
+export interface ClaimEvidencePreview {
+  state: ClaimEvidencePreviewState
+  sentence: string | null
+  sourceLabel: string | null
+}
+
+const TRUST_PRESET_STATUS_MAP: Record<GraphTrustPreset, string[] | null> = {
+  ALL: null,
+  APPROVED_ONLY: ['APPROVED'],
+  PENDING_REVIEW: ['DRAFT', 'UNDER_REVIEW'],
+  REJECTED: ['REJECTED', 'RETRACTED'],
+}
 
 interface QueryRouter {
   replace: (href: string) => void
@@ -47,6 +90,7 @@ interface UseKnowledgeGraphControllerArgs {
   initialTopK: number
   initialMaxDepth: number
   initialForceAgent: boolean
+  initialTrustPreset: GraphTrustPreset
 }
 
 function parseBoundedInt(
@@ -83,6 +127,175 @@ function errorStatusCode(error: unknown): number | null {
   return response.status
 }
 
+function normalizedOptionalText(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const normalized = value.trim()
+  return normalized.length > 0 ? normalized : null
+}
+
+function parseClaimEvidencePmid(row: ClaimEvidenceResponse): string | null {
+  const metadata = row.metadata
+  if (
+    typeof metadata !== 'object'
+    || metadata === null
+    || Array.isArray(metadata)
+  ) {
+    return null
+  }
+  const keys = ['pmid', 'pubmed_id', 'publication_id', 'external_id']
+  for (const key of keys) {
+    const raw = metadata[key]
+    if (typeof raw === 'string') {
+      const value = raw.trim()
+      if (value.length > 0) {
+        return value
+      }
+    }
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+      return String(raw)
+    }
+  }
+  return null
+}
+
+function claimEvidenceSourceLabel(row: ClaimEvidenceResponse): string | null {
+  const firstPaperLink = Array.isArray(row.paper_links) ? row.paper_links[0] : undefined
+  if (firstPaperLink) {
+    const label = normalizedOptionalText(firstPaperLink.label)
+    if (label) {
+      return label
+    }
+  }
+  const pmid = parseClaimEvidencePmid(row)
+  if (pmid) {
+    return `PMID: ${pmid}`
+  }
+  const sourceDocumentId = normalizedOptionalText(row.source_document_id)
+  if (sourceDocumentId) {
+    return `Source doc: ${sourceDocumentId.slice(0, 8)}...`
+  }
+  return null
+}
+
+function pickTopEvidenceRow(
+  evidenceRows: readonly ClaimEvidenceResponse[],
+): ClaimEvidenceResponse | null {
+  if (evidenceRows.length === 0) {
+    return null
+  }
+  const rowsWithSentence = evidenceRows.filter((row) => normalizedOptionalText(row.sentence) !== null)
+  const prioritizedRows = rowsWithSentence.length > 0 ? rowsWithSentence : evidenceRows
+  const sorted = [...prioritizedRows].sort((left, right) => {
+    const confidenceDelta = right.confidence - left.confidence
+    if (confidenceDelta !== 0) {
+      return confidenceDelta
+    }
+    return Date.parse(right.created_at) - Date.parse(left.created_at)
+  })
+  return sorted[0] ?? null
+}
+
+async function fetchRelationConflictsSafe(
+  spaceId: string,
+  token: string,
+): Promise<RelationConflictListResponse> {
+  try {
+    return await fetchRelationConflicts(spaceId, { offset: 0, limit: 200 }, token)
+  } catch (error) {
+    const statusCode = errorStatusCode(error)
+    if (statusCode === 404 || statusCode === 405 || statusCode === 500) {
+      return {
+        conflicts: [],
+        total: 0,
+        offset: 0,
+        limit: 200,
+      }
+    }
+    logControllerWarning('[KnowledgeGraphController] Relation conflicts overlay unavailable', error)
+    return {
+      conflicts: [],
+      total: 0,
+      offset: 0,
+      limit: 200,
+    }
+  }
+}
+
+async function fetchRelationClaimsOverlaySafe(
+  spaceId: string,
+  token: string,
+): Promise<RelationClaimResponse[]> {
+  const claims: RelationClaimResponse[] = []
+  let offset = 0
+  let total = 0
+
+  try {
+    do {
+      const page = await fetchRelationClaims(
+        spaceId,
+        {
+          offset,
+          limit: CLAIM_OVERLAY_PAGE_LIMIT,
+        },
+        token,
+      )
+      claims.push(...page.claims)
+      total = page.total
+      if (page.claims.length === 0) {
+        break
+      }
+      offset += page.claims.length
+    } while (offset < total && offset < CLAIM_OVERLAY_MAX_TOTAL)
+
+    return claims
+  } catch (error) {
+    logControllerWarning('[KnowledgeGraphController] Relation claims overlay unavailable', error)
+    return []
+  }
+}
+
+async function fetchClaimParticipantsOverlaySafe(
+  spaceId: string,
+  claimIds: readonly string[],
+  token: string,
+): Promise<Record<string, ClaimParticipantResponse[]>> {
+  if (claimIds.length === 0) {
+    return {}
+  }
+
+  const uniqueClaimIds = [...new Set(claimIds)]
+  const participantMap: Record<string, ClaimParticipantResponse[]> = {}
+  const maxConcurrent = 12
+
+  for (let index = 0; index < uniqueClaimIds.length; index += maxConcurrent) {
+    const batch = uniqueClaimIds.slice(index, index + maxConcurrent)
+    const responses = await Promise.all(
+      batch.map(async (claimId) => {
+        try {
+          return await fetchClaimParticipants(spaceId, claimId, token)
+        } catch (error) {
+          logControllerWarning(
+            `[KnowledgeGraphController] Claim participants overlay unavailable for claim ${claimId}`,
+            error,
+          )
+          return null
+        }
+      }),
+    )
+
+    for (const response of responses) {
+      if (!response) {
+        continue
+      }
+      participantMap[response.claim_id] = response.participants
+    }
+  }
+
+  return participantMap
+}
+
 function updateQueryParams(
   router: QueryRouter,
   spaceId: string,
@@ -90,9 +303,13 @@ function updateQueryParams(
   topK: number,
   maxDepth: number,
   forceAgent: boolean,
+  trustPreset: GraphTrustPreset,
 ): void {
   const params = new URLSearchParams()
   const trimmedQuestion = question.trim()
+  if (trustPreset !== 'ALL') {
+    params.set('trust', trustPreset)
+  }
   if (trimmedQuestion.length > 0) {
     params.set('q', trimmedQuestion)
     params.set('top_k', String(topK))
@@ -114,10 +331,14 @@ export interface KnowledgeGraphController {
   topKInput: string
   maxDepthInput: string
   forceAgent: boolean
+  trustPreset: GraphTrustPreset
+  graphDisplayMode: GraphDisplayMode
   setQuestionInput: (value: string) => void
   setTopKInput: (value: string) => void
   setMaxDepthInput: (value: string) => void
   setForceAgent: (value: boolean) => void
+  setTrustPreset: (value: GraphTrustPreset) => void
+  setGraphDisplayMode: (mode: GraphDisplayMode) => void
   topK: number
   maxDepth: number
   minDepth: number
@@ -147,8 +368,11 @@ export interface KnowledgeGraphController {
   relationTypeFilter: Set<string>
   curationStatusFilter: Set<string>
   onNodeClick: (nodeId: string) => void
+  onEdgeClick: (edgeId: string) => void
   onHoverNodeChange: (nodeId: string | null) => void
+  onHoverEdgeChange: (edgeId: string | null) => void
   clearSelection: () => void
+  claimEvidenceByClaimId: Readonly<Record<string, ClaimEvidencePreview>>
   runSearch: (syncUrl?: boolean) => Promise<void>
   resetToStarter: () => void
   resetFilters: () => void
@@ -165,6 +389,7 @@ export function useKnowledgeGraphController({
   initialTopK,
   initialMaxDepth,
   initialForceAgent,
+  initialTrustPreset,
 }: UseKnowledgeGraphControllerArgs): KnowledgeGraphController {
   const bootstrapRef = useRef(false)
 
@@ -172,6 +397,10 @@ export function useKnowledgeGraphController({
   const [topKInput, setTopKInput] = useState(String(initialTopK))
   const [maxDepthInput, setMaxDepthInput] = useState(String(initialMaxDepth))
   const [forceAgent, setForceAgent] = useState(initialForceAgent)
+  const [trustPreset, setTrustPresetState] = useState<GraphTrustPreset>(initialTrustPreset)
+  const [graphDisplayMode, setGraphDisplayModeState] = useState<GraphDisplayMode>(
+    DEFAULT_GRAPH_DISPLAY_MODE,
+  )
 
   const [rawGraph, setRawGraph] = useState<GraphModel>(emptyGraphModel())
   const [subgraphMeta, setSubgraphMeta] = useState<KernelGraphSubgraphMeta | null>(null)
@@ -185,11 +414,36 @@ export function useKnowledgeGraphController({
   const [isExpandingNodeId, setIsExpandingNodeId] = useState<string | null>(null)
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
+  const [claimEvidenceByClaimId, setClaimEvidenceByClaimId] = useState<
+    Record<string, ClaimEvidencePreview>
+  >({})
+  const [claimEvidenceRowsByClaimId, setClaimEvidenceRowsByClaimId] = useState<
+    Record<string, ClaimEvidenceResponse[]>
+  >({})
 
   const [relationTypeFilter, setRelationTypeFilter] = useState<Set<string>>(new Set())
   const [curationStatusFilter, setCurationStatusFilter] = useState<Set<string>>(
-    new Set(DEFAULT_VISIBLE_CURATION_STATUSES),
+    () => new Set(TRUST_PRESET_STATUS_MAP[initialTrustPreset] ?? []),
+  )
+  const trustPresetSyncRef = useRef<GraphTrustPreset>(initialTrustPreset)
+  const claimEvidenceInFlightRef = useRef<Set<string>>(new Set())
+  const evidenceModeFetchInFlightRef = useRef<Set<string>>(new Set())
+  const evidenceModeLoadedClaimIdsRef = useRef<Set<string>>(new Set())
+  const isMountedRef = useRef(true)
+
+  useEffect(
+    () => () => {
+      isMountedRef.current = false
+    },
+    [],
+  )
+
+  const activeCurationStatuses = useMemo(
+    () => TRUST_PRESET_STATUS_MAP[trustPreset],
+    [trustPreset],
   )
 
   const topK = useMemo(
@@ -213,14 +467,54 @@ export function useKnowledgeGraphController({
       setGraphNotice(null)
 
       try {
-        const response = await fetchKernelSubgraph(spaceId, payload, token)
-        setRawGraph(buildGraphModel(response))
+        const [response, claimOverlay, conflictResponse] = await Promise.all([
+          fetchKernelSubgraph(spaceId, payload, token),
+          fetchRelationClaimsOverlaySafe(spaceId, token),
+          fetchRelationConflictsSafe(spaceId, token),
+        ])
+        const participantsByClaimId = await fetchClaimParticipantsOverlaySafe(
+          spaceId,
+          claimOverlay.map((claim) => claim.id),
+          token,
+        )
+        const persistedGraph = buildGraphModel(response)
+        const mergedGraph = mergeGraphModelWithRelationClaims(
+          persistedGraph,
+          claimOverlay,
+          participantsByClaimId,
+        )
+        setRawGraph(
+          annotateGraphModelWithConflicts(
+            mergedGraph,
+            conflictResponse.conflicts,
+          ),
+        )
         setSubgraphMeta(response.meta)
       } catch (error) {
         if (errorStatusCode(error) === 404) {
           try {
-            const legacyGraph = await fetchKernelGraphExport(spaceId, token)
-            setRawGraph(buildGraphModel(legacyGraph))
+            const [legacyGraph, claimOverlay, conflictResponse] = await Promise.all([
+              fetchKernelGraphExport(spaceId, token),
+              fetchRelationClaimsOverlaySafe(spaceId, token),
+              fetchRelationConflictsSafe(spaceId, token),
+            ])
+            const participantsByClaimId = await fetchClaimParticipantsOverlaySafe(
+              spaceId,
+              claimOverlay.map((claim) => claim.id),
+              token,
+            )
+            const persistedGraph = buildGraphModel(legacyGraph)
+            const mergedGraph = mergeGraphModelWithRelationClaims(
+              persistedGraph,
+              claimOverlay,
+              participantsByClaimId,
+            )
+            setRawGraph(
+              annotateGraphModelWithConflicts(
+                mergedGraph,
+                conflictResponse.conflicts,
+              ),
+            )
             setSubgraphMeta(null)
             setGraphNotice(
               'Subgraph endpoint is unavailable on this backend instance. Showing legacy graph export.',
@@ -251,16 +545,18 @@ export function useKnowledgeGraphController({
 
   const loadStarterSubgraph = useCallback(async (): Promise<void> => {
     setSelectedNodeId(null)
+    setSelectedEdgeId(null)
     setHoveredNodeId(null)
     await fetchSubgraph({
       mode: 'starter',
       seed_entity_ids: [],
       depth: DEFAULT_STARTER_DEPTH,
       top_k: DEFAULT_STARTER_TOP_K,
+      curation_statuses: activeCurationStatuses,
       max_nodes: MAX_RENDER_NODES,
       max_edges: MAX_RENDER_EDGES,
     })
-  }, [fetchSubgraph])
+  }, [activeCurationStatuses, fetchSubgraph])
 
   const runQuery = useCallback(
     async ({
@@ -293,6 +589,7 @@ export function useKnowledgeGraphController({
             topK,
             maxDepth,
             forceAgent,
+            trustPreset,
           )
         }
         await loadStarterSubgraph()
@@ -304,6 +601,7 @@ export function useKnowledgeGraphController({
       setGraphError(null)
       setGraphNotice(null)
       setSelectedNodeId(null)
+      setSelectedEdgeId(null)
       setHoveredNodeId(null)
 
       try {
@@ -313,6 +611,7 @@ export function useKnowledgeGraphController({
             question: normalizedQuestion,
             top_k: topK,
             max_depth: maxDepth,
+            curation_statuses: activeCurationStatuses,
             include_evidence_chains: true,
             force_agent: forceAgent,
           },
@@ -333,6 +632,7 @@ export function useKnowledgeGraphController({
             seed_entity_ids: seedEntityIds,
             depth: maxDepth,
             top_k: topK,
+            curation_statuses: activeCurationStatuses,
             max_nodes: MAX_RENDER_NODES,
             max_edges: MAX_RENDER_EDGES,
           })
@@ -346,6 +646,7 @@ export function useKnowledgeGraphController({
             topK,
             maxDepth,
             forceAgent,
+            trustPreset,
           )
         }
       } catch (error) {
@@ -356,7 +657,7 @@ export function useKnowledgeGraphController({
         setIsSearching(false)
       }
     },
-    [fetchSubgraph, loadStarterSubgraph, router, spaceId, token],
+    [activeCurationStatuses, fetchSubgraph, loadStarterSubgraph, router, spaceId, token, trustPreset],
   )
 
   useEffect(() => {
@@ -387,6 +688,49 @@ export function useKnowledgeGraphController({
     token,
   ])
 
+  useEffect(() => {
+    if (!bootstrapRef.current || !token) {
+      return
+    }
+    if (trustPresetSyncRef.current === trustPreset) {
+      return
+    }
+    trustPresetSyncRef.current = trustPreset
+
+    if (questionInput.trim().length > 0) {
+      void runQuery({
+        question: questionInput,
+        topK,
+        maxDepth,
+        forceAgent,
+        syncUrl: true,
+      })
+      return
+    }
+
+    updateQueryParams(
+      router,
+      spaceId,
+      '',
+      topK,
+      maxDepth,
+      forceAgent,
+      trustPreset,
+    )
+    void loadStarterSubgraph()
+  }, [
+    forceAgent,
+    loadStarterSubgraph,
+    maxDepth,
+    questionInput,
+    router,
+    runQuery,
+    spaceId,
+    token,
+    topK,
+    trustPreset,
+  ])
+
   const expandFromNode = useCallback(
     async (nodeId: string): Promise<void> => {
       if (!token) {
@@ -405,6 +749,7 @@ export function useKnowledgeGraphController({
             seed_entity_ids: [nodeId],
             depth: 1,
             top_k: Math.min(topK, DEFAULT_EXPAND_TOP_K),
+            curation_statuses: activeCurationStatuses,
             max_nodes: MAX_RENDER_NODES,
             max_edges: MAX_RENDER_EDGES,
           },
@@ -447,29 +792,51 @@ export function useKnowledgeGraphController({
         setIsExpandingNodeId(null)
       }
     },
-    [spaceId, token, topK],
+    [activeCurationStatuses, spaceId, token, topK],
   )
 
   const onNodeClick = useCallback(
     (nodeId: string): void => {
       setSelectedNodeId(nodeId)
+      setSelectedEdgeId(null)
+      const selectedNode = rawGraph.nodeById[nodeId]
+      if (!selectedNode || selectedNode.origin !== 'entity') {
+        return
+      }
       void expandFromNode(nodeId)
     },
-    [expandFromNode],
+    [expandFromNode, rawGraph],
   )
 
-  const availableRelationTypes = rawGraph.relationTypes
+  const onEdgeClick = useCallback((edgeId: string): void => {
+    setSelectedNodeId(null)
+    setSelectedEdgeId(edgeId)
+  }, [])
+
+  const evidenceAugmentedGraph = useMemo(() => {
+    if (graphDisplayMode !== 'EVIDENCE') {
+      return rawGraph
+    }
+    return augmentGraphModelWithClaimEvidence(rawGraph, claimEvidenceRowsByClaimId)
+  }, [claimEvidenceRowsByClaimId, graphDisplayMode, rawGraph])
+
+  const modeProjectedGraph = useMemo(
+    () => projectGraphByDisplayMode(evidenceAugmentedGraph, graphDisplayMode),
+    [evidenceAugmentedGraph, graphDisplayMode],
+  )
+
+  const availableRelationTypes = modeProjectedGraph.relationTypes
   const availableCurationStatuses = useMemo(() => {
-    const merged = new Set<string>(DEFAULT_VISIBLE_CURATION_STATUSES)
-    for (const status of rawGraph.curationStatuses) {
+    const merged = new Set<string>(ALL_GRAPH_STATUSES)
+    for (const status of modeProjectedGraph.curationStatuses) {
       merged.add(status)
     }
     return [...merged]
-  }, [rawGraph.curationStatuses])
+  }, [modeProjectedGraph.curationStatuses])
 
   const filteredGraph = useMemo(
-    () => filterGraphModel(rawGraph, relationTypeFilter, curationStatusFilter),
-    [curationStatusFilter, rawGraph, relationTypeFilter],
+    () => filterGraphModel(modeProjectedGraph, relationTypeFilter, curationStatusFilter),
+    [curationStatusFilter, modeProjectedGraph, relationTypeFilter],
   )
 
   const prunedGraph = useMemo(
@@ -484,8 +851,51 @@ export function useKnowledgeGraphController({
   )
 
   const renderGraph = prunedGraph.model
-  const activeNeighborhoodNode = selectedNodeId ?? hoveredNodeId
   const neighborhood = useMemo(() => {
+    if (selectedEdgeId) {
+      const selectedEdge = renderGraph.edgeById[selectedEdgeId]
+      if (!selectedEdge) {
+        return {
+          nodeIds: new Set<string>(),
+          edgeIds: new Set<string>(),
+        }
+      }
+
+      const nodeIds = new Set<string>([selectedEdge.sourceId, selectedEdge.targetId])
+      const edgeIds = new Set<string>([selectedEdge.id])
+
+      if (selectedEdge.origin === 'canonical') {
+        if (selectedEdge.linkedClaimIds.length > 0) {
+          for (const claimId of selectedEdge.linkedClaimIds) {
+            const claimNodeId = `claim-node:${claimId}`
+            if (renderGraph.nodeById[claimNodeId]) {
+              nodeIds.add(claimNodeId)
+            }
+            for (const claimEdge of renderGraph.edges) {
+              if (claimEdge.origin !== 'claim' || claimEdge.claimId !== claimId) {
+                continue
+              }
+              edgeIds.add(claimEdge.id)
+              nodeIds.add(claimEdge.sourceId)
+              nodeIds.add(claimEdge.targetId)
+            }
+          }
+        } else {
+          for (const edge of renderGraph.edges) {
+            if (edge.origin !== 'claim' || edge.linkedRelationId !== selectedEdge.id) {
+              continue
+            }
+            edgeIds.add(edge.id)
+            nodeIds.add(edge.sourceId)
+            nodeIds.add(edge.targetId)
+          }
+        }
+      }
+
+      return { nodeIds, edgeIds }
+    }
+
+    const activeNeighborhoodNode = selectedNodeId ?? hoveredNodeId
     if (!activeNeighborhoodNode) {
       return {
         nodeIds: new Set<string>(),
@@ -493,7 +903,179 @@ export function useKnowledgeGraphController({
       }
     }
     return getNeighborhood(renderGraph, activeNeighborhoodNode)
-  }, [activeNeighborhoodNode, renderGraph])
+  }, [hoveredNodeId, renderGraph, selectedEdgeId, selectedNodeId])
+
+  const evidenceModeClaimIds = useMemo(() => {
+    if (graphDisplayMode !== 'EVIDENCE') {
+      return [] as string[]
+    }
+    const ids = new Set<string>()
+    for (const edge of rawGraph.edges) {
+      if (edge.origin === 'claim' && edge.claimId) {
+        ids.add(edge.claimId)
+      }
+    }
+    return [...ids].slice(0, EVIDENCE_MODE_MAX_CLAIMS)
+  }, [graphDisplayMode, rawGraph.edges])
+
+  useEffect(() => {
+    if (graphDisplayMode !== 'EVIDENCE' || !token || evidenceModeClaimIds.length === 0) {
+      return
+    }
+
+    let cancelled = false
+    const pendingClaimIds = evidenceModeClaimIds.filter((claimId) => {
+      if (evidenceModeLoadedClaimIdsRef.current.has(claimId)) {
+        return false
+      }
+      if (evidenceModeFetchInFlightRef.current.has(claimId)) {
+        return false
+      }
+      return true
+    })
+    if (pendingClaimIds.length === 0) {
+      return
+    }
+
+    void (async () => {
+      for (let index = 0; index < pendingClaimIds.length; index += EVIDENCE_MODE_FETCH_CONCURRENCY) {
+        if (cancelled || !isMountedRef.current) {
+          return
+        }
+        const batch = pendingClaimIds.slice(index, index + EVIDENCE_MODE_FETCH_CONCURRENCY)
+        batch.forEach((claimId) => evidenceModeFetchInFlightRef.current.add(claimId))
+        const rowsByClaim = await Promise.all(
+          batch.map(async (claimId) => {
+            try {
+              const response = await fetchRelationClaimEvidence(spaceId, claimId, token)
+              return {
+                claimId,
+                rows: response.evidence.slice(0, EVIDENCE_MODE_MAX_ROWS_PER_CLAIM),
+              }
+            } catch (error) {
+              logControllerWarning(
+                `[KnowledgeGraphController] Evidence mode evidence lookup failed for claim ${claimId}`,
+                error,
+              )
+              return {
+                claimId,
+                rows: [] as ClaimEvidenceResponse[],
+              }
+            } finally {
+              evidenceModeFetchInFlightRef.current.delete(claimId)
+            }
+          }),
+        )
+        if (cancelled || !isMountedRef.current) {
+          return
+        }
+        setClaimEvidenceRowsByClaimId((current) => {
+          const next = { ...current }
+          for (const item of rowsByClaim) {
+            next[item.claimId] = item.rows
+            evidenceModeLoadedClaimIdsRef.current.add(item.claimId)
+          }
+          return next
+        })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [evidenceModeClaimIds, graphDisplayMode, spaceId, token])
+
+  useEffect(() => {
+    if (!token || !hoveredEdgeId) {
+      return
+    }
+    const edge = renderGraph.edgeById[hoveredEdgeId]
+    if (!edge || edge.origin !== 'claim' || !edge.claimId) {
+      return
+    }
+    const claimId = edge.claimId
+    const cachedPreview = claimEvidenceByClaimId[claimId]
+    if (cachedPreview && (cachedPreview.state === 'ready' || cachedPreview.state === 'empty')) {
+      return
+    }
+    if (claimEvidenceInFlightRef.current.has(claimId)) {
+      return
+    }
+
+    claimEvidenceInFlightRef.current.add(claimId)
+    setClaimEvidenceByClaimId((current) => {
+      const currentPreview = current[claimId]
+      if (currentPreview && (currentPreview.state === 'ready' || currentPreview.state === 'empty')) {
+        return current
+      }
+      return {
+        ...current,
+        [claimId]: {
+          state: 'loading',
+          sentence: null,
+          sourceLabel: null,
+        },
+      }
+    })
+
+    void (async () => {
+      try {
+        const response = await fetchRelationClaimEvidence(spaceId, claimId, token)
+        if (!isMountedRef.current) {
+          return
+        }
+        const topRow = pickTopEvidenceRow(response.evidence)
+        if (!topRow) {
+          setClaimEvidenceByClaimId((current) => ({
+            ...current,
+            [claimId]: {
+              state: 'empty',
+              sentence: null,
+              sourceLabel: null,
+            },
+          }))
+          return
+        }
+        const sentence = normalizedOptionalText(topRow.sentence)
+        const sourceLabel = claimEvidenceSourceLabel(topRow)
+        setClaimEvidenceByClaimId((current) => ({
+          ...current,
+          [claimId]: sentence
+            ? {
+                state: 'ready',
+                sentence,
+                sourceLabel,
+              }
+            : {
+                state: 'empty',
+                sentence: null,
+                sourceLabel,
+              },
+        }))
+      } catch (error) {
+        if (!isMountedRef.current) {
+          return
+        }
+        logControllerWarning('[KnowledgeGraphController] Claim evidence preview lookup failed', error)
+        setClaimEvidenceByClaimId((current) => ({
+          ...current,
+          [claimId]: {
+            state: 'error',
+            sentence: null,
+            sourceLabel: null,
+          },
+        }))
+      } finally {
+        claimEvidenceInFlightRef.current.delete(claimId)
+      }
+    })()
+  }, [
+    claimEvidenceByClaimId,
+    hoveredEdgeId,
+    renderGraph.edgeById,
+    spaceId,
+    token,
+  ])
 
   const runSearch = useCallback(
     async (syncUrl = true): Promise<void> => {
@@ -522,28 +1104,44 @@ export function useKnowledgeGraphController({
       topK,
       maxDepth,
       false,
+      trustPreset,
     )
     void loadStarterSubgraph()
-  }, [initialMaxDepth, initialTopK, loadStarterSubgraph, maxDepth, router, spaceId, topK])
+  }, [
+    initialMaxDepth,
+    initialTopK,
+    loadStarterSubgraph,
+    maxDepth,
+    router,
+    spaceId,
+    topK,
+    trustPreset,
+  ])
 
   const clearSelection = useCallback((): void => {
     setSelectedNodeId(null)
+    setSelectedEdgeId(null)
     setHoveredNodeId(null)
+    setHoveredEdgeId(null)
   }, [])
 
   const onHoverNodeChange = useCallback(
     (nodeId: string | null): void => {
-      if (selectedNodeId) {
+      if (selectedNodeId || selectedEdgeId) {
         return
       }
       setHoveredNodeId(nodeId)
     },
-    [selectedNodeId],
+    [selectedEdgeId, selectedNodeId],
   )
+
+  const onHoverEdgeChange = useCallback((edgeId: string | null): void => {
+    setHoveredEdgeId(edgeId)
+  }, [])
 
   const resetFilters = useCallback((): void => {
     setRelationTypeFilter(new Set())
-    setCurationStatusFilter(new Set(DEFAULT_VISIBLE_CURATION_STATUSES))
+    setCurationStatusFilter(new Set())
   }, [])
 
   const enableAllRelationTypes = useCallback((): void => {
@@ -552,15 +1150,27 @@ export function useKnowledgeGraphController({
 
   const toggleRelationType = useCallback((relationType: string, checked: boolean): void => {
     setRelationTypeFilter((current) => {
-      const next = new Set(current)
+      const hasExplicitFilter = current.size > 0
+      const nextEnabled = hasExplicitFilter
+        ? new Set(current)
+        : new Set(availableRelationTypes)
+
       if (checked) {
-        next.add(relationType)
+        nextEnabled.add(relationType)
       } else {
-        next.delete(relationType)
+        nextEnabled.delete(relationType)
       }
-      return next
+
+      if (
+        nextEnabled.size === 0 ||
+        nextEnabled.size >= availableRelationTypes.length
+      ) {
+        return new Set()
+      }
+
+      return nextEnabled
     })
-  }, [])
+  }, [availableRelationTypes])
 
   const toggleCurationStatus = useCallback((status: string, checked: boolean): void => {
     setCurationStatusFilter((current) => {
@@ -572,6 +1182,21 @@ export function useKnowledgeGraphController({
       }
       return next
     })
+  }, [])
+
+  const setTrustPreset = useCallback((preset: GraphTrustPreset): void => {
+    setTrustPresetState(preset)
+    const mappedStatuses = TRUST_PRESET_STATUS_MAP[preset]
+    setCurationStatusFilter(new Set(mappedStatuses ?? []))
+  }, [])
+
+  const setGraphDisplayMode = useCallback((mode: GraphDisplayMode): void => {
+    setGraphDisplayModeState(mode)
+    setRelationTypeFilter(new Set())
+    setSelectedNodeId(null)
+    setSelectedEdgeId(null)
+    setHoveredNodeId(null)
+    setHoveredEdgeId(null)
   }, [])
 
   const graphSearchResults = graphSearch?.results ?? []
@@ -587,10 +1212,14 @@ export function useKnowledgeGraphController({
     topKInput,
     maxDepthInput,
     forceAgent,
+    trustPreset,
+    graphDisplayMode,
     setQuestionInput,
     setTopKInput,
     setMaxDepthInput,
     setForceAgent,
+    setTrustPreset,
+    setGraphDisplayMode,
     topK,
     maxDepth,
     minDepth: MIN_DEPTH,
@@ -617,8 +1246,11 @@ export function useKnowledgeGraphController({
     relationTypeFilter,
     curationStatusFilter,
     onNodeClick,
+    onEdgeClick,
     onHoverNodeChange,
+    onHoverEdgeChange,
     clearSelection,
+    claimEvidenceByClaimId,
     runSearch,
     resetToStarter,
     resetFilters,

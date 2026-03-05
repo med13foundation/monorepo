@@ -20,9 +20,25 @@ export interface ResearchSpaceSettings {
   require_review?: boolean
   review_threshold?: number
   relation_governance_mode?: 'FULL_AUTO' | 'HUMAN_IN_LOOP'
+  relation_auto_promotion?: {
+    enabled?: boolean
+    min_distinct_sources?: number
+    min_aggregate_confidence?: number
+    require_distinct_documents?: boolean
+    require_distinct_runs?: boolean
+    block_if_conflicting_evidence?: boolean
+    min_evidence_tier?: string
+    computational_min_distinct_sources?: number
+    computational_min_aggregate_confidence?: number
+    conflicting_confidence_threshold?: number
+  }
+  claim_non_persistable_baseline_ratio?: number
+  claim_non_persistable_alert_ratio?: number
   relation_default_review_threshold?: number
   relation_review_thresholds?: Record<string, number>
   dictionary_agent_creation_policy?: 'ACTIVE' | 'PENDING_REVIEW'
+  concept_agent_creation_policy?: 'ACTIVE' | 'PENDING_REVIEW'
+  concept_policy_mode?: 'PRECISION' | 'BALANCED' | 'DISCOVERY'
   max_data_sources?: number
   allowed_source_types?: string[]
   public_read?: boolean

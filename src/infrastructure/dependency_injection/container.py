@@ -133,6 +133,7 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         self._system_status_service: app_services.SystemStatusService | None = None
         self._entity_recognition_agent = None
         self._extraction_agent = None
+        self._mapping_judge_agent = None
         self._graph_connection_agent = None
         self._query_agent = None
 

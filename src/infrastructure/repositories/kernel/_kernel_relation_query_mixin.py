@@ -11,12 +11,15 @@ from sqlalchemy.orm import aliased
 
 from src.domain.entities.kernel.relations import KernelRelation
 from src.models.database.kernel.entities import EntityModel
+from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 
 from ._kernel_relation_repository_shared import _as_uuid
 
 if TYPE_CHECKING:
     from uuid import UUID
+
+    from sqlalchemy.sql import Select
 
     from src.infrastructure.repositories.kernel.kernel_relation_repository import (
         SqlAlchemyKernelRelationRepository,
@@ -25,6 +28,9 @@ if TYPE_CHECKING:
 
 class _KernelRelationQueryMixin:
     """Read and graph-traversal query helpers."""
+
+    _HIGH_CONFIDENCE_THRESHOLD = 0.8
+    _MEDIUM_CONFIDENCE_THRESHOLD = 0.6
 
     def get_by_id(
         self: SqlAlchemyKernelRelationRepository,
@@ -142,57 +148,26 @@ class _KernelRelationQueryMixin:
         *,
         relation_type: str | None = None,
         curation_status: str | None = None,
+        validation_state: str | None = None,
+        source_document_id: str | None = None,
+        certainty_band: str | None = None,
         node_query: str | None = None,
         node_ids: list[str] | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:
-        stmt = select(RelationModel).where(
-            RelationModel.research_space_id == _as_uuid(research_space_id),
+        stmt = self._build_research_space_stmt(
+            research_space_id=research_space_id,
+            relation_type=relation_type,
+            curation_status=curation_status,
+            validation_state=validation_state,
+            source_document_id=source_document_id,
+            certainty_band=certainty_band,
+            node_query=node_query,
+            node_ids=node_ids,
         )
-        if relation_type is not None:
-            stmt = stmt.where(RelationModel.relation_type == relation_type)
-        if curation_status is not None:
-            stmt = stmt.where(RelationModel.curation_status == curation_status)
-        if node_ids:
-            node_uuid_ids: list[UUID] = []
-            for node_id in node_ids:
-                trimmed = node_id.strip()
-                if not trimmed:
-                    continue
-                try:
-                    node_uuid_ids.append(_as_uuid(trimmed))
-                except ValueError:
-                    continue
-            if not node_uuid_ids:
-                return []
-            stmt = stmt.where(
-                or_(
-                    RelationModel.source_id.in_(node_uuid_ids),
-                    RelationModel.target_id.in_(node_uuid_ids),
-                ),
-            )
-        if node_query is not None and node_query.strip():
-            source_entity = aliased(EntityModel)
-            target_entity = aliased(EntityModel)
-            search_term = f"%{node_query.strip()}%"
-            stmt = stmt.join(
-                source_entity,
-                source_entity.id == RelationModel.source_id,
-            ).join(
-                target_entity,
-                target_entity.id == RelationModel.target_id,
-            )
-            stmt = stmt.where(
-                or_(
-                    RelationModel.source_id.cast(String).ilike(search_term),
-                    RelationModel.target_id.cast(String).ilike(search_term),
-                    source_entity.display_label.ilike(search_term),
-                    target_entity.display_label.ilike(search_term),
-                    source_entity.entity_type.ilike(search_term),
-                    target_entity.entity_type.ilike(search_term),
-                ),
-            )
+        if stmt is None:
+            return []
         stmt = stmt.order_by(RelationModel.created_at.desc())
         if limit is not None:
             stmt = stmt.limit(limit)
@@ -237,14 +212,151 @@ class _KernelRelationQueryMixin:
             unique_models.append(model)
         return [KernelRelation.model_validate(model) for model in unique_models]
 
-    def count_by_research_space(
+    def count_by_research_space(  # noqa: PLR0913
         self: SqlAlchemyKernelRelationRepository,
         research_space_id: str,
+        *,
+        relation_type: str | None = None,
+        curation_status: str | None = None,
+        validation_state: str | None = None,
+        source_document_id: str | None = None,
+        certainty_band: str | None = None,
+        node_query: str | None = None,
+        node_ids: list[str] | None = None,
     ) -> int:
         """Count total relations in a research space."""
+        stmt = self._build_research_space_stmt(
+            research_space_id=research_space_id,
+            relation_type=relation_type,
+            curation_status=curation_status,
+            validation_state=validation_state,
+            source_document_id=source_document_id,
+            certainty_band=certainty_band,
+            node_query=node_query,
+            node_ids=node_ids,
+        )
+        if stmt is None:
+            return 0
         result = self._session.execute(
-            select(func.count()).where(
-                RelationModel.research_space_id == _as_uuid(research_space_id),
+            stmt.with_only_columns(
+                func.count(func.distinct(RelationModel.id)),
+                maintain_column_froms=True,
             ),
         )
-        return result.scalar_one()
+        return int(result.scalar_one())
+
+    def _build_research_space_stmt(  # noqa: C901, PLR0912, PLR0913
+        self: SqlAlchemyKernelRelationRepository,
+        *,
+        research_space_id: str,
+        relation_type: str | None,
+        curation_status: str | None,
+        validation_state: str | None,
+        source_document_id: str | None,
+        certainty_band: str | None,
+        node_query: str | None,
+        node_ids: list[str] | None,
+    ) -> Select[tuple[RelationModel]] | None:
+        stmt = select(RelationModel).where(
+            RelationModel.research_space_id == _as_uuid(research_space_id),
+        )
+        if relation_type is not None:
+            stmt = stmt.where(RelationModel.relation_type == relation_type)
+        if curation_status is not None:
+            stmt = stmt.where(RelationModel.curation_status == curation_status)
+        if validation_state is not None:
+            claim_relation_ids = select(RelationClaimModel.linked_relation_id).where(
+                RelationClaimModel.research_space_id == _as_uuid(research_space_id),
+                RelationClaimModel.linked_relation_id.is_not(None),
+                RelationClaimModel.validation_state == validation_state,
+            )
+            stmt = stmt.where(RelationModel.id.in_(claim_relation_ids))
+        if source_document_id is not None:
+            source_document_uuid = _try_as_uuid(source_document_id)
+            if source_document_uuid is None:
+                return None
+            evidence_relation_ids = select(RelationEvidenceModel.relation_id).where(
+                RelationEvidenceModel.source_document_id == source_document_uuid,
+            )
+            claim_relation_ids = select(RelationClaimModel.linked_relation_id).where(
+                RelationClaimModel.research_space_id == _as_uuid(research_space_id),
+                RelationClaimModel.linked_relation_id.is_not(None),
+                RelationClaimModel.source_document_id == source_document_uuid,
+            )
+            stmt = stmt.where(
+                or_(
+                    RelationModel.id.in_(evidence_relation_ids),
+                    RelationModel.id.in_(claim_relation_ids),
+                ),
+            )
+        if certainty_band is not None:
+            normalized_band = certainty_band.strip().upper()
+            if normalized_band == "HIGH":
+                stmt = stmt.where(
+                    RelationModel.aggregate_confidence
+                    >= self._HIGH_CONFIDENCE_THRESHOLD,
+                )
+            elif normalized_band == "MEDIUM":
+                stmt = stmt.where(
+                    RelationModel.aggregate_confidence
+                    >= self._MEDIUM_CONFIDENCE_THRESHOLD,
+                    RelationModel.aggregate_confidence
+                    < self._HIGH_CONFIDENCE_THRESHOLD,
+                )
+            elif normalized_band == "LOW":
+                stmt = stmt.where(
+                    RelationModel.aggregate_confidence
+                    < self._MEDIUM_CONFIDENCE_THRESHOLD,
+                )
+        if node_ids:
+            node_uuid_ids: list[UUID] = []
+            for node_id in node_ids:
+                trimmed = node_id.strip()
+                if not trimmed:
+                    continue
+                try:
+                    node_uuid_ids.append(_as_uuid(trimmed))
+                except ValueError:
+                    continue
+            if not node_uuid_ids:
+                return None
+            stmt = stmt.where(
+                or_(
+                    RelationModel.source_id.in_(node_uuid_ids),
+                    RelationModel.target_id.in_(node_uuid_ids),
+                ),
+            )
+        if node_query is not None and node_query.strip():
+            source_entity = aliased(EntityModel)
+            target_entity = aliased(EntityModel)
+            search_term = f"%{node_query.strip()}%"
+            stmt = stmt.join(
+                source_entity,
+                source_entity.id == RelationModel.source_id,
+            ).join(
+                target_entity,
+                target_entity.id == RelationModel.target_id,
+            )
+            stmt = stmt.where(
+                or_(
+                    RelationModel.source_id.cast(String).ilike(search_term),
+                    RelationModel.target_id.cast(String).ilike(search_term),
+                    source_entity.display_label.ilike(search_term),
+                    target_entity.display_label.ilike(search_term),
+                    source_entity.entity_type.ilike(search_term),
+                    target_entity.entity_type.ilike(search_term),
+                ),
+            )
+        return stmt
+
+
+def _try_as_uuid(value: str | None) -> UUID | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    try:
+        return _as_uuid(normalized)
+    except ValueError:
+        return None

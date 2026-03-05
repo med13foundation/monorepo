@@ -71,6 +71,8 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         docs = [
             document
@@ -81,6 +83,15 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
             docs = [doc for doc in docs if doc.source_id == source_id]
         if research_space_id is not None:
             docs = [doc for doc in docs if doc.research_space_id == research_space_id]
+        if ingestion_job_id is not None:
+            docs = [doc for doc in docs if doc.ingestion_job_id == ingestion_job_id]
+        if isinstance(source_type, str) and source_type.strip():
+            normalized_source_type = source_type.strip().lower()
+            docs = [
+                doc
+                for doc in docs
+                if doc.source_type.value.strip().lower() == normalized_source_type
+            ]
         docs.sort(key=lambda item: item.created_at)
         return docs[: max(limit, 1)]
 
@@ -90,6 +101,8 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         docs = [
             document
@@ -100,6 +113,15 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
             docs = [doc for doc in docs if doc.source_id == source_id]
         if research_space_id is not None:
             docs = [doc for doc in docs if doc.research_space_id == research_space_id]
+        if ingestion_job_id is not None:
+            docs = [doc for doc in docs if doc.ingestion_job_id == ingestion_job_id]
+        if isinstance(source_type, str) and source_type.strip():
+            normalized_source_type = source_type.strip().lower()
+            docs = [
+                doc
+                for doc in docs
+                if doc.source_type.value.strip().lower() == normalized_source_type
+            ]
         docs.sort(key=lambda item: item.created_at)
         return docs[: max(limit, 1)]
 

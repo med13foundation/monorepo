@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from threading import Thread
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.mapping_judge import MappingJudgeContract
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _ARTANA_IMPORT_ERROR: Exception | None = None
+_THREAD_BRIDGE_TIMEOUT_SECONDS = 90.0
 
 try:
     from artana.agent import SingleStepModelClient
@@ -61,17 +63,6 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         self._governance = GovernanceConfig.from_environment()
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
-        self._last_run_id: str | None = None
-        timeout_seconds = self._resolve_timeout_seconds(model)
-        self._model_port = _OpenAIChatModelPort(
-            timeout_seconds=timeout_seconds,
-            schema_name_fallback="mapping_judge_contract",
-        )
-        self._kernel = ArtanaKernel(
-            store=self._create_store(),
-            model_port=self._model_port,
-        )
-        self._client = SingleStepModelClient(kernel=self._kernel)
 
     def judge(
         self,
@@ -79,21 +70,13 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         *,
         model_id: str | None = None,
     ) -> MappingJudgeContract:
-        self._last_run_id = None
-
         if not self._has_openai_key():
-            return self._fallback_contract(
-                context,
-                decision="no_match",
-                reason="Mapping-judge API key is not configured.",
-            )
+            msg = "Mapping-judge requires OPENAI_API_KEY for Artana execution."
+            raise RuntimeError(msg)
 
         if not context.candidates:
-            return self._fallback_contract(
-                context,
-                decision="no_match",
-                reason="Mapping-judge received no candidates.",
-            )
+            msg = "Mapping-judge received no candidates."
+            raise ValueError(msg)
 
         effective_model = self._resolve_model_id(model_id)
         run_id = self._create_run_id(
@@ -103,34 +86,44 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
             field_value_preview=context.field_value_preview,
             candidate_ids=[candidate.variable_id for candidate in context.candidates],
         )
-        self._last_run_id = run_id
+        logger.info(
+            "Mapping judge started",
+            extra={
+                "run_id": run_id,
+                "source_id": context.source_id,
+                "field_key": context.field_key,
+                "candidate_count": len(context.candidates),
+                "model_id": effective_model,
+            },
+        )
 
-        try:
-            return self._run_contract_coroutine(
-                self._judge_async(
+        async def execute() -> MappingJudgeContract:
+            kernel, client, model_port = self._create_runtime()
+            try:
+                return await self._judge_async(
                     context=context,
                     model_id=effective_model,
                     run_id=run_id,
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Mapping-judge execution failed for field_key=%s: %s",
-                context.field_key,
-                exc,
-            )
-            return self._fallback_contract(
-                context,
-                decision="no_match",
-                reason="Mapping-judge execution failed.",
-            )
+                    client=client,
+                )
+            finally:
+                await model_port.aclose()
+                await kernel.close()
+
+        contract = self._run_contract_coroutine(execute())
+        logger.info(
+            "Mapping judge finished",
+            extra={
+                "run_id": run_id,
+                "decision": contract.decision,
+                "selected_variable_id": contract.selected_variable_id,
+                "candidate_count": contract.candidate_count,
+            },
+        )
+        return contract
 
     def close(self) -> None:
-        self._run_void_coroutine(self._close_async())
-
-    async def _close_async(self) -> None:
-        await self._model_port.aclose()
-        await self._kernel.close()
+        return
 
     @staticmethod
     def _has_openai_key() -> bool:
@@ -158,6 +151,21 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
             return PostgresStore(state_uri)
         msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"
         raise ValueError(msg)
+
+    def _create_runtime(
+        self,
+    ) -> tuple[ArtanaKernel, SingleStepModelClient, OpenAIJSONSchemaModelPort]:
+        timeout_seconds = self._resolve_timeout_seconds(self._default_model)
+        model_port = _OpenAIChatModelPort(
+            timeout_seconds=timeout_seconds,
+            schema_name_fallback="mapping_judge_contract",
+        )
+        kernel = ArtanaKernel(
+            store=self._create_store(),
+            model_port=model_port,
+        )
+        client = SingleStepModelClient(kernel=kernel)
+        return kernel, client, model_port
 
     def _resolve_model_id(self, model_id: str | None) -> str:
         if (
@@ -236,6 +244,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         context: MappingJudgeContext,
         model_id: str,
         run_id: str,
+        client: SingleStepModelClient,
     ) -> MappingJudgeContract:
         input_text = self._build_input_text(context)
         usage_limits = self._governance.usage_limits
@@ -248,7 +257,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         )
 
         result = await run_single_step_with_policy(
-            self._client,
+            client,
             run_id=run_id,
             tenant=tenant,
             model=model_id,
@@ -283,15 +292,10 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         if contract.decision == "matched":
             selected_id = contract.selected_variable_id
             if selected_id is None or selected_id not in candidate_map:
-                reason = (
-                    "Mapping-judge selected a variable_id outside provided candidates. "
-                    "Converted to no_match."
+                msg = (
+                    "Mapping-judge selected a variable_id outside provided candidates."
                 )
-                return self._fallback_contract(
-                    context,
-                    decision="no_match",
-                    reason=reason,
-                )
+                raise ValueError(msg)
             selected_candidate = candidate_map[selected_id]
             normalized = contract.model_copy(
                 update={
@@ -323,32 +327,6 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
             },
         )
 
-    def _fallback_contract(
-        self,
-        context: MappingJudgeContext,
-        *,
-        decision: Literal["no_match", "ambiguous"],
-        reason: str,
-    ) -> MappingJudgeContract:
-        return MappingJudgeContract(
-            decision=decision,
-            selected_variable_id=None,
-            candidate_count=len(context.candidates),
-            selection_rationale=reason,
-            selected_candidate=None,
-            confidence_score=0.3 if decision == "no_match" else 0.2,
-            rationale=reason,
-            evidence=[
-                EvidenceItem(
-                    source_type="note",
-                    locator=f"mapping-judge:{context.source_id}:{context.field_key}",
-                    excerpt=reason,
-                    relevance=0.2,
-                ),
-            ],
-            agent_run_id=self._last_run_id,
-        )
-
     @staticmethod
     def _run_contract_coroutine(coroutine: object) -> MappingJudgeContract:
         if not asyncio.iscoroutine(coroutine):
@@ -365,10 +343,12 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         try:
             asyncio.get_running_loop()
         except RuntimeError:
+            logger.debug("Mapping judge coroutine executing on direct event loop")
             return asyncio.run(_typed_coroutine())
 
         result_holder: dict[str, MappingJudgeContract | None] = {"result": None}
         error_holder: dict[str, BaseException | None] = {"error": None}
+        bridge_started_at = time.monotonic()
 
         def _target() -> None:
             try:
@@ -376,42 +356,40 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
             except BaseException as exc:  # noqa: BLE001
                 error_holder["error"] = exc
 
+        logger.debug(
+            "Mapping judge coroutine executing via thread bridge",
+            extra={"timeout_seconds": _THREAD_BRIDGE_TIMEOUT_SECONDS},
+        )
         thread = Thread(target=_target, daemon=True)
         thread.start()
-        thread.join()
+        thread.join(timeout=_THREAD_BRIDGE_TIMEOUT_SECONDS)
+        if thread.is_alive():
+            msg = (
+                "Mapping-judge coroutine bridge timed out while awaiting async "
+                "workflow completion."
+            )
+            logger.error(
+                "Mapping judge coroutine bridge timed out",
+                extra={"timeout_seconds": _THREAD_BRIDGE_TIMEOUT_SECONDS},
+            )
+            raise TimeoutError(msg)
 
         if error_holder["error"] is not None:
+            logger.error(
+                "Mapping judge coroutine bridge raised exception",
+                extra={"error_class": error_holder["error"].__class__.__name__},
+            )
             raise error_holder["error"]
         if result_holder["result"] is None:
             msg = "Mapping judge coroutine returned no contract."
             raise RuntimeError(msg)
+        logger.debug(
+            "Mapping judge coroutine bridge completed",
+            extra={
+                "duration_ms": int((time.monotonic() - bridge_started_at) * 1000),
+            },
+        )
         return result_holder["result"]
-
-    @staticmethod
-    def _run_void_coroutine(coroutine: object) -> None:
-        if not asyncio.iscoroutine(coroutine):
-            msg = "Expected coroutine for close operation."
-            raise TypeError(msg)
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(coroutine)
-            return
-
-        error_holder: dict[str, BaseException | None] = {"error": None}
-
-        def _target() -> None:
-            try:
-                asyncio.run(coroutine)
-            except BaseException as exc:  # noqa: BLE001
-                error_holder["error"] = exc
-
-        thread = Thread(target=_target, daemon=True)
-        thread.start()
-        thread.join()
-
-        if error_holder["error"] is not None:
-            raise error_holder["error"]
 
 
 __all__ = ["ArtanaMappingJudgeAdapter"]

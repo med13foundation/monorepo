@@ -1,29 +1,56 @@
-"""Relation persistence helpers for extraction orchestration."""
-
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy.exc import SQLAlchemyError
+
+from src.application.agents.services._extraction_relation_auto_resolve_helpers import (
+    _ExtractionRelationAutoResolveHelpers,
+)
+from src.application.agents.services._extraction_relation_candidate_write_flow import (
+    _PersistCandidatesResult,
+    persist_relation_candidates,
+)
+from src.application.agents.services._extraction_relation_canonicalization_helpers import (
+    _ExtractionRelationCanonicalizationHelpers,
+)
 from src.application.agents.services._extraction_relation_full_auto_helpers import (
     _ExtractionRelationFullAutoHelpers,
 )
 from src.application.agents.services._extraction_relation_policy_helpers import (
+    RelationClaimPolarity,
     _ExtractionRelationPolicyHelpers,
     _ResolvedRelationCandidate,
 )
 from src.application.agents.services._relation_endpoint_entity_resolution_helpers import (
+    EndpointEntityResolutionResult,
     _RelationEndpointEntityResolutionHelpers,
 )
+from src.application.agents.services._relation_evidence_span_helpers import (
+    append_span_to_summary,
+    resolve_relation_evidence_span,
+)
 from src.application.agents.services._relation_persistence_payload_helpers import (
-    candidate_payload,
     normalize_optional_text,
     normalize_run_id,
     relation_payload,
 )
+from src.application.services.claim_first_metrics import (
+    emit_claim_first_extraction_metrics,
+    increment_metric,
+)
+from src.domain.entities.kernel.relations import (
+    EvidenceSentenceGenerationRequest,
+    EvidenceSentenceGenerationResult,
+)
 from src.domain.value_objects.relation_types import normalize_relation_type
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.application.agents.services._extraction_relation_policy_helpers import (
         RelationGovernanceMode,
     )
@@ -31,23 +58,84 @@ if TYPE_CHECKING:
         ExtractedRelation,
         ExtractionContract,
     )
-    from src.domain.agents.contracts.extraction_policy import ExtractionPolicyContract
+    from src.domain.agents.contracts.extraction_policy import (
+        ExtractionPolicyContract,
+        RelationConstraintProposal,
+        RelationTypeMappingProposal,
+    )
+    from src.domain.entities.kernel.claim_evidence import (
+        ClaimEvidenceSentenceConfidence,
+        ClaimEvidenceSentenceSource,
+    )
     from src.domain.entities.source_document import SourceDocument
+    from src.domain.ports.concept_port import ConceptPort
+    from src.domain.ports.evidence_sentence_harness_port import (
+        EvidenceSentenceHarnessPort,
+    )
+    from src.domain.repositories.kernel.claim_evidence_repository import (
+        KernelClaimEvidenceRepository,
+    )
+    from src.domain.repositories.kernel.claim_participant_repository import (
+        KernelClaimParticipantRepository,
+    )
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
+    from src.domain.repositories.kernel.relation_claim_repository import (
+        KernelRelationClaimRepository,
+    )
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
+logger = logging.getLogger(__name__)
+_MIN_GENERATED_EVIDENCE_SENTENCE_LENGTH = 24
+
+
+def _normalize_claim_polarity_value(raw_polarity: str) -> RelationClaimPolarity:
+    normalized = raw_polarity.strip().upper()
+    if normalized == "SUPPORT":
+        return "SUPPORT"
+    if normalized == "REFUTE":
+        return "REFUTE"
+    if normalized == "HYPOTHESIS":
+        return "HYPOTHESIS"
+    return "UNCERTAIN"
+
+
+def _normalize_claim_evidence_sentence_source(
+    source: str | None,
+) -> ClaimEvidenceSentenceSource | None:
+    if source == "verbatim_span":
+        return "verbatim_span"
+    if source == "artana_generated":
+        return "artana_generated"
+    return None
+
+
+def _normalize_claim_evidence_sentence_confidence(
+    confidence: str | None,
+) -> ClaimEvidenceSentenceConfidence | None:
+    if confidence == "low":
+        return "low"
+    if confidence == "medium":
+        return "medium"
+    if confidence == "high":
+        return "high"
+    return None
+
 
 @dataclass(frozen=True)
 class RelationPersistenceResult:
-    """Persistence + review outcome for extracted relation candidates."""
-
     persisted_relations_count: int = 0
     pending_review_relations_count: int = 0
+    relation_claims_count: int = 0
+    claim_evidence_rows_created_count: int = 0
+    non_persistable_claims_count: int = 0
     forbidden_relations_count: int = 0
     undefined_relations_count: int = 0
+    concept_members_created_count: int = 0
+    concept_aliases_created_count: int = 0
+    concept_decisions_proposed_count: int = 0
     policy_proposals_count: int = 0
     policy_run_id: str | None = None
     rejected_relation_reasons: tuple[str, ...] = ()
@@ -63,31 +151,37 @@ class _CandidateBuildResult:
     rejected_relation_details: tuple[JSONObject, ...] = ()
     invalid_components_count: int = 0
     endpoint_resolution_failed_count: int = 0
+    endpoint_shape_rejected_count: int = 0
     self_loop_count: int = 0
     errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
-class _PersistCandidatesResult:
+class _RelationWriteOutcome:
     persisted_relations_count: int = 0
     pending_review_relations_count: int = 0
-    forbidden_relations_count: int = 0
-    undefined_relations_count: int = 0
-    rejected_relation_reasons: tuple[str, ...] = ()
-    rejected_relation_details: tuple[JSONObject, ...] = ()
+    relation_claims_count_delta: int = 0
+    claim_evidence_rows_created_count_delta: int = 0
+    relation_claims_queued_for_review_count: int = 0
     persistence_failed_count: int = 0
     errors: tuple[str, ...] = ()
 
 
 class _ExtractionRelationPersistenceHelpers(
+    _ExtractionRelationAutoResolveHelpers,
+    _ExtractionRelationCanonicalizationHelpers,
     _ExtractionRelationFullAutoHelpers,
     _RelationEndpointEntityResolutionHelpers,
     _ExtractionRelationPolicyHelpers,
 ):
-    """Shared relation-persistence helpers for extraction service."""
-
     _relations: KernelRelationRepository | None
+    _relation_claims: KernelRelationClaimRepository | None
+    _claim_participants: KernelClaimParticipantRepository | None
+    _claim_evidences: KernelClaimEvidenceRepository | None
     _entities: KernelEntityRepository | None
+    _concepts: ConceptPort | None
+    _evidence_sentence_harness: EvidenceSentenceHarnessPort | None
+    _rollback_on_error: Callable[[], None] | None
 
     async def _persist_extracted_relations(
         self,
@@ -98,6 +192,8 @@ class _ExtractionRelationPersistenceHelpers(
         publication_entity_ids: tuple[str, ...],
         model_id: str | None,
     ) -> RelationPersistenceResult:
+        started_at = datetime.now(UTC)
+        run_id = normalize_run_id(contract.agent_run_id)
         if document.research_space_id is None:
             return RelationPersistenceResult(
                 errors=("relation_persistence_missing_research_space_id",),
@@ -113,17 +209,52 @@ class _ExtractionRelationPersistenceHelpers(
                 errors=("relation_persistence_unavailable",),
             )
 
+        logger.info(
+            "Extraction relation persistence helper started",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "research_space_id": research_space_id,
+                "relation_candidates_input_count": len(contract.relations),
+                "publication_entity_ids_count": len(publication_entity_ids),
+                "relation_governance_mode": relation_governance_mode,
+            },
+        )
+
         publication_entity_id = (
             publication_entity_ids[0] if publication_entity_ids else None
         )
+        candidate_build_started_at = datetime.now(UTC)
         candidate_build = self._build_relation_candidates(
             research_space_id=research_space_id,
             relations=contract.relations,
             publication_entity_id=publication_entity_id,
         )
+        logger.info(
+            "Extraction relation candidates built",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - candidate_build_started_at).total_seconds()
+                    * 1000,
+                ),
+                "candidates_count": len(candidate_build.candidates),
+                "invalid_components_count": candidate_build.invalid_components_count,
+                "endpoint_resolution_failed_count": (
+                    candidate_build.endpoint_resolution_failed_count
+                ),
+                "endpoint_shape_rejected_count": (
+                    candidate_build.endpoint_shape_rejected_count
+                ),
+                "self_loop_count": candidate_build.self_loop_count,
+                "error_count": len(candidate_build.errors),
+            },
+        )
         unknown_patterns = self._build_unknown_relation_patterns(
             candidate_build.candidates,
         )
+        policy_step_started_at = datetime.now(UTC)
         policy_step = await self._run_policy_step(
             research_space_id=research_space_id,
             document=document,
@@ -131,6 +262,20 @@ class _ExtractionRelationPersistenceHelpers(
             unknown_patterns=unknown_patterns,
             model_id=model_id,
         )
+        logger.info(
+            "Extraction relation policy step finished",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - policy_step_started_at).total_seconds() * 1000,
+                ),
+                "unknown_patterns_count": len(unknown_patterns),
+                "policy_contract_present": policy_step.contract is not None,
+                "error_count": len(policy_step.errors),
+            },
+        )
+        proposal_store_started_at = datetime.now(UTC)
         proposal_count, proposal_errors = self._store_policy_constraint_proposals(
             research_space_id=research_space_id,
             document=document,
@@ -144,18 +289,133 @@ class _ExtractionRelationPersistenceHelpers(
             ),
             relation_governance_mode=relation_governance_mode,
         )
+        logger.info(
+            "Extraction relation policy proposals stored",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - proposal_store_started_at).total_seconds()
+                    * 1000,
+                ),
+                "proposal_count": proposal_count,
+                "error_count": len(proposal_errors),
+            },
+        )
+        persist_candidates_started_at = datetime.now(UTC)
         persist_result = self._persist_relation_candidates(
             document=document,
-            run_id=normalize_run_id(contract.agent_run_id),
+            run_id=run_id,
             candidates=candidate_build.candidates,
             policy_contract=policy_step.contract,
             relation_governance_mode=relation_governance_mode,
+            research_space_settings=research_space_settings,
+        )
+        logger.info(
+            "Extraction relation candidates persisted",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - persist_candidates_started_at).total_seconds()
+                    * 1000,
+                ),
+                "persisted_relations_count": persist_result.persisted_relations_count,
+                "pending_review_relations_count": (
+                    persist_result.pending_review_relations_count
+                ),
+                "relation_claims_count": persist_result.relation_claims_count,
+                "claim_evidence_rows_created_count": (
+                    persist_result.claim_evidence_rows_created_count
+                ),
+                "non_persistable_claims_count": (
+                    persist_result.non_persistable_claims_count
+                ),
+                "evidence_span_missing_count": (
+                    persist_result.evidence_span_missing_count
+                ),
+                "forbidden_relations_count": persist_result.forbidden_relations_count,
+                "undefined_relations_count": persist_result.undefined_relations_count,
+                "concept_members_created_count": (
+                    persist_result.concept_members_created_count
+                ),
+                "concept_aliases_created_count": (
+                    persist_result.concept_aliases_created_count
+                ),
+                "concept_decisions_proposed_count": (
+                    persist_result.concept_decisions_proposed_count
+                ),
+                "persistence_failed_count": persist_result.persistence_failed_count,
+                "full_auto_retry_skipped_count": (
+                    persist_result.full_auto_retry_skipped_count
+                ),
+                "error_count": len(persist_result.errors),
+            },
+        )
+        emit_claim_first_extraction_metrics(
+            research_space_id=research_space_id,
+            source_document_id=str(document.id),
+            claims_created=persist_result.relation_claims_count,
+            claims_non_persistable=persist_result.non_persistable_claims_count,
+            relations_draft_created=persist_result.persisted_relations_count,
+            relation_claims_queued_for_review=(
+                persist_result.relation_claims_queued_for_review_count
+            ),
+            claim_evidence_rows_created=persist_result.claim_evidence_rows_created_count,
+            research_space_settings=research_space_settings,
+        )
+        logger.info(
+            "Extraction relation persistence helper finished",
+            extra={
+                "document_id": str(document.id),
+                "run_id": run_id,
+                "duration_ms": int(
+                    (datetime.now(UTC) - started_at).total_seconds() * 1000,
+                ),
+                "relation_candidates_input_count": len(contract.relations),
+                "relation_claims_count": persist_result.relation_claims_count,
+                "claim_evidence_rows_created_count": (
+                    persist_result.claim_evidence_rows_created_count
+                ),
+                "persisted_relations_count": persist_result.persisted_relations_count,
+                "non_persistable_claims_count": (
+                    persist_result.non_persistable_claims_count
+                ),
+                "concept_members_created_count": (
+                    persist_result.concept_members_created_count
+                ),
+                "concept_aliases_created_count": (
+                    persist_result.concept_aliases_created_count
+                ),
+                "concept_decisions_proposed_count": (
+                    persist_result.concept_decisions_proposed_count
+                ),
+                "full_auto_retry_skipped_count": (
+                    persist_result.full_auto_retry_skipped_count
+                ),
+                "total_error_count": len(
+                    candidate_build.errors
+                    + policy_step.errors
+                    + proposal_errors
+                    + persist_result.errors,
+                ),
+            },
         )
         return RelationPersistenceResult(
             persisted_relations_count=persist_result.persisted_relations_count,
             pending_review_relations_count=persist_result.pending_review_relations_count,
+            relation_claims_count=persist_result.relation_claims_count,
+            claim_evidence_rows_created_count=(
+                persist_result.claim_evidence_rows_created_count
+            ),
+            non_persistable_claims_count=persist_result.non_persistable_claims_count,
             forbidden_relations_count=persist_result.forbidden_relations_count,
             undefined_relations_count=persist_result.undefined_relations_count,
+            concept_members_created_count=persist_result.concept_members_created_count,
+            concept_aliases_created_count=persist_result.concept_aliases_created_count,
+            concept_decisions_proposed_count=(
+                persist_result.concept_decisions_proposed_count
+            ),
             policy_proposals_count=proposal_count,
             policy_run_id=normalize_run_id(
                 (
@@ -188,12 +448,37 @@ class _ExtractionRelationPersistenceHelpers(
                 "relation_candidates_endpoint_resolution_failed": (
                     candidate_build.endpoint_resolution_failed_count
                 ),
+                "relation_candidates_endpoint_shape_rejected": (
+                    candidate_build.endpoint_shape_rejected_count
+                ),
                 "relation_candidates_self_loop": candidate_build.self_loop_count,
+                "relation_candidates_evidence_span_missing": (
+                    persist_result.evidence_span_missing_count
+                ),
                 "relation_candidates_forbidden": (
                     persist_result.forbidden_relations_count
                 ),
                 "relation_candidates_undefined": (
                     persist_result.undefined_relations_count
+                ),
+                "concept_members_created": (
+                    persist_result.concept_members_created_count
+                ),
+                "concept_aliases_created": (
+                    persist_result.concept_aliases_created_count
+                ),
+                "concept_decisions_proposed": (
+                    persist_result.concept_decisions_proposed_count
+                ),
+                "relation_claims_created": persist_result.relation_claims_count,
+                "claim_evidence_rows_created": (
+                    persist_result.claim_evidence_rows_created_count
+                ),
+                "relation_claims_queued_for_review": (
+                    persist_result.relation_claims_queued_for_review_count
+                ),
+                "relation_claims_non_persistable": (
+                    persist_result.non_persistable_claims_count
                 ),
                 "relation_candidates_persisted": (
                     persist_result.persisted_relations_count
@@ -203,6 +488,9 @@ class _ExtractionRelationPersistenceHelpers(
                 ),
                 "relation_candidates_persistence_failed": (
                     persist_result.persistence_failed_count
+                ),
+                "relation_candidates_full_auto_retry_skipped": (
+                    persist_result.full_auto_retry_skipped_count
                 ),
                 "relation_policy_unknown_patterns": len(unknown_patterns),
                 "relation_policy_proposals_created": proposal_count,
@@ -228,12 +516,24 @@ class _ExtractionRelationPersistenceHelpers(
         errors: list[str] = []
         invalid_components_count = 0
         endpoint_resolution_failed_count = 0
+        endpoint_shape_rejected_count = 0
         self_loop_count = 0
 
         for relation in relations:
             normalized_source_type = self._normalize_component(relation.source_type)
             normalized_relation_type = normalize_relation_type(relation.relation_type)
             normalized_target_type = self._normalize_component(relation.target_type)
+            normalized_source_label = normalize_optional_text(relation.source_label)
+            normalized_target_label = normalize_optional_text(relation.target_label)
+            normalized_polarity = _normalize_claim_polarity_value(relation.polarity)
+            normalized_claim_text = normalize_optional_text(relation.claim_text)
+            normalized_claim_section = normalize_optional_text(relation.claim_section)
+            normalized_evidence_excerpt = normalize_optional_text(
+                relation.evidence_excerpt,
+            )
+            normalized_evidence_locator = normalize_optional_text(
+                relation.evidence_locator,
+            )
             payload = relation_payload(relation)
 
             if (
@@ -247,42 +547,69 @@ class _ExtractionRelationPersistenceHelpers(
                     reason="invalid_relation_components",
                     payload=payload,
                     metadata={
-                        "validation_state": "UNDEFINED",
+                        "validation_state": "INVALID_COMPONENTS",
                         "validation_reason": (
                             "source_type, relation_type, and target_type are required"
                         ),
                     },
                 )
                 errors.append("relation_persistence_skipped_invalid_components")
+                candidates.append(
+                    _ResolvedRelationCandidate(
+                        source_entity_id=None,
+                        target_entity_id=None,
+                        source_type=normalized_source_type or "UNKNOWN",
+                        relation_type=normalized_relation_type or "UNKNOWN",
+                        target_type=normalized_target_type or "UNKNOWN",
+                        source_label=normalized_source_label,
+                        target_label=normalized_target_label,
+                        confidence=float(relation.confidence),
+                        validation_state="INVALID_COMPONENTS",
+                        validation_reason=(
+                            "source_type, relation_type, and target_type are required"
+                        ),
+                        evidence_excerpt=normalized_evidence_excerpt,
+                        evidence_locator=normalized_evidence_locator,
+                        polarity=normalized_polarity,
+                        claim_text=normalized_claim_text,
+                        claim_section=normalized_claim_section,
+                        persistability="NON_PERSISTABLE",
+                    ),
+                )
                 invalid_components_count += 1
                 continue
 
-            source_entity_id = self._resolve_relation_endpoint_entity_id(
+            source_resolution = self._resolve_relation_endpoint_entity_id(
                 research_space_id=research_space_id,
                 entity_type=normalized_source_type,
                 label=relation.source_label,
                 publication_entity_id=publication_entity_id,
                 endpoint_name="source",
             )
-            target_entity_id = self._resolve_relation_endpoint_entity_id(
+            target_resolution = self._resolve_relation_endpoint_entity_id(
                 research_space_id=research_space_id,
                 entity_type=normalized_target_type,
                 label=relation.target_label,
                 publication_entity_id=publication_entity_id,
                 endpoint_name="target",
             )
+            source_entity_id = source_resolution.entity_id
+            target_entity_id = target_resolution.entity_id
             if source_entity_id is None or target_entity_id is None:
+                (
+                    rejection_reason,
+                    validation_reason,
+                    rejection_metadata,
+                ) = self._build_endpoint_resolution_rejection(
+                    source_resolution=source_resolution,
+                    target_resolution=target_resolution,
+                )
                 self._record_rejected_relation(
                     reasons=rejected_reasons,
                     details=rejected_details,
-                    reason="relation_endpoint_resolution_failed",
+                    reason=rejection_reason,
                     payload=payload,
-                    metadata={
-                        "validation_state": "UNDEFINED",
-                        "validation_reason": (
-                            "source or target endpoint could not be resolved"
-                        ),
-                    },
+                    metadata=rejection_metadata,
                 )
                 errors.append(
                     (
@@ -291,7 +618,29 @@ class _ExtractionRelationPersistenceHelpers(
                         f"{normalized_target_type}"
                     ),
                 )
+                candidates.append(
+                    _ResolvedRelationCandidate(
+                        source_entity_id=source_entity_id,
+                        target_entity_id=target_entity_id,
+                        source_type=normalized_source_type,
+                        relation_type=normalized_relation_type,
+                        target_type=normalized_target_type,
+                        source_label=normalized_source_label,
+                        target_label=normalized_target_label,
+                        confidence=float(relation.confidence),
+                        validation_state="ENDPOINT_UNRESOLVED",
+                        validation_reason=validation_reason,
+                        evidence_excerpt=normalized_evidence_excerpt,
+                        evidence_locator=normalized_evidence_locator,
+                        polarity=normalized_polarity,
+                        claim_text=normalized_claim_text,
+                        claim_section=normalized_claim_section,
+                        persistability="NON_PERSISTABLE",
+                    ),
+                )
                 endpoint_resolution_failed_count += 1
+                if rejection_reason == "relation_endpoint_shape_rejected":
+                    endpoint_shape_rejected_count += 1
                 continue
             if source_entity_id == target_entity_id:
                 self._record_rejected_relation(
@@ -300,9 +649,29 @@ class _ExtractionRelationPersistenceHelpers(
                     reason="relation_self_loop",
                     payload=payload,
                     metadata={
-                        "validation_state": "FORBIDDEN",
+                        "validation_state": "SELF_LOOP",
                         "validation_reason": "self-loop relations are not allowed",
                     },
+                )
+                candidates.append(
+                    _ResolvedRelationCandidate(
+                        source_entity_id=source_entity_id,
+                        target_entity_id=target_entity_id,
+                        source_type=normalized_source_type,
+                        relation_type=normalized_relation_type,
+                        target_type=normalized_target_type,
+                        source_label=normalized_source_label,
+                        target_label=normalized_target_label,
+                        confidence=float(relation.confidence),
+                        validation_state="SELF_LOOP",
+                        validation_reason="self-loop relations are not allowed",
+                        evidence_excerpt=normalized_evidence_excerpt,
+                        evidence_locator=normalized_evidence_locator,
+                        polarity=normalized_polarity,
+                        claim_text=normalized_claim_text,
+                        claim_section=normalized_claim_section,
+                        persistability="NON_PERSISTABLE",
+                    ),
                 )
                 self_loop_count += 1
                 continue
@@ -321,11 +690,17 @@ class _ExtractionRelationPersistenceHelpers(
                     source_type=normalized_source_type,
                     relation_type=normalized_relation_type,
                     target_type=normalized_target_type,
-                    source_label=normalize_optional_text(relation.source_label),
-                    target_label=normalize_optional_text(relation.target_label),
+                    source_label=normalized_source_label,
+                    target_label=normalized_target_label,
                     confidence=float(relation.confidence),
                     validation_state=validation_state,
                     validation_reason=validation_reason,
+                    evidence_excerpt=normalized_evidence_excerpt,
+                    evidence_locator=normalized_evidence_locator,
+                    polarity=normalized_polarity,
+                    claim_text=normalized_claim_text,
+                    claim_section=normalized_claim_section,
+                    persistability="PERSISTABLE",
                 ),
             )
 
@@ -335,11 +710,535 @@ class _ExtractionRelationPersistenceHelpers(
             rejected_relation_details=tuple(rejected_details),
             invalid_components_count=invalid_components_count,
             endpoint_resolution_failed_count=endpoint_resolution_failed_count,
+            endpoint_shape_rejected_count=endpoint_shape_rejected_count,
             self_loop_count=self_loop_count,
             errors=tuple(errors),
         )
 
-    def _persist_relation_candidates(
+    @staticmethod
+    def _build_endpoint_resolution_rejection(
+        *,
+        source_resolution: EndpointEntityResolutionResult,
+        target_resolution: EndpointEntityResolutionResult,
+    ) -> tuple[str, str, JSONObject]:
+        source_reason = source_resolution.failure_reason
+        target_reason = target_resolution.failure_reason
+        is_shape_rejection = (
+            source_reason == "relation_endpoint_shape_rejected"
+            or target_reason == "relation_endpoint_shape_rejected"
+        )
+        reason = (
+            "relation_endpoint_shape_rejected"
+            if is_shape_rejection
+            else "relation_endpoint_resolution_failed"
+        )
+        validation_reason = (
+            "source or target endpoint failed entity-shape guard"
+            if is_shape_rejection
+            else "source or target endpoint could not be resolved"
+        )
+        metadata: JSONObject = {
+            "validation_state": "ENDPOINT_UNRESOLVED",
+            "validation_reason": validation_reason,
+            "source_endpoint_failure_reason": source_reason,
+            "target_endpoint_failure_reason": target_reason,
+        }
+        if source_resolution.failure_metadata is not None:
+            metadata["source_endpoint_failure_metadata"] = (
+                source_resolution.failure_metadata
+            )
+        if target_resolution.failure_metadata is not None:
+            metadata["target_endpoint_failure_metadata"] = (
+                target_resolution.failure_metadata
+            )
+        return reason, validation_reason, metadata
+
+    def _should_require_relation_evidence_span(
+        self,
+        *,
+        document: SourceDocument,
+        candidate: _ResolvedRelationCandidate,
+        research_space_settings: ResearchSpaceSettings,
+    ) -> bool:
+        source_type_value = document.source_type.value.strip().lower()
+        if source_type_value != "pubmed":
+            return False
+        custom_settings = research_space_settings.get("custom")
+        if isinstance(custom_settings, dict):
+            explicit = custom_settings.get("pubmed_require_evidence_span")
+            if isinstance(explicit, bool):
+                return explicit
+        dictionary = self._dictionary
+        if dictionary is None:
+            return True
+        try:
+            return dictionary.requires_evidence(
+                candidate.source_type,
+                candidate.relation_type,
+                candidate.target_type,
+            )
+        except ValueError:
+            return True
+
+    def _prepare_relation_evidence_summary(  # noqa: PLR0913
+        self,
+        *,
+        document: SourceDocument,
+        candidate: _ResolvedRelationCandidate,
+        relation_governance_mode: RelationGovernanceMode,
+        constraint_proposal: RelationConstraintProposal | None,
+        mapping_proposal: RelationTypeMappingProposal | None,
+        requires_evidence_span: bool,
+    ) -> tuple[str, JSONObject, str | None]:
+        base_summary = self._build_relation_evidence_summary(
+            document=document,
+            candidate=candidate,
+            relation_governance_mode=relation_governance_mode,
+            constraint_proposal=constraint_proposal,
+            mapping_proposal=mapping_proposal,
+        )
+        raw_record = self._extract_raw_record(document)
+        span_result = resolve_relation_evidence_span(
+            source_label=candidate.source_label,
+            target_label=candidate.target_label,
+            candidate_excerpt=candidate.evidence_excerpt,
+            candidate_locator=candidate.evidence_locator,
+            raw_record=raw_record,
+        )
+        metadata: JSONObject = {
+            "span_required": requires_evidence_span,
+            **span_result.metadata,
+        }
+        if span_result.failure_reason is not None:
+            metadata["span_status"] = "missing"
+            metadata["span_failure_reason"] = span_result.failure_reason
+            if requires_evidence_span:
+                return base_summary, metadata, span_result.failure_reason
+            return base_summary, metadata, None
+        span_text = span_result.span_text
+        if span_text is None:
+            metadata["span_status"] = "missing"
+            metadata["span_failure_reason"] = "span_unavailable"
+            if requires_evidence_span:
+                return base_summary, metadata, "span_unavailable"
+            return base_summary, metadata, None
+        metadata["span_status"] = "resolved"
+        metadata["span_text"] = span_text
+        return (
+            append_span_to_summary(base_summary=base_summary, span_text=span_text),
+            metadata,
+            None,
+        )
+
+    def _generate_optional_relation_evidence_sentence(
+        self,
+        *,
+        document: SourceDocument,
+        candidate: _ResolvedRelationCandidate,
+        evidence_summary: str,
+        relation_evidence_metadata: JSONObject,
+        run_id: str | None,
+    ) -> EvidenceSentenceGenerationResult:
+        harness = self._evidence_sentence_harness
+        if harness is None:
+            return EvidenceSentenceGenerationResult(
+                outcome="failed",
+                failure_reason="evidence_sentence_harness_unavailable",
+            )
+
+        raw_record = self._extract_raw_record(document)
+        document_text: str | None = None
+        for field_name in ("full_text", "text", "abstract", "title"):
+            field_value = raw_record.get(field_name)
+            if not isinstance(field_value, str):
+                continue
+            normalized_value = normalize_optional_text(field_value)
+            if normalized_value is None:
+                continue
+            document_text = normalized_value[:120000]
+            break
+
+        request = EvidenceSentenceGenerationRequest(
+            research_space_id=(
+                str(document.research_space_id)
+                if document.research_space_id is not None
+                else "unknown"
+            ),
+            source_type=document.source_type.value,
+            relation_type=candidate.relation_type,
+            source_label=candidate.source_label,
+            target_label=candidate.target_label,
+            evidence_summary=evidence_summary[:2000],
+            evidence_excerpt=normalize_optional_text(candidate.evidence_excerpt),
+            evidence_locator=normalize_optional_text(candidate.evidence_locator),
+            document_text=document_text,
+            document_id=str(document.id),
+            run_id=run_id,
+            metadata={
+                "relation_evidence": relation_evidence_metadata,
+                "confidence": candidate.confidence,
+                "validation_state": candidate.validation_state,
+            },
+        )
+        try:
+            result = harness.generate(request)
+        except Exception as exc:  # noqa: BLE001 - fail-open for optional sentence path
+            return EvidenceSentenceGenerationResult(
+                outcome="failed",
+                failure_reason=f"evidence_sentence_harness_error:{type(exc).__name__}",
+                metadata={"error": str(exc)},
+            )
+
+        normalized_sentence = normalize_optional_text(result.sentence)
+        if result.outcome != "generated":
+            failure_reason = normalize_optional_text(result.failure_reason)
+            return EvidenceSentenceGenerationResult(
+                outcome="failed",
+                failure_reason=failure_reason or "evidence_sentence_generation_failed",
+                metadata=result.metadata,
+            )
+        if normalized_sentence is None:
+            return EvidenceSentenceGenerationResult(
+                outcome="failed",
+                failure_reason="generated_sentence_empty",
+                metadata=result.metadata,
+            )
+        if len(normalized_sentence) < _MIN_GENERATED_EVIDENCE_SENTENCE_LENGTH:
+            return EvidenceSentenceGenerationResult(
+                outcome="failed",
+                failure_reason="generated_sentence_too_short",
+                metadata=result.metadata,
+            )
+        return EvidenceSentenceGenerationResult(
+            outcome="generated",
+            sentence=normalized_sentence[:2000],
+            source="artana_generated",
+            confidence=result.confidence or "low",
+            rationale=normalize_optional_text(result.rationale),
+            metadata=result.metadata,
+        )
+
+    @staticmethod
+    def _claim_evidence_reference_from_metadata(
+        *,
+        metadata: JSONObject,
+        primary_key: str,
+        fallback_key: str,
+    ) -> str | None:
+        primary_value = metadata.get(primary_key)
+        if isinstance(primary_value, str):
+            normalized_primary = normalize_optional_text(primary_value)
+            if normalized_primary is not None:
+                return normalized_primary
+        fallback_value = metadata.get(fallback_key)
+        if isinstance(fallback_value, str):
+            return normalize_optional_text(fallback_value)
+        return None
+
+    def _create_claim_evidence_record(  # noqa: PLR0913
+        self,
+        *,
+        claim_id: str,
+        document: SourceDocument,
+        run_id: str | None,
+        relation_evidence_metadata: JSONObject,
+        evidence_sentence: str | None,
+        evidence_sentence_source: str | None,
+        evidence_sentence_confidence: str | None,
+        evidence_sentence_rationale: str | None,
+        candidate_confidence: float,
+    ) -> tuple[str, ...]:
+        if self._claim_evidences is None:
+            return ("claim_evidence_repository_unavailable",)
+        metadata_copy: JSONObject = {
+            str(key): value for key, value in relation_evidence_metadata.items()
+        }
+        figure_reference = self._claim_evidence_reference_from_metadata(
+            metadata=metadata_copy,
+            primary_key="figure_reference",
+            fallback_key="figure_ref",
+        )
+        table_reference = self._claim_evidence_reference_from_metadata(
+            metadata=metadata_copy,
+            primary_key="table_reference",
+            fallback_key="table_ref",
+        )
+        normalized_sentence_source = _normalize_claim_evidence_sentence_source(
+            evidence_sentence_source,
+        )
+        normalized_sentence_confidence = _normalize_claim_evidence_sentence_confidence(
+            evidence_sentence_confidence,
+        )
+        try:
+            self._claim_evidences.create(
+                claim_id=claim_id,
+                source_document_id=str(document.id),
+                agent_run_id=run_id,
+                sentence=evidence_sentence,
+                sentence_source=normalized_sentence_source,
+                sentence_confidence=normalized_sentence_confidence,
+                sentence_rationale=evidence_sentence_rationale,
+                figure_reference=figure_reference,
+                table_reference=table_reference,
+                confidence=float(candidate_confidence),
+                metadata=metadata_copy,
+            )
+            increment_metric(
+                "claim_evidence_rows_created_total",
+                tags={
+                    "research_space_id": (
+                        str(document.research_space_id)
+                        if document.research_space_id is not None
+                        else "unknown"
+                    ),
+                    "source_document_id": str(document.id),
+                },
+            )
+        except (TypeError, ValueError, SQLAlchemyError) as exc:
+            error_code = self._map_relation_write_error_code(exc)
+            return (f"claim_evidence_create_failed:{error_code}",)
+        return ()
+
+    def _persist_candidate_relation(  # noqa: C901, PLR0912, PLR0913
+        self,
+        *,
+        document: SourceDocument,
+        run_id: str | None,
+        research_space_id: str,
+        relation_governance_mode: RelationGovernanceMode,
+        effective_candidate: _ResolvedRelationCandidate,
+        evidence_summary: str,
+        evidence_sentence: str | None,
+        evidence_sentence_source: str | None,
+        evidence_sentence_confidence: str | None,
+        evidence_sentence_rationale: str | None,
+        relation_evidence_metadata: JSONObject,
+        claim_id: str | None,
+        payload: JSONObject,
+        candidate_signature: tuple[str, str, str, str, str],
+        full_auto_retry_index: dict[tuple[str, str, str, str, str], str],
+        dictionary_fingerprint: str,
+        index: int,
+        total_candidates: int,
+        should_log_candidate: bool,
+    ) -> _RelationWriteOutcome:
+        errors: list[str] = []
+        relation_claims_count_delta = 0
+        claim_evidence_rows_created_count_delta = 0
+        relation_claims_queued_for_review_count = 0
+        if self._relations is None:
+            return _RelationWriteOutcome(
+                persistence_failed_count=1,
+                errors=("relation_persistence_unavailable",),
+            )
+        source_entity_id = effective_candidate.source_entity_id
+        target_entity_id = effective_candidate.target_entity_id
+        if source_entity_id is None or target_entity_id is None:
+            return _RelationWriteOutcome(
+                persistence_failed_count=1,
+                errors=("relation_persistence_missing_endpoint_entity_id",),
+            )
+        try:
+            created_relation = self._relations.create(
+                research_space_id=research_space_id,
+                source_id=source_entity_id,
+                relation_type=effective_candidate.relation_type,
+                target_id=target_entity_id,
+                confidence=effective_candidate.confidence,
+                evidence_summary=evidence_summary,
+                evidence_sentence=evidence_sentence,
+                evidence_sentence_source=evidence_sentence_source,
+                evidence_sentence_confidence=evidence_sentence_confidence,
+                evidence_sentence_rationale=evidence_sentence_rationale,
+                evidence_tier="COMPUTATIONAL",
+                curation_status="DRAFT",
+                source_document_id=str(document.id),
+                agent_run_id=run_id,
+            )
+            if claim_id is not None and self._relation_claims is not None:
+                with_context_errors = self._link_claim_to_relation(
+                    claim_id=claim_id,
+                    relation_id=str(created_relation.id),
+                )
+                errors.extend(with_context_errors)
+                if relation_governance_mode == "FULL_AUTO":
+                    status_errors = self._set_claim_system_status(
+                        claim_id=claim_id,
+                        claim_status="RESOLVED",
+                    )
+                    errors.extend(status_errors)
+                    if candidate_signature in full_auto_retry_index:
+                        full_auto_retry_index.pop(candidate_signature)
+        except (TypeError, ValueError, SQLAlchemyError) as exc:
+            self._rollback_after_persistence_error(
+                context="relation_create",
+            )
+            error_code = self._map_relation_write_error_code(exc)
+            errors.append(
+                (
+                    "relation_persistence_failed:"
+                    f"{error_code}:{effective_candidate.relation_type}:"
+                    f"{source_entity_id}"
+                    f"->{target_entity_id}"
+                ),
+            )
+            if claim_id is not None and self._relation_claims is not None:
+                relation_claims_count_delta -= 1
+                try:
+                    recreated_claim = self._relation_claims.create(
+                        research_space_id=research_space_id,
+                        source_document_id=str(document.id),
+                        agent_run_id=run_id,
+                        source_type=effective_candidate.source_type,
+                        relation_type=effective_candidate.relation_type,
+                        target_type=effective_candidate.target_type,
+                        source_label=effective_candidate.source_label,
+                        target_label=effective_candidate.target_label,
+                        confidence=effective_candidate.confidence,
+                        validation_state=effective_candidate.validation_state,
+                        validation_reason=effective_candidate.validation_reason,
+                        persistability=effective_candidate.persistability,
+                        claim_status=(
+                            "NEEDS_MAPPING"
+                            if relation_governance_mode == "FULL_AUTO"
+                            else "OPEN"
+                        ),
+                        polarity=effective_candidate.polarity,
+                        claim_text=effective_candidate.claim_text,
+                        claim_section=effective_candidate.claim_section,
+                        linked_relation_id=None,
+                        metadata=payload,
+                    )
+                    claim_id = str(recreated_claim.id)
+                    relation_claims_count_delta += 1
+                    claim_evidence_errors = self._create_claim_evidence_record(
+                        claim_id=claim_id,
+                        document=document,
+                        run_id=run_id,
+                        relation_evidence_metadata=relation_evidence_metadata,
+                        evidence_sentence=evidence_sentence,
+                        evidence_sentence_source=evidence_sentence_source,
+                        evidence_sentence_confidence=evidence_sentence_confidence,
+                        evidence_sentence_rationale=evidence_sentence_rationale,
+                        candidate_confidence=effective_candidate.confidence,
+                    )
+                    if not claim_evidence_errors:
+                        claim_evidence_rows_created_count_delta += 1
+                    errors.extend(claim_evidence_errors)
+                    if relation_governance_mode == "FULL_AUTO":
+                        full_auto_retry_index[candidate_signature] = (
+                            dictionary_fingerprint
+                        )
+                    self._enqueue_review_item(
+                        entity_type="relation_claim",
+                        entity_id=claim_id,
+                        research_space_id=research_space_id,
+                        priority="high",
+                    )
+                    relation_claims_queued_for_review_count += 1
+                    if should_log_candidate:
+                        logger.info(
+                            "Persist relation candidate claim restored after relation rollback",
+                            extra={
+                                "document_id": str(document.id),
+                                "run_id": run_id,
+                                "candidate_index": index,
+                                "candidate_total": total_candidates,
+                                "claim_id": claim_id,
+                                "relation_type": effective_candidate.relation_type,
+                                "error_code": error_code,
+                            },
+                        )
+                except (TypeError, ValueError, SQLAlchemyError) as claim_exc:
+                    self._rollback_after_persistence_error(
+                        context="relation_claim_recreate",
+                    )
+                    claim_error_code = self._map_relation_write_error_code(
+                        claim_exc,
+                    )
+                    errors.append(
+                        (
+                            "relation_claim_recreate_failed:"
+                            f"{claim_error_code}:{effective_candidate.relation_type}"
+                        ),
+                    )
+                    if should_log_candidate:
+                        logger.warning(
+                            "Persist relation candidate claim recreate failed after rollback",
+                            extra={
+                                "document_id": str(document.id),
+                                "run_id": run_id,
+                                "candidate_index": index,
+                                "candidate_total": total_candidates,
+                                "relation_type": effective_candidate.relation_type,
+                                "error_code": claim_error_code,
+                                "error": str(claim_exc),
+                            },
+                        )
+            if should_log_candidate:
+                logger.warning(
+                    "Persist relation candidate relation write failed",
+                    extra={
+                        "document_id": str(document.id),
+                        "run_id": run_id,
+                        "candidate_index": index,
+                        "candidate_total": total_candidates,
+                        "relation_type": effective_candidate.relation_type,
+                        "source_entity_id": source_entity_id,
+                        "target_entity_id": target_entity_id,
+                        "error_code": error_code,
+                        "error": str(exc),
+                    },
+                )
+            return _RelationWriteOutcome(
+                relation_claims_count_delta=relation_claims_count_delta,
+                claim_evidence_rows_created_count_delta=(
+                    claim_evidence_rows_created_count_delta
+                ),
+                relation_claims_queued_for_review_count=(
+                    relation_claims_queued_for_review_count
+                ),
+                persistence_failed_count=1,
+                errors=tuple(errors),
+            )
+
+        self._enqueue_review_item(
+            entity_type="relation",
+            entity_id=str(created_relation.id),
+            research_space_id=research_space_id,
+            priority=self._review_priority_for_candidate(
+                candidate=effective_candidate,
+            ),
+        )
+        if should_log_candidate:
+            logger.info(
+                "Persist relation candidate completed as persisted relation",
+                extra={
+                    "document_id": str(document.id),
+                    "run_id": run_id,
+                    "candidate_index": index,
+                    "candidate_total": total_candidates,
+                    "relation_id": str(created_relation.id),
+                    "claim_id": claim_id,
+                    "validation_state": effective_candidate.validation_state,
+                    "relation_type": effective_candidate.relation_type,
+                },
+            )
+
+        return _RelationWriteOutcome(
+            persisted_relations_count=1,
+            pending_review_relations_count=1,
+            relation_claims_count_delta=relation_claims_count_delta,
+            claim_evidence_rows_created_count_delta=(
+                claim_evidence_rows_created_count_delta
+            ),
+            relation_claims_queued_for_review_count=(
+                relation_claims_queued_for_review_count
+            ),
+            errors=tuple(errors),
+        )
+
+    def _persist_relation_candidates(  # noqa: PLR0913
         self,
         *,
         document: SourceDocument,
@@ -347,150 +1246,22 @@ class _ExtractionRelationPersistenceHelpers(
         candidates: tuple[_ResolvedRelationCandidate, ...],
         policy_contract: ExtractionPolicyContract | None,
         relation_governance_mode: RelationGovernanceMode,
+        research_space_settings: ResearchSpaceSettings,
     ) -> _PersistCandidatesResult:
-        if self._relations is None:
-            return _PersistCandidatesResult(
-                errors=("relation_persistence_unavailable",),
-            )
-
-        persisted_count = 0
-        pending_count = 0
-        forbidden_count = 0
-        undefined_count = 0
-        rejected_reasons: list[str] = []
-        rejected_details: list[JSONObject] = []
-        errors: list[str] = []
-        persistence_failed_count = 0
-
-        constraint_lookup = self._index_constraint_proposals(policy_contract)
-        mapping_lookup = self._index_mapping_proposals(policy_contract)
-        research_space_id = (
-            str(document.research_space_id)
-            if document.research_space_id is not None
-            else ""
+        return persist_relation_candidates(
+            helper=self,
+            document=document,
+            run_id=run_id,
+            candidates=candidates,
+            policy_contract=policy_contract,
+            relation_governance_mode=relation_governance_mode,
+            research_space_settings=research_space_settings,
         )
 
-        for candidate in candidates:
-            proposal_key = (
-                candidate.source_type,
-                candidate.relation_type,
-                candidate.target_type,
-            )
-            mapping_proposal = mapping_lookup.get(proposal_key)
-            effective_candidate = candidate
-            if (
-                effective_candidate.validation_state == "UNDEFINED"
-                and relation_governance_mode == "FULL_AUTO"
-            ):
-                effective_candidate = self._resolve_full_auto_candidate(
-                    candidate=effective_candidate,
-                    mapping_proposal=mapping_proposal,
-                    source_ref=f"source_document:{document.id}:full_auto_persist",
-                )
-
-            payload = candidate_payload(effective_candidate)
-            if effective_candidate.validation_state == "FORBIDDEN":
-                forbidden_count += 1
-                self._record_rejected_relation(
-                    reasons=rejected_reasons,
-                    details=rejected_details,
-                    reason="forbidden_by_dictionary_constraint",
-                    payload=payload,
-                    metadata={
-                        "validation_state": effective_candidate.validation_state,
-                        "validation_reason": effective_candidate.validation_reason,
-                    },
-                )
-                continue
-            if effective_candidate.validation_state == "UNDEFINED":
-                undefined_count += 1
-                if relation_governance_mode == "FULL_AUTO":
-                    self._record_rejected_relation(
-                        reasons=rejected_reasons,
-                        details=rejected_details,
-                        reason="undefined_relation_rejected_full_auto",
-                        payload=payload,
-                        metadata={
-                            "validation_state": effective_candidate.validation_state,
-                            "validation_reason": effective_candidate.validation_reason,
-                        },
-                    )
-                    continue
-
-            try:
-                created_relation = self._relations.create(
-                    research_space_id=research_space_id,
-                    source_id=effective_candidate.source_entity_id,
-                    relation_type=effective_candidate.relation_type,
-                    target_id=effective_candidate.target_entity_id,
-                    confidence=effective_candidate.confidence,
-                    evidence_summary=self._build_relation_evidence_summary(
-                        document=document,
-                        candidate=effective_candidate,
-                        relation_governance_mode=relation_governance_mode,
-                        constraint_proposal=constraint_lookup.get(
-                            (
-                                effective_candidate.source_type,
-                                effective_candidate.relation_type,
-                                effective_candidate.target_type,
-                            ),
-                        ),
-                        mapping_proposal=mapping_proposal,
-                    ),
-                    evidence_tier="COMPUTATIONAL",
-                    curation_status=(
-                        "PENDING_REVIEW"
-                        if effective_candidate.validation_state == "UNDEFINED"
-                        else "DRAFT"
-                    ),
-                    source_document_id=str(document.id),
-                    agent_run_id=run_id,
-                )
-                persisted_count += 1
-            except (TypeError, ValueError) as exc:
-                errors.append(
-                    (
-                        "relation_persistence_failed:"
-                        f"{effective_candidate.relation_type}:"
-                        f"{effective_candidate.source_entity_id}"
-                        f"->{effective_candidate.target_entity_id}:{exc!s}"
-                    ),
-                )
-                persistence_failed_count += 1
-                continue
-
-            if effective_candidate.validation_state != "UNDEFINED":
-                continue
-
-            pending_count += 1
-            self._record_rejected_relation(
-                reasons=rejected_reasons,
-                details=rejected_details,
-                reason="undefined_relation_persisted_pending_review",
-                payload=payload,
-                metadata={
-                    "status": "pending_review",
-                    "validation_state": effective_candidate.validation_state,
-                    "validation_reason": effective_candidate.validation_reason,
-                },
-            )
-            self._enqueue_review_item(
-                entity_type="relation",
-                entity_id=str(created_relation.id),
-                research_space_id=research_space_id,
-                priority="medium",
-            )
-
-        return _PersistCandidatesResult(
-            persisted_relations_count=persisted_count,
-            pending_review_relations_count=pending_count,
-            forbidden_relations_count=forbidden_count,
-            undefined_relations_count=undefined_count,
-            rejected_relation_reasons=tuple(rejected_reasons),
-            rejected_relation_details=tuple(rejected_details),
-            persistence_failed_count=persistence_failed_count,
-            errors=tuple(errors),
-        )
+    @staticmethod
+    def _extract_raw_record(document: SourceDocument) -> JSONObject:
+        msg = "subclass must implement _extract_raw_record"
+        raise NotImplementedError(msg)
 
 
 __all__ = ["RelationPersistenceResult", "_ExtractionRelationPersistenceHelpers"]

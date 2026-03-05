@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.infrastructure.ingestion.types import RawRecord
 
 if TYPE_CHECKING:
@@ -24,10 +25,19 @@ class PubMedAdapter:
         self,
         records: Iterable[JSONObject],
         source_id: str,
+        *,
+        domain_context: str = "clinical",
     ) -> list[RawRecord]:
         """
         Convert legacy PubMed records (dicts) to RawRecord dataclasses.
         """
+        normalized_domain_context = DomainContextResolver.resolve(
+            explicit_domain_context=domain_context,
+            source_type="pubmed",
+            fallback=DomainContextResolver.PUBMED_DEFAULT_DOMAIN,
+        )
+        if normalized_domain_context is None:
+            normalized_domain_context = DomainContextResolver.PUBMED_DEFAULT_DOMAIN
         raw_records = []
         for record in records:
             # Generate a unique record ID if not present, but use PMID if available for stability
@@ -43,6 +53,7 @@ class PubMedAdapter:
                         "entity_type": "PUBLICATION",
                         "pmid": record.get("pmid"),
                         "doi": record.get("doi"),
+                        "domain_context": normalized_domain_context,
                     },
                 ),
             )

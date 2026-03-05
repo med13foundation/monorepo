@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import KnowledgeGraphClient from '../knowledge-graph-client'
+import type { GraphTrustPreset } from '../use-knowledge-graph-controller'
 
 interface KnowledgeGraphPageProps {
   params: Promise<{
@@ -30,6 +31,23 @@ function parsePositiveInt(
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
+function parseTrustPreset(
+  value: string | undefined,
+): GraphTrustPreset {
+  if (!value) {
+    return 'ALL'
+  }
+  const normalized = value.trim().toUpperCase()
+  if (
+    normalized === 'APPROVED_ONLY'
+    || normalized === 'PENDING_REVIEW'
+    || normalized === 'REJECTED'
+  ) {
+    return normalized
+  }
+  return 'ALL'
+}
+
 export default async function KnowledgeGraphPage({
   params,
   searchParams,
@@ -47,6 +65,7 @@ export default async function KnowledgeGraphPage({
   const topK = parsePositiveInt(parseSearchParam(resolvedSearchParams.top_k), 25)
   const maxDepth = parsePositiveInt(parseSearchParam(resolvedSearchParams.max_depth), 2)
   const forceAgent = parseSearchParam(resolvedSearchParams.force_agent) === '1'
+  const trustPreset = parseTrustPreset(parseSearchParam(resolvedSearchParams.trust))
 
   return (
     <KnowledgeGraphClient
@@ -55,6 +74,7 @@ export default async function KnowledgeGraphPage({
       initialTopK={topK}
       initialMaxDepth={maxDepth}
       initialForceAgent={forceAgent}
+      initialTrustPreset={trustPreset}
     />
   )
 }

@@ -31,8 +31,23 @@ class ExtractedRelation(BaseModel):
     source_type: str = Field(..., min_length=1, max_length=64)
     relation_type: str = Field(..., min_length=1, max_length=64)
     target_type: str = Field(..., min_length=1, max_length=64)
+    polarity: Literal["SUPPORT", "REFUTE", "UNCERTAIN", "HYPOTHESIS"] = Field(
+        default="UNCERTAIN",
+    )
+    claim_text: str | None = Field(default=None, max_length=2000)
+    claim_section: str | None = Field(default=None, max_length=64)
     source_label: str | None = Field(default=None, max_length=255)
     target_label: str | None = Field(default=None, max_length=255)
+    evidence_excerpt: str | None = Field(
+        default=None,
+        max_length=1200,
+        description="Relation-level supporting text span excerpt from the source.",
+    )
+    evidence_locator: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Locator for the evidence span (sentence id, section, etc.).",
+    )
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
 

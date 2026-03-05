@@ -70,11 +70,22 @@ class SourceWorkflowMonitorService(
         selected_run = self._select_run_record(run_records, run_id)
         selected_run_id = selected_run.run_id if selected_run is not None else None
         selected_run_job_id = selected_run.job_id if selected_run is not None else None
+        selected_run_payload = (
+            coerce_json_object(selected_run.payload) if selected_run is not None else {}
+        )
+        selected_run_ingestion_job_id = normalize_optional_string(
+            selected_run_payload.get("ingestion_job_id"),
+        )
+        run_scoped_ingestion_job_id = (
+            selected_run_ingestion_job_id
+            if selected_run_ingestion_job_id is not None
+            else (None if selected_run_id is not None else selected_run_job_id)
+        )
 
         documents = self._load_source_documents(
             source_id=source_id,
             run_id=selected_run_id,
-            ingestion_job_id=selected_run_job_id,
+            ingestion_job_id=run_scoped_ingestion_job_id,
             limit=limit,
         )
         document_status_counts = self._count_statuses(
@@ -94,7 +105,7 @@ class SourceWorkflowMonitorService(
         queue_rows = self._load_extraction_queue(
             source_id=source_id,
             run_id=selected_run_id,
-            ingestion_job_id=selected_run_job_id,
+            ingestion_job_id=run_scoped_ingestion_job_id,
             external_record_ids=set(external_record_to_document_id.keys()),
             limit=limit,
         )
@@ -112,7 +123,7 @@ class SourceWorkflowMonitorService(
         extraction_rows = self._load_publication_extractions(
             source_id=source_id,
             run_id=selected_run_id,
-            ingestion_job_id=selected_run_job_id,
+            ingestion_job_id=run_scoped_ingestion_job_id,
             queue_item_ids=set(queue_id_to_document_id.keys()),
             limit=limit,
         )
@@ -124,11 +135,14 @@ class SourceWorkflowMonitorService(
         relation_review_payload = self._build_relation_review_payload(
             space_id=space_id,
             document_ids=document_ids,
-            document_external_record_id_by_id={
-                str(item["id"]): str(item["external_record_id"])
+            document_context_by_id={
+                str(item["id"]): {
+                    "external_record_id": item.get("external_record_id"),
+                    "source_type": item.get("source_type"),
+                    "metadata": item.get("metadata"),
+                }
                 for item in documents
                 if isinstance(item.get("id"), str)
-                and isinstance(item.get("external_record_id"), str)
             },
             queue_id_to_document_id=queue_id_to_document_id,
             extraction_rows=extraction_rows,
@@ -163,6 +177,8 @@ class SourceWorkflowMonitorService(
             selected_run=selected_run,
             graph_summary=graph_summary,
             relation_edge_delta=relation_edge_delta,
+            selected_run_id=selected_run_id,
+            selected_ingestion_job_id=run_scoped_ingestion_job_id,
         )
         artana_progress = self._build_artana_progress(
             selected_run_id=selected_run_id,

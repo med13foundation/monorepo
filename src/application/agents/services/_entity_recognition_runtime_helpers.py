@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from src.domain.entities.source_document import DocumentExtractionStatus
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
@@ -21,6 +23,7 @@ if TYPE_CHECKING:
 _ID_CLEANUP_PATTERN = re.compile(r"[^A-Za-z0-9_]+")
 _SEPARATOR_PATTERN = re.compile(r"[_\s]+")
 _ISO_DATE_ONLY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+logger = logging.getLogger(__name__)
 
 
 class _EntityRecognitionRuntimeHelpers:
@@ -64,7 +67,43 @@ class _EntityRecognitionRuntimeHelpers:
                 "metadata": self._merge_metadata(document.metadata, metadata_patch),
             },
         )
-        return self._source_documents.upsert(failed)
+        try:
+            return self._source_documents.upsert(failed)
+        except Exception as exc:  # noqa: BLE001
+            rolled_back = self._rollback_source_document_session(
+                context="persist_failed_document",
+            )
+            if not rolled_back:
+                raise
+            logger.warning(
+                "Retrying failed document persistence after rollback "
+                "(document_id=%s): %s",
+                document.id,
+                exc,
+            )
+            return self._source_documents.upsert(failed)
+
+    def _rollback_source_document_session(self, *, context: str) -> bool:
+        repository = self._source_documents
+        try:
+            session = getattr(repository, "session", None)
+        except AttributeError:
+            return False
+        if session is None:
+            return False
+        rollback = getattr(session, "rollback", None)
+        if rollback is None or not callable(rollback):
+            return False
+        try:
+            rollback()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Source document session rollback failed (context=%s): %s",
+                context,
+                exc,
+            )
+            return False
+        return True
 
     @staticmethod
     def _merge_metadata(
@@ -188,12 +227,10 @@ class _EntityRecognitionRuntimeHelpers:
 
     @staticmethod
     def _infer_domain_context(source_type: str) -> str:
-        normalized = source_type.strip().lower()
-        if normalized == "clinvar":
-            return "genomics"
-        if normalized == "pubmed":
-            return "clinical"
-        return "general"
+        resolved = DomainContextResolver.default_for_source_type(source_type)
+        if resolved is None:
+            return DomainContextResolver.GENERAL_DEFAULT_DOMAIN
+        return resolved
 
     @staticmethod
     def _normalize_seed_entity_ids(seed_entity_ids: list[str]) -> tuple[str, ...]:

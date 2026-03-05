@@ -1,6 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import KnowledgeGraphClient from '@/app/(dashboard)/spaces/[spaceId]/knowledge-graph-client'
-import { fetchKernelSubgraph, searchKernelGraph } from '@/lib/api/kernel'
+import {
+  fetchClaimParticipants,
+  fetchKernelSubgraph,
+  fetchRelationClaims,
+  fetchRelationConflicts,
+  searchKernelGraph,
+} from '@/lib/api/kernel'
 import { useSession } from 'next-auth/react'
 import type { GraphSearchResponse, KernelGraphSubgraphResponse } from '@/types/kernel'
 
@@ -20,6 +26,9 @@ jest.mock('next/navigation', () => ({
 
 jest.mock('@/lib/api/kernel', () => ({
   fetchKernelSubgraph: jest.fn(),
+  fetchRelationClaims: jest.fn(),
+  fetchRelationConflicts: jest.fn(),
+  fetchClaimParticipants: jest.fn(),
   searchKernelGraph: jest.fn(),
 }))
 
@@ -167,10 +176,36 @@ function buildSearchResponse(): GraphSearchResponse {
 describe('KnowledgeGraphClient', () => {
   const mockUseSession = useSession as jest.MockedFunction<typeof useSession>
   const mockFetchKernelSubgraph = fetchKernelSubgraph as jest.MockedFunction<typeof fetchKernelSubgraph>
+  const mockFetchRelationClaims = fetchRelationClaims as jest.MockedFunction<
+    typeof fetchRelationClaims
+  >
+  const mockFetchClaimParticipants = fetchClaimParticipants as jest.MockedFunction<
+    typeof fetchClaimParticipants
+  >
+  const mockFetchRelationConflicts = fetchRelationConflicts as jest.MockedFunction<
+    typeof fetchRelationConflicts
+  >
   const mockSearchKernelGraph = searchKernelGraph as jest.MockedFunction<typeof searchKernelGraph>
 
   beforeEach(() => {
     jest.clearAllMocks()
+    mockFetchRelationClaims.mockResolvedValue({
+      claims: [],
+      total: 0,
+      offset: 0,
+      limit: 200,
+    })
+    mockFetchClaimParticipants.mockResolvedValue({
+      claim_id: 'claim-1',
+      participants: [],
+      total: 0,
+    })
+    mockFetchRelationConflicts.mockResolvedValue({
+      conflicts: [],
+      total: 0,
+      offset: 0,
+      limit: 200,
+    })
     mockUseSession.mockReturnValue({
       data: {
         expires: new Date(Date.now() + 60_000).toISOString(),
@@ -296,10 +331,88 @@ describe('KnowledgeGraphClient', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
-    fireEvent.click(screen.getByLabelText('ASSOCIATED_WITH'))
+    const associatedWithCheckbox = screen.getByLabelText('ASSOCIATED_WITH')
+    expect(associatedWithCheckbox).toBeChecked()
+    fireEvent.click(associatedWithCheckbox)
 
     await waitFor(() => {
       expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('1')
+    })
+
+    const enableAllButton = screen.getByRole('button', { name: 'Enable all' })
+    expect(enableAllButton).toBeEnabled()
+    fireEvent.click(enableAllButton)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
+    })
+  })
+
+  it('uses trust preset as backend curation_statuses filter', async () => {
+    mockFetchKernelSubgraph
+      .mockResolvedValueOnce(buildSubgraphResponse())
+      .mockResolvedValueOnce(buildSubgraphResponse())
+
+    render(<KnowledgeGraphClient spaceId="space-1" />)
+
+    await waitFor(() => {
+      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(mockFetchKernelSubgraph.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          curation_statuses: null,
+        }),
+      )
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Approved only' }))
+
+    await waitFor(() => {
+      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(2)
+      expect(mockFetchKernelSubgraph.mock.calls[1]?.[1]).toEqual(
+        expect.objectContaining({
+          curation_statuses: ['APPROVED'],
+        }),
+      )
+    })
+  })
+
+  it('renders graph when relation conflict endpoint returns 405', async () => {
+    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
+    mockFetchRelationConflicts.mockRejectedValueOnce({ response: { status: 405 } })
+
+    render(<KnowledgeGraphClient spaceId="space-1" />)
+
+    await waitFor(() => {
+      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('mock-graph-node-count')).toHaveTextContent('3')
+      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
+    })
+  })
+
+  it('renders graph when relation conflict endpoint returns 500', async () => {
+    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
+    mockFetchRelationConflicts.mockRejectedValueOnce({ response: { status: 500 } })
+
+    render(<KnowledgeGraphClient spaceId="space-1" />)
+
+    await waitFor(() => {
+      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('mock-graph-node-count')).toHaveTextContent('3')
+      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
+    })
+  })
+
+  it('renders graph when relation claims overlay endpoint returns 500', async () => {
+    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
+    mockFetchRelationClaims.mockRejectedValueOnce({ response: { status: 500 } })
+
+    render(<KnowledgeGraphClient spaceId="space-1" />)
+
+    await waitFor(() => {
+      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('mock-graph-node-count')).toHaveTextContent('3')
+      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
     })
   })
 })

@@ -30,6 +30,8 @@ type SpaceDiscoveryAddResult =
   | { success: true; addedCount: number }
   | { success: false; error: string }
 
+const DISCOVERY_REQUEST_TIMEOUT_MS = 60000
+
 type IssueObject = {
   msg: string
   loc?: unknown
@@ -67,6 +69,15 @@ function getErrorMessage(error: unknown, fallback: string): string {
   if (statusCode === 401) {
     return "Session expired. Please sign in again."
   }
+  const timeoutCode = typeof axiosError.code === "string" ? axiosError.code : ""
+  const timeoutMessage =
+    typeof axiosError.message === "string" ? axiosError.message.toLowerCase() : ""
+  if (
+    timeoutCode === "ECONNABORTED" ||
+    timeoutMessage.includes("timeout")
+  ) {
+    return "Discovery backend is taking longer than expected. Please retry in a few seconds."
+  }
   const detail = axiosError.response?.data?.detail
   const formatted = formatErrorDetail(detail)
   if (formatted) {
@@ -85,9 +96,14 @@ async function ensureSpaceSession(
   spaceId: string,
   token: string
 ): Promise<DataDiscoverySessionResponse> {
+  const requestConfig = {
+    ...authHeaders(token),
+    timeout: DISCOVERY_REQUEST_TIMEOUT_MS,
+  }
+
   const { data: sessions } = await apiClient.get<DataDiscoverySessionResponse[]>(
     `/research-spaces/${spaceId}/discovery/sessions`,
-    authHeaders(token)
+    requestConfig
   )
 
   if (sessions.length > 0) {
@@ -105,7 +121,7 @@ async function ensureSpaceSession(
   const { data: created } = await apiClient.post<DataDiscoverySessionResponse>(
     `/research-spaces/${spaceId}/discovery/sessions`,
     payload,
-    authHeaders(token)
+    requestConfig
   )
   return created
 }
@@ -116,14 +132,18 @@ export async function fetchSpaceDiscoveryState(
   try {
     const token = await requireAccessToken()
     const session = await ensureSpaceSession(spaceId, token)
+    const requestConfig = {
+      ...authHeaders(token),
+      timeout: DISCOVERY_REQUEST_TIMEOUT_MS,
+    }
     const [stateResponse, catalogResponse] = await Promise.all([
       apiClient.get<OrchestratedSessionState>(
         `/data-discovery/sessions/${session.id}/state`,
-        authHeaders(token)
+        requestConfig
       ),
       apiClient.get<SourceCatalogEntry[]>(
         `/research-spaces/${spaceId}/discovery/catalog`,
-        authHeaders(token)
+        requestConfig
       ),
     ])
 
@@ -153,10 +173,14 @@ export async function updateSpaceDiscoverySelection(
   try {
     const token = await requireAccessToken()
     const payload: UpdateSelectionRequest = { source_ids: sourceIds }
+    const requestConfig = {
+      ...authHeaders(token),
+      timeout: DISCOVERY_REQUEST_TIMEOUT_MS,
+    }
     const response = await apiClient.post<OrchestratedSessionState>(
       `/data-discovery/sessions/${sessionId}/selection`,
       payload,
-      authHeaders(token)
+      requestConfig
     )
     revalidatePath(path)
     return { success: true, state: response.data }
@@ -179,6 +203,10 @@ export async function addSpaceDiscoverySources(
 ): Promise<SpaceDiscoveryAddResult> {
   try {
     const token = await requireAccessToken()
+    const requestConfig = {
+      ...authHeaders(token),
+      timeout: DISCOVERY_REQUEST_TIMEOUT_MS,
+    }
     const results = await Promise.allSettled(
       sourceIds.map(async (catalogEntryId) => {
         const payload: AddToSpaceRequest = {
@@ -189,7 +217,7 @@ export async function addSpaceDiscoverySources(
         await apiClient.post<{ data_source_id: string }>(
           `/data-discovery/sessions/${sessionId}/add-to-space`,
           payload,
-          authHeaders(token)
+          requestConfig
         )
         return catalogEntryId
       })

@@ -1,8 +1,11 @@
-import { apiDelete, apiGet, apiPost, apiPut, type ApiRequestOptions } from '@/lib/api/client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut, type ApiRequestOptions } from '@/lib/api/client'
 import type {
+  KernelEntityEmbeddingRefreshRequest,
+  KernelEntityEmbeddingRefreshResponse,
   KernelEntityCreateRequest,
   KernelEntityListResponse,
   KernelEntityResponse,
+  KernelEntitySimilarityListResponse,
   KernelEntityUpdateRequest,
   KernelEntityUpsertResponse,
   KernelGraphExportResponse,
@@ -13,9 +16,31 @@ import type {
   KernelObservationCreateRequest,
   KernelObservationListResponse,
   KernelObservationResponse,
+  ClaimEvidenceListResponse,
+  CreateManualHypothesisRequest,
+  GenerateHypothesesRequest,
+  GenerateHypothesesResponse,
+  ClaimRelationCreateRequest,
+  ClaimRelationListResponse,
+  ClaimRelationResponse,
+  ClaimRelationReviewStatus,
+  ClaimRelationType,
+  ClaimRelationReviewUpdateRequest,
+  ClaimParticipantBackfillRequest,
+  ClaimParticipantBackfillResponse,
+  ClaimParticipantCoverageResponse,
+  ClaimParticipantListResponse,
+  HypothesisListResponse,
+  HypothesisResponse,
   KernelProvenanceListResponse,
   KernelProvenanceResponse,
   KernelRelationCreateRequest,
+  KernelRelationSuggestionListResponse,
+  KernelRelationSuggestionRequest,
+  RelationConflictListResponse,
+  RelationClaimListResponse,
+  RelationClaimResponse,
+  RelationClaimTriageRequest,
   KernelRelationCurationUpdateRequest,
   KernelRelationListResponse,
   KernelRelationResponse,
@@ -84,6 +109,54 @@ export async function fetchKernelEntity(
     throw new Error('Authentication token is required for fetchKernelEntity')
   }
   return apiGet<KernelEntityResponse>(`/research-spaces/${spaceId}/entities/${entityId}`, { token })
+}
+
+export interface KernelEntitySimilarParams {
+  limit?: number
+  min_similarity?: number
+  target_entity_types?: string[]
+}
+
+export async function fetchKernelSimilarEntities(
+  spaceId: string,
+  entityId: string,
+  params: KernelEntitySimilarParams = {},
+  token?: string,
+): Promise<KernelEntitySimilarityListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchKernelSimilarEntities')
+  }
+
+  const options: ApiRequestOptions<KernelEntitySimilarityListResponse> = {
+    token,
+    params: {
+      limit: params.limit ?? 20,
+      min_similarity: params.min_similarity ?? 0.72,
+      ...(params.target_entity_types && params.target_entity_types.length > 0
+        ? { target_entity_types: params.target_entity_types.join(',') }
+        : {}),
+    },
+  }
+
+  return apiGet<KernelEntitySimilarityListResponse>(
+    `/research-spaces/${spaceId}/entities/${entityId}/similar`,
+    options,
+  )
+}
+
+export async function refreshKernelEntityEmbeddings(
+  spaceId: string,
+  payload: KernelEntityEmbeddingRefreshRequest,
+  token?: string,
+): Promise<KernelEntityEmbeddingRefreshResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for refreshKernelEntityEmbeddings')
+  }
+  return apiPost<KernelEntityEmbeddingRefreshResponse>(
+    `/research-spaces/${spaceId}/entities/embeddings/refresh`,
+    payload,
+    { token },
+  )
 }
 
 export async function updateKernelEntity(
@@ -177,6 +250,9 @@ export async function fetchKernelObservation(
 export interface KernelRelationListParams {
   relation_type?: string
   curation_status?: string
+  validation_state?: string
+  source_document_id?: string
+  certainty_band?: 'HIGH' | 'MEDIUM' | 'LOW'
   node_query?: string
   node_ids?: string[]
   offset?: number
@@ -197,6 +273,9 @@ export async function fetchKernelRelations(
     params: {
       ...(params.relation_type ? { relation_type: params.relation_type } : {}),
       ...(params.curation_status ? { curation_status: params.curation_status } : {}),
+      ...(params.validation_state ? { validation_state: params.validation_state } : {}),
+      ...(params.source_document_id ? { source_document_id: params.source_document_id } : {}),
+      ...(params.certainty_band ? { certainty_band: params.certainty_band } : {}),
       ...(params.node_query ? { node_query: params.node_query } : {}),
       ...(params.node_ids && params.node_ids.length > 0
         ? { node_ids: params.node_ids.join(',') }
@@ -220,6 +299,21 @@ export async function createKernelRelation(
   return apiPost<KernelRelationResponse>(`/research-spaces/${spaceId}/relations`, payload, { token })
 }
 
+export async function suggestKernelRelations(
+  spaceId: string,
+  payload: KernelRelationSuggestionRequest,
+  token?: string,
+): Promise<KernelRelationSuggestionListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for suggestKernelRelations')
+  }
+  return apiPost<KernelRelationSuggestionListResponse>(
+    `/research-spaces/${spaceId}/graph/relation-suggestions`,
+    payload,
+    { token },
+  )
+}
+
 export async function updateKernelRelationCurationStatus(
   spaceId: string,
   relationId: string,
@@ -231,6 +325,303 @@ export async function updateKernelRelationCurationStatus(
   }
   return apiPut<KernelRelationResponse>(
     `/research-spaces/${spaceId}/relations/${relationId}`,
+    payload,
+    { token },
+  )
+}
+
+export interface RelationClaimListParams {
+  claim_status?: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'
+  validation_state?: string
+  persistability?: 'PERSISTABLE' | 'NON_PERSISTABLE'
+  polarity?: 'SUPPORT' | 'REFUTE' | 'UNCERTAIN' | 'HYPOTHESIS'
+  source_document_id?: string
+  relation_type?: string
+  linked_relation_id?: string
+  certainty_band?: 'HIGH' | 'MEDIUM' | 'LOW'
+  offset?: number
+  limit?: number
+}
+
+export async function fetchRelationClaims(
+  spaceId: string,
+  params: RelationClaimListParams = {},
+  token?: string,
+): Promise<RelationClaimListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchRelationClaims')
+  }
+
+  const options: ApiRequestOptions<RelationClaimListResponse> = {
+    token,
+    params: {
+      ...(params.claim_status ? { claim_status: params.claim_status } : {}),
+      ...(params.validation_state ? { validation_state: params.validation_state } : {}),
+      ...(params.persistability ? { persistability: params.persistability } : {}),
+      ...(params.polarity ? { polarity: params.polarity } : {}),
+      ...(params.source_document_id ? { source_document_id: params.source_document_id } : {}),
+      ...(params.relation_type ? { relation_type: params.relation_type } : {}),
+      ...(params.linked_relation_id ? { linked_relation_id: params.linked_relation_id } : {}),
+      ...(params.certainty_band ? { certainty_band: params.certainty_band } : {}),
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 50,
+    },
+  }
+
+  return apiGet<RelationClaimListResponse>(
+    `/research-spaces/${spaceId}/relation-claims`,
+    options,
+  )
+}
+
+export interface HypothesisListParams {
+  offset?: number
+  limit?: number
+}
+
+export async function fetchHypotheses(
+  spaceId: string,
+  params: HypothesisListParams = {},
+  token?: string,
+): Promise<HypothesisListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchHypotheses')
+  }
+  const options: ApiRequestOptions<HypothesisListResponse> = {
+    token,
+    params: {
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 50,
+    },
+  }
+  return apiGet<HypothesisListResponse>(
+    `/research-spaces/${spaceId}/hypotheses`,
+    options,
+  )
+}
+
+export async function createManualHypothesis(
+  spaceId: string,
+  payload: CreateManualHypothesisRequest,
+  token?: string,
+): Promise<HypothesisResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for createManualHypothesis')
+  }
+  return apiPost<HypothesisResponse>(
+    `/research-spaces/${spaceId}/hypotheses/manual`,
+    payload,
+    { token },
+  )
+}
+
+export async function generateHypotheses(
+  spaceId: string,
+  payload: GenerateHypothesesRequest,
+  token?: string,
+): Promise<GenerateHypothesesResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for generateHypotheses')
+  }
+  return apiPost<GenerateHypothesesResponse>(
+    `/research-spaces/${spaceId}/hypotheses/generate`,
+    payload,
+    { token, timeout: 0 },
+  )
+}
+
+export interface ClaimRelationListParams {
+  relation_type?: ClaimRelationType
+  review_status?: ClaimRelationReviewStatus
+  source_claim_id?: string
+  target_claim_id?: string
+  claim_id?: string
+  offset?: number
+  limit?: number
+}
+
+export async function fetchClaimRelations(
+  spaceId: string,
+  params: ClaimRelationListParams = {},
+  token?: string,
+): Promise<ClaimRelationListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchClaimRelations')
+  }
+
+  const options: ApiRequestOptions<ClaimRelationListResponse> = {
+    token,
+    params: {
+      ...(params.relation_type ? { relation_type: params.relation_type } : {}),
+      ...(params.review_status ? { review_status: params.review_status } : {}),
+      ...(params.source_claim_id ? { source_claim_id: params.source_claim_id } : {}),
+      ...(params.target_claim_id ? { target_claim_id: params.target_claim_id } : {}),
+      ...(params.claim_id ? { claim_id: params.claim_id } : {}),
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 100,
+    },
+  }
+
+  return apiGet<ClaimRelationListResponse>(
+    `/research-spaces/${spaceId}/claim-relations`,
+    options,
+  )
+}
+
+export async function createClaimRelation(
+  spaceId: string,
+  payload: ClaimRelationCreateRequest,
+  token?: string,
+): Promise<ClaimRelationResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for createClaimRelation')
+  }
+
+  return apiPost<ClaimRelationResponse>(
+    `/research-spaces/${spaceId}/claim-relations`,
+    payload,
+    { token },
+  )
+}
+
+export async function updateClaimRelationReview(
+  spaceId: string,
+  relationId: string,
+  payload: ClaimRelationReviewUpdateRequest,
+  token?: string,
+): Promise<ClaimRelationResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for updateClaimRelationReview')
+  }
+
+  return apiPatch<ClaimRelationResponse>(
+    `/research-spaces/${spaceId}/claim-relations/${relationId}`,
+    payload,
+    { token },
+  )
+}
+
+export async function fetchClaimParticipants(
+  spaceId: string,
+  claimId: string,
+  token?: string,
+): Promise<ClaimParticipantListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchClaimParticipants')
+  }
+  return apiGet<ClaimParticipantListResponse>(
+    `/research-spaces/${spaceId}/claims/${claimId}/participants`,
+    { token },
+  )
+}
+
+export async function fetchClaimsByEntity(
+  spaceId: string,
+  entityId: string,
+  params: { limit?: number; offset?: number } = {},
+  token?: string,
+): Promise<RelationClaimListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchClaimsByEntity')
+  }
+  return apiGet<RelationClaimListResponse>(
+    `/research-spaces/${spaceId}/claims/by-entity/${entityId}`,
+    {
+      token,
+      params: {
+        limit: params.limit ?? 20,
+        offset: params.offset ?? 0,
+      },
+    },
+  )
+}
+
+export async function fetchClaimParticipantCoverage(
+  spaceId: string,
+  params: { limit?: number; offset?: number } = {},
+  token?: string,
+): Promise<ClaimParticipantCoverageResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchClaimParticipantCoverage')
+  }
+  return apiGet<ClaimParticipantCoverageResponse>(
+    `/research-spaces/${spaceId}/claim-participants/coverage`,
+    {
+      token,
+      params: {
+        limit: params.limit ?? 500,
+        offset: params.offset ?? 0,
+      },
+    },
+  )
+}
+
+export async function runClaimParticipantBackfill(
+  spaceId: string,
+  payload: ClaimParticipantBackfillRequest,
+  token?: string,
+): Promise<ClaimParticipantBackfillResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for runClaimParticipantBackfill')
+  }
+  return apiPost<ClaimParticipantBackfillResponse>(
+    `/research-spaces/${spaceId}/claim-participants/backfill`,
+    payload,
+    { token },
+  )
+}
+
+export async function fetchRelationClaimEvidence(
+  spaceId: string,
+  claimId: string,
+  token?: string,
+): Promise<ClaimEvidenceListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchRelationClaimEvidence')
+  }
+  return apiGet<ClaimEvidenceListResponse>(
+    `/research-spaces/${spaceId}/relation-claims/${claimId}/evidence`,
+    { token },
+  )
+}
+
+export interface RelationConflictListParams {
+  offset?: number
+  limit?: number
+}
+
+export async function fetchRelationConflicts(
+  spaceId: string,
+  params: RelationConflictListParams = {},
+  token?: string,
+): Promise<RelationConflictListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchRelationConflicts')
+  }
+  const options: ApiRequestOptions<RelationConflictListResponse> = {
+    token,
+    params: {
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 50,
+    },
+  }
+  return apiGet<RelationConflictListResponse>(
+    `/research-spaces/${spaceId}/relations/conflicts`,
+    options,
+  )
+}
+
+export async function updateRelationClaimStatus(
+  spaceId: string,
+  claimId: string,
+  payload: RelationClaimTriageRequest,
+  token?: string,
+): Promise<RelationClaimResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for updateRelationClaimStatus')
+  }
+  return apiPatch<RelationClaimResponse>(
+    `/research-spaces/${spaceId}/relation-claims/${claimId}`,
     payload,
     { token },
   )

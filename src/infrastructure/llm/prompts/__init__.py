@@ -27,6 +27,9 @@ from src.infrastructure.llm.prompts.graph_connection import (
     PUBMED_GRAPH_CONNECTION_SYSTEM_PROMPT,
 )
 from src.infrastructure.llm.prompts.graph_search import GRAPH_SEARCH_SYSTEM_PROMPT
+from src.infrastructure.llm.prompts.pubmed_relevance import (
+    PUBMED_RELEVANCE_SYSTEM_PROMPT,
+)
 from src.infrastructure.llm.prompts.query.pubmed import PUBMED_QUERY_SYSTEM_PROMPT
 
 __all__ = [
@@ -41,4 +44,5 @@ __all__ = [
     "GRAPH_SEARCH_SYSTEM_PROMPT",
     "EVIDENCE_INSTRUCTION",
     "PUBMED_QUERY_SYSTEM_PROMPT",
+    "PUBMED_RELEVANCE_SYSTEM_PROMPT",
 ]

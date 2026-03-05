@@ -279,6 +279,7 @@ def test_create_relation_success(
         EntityModel(id="src-1", research_space_id="space-1", entity_type="GENE"),
         EntityModel(id="tgt-1", research_space_id="space-1", entity_type="DISEASE"),
     ]
+    mock_dictionary_repo.resolve_relation_synonym.return_value = None
     mock_dictionary_repo.is_triple_allowed.return_value = True
 
     # Execute
@@ -292,6 +293,11 @@ def test_create_relation_success(
 
     # Verify
     mock_relation_repo.create.assert_called_once()
+    mock_dictionary_repo.is_triple_allowed.assert_called_once_with(
+        "GENE",
+        "ASSOCIATED_WITH",
+        "DISEASE",
+    )
 
 
 def test_create_relation_constraint_violation(
@@ -310,6 +316,7 @@ def test_create_relation_constraint_violation(
         EntityModel(id="src-1", research_space_id="space-1", entity_type="GENE"),
         EntityModel(id="tgt-1", research_space_id="space-1", entity_type="DISEASE"),
     ]
+    mock_dictionary_repo.resolve_relation_synonym.return_value = None
     # Constraint says NO
     mock_dictionary_repo.is_triple_allowed.return_value = False
 
@@ -321,6 +328,85 @@ def test_create_relation_constraint_violation(
             relation_type="BAD_RELATION",
             target_id="tgt-1",
         )
+
+
+def test_create_relation_canonicalizes_alias_before_constraint_check(
+    mock_relation_repo,
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelRelationService(
+        mock_relation_repo,
+        mock_entity_repo,
+        mock_dictionary_repo,
+    )
+
+    mock_entity_repo.get_by_id.side_effect = [
+        EntityModel(id="src-1", research_space_id="space-1", entity_type="GENE"),
+        EntityModel(id="tgt-1", research_space_id="space-1", entity_type="DISEASE"),
+    ]
+
+    resolved_relation = Mock()
+    resolved_relation.id = "CAUSES"
+    mock_dictionary_repo.resolve_relation_synonym.return_value = resolved_relation
+    mock_dictionary_repo.is_triple_allowed.return_value = True
+    mock_dictionary_repo.requires_evidence.return_value = False
+
+    service.create_relation(
+        research_space_id="space-1",
+        source_id="src-1",
+        relation_type="drives",
+        target_id="tgt-1",
+    )
+
+    mock_dictionary_repo.resolve_relation_synonym.assert_called_once_with("DRIVES")
+    mock_dictionary_repo.is_triple_allowed.assert_called_once_with(
+        "GENE",
+        "CAUSES",
+        "DISEASE",
+    )
+    mock_relation_repo.create.assert_called_once()
+    assert mock_relation_repo.create.call_args.kwargs["relation_type"] == "CAUSES"
+
+
+def test_create_relation_normalizes_relation_type_when_no_synonym_match(
+    mock_relation_repo,
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelRelationService(
+        mock_relation_repo,
+        mock_entity_repo,
+        mock_dictionary_repo,
+    )
+
+    mock_entity_repo.get_by_id.side_effect = [
+        EntityModel(id="src-1", research_space_id="space-1", entity_type="GENE"),
+        EntityModel(id="tgt-1", research_space_id="space-1", entity_type="DISEASE"),
+    ]
+    mock_dictionary_repo.resolve_relation_synonym.return_value = None
+    mock_dictionary_repo.is_triple_allowed.return_value = True
+    mock_dictionary_repo.requires_evidence.return_value = False
+
+    service.create_relation(
+        research_space_id="space-1",
+        source_id="src-1",
+        relation_type=" associated_with ",
+        target_id="tgt-1",
+    )
+
+    mock_dictionary_repo.resolve_relation_synonym.assert_called_once_with(
+        "ASSOCIATED_WITH",
+    )
+    mock_dictionary_repo.is_triple_allowed.assert_called_once_with(
+        "GENE",
+        "ASSOCIATED_WITH",
+        "DISEASE",
+    )
+    mock_relation_repo.create.assert_called_once()
+    assert (
+        mock_relation_repo.create.call_args.kwargs["relation_type"] == "ASSOCIATED_WITH"
+    )
 
 
 def test_get_neighborhood_passes_limit_to_repository(

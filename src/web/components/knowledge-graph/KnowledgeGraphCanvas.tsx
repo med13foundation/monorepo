@@ -1,104 +1,36 @@
 'use client'
 
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Minus, Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { GraphEdge, GraphModel, GraphNode } from '@/lib/graph/model'
+import type { GraphModel } from '@/lib/graph/model'
 import { CytoscapeGraphViewAdapter } from '@/lib/graph/cytoscape-adapter'
 import type { GraphHoverEvent } from '@/lib/graph/view-adapter'
+import {
+  buildGraphCanvasTooltip,
+  type ClaimEvidencePreview,
+  MAP_GRID_STYLE,
+} from './knowledge-graph-canvas-tooltips'
+
+interface KnowledgeGraphCanvasHover {
+  nodeId: string | null
+  edgeId: string | null
+}
 
 interface KnowledgeGraphCanvasProps {
   graph: GraphModel
   highlightedNodeIds: ReadonlySet<string>
   highlightedEdgeIds: ReadonlySet<string>
   onNodeClick: (nodeId: string) => void
-  onHoverNodeChange?: (nodeId: string | null) => void
+  onEdgeClick?: (edgeId: string) => void
+  onHoverChange?: (hover: KnowledgeGraphCanvasHover) => void
+  claimEvidenceByClaimId?: Readonly<Record<string, ClaimEvidencePreview>>
   /** Called on any tap on the canvas (background, node, or edge). Use e.g. to collapse overlays. */
   onCanvasTap?: () => void
   chrome?: 'full' | 'minimal' | 'none'
   className?: string
-}
-
-interface TooltipPosition {
-  left: number
-  top: number
-}
-
-const TOOLTIP_WIDTH = 280
-const TOOLTIP_HEIGHT = 152
-const MAP_GRID_STYLE: CSSProperties = {
-  backgroundImage:
-    'linear-gradient(to right, rgba(100, 116, 139, 0.12) 1px, transparent 1px), linear-gradient(to bottom, rgba(100, 116, 139, 0.1) 1px, transparent 1px)',
-  backgroundSize: '44px 44px',
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(value, max))
-}
-
-function tooltipPosition(
-  hoverEvent: GraphHoverEvent,
-  containerWidth: number,
-  containerHeight: number,
-): TooltipPosition {
-  const rawLeft = hoverEvent.containerX + 14
-  const rawTop = hoverEvent.containerY + 14
-  return {
-    left: clamp(rawLeft, 8, Math.max(8, containerWidth - TOOLTIP_WIDTH - 8)),
-    top: clamp(rawTop, 8, Math.max(8, containerHeight - TOOLTIP_HEIGHT - 8)),
-  }
-}
-
-function confidencePercent(confidence: number): string {
-  return `${(confidence * 100).toFixed(1)}%`
-}
-
-function formattedDate(value: string): string {
-  const parsed = Date.parse(value)
-  if (!Number.isFinite(parsed)) {
-    return 'Unknown'
-  }
-  return new Date(parsed).toLocaleDateString()
-}
-
-function NodeTooltipContent({ node, degree }: { node: GraphNode; degree: number }) {
-  return (
-    <div className="space-y-2">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {node.entityType}
-      </div>
-      <div className="text-sm font-medium text-foreground">{node.label}</div>
-      <div className="truncate font-mono text-[11px] text-muted-foreground">{node.id}</div>
-      <div className="grid grid-cols-2 gap-x-2 gap-y-1 border-t pt-2 text-[11px] text-muted-foreground">
-        <div>Connections</div>
-        <div className="text-right font-semibold text-foreground">{degree}</div>
-        <div>Updated</div>
-        <div className="text-right">{formattedDate(node.updatedAt)}</div>
-      </div>
-    </div>
-  )
-}
-
-function EdgeTooltipContent({ edge }: { edge: GraphEdge }) {
-  return (
-    <div className="space-y-2">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {edge.relationType}
-      </div>
-      <div className="text-sm font-medium text-foreground">
-        {edge.curationStatus} • {confidencePercent(edge.confidence)}
-      </div>
-      <div className="truncate font-mono text-[11px] text-muted-foreground">{edge.id}</div>
-      <div className="grid grid-cols-2 gap-x-2 gap-y-1 border-t pt-2 text-[11px] text-muted-foreground">
-        <div>Evidence Sources</div>
-        <div className="text-right font-semibold text-foreground">{edge.sourceCount}</div>
-        <div>Tier</div>
-        <div className="truncate text-right">{edge.highestEvidenceTier ?? 'Unknown'}</div>
-      </div>
-    </div>
-  )
 }
 
 export default function KnowledgeGraphCanvas({
@@ -106,7 +38,9 @@ export default function KnowledgeGraphCanvas({
   highlightedNodeIds,
   highlightedEdgeIds,
   onNodeClick,
-  onHoverNodeChange,
+  onEdgeClick,
+  onHoverChange,
+  claimEvidenceByClaimId = {},
   onCanvasTap,
   chrome = 'full',
   className,
@@ -115,7 +49,10 @@ export default function KnowledgeGraphCanvas({
   const adapterRef = useRef<CytoscapeGraphViewAdapter | null>(null)
   const [hoverEvent, setHoverEvent] = useState<GraphHoverEvent | null>(null)
   const hoverKeyRef = useRef<string>('none')
-  const hoveredNodeIdRef = useRef<string | null>(null)
+  const hoverStateRef = useRef<KnowledgeGraphCanvasHover>({
+    nodeId: null,
+    edgeId: null,
+  })
 
   useEffect(() => {
     const container = containerRef.current
@@ -128,18 +65,24 @@ export default function KnowledgeGraphCanvas({
         onNodeClick(nodeId)
         adapterRef.current?.focusNode(nodeId)
       },
+      onEdgeClick,
       onCanvasTap,
-      onHoverChange: (event) => {
+      onHoverChange: (event: GraphHoverEvent | null) => {
         const nextHoverKey = event ? `${event.kind}:${event.id}` : 'none'
         if (nextHoverKey !== hoverKeyRef.current) {
           hoverKeyRef.current = nextHoverKey
           setHoverEvent(event)
         }
-
-        const nextHoveredNodeId = !event || event.kind !== 'node' ? null : event.id
-        if (nextHoveredNodeId !== hoveredNodeIdRef.current) {
-          hoveredNodeIdRef.current = nextHoveredNodeId
-          onHoverNodeChange?.(nextHoveredNodeId)
+        const nextHoverState: KnowledgeGraphCanvasHover = {
+          nodeId: !event || event.kind !== 'node' ? null : event.id,
+          edgeId: !event || event.kind !== 'edge' ? null : event.id,
+        }
+        if (
+          nextHoverState.nodeId !== hoverStateRef.current.nodeId ||
+          nextHoverState.edgeId !== hoverStateRef.current.edgeId
+        ) {
+          hoverStateRef.current = nextHoverState
+          onHoverChange?.(nextHoverState)
         }
       },
     })
@@ -150,9 +93,9 @@ export default function KnowledgeGraphCanvas({
       adapter.unmount()
       adapterRef.current = null
       hoverKeyRef.current = 'none'
-      hoveredNodeIdRef.current = null
+      hoverStateRef.current = { nodeId: null, edgeId: null }
     }
-  }, [onCanvasTap, onHoverNodeChange, onNodeClick])
+  }, [onCanvasTap, onEdgeClick, onHoverChange, onNodeClick])
 
   useEffect(() => {
     adapterRef.current?.setGraph(graph)
@@ -165,35 +108,19 @@ export default function KnowledgeGraphCanvas({
   const hasRenderableGraph = graph.stats.nodeCount > 0
 
   const tooltip = useMemo(() => {
-    if (!hoverEvent || !containerRef.current) {
+    const container = containerRef.current
+    if (!container) {
       return null
     }
-    const rect = containerRef.current.getBoundingClientRect()
-    const position = tooltipPosition(hoverEvent, rect.width, rect.height)
-    if (hoverEvent.kind === 'node') {
-      const node = graph.nodeById[hoverEvent.id]
-      if (!node) {
-        return null
-      }
-      return {
-        content: (
-          <NodeTooltipContent
-            node={node}
-            degree={graph.incidentEdges[node.id]?.length ?? 0}
-          />
-        ),
-        position,
-      }
-    }
-    const edge = graph.edgeById[hoverEvent.id]
-    if (!edge) {
-      return null
-    }
-    return {
-      content: <EdgeTooltipContent edge={edge} />,
-      position,
-    }
-  }, [graph.edgeById, graph.incidentEdges, graph.nodeById, hoverEvent])
+    const rect = container.getBoundingClientRect()
+    return buildGraphCanvasTooltip({
+      hoverEvent,
+      containerWidth: rect.width,
+      containerHeight: rect.height,
+      graph,
+      claimEvidenceByClaimId,
+    })
+  }, [claimEvidenceByClaimId, graph, hoverEvent])
 
   const isMinimalChrome = chrome === 'minimal'
 

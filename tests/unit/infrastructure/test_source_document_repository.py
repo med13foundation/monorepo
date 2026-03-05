@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -188,3 +188,70 @@ def test_upsert_round_trips_non_uuid_agent_run_ids(session: Session) -> None:
     assert fetched is not None
     assert fetched.enrichment_agent_run_id == "enrich:pubmed:sha256:abc123"
     assert fetched.extraction_agent_run_id == "extract:pubmed:sha256:def456"
+
+
+def test_recover_stale_in_progress_extraction(session: Session) -> None:
+    source_id = _seed_source(session)
+    repository = SqlAlchemySourceDocumentRepository(session)
+    now = datetime.now(UTC)
+    stale_document = SourceDocument(
+        id=uuid4(),
+        source_id=source_id,
+        external_record_id="pubmed:pmid:stale-in-progress",
+        source_type=SourceType.PUBMED,
+        document_format=DocumentFormat.MEDLINE_XML,
+        enrichment_status=EnrichmentStatus.ENRICHED,
+        extraction_status=DocumentExtractionStatus.IN_PROGRESS,
+        extraction_agent_run_id="entity-run-stale",
+        updated_at=now - timedelta(minutes=45),
+    )
+    fresh_document = SourceDocument(
+        id=uuid4(),
+        source_id=source_id,
+        external_record_id="pubmed:pmid:fresh-in-progress",
+        source_type=SourceType.PUBMED,
+        document_format=DocumentFormat.MEDLINE_XML,
+        enrichment_status=EnrichmentStatus.ENRICHED,
+        extraction_status=DocumentExtractionStatus.IN_PROGRESS,
+        extraction_agent_run_id="entity-run-fresh",
+        updated_at=now - timedelta(minutes=1),
+    )
+    pending_document = SourceDocument(
+        id=uuid4(),
+        source_id=source_id,
+        external_record_id="pubmed:pmid:already-pending",
+        source_type=SourceType.PUBMED,
+        document_format=DocumentFormat.MEDLINE_XML,
+        enrichment_status=EnrichmentStatus.ENRICHED,
+        extraction_status=DocumentExtractionStatus.PENDING,
+    )
+    repository.upsert_many([stale_document, fresh_document, pending_document])
+
+    recovered = repository.recover_stale_in_progress_extraction(
+        stale_before=now - timedelta(minutes=10),
+        source_id=source_id,
+    )
+    assert recovered == 1
+
+    persisted_stale = repository.get_by_id(stale_document.id)
+    assert persisted_stale is not None
+    assert persisted_stale.extraction_status == DocumentExtractionStatus.PENDING
+    assert persisted_stale.extraction_agent_run_id is None
+    assert (
+        persisted_stale.metadata.get("extraction_stale_recovery_reason")
+        == "in_progress_timeout_recovered_to_pending"
+    )
+
+    persisted_fresh = repository.get_by_id(fresh_document.id)
+    assert persisted_fresh is not None
+    assert persisted_fresh.extraction_status == DocumentExtractionStatus.IN_PROGRESS
+
+    pending_ids = {
+        document.id
+        for document in repository.list_pending_extraction(
+            source_id=source_id,
+            limit=10,
+        )
+    }
+    assert stale_document.id in pending_ids
+    assert pending_document.id in pending_ids

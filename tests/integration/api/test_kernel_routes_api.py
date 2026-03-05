@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from src.database import session as session_module
 from src.database.seeds.seeder import (
@@ -21,8 +22,12 @@ from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
 from src.infrastructure.security.jwt_provider import JWTProvider
 from src.main import create_app
 from src.models.database.base import Base
+from src.models.database.kernel.claim_evidence import ClaimEvidenceModel
 from src.models.database.kernel.dictionary import TransformRegistryModel
+from src.models.database.kernel.relation_claims import RelationClaimModel
+from src.models.database.kernel.relations import RelationEvidenceModel
 from src.models.database.research_space import ResearchSpaceModel
+from src.models.database.source_document import SourceDocumentModel
 from src.models.database.user import UserModel
 from src.models.database.user_data_source import (
     SourceStatusEnum,
@@ -104,6 +109,7 @@ def _create_kernel_relation_for_space(
     relation_type: str = "ASSOCIATED_WITH",
     confidence: float = 0.8,
     evidence_summary: str = "Test evidence",
+    evidence_sentence: str | None = None,
     evidence_tier: str = "LITERATURE",
 ) -> UUID:
     response = test_client.post(
@@ -115,6 +121,7 @@ def _create_kernel_relation_for_space(
             "target_id": str(target_id),
             "confidence": confidence,
             "evidence_summary": evidence_summary,
+            "evidence_sentence": evidence_sentence,
             "evidence_tier": evidence_tier,
             "provenance_id": None,
         },
@@ -340,7 +347,12 @@ def test_kernel_entity_observation_relation_flow(
         headers=headers,
     )
     assert list_rel.status_code == 200
-    assert list_rel.json()["total"] == 1
+    list_rel_payload = list_rel.json()
+    assert list_rel_payload["total"] == 1
+    relation_row = list_rel_payload["relations"][0]
+    assert relation_row["evidence_summary"] == "Test evidence"
+    assert relation_row["evidence_sentence"] is None
+    assert relation_row["paper_links"] == []
 
     # 6) Graph export includes nodes + edge
     graph = test_client.get(
@@ -492,6 +504,160 @@ def test_graph_subgraph_starter_mode_returns_bounded_sorted_edges(
     assert returned_statuses == ["APPROVED", "UNDER_REVIEW", "DRAFT", "REJECTED"]
 
 
+def test_graph_subgraph_starter_mode_defaults_to_single_connected_component(
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    # Component A
+    gene_a = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="GENE-A",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    phenotype_a_1 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype A-1",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    phenotype_a_2 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype A-2",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    relation_a_approved = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=gene_a,
+        target_id=phenotype_a_1,
+    )
+    _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=gene_a,
+        target_id=phenotype_a_2,
+    )
+
+    # Component B (disconnected from A)
+    gene_b = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="GENE-B",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    phenotype_b_1 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype B-1",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    phenotype_b_2 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype B-2",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    relation_b_approved = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=gene_b,
+        target_id=phenotype_b_1,
+    )
+    _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=gene_b,
+        target_id=phenotype_b_2,
+    )
+
+    promote_a = test_client.put(
+        f"/research-spaces/{space.id}/relations/{relation_a_approved}",
+        headers=headers,
+        json={"curation_status": "APPROVED"},
+    )
+    assert promote_a.status_code == 200, promote_a.text
+
+    promote_b = test_client.put(
+        f"/research-spaces/{space.id}/relations/{relation_b_approved}",
+        headers=headers,
+        json={"curation_status": "APPROVED"},
+    )
+    assert promote_b.status_code == 200, promote_b.text
+
+    response = test_client.post(
+        f"/research-spaces/{space.id}/graph/subgraph",
+        headers=headers,
+        json={
+            "mode": "starter",
+            "seed_entity_ids": [],
+            "depth": 2,
+            "top_k": 25,
+            "max_nodes": 20,
+            "max_edges": 20,
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["edges"]) >= 1
+
+    adjacency: dict[str, set[str]] = {}
+    for edge in payload["edges"]:
+        source_id = str(edge["source_id"])
+        target_id = str(edge["target_id"])
+        adjacency.setdefault(source_id, set()).add(target_id)
+        adjacency.setdefault(target_id, set()).add(source_id)
+
+    assert adjacency
+    visited: set[str] = set()
+    pending: list[str] = [next(iter(adjacency))]
+    while pending:
+        node_id = pending.pop()
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        pending.extend(
+            neighbor_id
+            for neighbor_id in adjacency[node_id]
+            if neighbor_id not in visited
+        )
+
+    assert visited == set(adjacency.keys())
+
+
 def test_graph_subgraph_seeded_mode_honors_filters_and_bounds(
     test_client,
     db_session,
@@ -634,6 +800,685 @@ def test_graph_subgraph_validation_and_membership_guards(
     )
     assert response_invalid.status_code == 400
     assert "seed_entity_ids is required" in str(response_invalid.json()["detail"])
+
+
+def test_kernel_relations_status_alias_totals_and_strict_status_validation(
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_a = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="A",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    target_b = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="B",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    target_c = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="C",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    relation_a = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=source_id,
+        target_id=target_a,
+    )
+    relation_b = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=source_id,
+        target_id=target_b,
+    )
+    _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=source_id,
+        target_id=target_c,
+    )
+
+    promote = test_client.put(
+        f"/research-spaces/{space.id}/relations/{relation_b}",
+        headers=headers,
+        json={"curation_status": "APPROVED"},
+    )
+    assert promote.status_code == 200, promote.text
+
+    list_response = test_client.get(
+        f"/research-spaces/{space.id}/relations",
+        headers=headers,
+        params={"offset": 0, "limit": 1},
+    )
+    assert list_response.status_code == 200, list_response.text
+    list_payload = list_response.json()
+    assert list_payload["limit"] == 1
+    assert list_payload["total"] == 3
+    assert len(list_payload["relations"]) == 1
+
+    pending_alias_response = test_client.get(
+        f"/research-spaces/{space.id}/relations",
+        headers=headers,
+        params={"curation_status": "PENDING_REVIEW"},
+    )
+    assert pending_alias_response.status_code == 200, pending_alias_response.text
+    pending_payload = pending_alias_response.json()
+    pending_ids = {relation["id"] for relation in pending_payload["relations"]}
+    assert str(relation_a) in pending_ids
+    assert str(relation_b) not in pending_ids
+
+    invalid_update = test_client.put(
+        f"/research-spaces/{space.id}/relations/{relation_a}",
+        headers=headers,
+        json={"curation_status": "PENDING_REVIEW"},
+    )
+    assert invalid_update.status_code == 400, invalid_update.text
+
+
+def test_relation_claims_list_and_triage_membership_guards(
+    test_client,
+    db_session,
+    researcher_user,
+    outsider_user,
+    space,
+):
+    owner_headers = _auth_headers(researcher_user)
+    outsider_headers = _auth_headers(outsider_user)
+
+    claim_id: UUID
+    with _session_for_api(db_session) as session:
+        claim = RelationClaimModel(
+            research_space_id=space.id,
+            source_document_id=None,
+            agent_run_id="run-1",
+            source_type="pubmed",
+            relation_type="ASSOCIATED_WITH",
+            target_type="DISEASE",
+            source_label="MED13",
+            target_label="Cardiomyopathy",
+            confidence=0.45,
+            validation_state="FORBIDDEN",
+            validation_reason="Constraint mismatch",
+            persistability="NON_PERSISTABLE",
+            claim_status="OPEN",
+            polarity="REFUTE",
+            claim_text="No significant association was observed.",
+            claim_section="results",
+            linked_relation_id=None,
+            metadata_payload={"test": True},
+            triaged_by=None,
+            triaged_at=None,
+        )
+        session.add(claim)
+        session.commit()
+        session.refresh(claim)
+        claim_id = claim.id
+
+    list_response = test_client.get(
+        f"/research-spaces/{space.id}/relation-claims",
+        headers=owner_headers,
+        params={"limit": 1, "offset": 0, "claim_status": "OPEN"},
+    )
+    assert list_response.status_code == 200, list_response.text
+    list_payload = list_response.json()
+    assert list_payload["total"] == 1
+    assert len(list_payload["claims"]) == 1
+    assert list_payload["claims"][0]["id"] == str(claim_id)
+    assert list_payload["claims"][0]["polarity"] == "REFUTE"
+
+    polarity_filter_response = test_client.get(
+        f"/research-spaces/{space.id}/relation-claims",
+        headers=owner_headers,
+        params={"polarity": "REFUTE"},
+    )
+    assert polarity_filter_response.status_code == 200, polarity_filter_response.text
+    assert polarity_filter_response.json()["total"] == 1
+
+    forbidden_patch = test_client.patch(
+        f"/research-spaces/{space.id}/relation-claims/{claim_id}",
+        headers=outsider_headers,
+        json={"claim_status": "RESOLVED"},
+    )
+    assert forbidden_patch.status_code == 403
+
+    patch_response = test_client.patch(
+        f"/research-spaces/{space.id}/relation-claims/{claim_id}",
+        headers=owner_headers,
+        json={"claim_status": "NEEDS_MAPPING"},
+    )
+    assert patch_response.status_code == 200, patch_response.text
+    patch_payload = patch_response.json()
+    assert patch_payload["claim_status"] == "NEEDS_MAPPING"
+    assert patch_payload["triaged_by"] == str(researcher_user.id)
+
+
+def test_relation_claim_evidence_and_conflict_endpoints(
+    postgres_required,
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    assert postgres_required is None
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    relation_id = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=source_id,
+        target_id=target_id,
+    )
+
+    claim_id: UUID
+    with _session_for_api(db_session) as session:
+        source = UserDataSourceModel(
+            id=str(uuid4()),
+            owner_id=str(researcher_user.id),
+            research_space_id=str(space.id),
+            name="PubMed source",
+            description="",
+            source_type=SourceTypeEnum.PUBMED,
+            template_id=None,
+            configuration={},
+            status=SourceStatusEnum.ACTIVE,
+            ingestion_schedule={},
+            quality_metrics={},
+            last_ingested_at=None,
+            tags=[],
+            version="1.0",
+        )
+        session.add(source)
+        session.flush()
+        source_document_id = str(uuid4())
+        session.add(
+            SourceDocumentModel(
+                id=source_document_id,
+                research_space_id=str(space.id),
+                source_id=source.id,
+                ingestion_job_id=None,
+                external_record_id="40214304",
+                source_type="pubmed",
+                document_format="json",
+                raw_storage_key=None,
+                enriched_storage_key=None,
+                content_hash=None,
+                content_length_chars=None,
+                enrichment_status="pending",
+                enrichment_method=None,
+                enrichment_agent_run_id=None,
+                extraction_status="pending",
+                extraction_agent_run_id=None,
+                metadata_payload={},
+            ),
+        )
+        support_claim = RelationClaimModel(
+            research_space_id=space.id,
+            source_document_id=None,
+            agent_run_id="run-conflict-support",
+            source_type="GENE",
+            relation_type="ASSOCIATED_WITH",
+            target_type="PHENOTYPE",
+            source_label="MED13",
+            target_label="Cardiomyopathy",
+            confidence=0.81,
+            validation_state="ALLOWED",
+            validation_reason=None,
+            persistability="PERSISTABLE",
+            claim_status="OPEN",
+            polarity="SUPPORT",
+            claim_text="MED13 variants are associated with cardiomyopathy.",
+            claim_section="results",
+            linked_relation_id=relation_id,
+            metadata_payload={},
+            triaged_by=None,
+            triaged_at=None,
+        )
+        refute_claim = RelationClaimModel(
+            research_space_id=space.id,
+            source_document_id=None,
+            agent_run_id="run-conflict-refute",
+            source_type="GENE",
+            relation_type="ASSOCIATED_WITH",
+            target_type="PHENOTYPE",
+            source_label="MED13",
+            target_label="Cardiomyopathy",
+            confidence=0.77,
+            validation_state="ALLOWED",
+            validation_reason=None,
+            persistability="PERSISTABLE",
+            claim_status="OPEN",
+            polarity="REFUTE",
+            claim_text="No association was observed for MED13 variants.",
+            claim_section="results",
+            linked_relation_id=relation_id,
+            metadata_payload={},
+            triaged_by=None,
+            triaged_at=None,
+        )
+        session.add(support_claim)
+        session.add(refute_claim)
+        session.commit()
+        session.refresh(support_claim)
+        claim_id = support_claim.id
+        session.add(
+            ClaimEvidenceModel(
+                claim_id=support_claim.id,
+                source_document_id=source_document_id,
+                agent_run_id="run-conflict-support",
+                sentence=(
+                    "MED13 variants were associated with cardiomyopathy "
+                    "in a curated cohort analysis."
+                ),
+                sentence_source="verbatim_span",
+                sentence_confidence="high",
+                sentence_rationale=None,
+                figure_reference=None,
+                table_reference=None,
+                confidence=0.81,
+                metadata_payload={},
+            ),
+        )
+        session.commit()
+
+    evidence_response = test_client.get(
+        f"/research-spaces/{space.id}/relation-claims/{claim_id}/evidence",
+        headers=headers,
+    )
+    assert evidence_response.status_code == 200, evidence_response.text
+    evidence_payload = evidence_response.json()
+    assert evidence_payload["claim_id"] == str(claim_id)
+    assert evidence_payload["total"] == 1
+    assert evidence_payload["evidence"][0]["sentence_source"] == "verbatim_span"
+    assert evidence_payload["evidence"][0]["paper_links"] == [
+        {
+            "label": "PubMed",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/40214304/",
+            "source": "external_record_id",
+        },
+    ]
+
+    conflict_response = test_client.get(
+        f"/research-spaces/{space.id}/relations/conflicts",
+        headers=headers,
+        params={"offset": 0, "limit": 50},
+    )
+    assert conflict_response.status_code == 200, conflict_response.text
+    conflict_payload = conflict_response.json()
+    assert conflict_payload["total"] >= 1
+    relation_ids = {row["relation_id"] for row in conflict_payload["conflicts"]}
+    assert str(relation_id) in relation_ids
+
+
+def test_create_relation_persists_evidence_sentence(
+    postgres_required,
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    assert postgres_required is None
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    relation_response = test_client.post(
+        f"/research-spaces/{space.id}/relations",
+        headers=headers,
+        json={
+            "source_id": str(source_id),
+            "relation_type": "ASSOCIATED_WITH",
+            "target_id": str(target_id),
+            "confidence": 0.82,
+            "evidence_summary": "Curated relation from deterministic test.",
+            "evidence_sentence": (
+                "MED13 variation was associated with cardiomyopathy "
+                "in the study cohort."
+            ),
+            "evidence_sentence_source": "artana_generated",
+            "evidence_sentence_confidence": "low",
+            "evidence_sentence_rationale": (
+                "No direct span was found; sentence generated from extraction context."
+            ),
+            "evidence_tier": "LITERATURE",
+            "provenance_id": None,
+        },
+    )
+    assert relation_response.status_code == 201, relation_response.text
+    relation_id = UUID(relation_response.json()["id"])
+
+    list_response = test_client.get(
+        f"/research-spaces/{space.id}/relations",
+        headers=headers,
+    )
+    assert list_response.status_code == 200, list_response.text
+    listed_relations = list_response.json()["relations"]
+    matching = [row for row in listed_relations if row["id"] == str(relation_id)]
+    assert len(matching) == 1
+    relation_row = matching[0]
+    assert (
+        relation_row["evidence_sentence"]
+        == "MED13 variation was associated with cardiomyopathy in the study cohort."
+    )
+    assert relation_row["evidence_sentence_source"] == "artana_generated"
+    assert relation_row["evidence_sentence_confidence"] == "low"
+    assert (
+        relation_row["evidence_sentence_rationale"]
+        == "No direct span was found; sentence generated from extraction context."
+    )
+    assert relation_row["paper_links"] == []
+
+    with _session_for_api(db_session) as session:
+        evidence_rows = session.scalars(
+            select(RelationEvidenceModel).where(
+                RelationEvidenceModel.relation_id == relation_id,
+            ),
+        ).all()
+
+    assert len(evidence_rows) == 1
+    assert (
+        evidence_rows[0].evidence_sentence
+        == "MED13 variation was associated with cardiomyopathy in the study cohort."
+    )
+    assert evidence_rows[0].evidence_sentence_source == "artana_generated"
+    assert evidence_rows[0].evidence_sentence_confidence == "low"
+    assert (
+        evidence_rows[0].evidence_sentence_rationale
+        == "No direct span was found; sentence generated from extraction context."
+    )
+
+
+def test_relation_claim_resolution_persists_evidence_sentence_from_claim_evidence(
+    postgres_required,
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    assert postgres_required is None
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_entity_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_entity_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    claim_id: UUID
+    with _session_for_api(db_session) as session:
+        claim = RelationClaimModel(
+            research_space_id=space.id,
+            source_document_id=None,
+            agent_run_id="run-claim-resolution-span",
+            source_type="GENE",
+            relation_type="ASSOCIATED_WITH",
+            target_type="PHENOTYPE",
+            source_label="MED13",
+            target_label="Cardiomyopathy",
+            confidence=0.72,
+            validation_state="ALLOWED",
+            validation_reason="allowed_by_active_constraint",
+            persistability="PERSISTABLE",
+            claim_status="OPEN",
+            polarity="SUPPORT",
+            claim_text="MED13 variants are associated with cardiomyopathy.",
+            claim_section="results",
+            linked_relation_id=None,
+            metadata_payload={
+                "source_entity_id": str(source_entity_id),
+                "target_entity_id": str(target_entity_id),
+            },
+            triaged_by=None,
+            triaged_at=None,
+        )
+        session.add(claim)
+        session.commit()
+        session.refresh(claim)
+        claim_id = claim.id
+        session.add(
+            ClaimEvidenceModel(
+                claim_id=claim_id,
+                source_document_id=None,
+                agent_run_id="run-claim-resolution-span",
+                sentence=(
+                    "MED13 variants were associated with cardiomyopathy "
+                    "in a curated cohort analysis."
+                ),
+                sentence_source="verbatim_span",
+                sentence_confidence="high",
+                sentence_rationale=None,
+                figure_reference=None,
+                table_reference=None,
+                confidence=0.72,
+                metadata_payload={},
+            ),
+        )
+        session.commit()
+
+    patch_response = test_client.patch(
+        f"/research-spaces/{space.id}/relation-claims/{claim_id}",
+        headers=headers,
+        json={"claim_status": "RESOLVED"},
+    )
+    assert patch_response.status_code == 200, patch_response.text
+    patch_payload = patch_response.json()
+    assert patch_payload["claim_status"] == "RESOLVED"
+    linked_relation_id = patch_payload["linked_relation_id"]
+    assert isinstance(linked_relation_id, str)
+
+    with _session_for_api(db_session) as session:
+        evidence_rows = session.scalars(
+            select(RelationEvidenceModel).where(
+                RelationEvidenceModel.relation_id == UUID(linked_relation_id),
+            ),
+        ).all()
+
+    assert len(evidence_rows) == 1
+    assert (
+        evidence_rows[0].evidence_sentence
+        == "MED13 variants were associated with cardiomyopathy in a curated cohort analysis."
+    )
+    assert evidence_rows[0].evidence_sentence_source == "verbatim_span"
+    assert evidence_rows[0].evidence_sentence_confidence == "high"
+    assert evidence_rows[0].evidence_sentence_rationale is None
+
+
+def test_graph_search_respects_curation_status_filters(
+    postgres_required,
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    assert postgres_required is None
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_a = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    target_b = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Arrhythmia",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    approved_relation = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=source_id,
+        target_id=target_a,
+    )
+    draft_relation = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=source_id,
+        target_id=target_b,
+    )
+    set_approved = test_client.put(
+        f"/research-spaces/{space.id}/relations/{approved_relation}",
+        headers=headers,
+        json={"curation_status": "APPROVED"},
+    )
+    assert set_approved.status_code == 200, set_approved.text
+
+    approved_only_response = test_client.post(
+        f"/research-spaces/{space.id}/graph/search",
+        headers=headers,
+        json={
+            "question": "MED13",
+            "top_k": 10,
+            "max_depth": 2,
+            "curation_statuses": ["APPROVED"],
+        },
+    )
+    assert approved_only_response.status_code == 200, approved_only_response.text
+    approved_payload = approved_only_response.json()
+    approved_relation_ids = {
+        relation_id
+        for result in approved_payload["results"]
+        for relation_id in result["matching_relation_ids"]
+    }
+    assert str(approved_relation) in approved_relation_ids
+    assert str(draft_relation) not in approved_relation_ids
+
+    pending_alias_response = test_client.post(
+        f"/research-spaces/{space.id}/graph/search",
+        headers=headers,
+        json={
+            "question": "MED13",
+            "top_k": 10,
+            "max_depth": 2,
+            "curation_statuses": ["PENDING_REVIEW"],
+        },
+    )
+    assert pending_alias_response.status_code == 200, pending_alias_response.text
+    pending_payload = pending_alias_response.json()
+    pending_relation_ids = {
+        relation_id
+        for result in pending_payload["results"]
+        for relation_id in result["matching_relation_ids"]
+    }
+    assert str(draft_relation) in pending_relation_ids
 
 
 def test_admin_dictionary_review_lifecycle(test_client, admin_user):
@@ -826,6 +1671,135 @@ def test_admin_dictionary_type_endpoints(test_client, admin_user):
     assert revoke_relation_type_response.json()["review_status"] == "REVOKED"
     assert revoke_relation_type_response.json()["is_active"] is False
     assert revoke_relation_type_response.json()["valid_to"] is not None
+
+
+def test_admin_dictionary_relation_synonym_endpoints(test_client, admin_user):
+    create_relation_type_response = test_client.post(
+        "/admin/dictionary/relation-types",
+        headers=_auth_headers(admin_user),
+        json={
+            "id": "REL_SYNONYM_CANONICAL_TEST",
+            "display_name": "Relation Synonym Canonical Test",
+            "description": "Canonical relation type for relation-synonym endpoint test",
+            "domain_context": "general",
+            "is_directional": True,
+        },
+    )
+    assert (
+        create_relation_type_response.status_code == 201
+    ), create_relation_type_response.text
+
+    create_synonym_response = test_client.post(
+        "/admin/dictionary/relation-synonyms",
+        headers=_auth_headers(admin_user),
+        json={
+            "relation_type_id": "REL_SYNONYM_CANONICAL_TEST",
+            "synonym": "REL_SYNONYM_ALIAS_TEST",
+            "source": "integration-test",
+            "source_ref": "test:relation-synonym",
+        },
+    )
+    assert create_synonym_response.status_code == 201, create_synonym_response.text
+    created_synonym_payload = create_synonym_response.json()
+    synonym_id = int(created_synonym_payload["id"])
+    assert created_synonym_payload["relation_type"] == "REL_SYNONYM_CANONICAL_TEST"
+    assert created_synonym_payload["synonym"] == "REL_SYNONYM_ALIAS_TEST"
+    assert created_synonym_payload["review_status"] == "ACTIVE"
+    assert created_synonym_payload["created_by"] == f"manual:{admin_user.id}"
+
+    list_synonyms_response = test_client.get(
+        "/admin/dictionary/relation-synonyms",
+        headers=_auth_headers(admin_user),
+        params={
+            "relation_type_id": "REL_SYNONYM_CANONICAL_TEST",
+        },
+    )
+    assert list_synonyms_response.status_code == 200, list_synonyms_response.text
+    listed_synonyms = list_synonyms_response.json()["relation_synonyms"]
+    assert any(item["id"] == synonym_id for item in listed_synonyms)
+
+    resolve_active_response = test_client.get(
+        "/admin/dictionary/relation-synonyms/resolve",
+        headers=_auth_headers(admin_user),
+        params={"synonym": "rel_synonym_alias_test"},
+    )
+    assert resolve_active_response.status_code == 200, resolve_active_response.text
+    assert resolve_active_response.json()["id"] == "REL_SYNONYM_CANONICAL_TEST"
+
+    set_pending_response = test_client.patch(
+        f"/admin/dictionary/relation-synonyms/{synonym_id}/review-status",
+        headers=_auth_headers(admin_user),
+        json={"review_status": "PENDING_REVIEW"},
+    )
+    assert set_pending_response.status_code == 200, set_pending_response.text
+    pending_payload = set_pending_response.json()
+    assert pending_payload["id"] == synonym_id
+    assert pending_payload["review_status"] == "PENDING_REVIEW"
+    assert pending_payload["reviewed_by"] == f"manual:{admin_user.id}"
+
+    revoke_response = test_client.post(
+        f"/admin/dictionary/relation-synonyms/{synonym_id}/revoke",
+        headers=_auth_headers(admin_user),
+        json={"reason": "Deprecated synonym"},
+    )
+    assert revoke_response.status_code == 200, revoke_response.text
+    revoked_payload = revoke_response.json()
+    assert revoked_payload["id"] == synonym_id
+    assert revoked_payload["review_status"] == "REVOKED"
+    assert revoked_payload["revocation_reason"] == "Deprecated synonym"
+    assert revoked_payload["is_active"] is False
+    assert revoked_payload["valid_to"] is not None
+
+    resolve_revoked_response = test_client.get(
+        "/admin/dictionary/relation-synonyms/resolve",
+        headers=_auth_headers(admin_user),
+        params={"synonym": "REL_SYNONYM_ALIAS_TEST"},
+    )
+    assert resolve_revoked_response.status_code == 404, resolve_revoked_response.text
+
+    resolve_with_inactive_response = test_client.get(
+        "/admin/dictionary/relation-synonyms/resolve",
+        headers=_auth_headers(admin_user),
+        params={
+            "synonym": "REL_SYNONYM_ALIAS_TEST",
+            "include_inactive": True,
+        },
+    )
+    assert (
+        resolve_with_inactive_response.status_code == 200
+    ), resolve_with_inactive_response.text
+    assert resolve_with_inactive_response.json()["id"] == "REL_SYNONYM_CANONICAL_TEST"
+
+    list_active_response = test_client.get(
+        "/admin/dictionary/relation-synonyms",
+        headers=_auth_headers(admin_user),
+        params={
+            "relation_type_id": "REL_SYNONYM_CANONICAL_TEST",
+            "include_inactive": False,
+        },
+    )
+    assert list_active_response.status_code == 200, list_active_response.text
+    active_ids = {
+        int(item["id"]) for item in list_active_response.json()["relation_synonyms"]
+    }
+    assert synonym_id not in active_ids
+
+    list_with_inactive_response = test_client.get(
+        "/admin/dictionary/relation-synonyms",
+        headers=_auth_headers(admin_user),
+        params={
+            "relation_type_id": "REL_SYNONYM_CANONICAL_TEST",
+            "include_inactive": True,
+        },
+    )
+    assert (
+        list_with_inactive_response.status_code == 200
+    ), list_with_inactive_response.text
+    inactive_or_active_payload = list_with_inactive_response.json()["relation_synonyms"]
+    assert any(
+        int(item["id"]) == synonym_id and item["review_status"] == "REVOKED"
+        for item in inactive_or_active_payload
+    )
 
 
 def test_admin_dictionary_merge_endpoints(test_client, admin_user):

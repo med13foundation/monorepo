@@ -6,6 +6,7 @@ import { useCallback, useState } from 'react'
 import { Filter, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import type { GraphDisplayMode } from '@/lib/graph/model'
 import { cn } from '@/lib/utils'
 
 import { KnowledgeGraphFeedbackCards } from './knowledge-graph-feedback-cards'
@@ -14,6 +15,7 @@ import { KnowledgeGraphQueryCard } from './knowledge-graph-query-card'
 import { KnowledgeGraphSearchResultsCard } from './knowledge-graph-search-results-card'
 import { KnowledgeGraphVisualization } from './knowledge-graph-visualization'
 import { useKnowledgeGraphController } from './use-knowledge-graph-controller'
+import type { GraphTrustPreset } from './use-knowledge-graph-controller'
 
 interface KnowledgeGraphClientProps {
   spaceId: string
@@ -21,6 +23,7 @@ interface KnowledgeGraphClientProps {
   initialTopK?: number
   initialMaxDepth?: number
   initialForceAgent?: boolean
+  initialTrustPreset?: GraphTrustPreset
 }
 
 export default function KnowledgeGraphClient({
@@ -29,6 +32,7 @@ export default function KnowledgeGraphClient({
   initialTopK = 25,
   initialMaxDepth = 2,
   initialForceAgent = false,
+  initialTrustPreset = 'ALL',
 }: KnowledgeGraphClientProps) {
   const router = useRouter()
   const { data: session } = useSession()
@@ -41,10 +45,16 @@ export default function KnowledgeGraphClient({
     initialTopK,
     initialMaxDepth,
     initialForceAgent,
+    initialTrustPreset,
   })
   const [showControlsPanel, setShowControlsPanel] = useState(true)
   const [activeControlsTab, setActiveControlsTab] = useState<'search' | 'filters'>('search')
   const handleCanvasTap = useCallback(() => setShowControlsPanel(false), [])
+  const displayModeOptions: Array<{ value: GraphDisplayMode; label: string }> = [
+    { value: 'RELATIONS_ONLY', label: 'Relations only' },
+    { value: 'CLAIMS', label: 'Claims' },
+    { value: 'EVIDENCE', label: 'Evidence' },
+  ]
 
   return (
     <div className="space-y-4 px-0">
@@ -67,8 +77,11 @@ export default function KnowledgeGraphClient({
         neighborhood={controller.neighborhood}
         selectedNodeId={controller.selectedNodeId}
         onNodeClick={controller.onNodeClick}
+        onEdgeClick={controller.onEdgeClick}
         onHoverNodeChange={controller.onHoverNodeChange}
+        onHoverEdgeChange={controller.onHoverEdgeChange}
         onClearSelection={controller.clearSelection}
+        claimEvidenceByClaimId={controller.claimEvidenceByClaimId}
         onCanvasTap={handleCanvasTap}
         topControls={
           <div className="w-[min(96vw,460px)]">
@@ -121,6 +134,27 @@ export default function KnowledgeGraphClient({
                   </Button>
                 </div>
 
+                <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
+                  <span className="text-xs font-medium text-muted-foreground">Show:</span>
+                  {displayModeOptions.map((option) => (
+                    <Button
+                      key={option.value}
+                      type="button"
+                      size="sm"
+                      variant={controller.graphDisplayMode === option.value ? 'default' : 'outline'}
+                      className="h-7"
+                      onClick={() => controller.setGraphDisplayMode(option.value)}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                  {controller.graphDisplayMode === 'EVIDENCE' ? (
+                    <span className="text-xs text-muted-foreground">
+                      Evidence mode enabled: claim evidence expands into paper/dataset links.
+                    </span>
+                  ) : null}
+                </div>
+
                 {activeControlsTab === 'search' ? (
                   <KnowledgeGraphQueryCard
                     questionInput={controller.questionInput}
@@ -147,13 +181,17 @@ export default function KnowledgeGraphClient({
                 ) : (
                   <div className="max-h-[48vh] overflow-auto px-3 pb-3">
                     <KnowledgeGraphFiltersCard
-                      availableRelationTypes={controller.availableRelationTypes}
-                      availableCurationStatuses={controller.availableCurationStatuses}
+                      filterOptions={{
+                        relationTypes: controller.availableRelationTypes,
+                        curationStatuses: controller.availableCurationStatuses,
+                      }}
+                      trustPreset={controller.trustPreset}
                       relationTypeFilter={controller.relationTypeFilter}
                       curationStatusFilter={controller.curationStatusFilter}
-                      onRelationTypeToggle={controller.toggleRelationType}
-                      onEnableAllRelationTypes={controller.enableAllRelationTypes}
-                      onCurationStatusToggle={controller.toggleCurationStatus}
+                      setTrustPreset={controller.setTrustPreset}
+                      toggleRelationType={controller.toggleRelationType}
+                      enableAllRelationTypes={controller.enableAllRelationTypes}
+                      toggleCurationStatus={controller.toggleCurationStatus}
                       variant="embedded"
                     />
                   </div>

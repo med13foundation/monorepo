@@ -6,6 +6,7 @@ Fetches scientific literature and publication data from PubMed.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -15,6 +16,8 @@ from .pubmed_record_parser_mixin import PubMedRecordParserMixin
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from src.type_definitions.common import JSONValue, RawRecord
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,9 @@ class PubMedIngestor(BaseIngestor, PubMedRecordParserMixin):
             # Small delay between batches
             await asyncio.sleep(0.1)
 
+        if self._coerce_bool(kwargs.get("open_access_only"), default=True):
+            all_records = self._enforce_open_access_record_set(all_records)
+
         return PubMedFetchPage(
             records=all_records,
             total_count=search_page.total_count,
@@ -170,9 +176,10 @@ class PubMedIngestor(BaseIngestor, PubMedRecordParserMixin):
                 query_terms.append(f"({pub_types})")
 
         if self._coerce_bool(kwargs.get("open_access_only"), default=True):
-            query_terms.append(
-                '("open access"[filter] OR "loattrfree full text"[sb])',
-            )
+            # Use PubMed "free full text" subset, then enforce PMCID presence
+            # post-fetch so downstream enrichment can deterministically retrieve
+            # full text through PMC/Europe PMC.
+            query_terms.append('"free full text"[sb]')
 
         full_query = " AND ".join(f"({term})" for term in query_terms)
 
@@ -223,6 +230,34 @@ class PubMedIngestor(BaseIngestor, PubMedRecordParserMixin):
             retstart=response_retstart,
             retmax=response_retmax,
         )
+
+    def _enforce_open_access_record_set(
+        self,
+        records: list[RawRecord],
+    ) -> list[RawRecord]:
+        retained: list[RawRecord] = []
+        dropped_pubmed_ids: list[str] = []
+        for record in records:
+            pmc_id_value = record.get("pmc_id")
+            has_pmc_id = isinstance(pmc_id_value, str) and bool(pmc_id_value.strip())
+            if has_pmc_id:
+                retained.append(record)
+                continue
+            pubmed_id_value = record.get("pubmed_id")
+            if isinstance(pubmed_id_value, str) and pubmed_id_value.strip():
+                dropped_pubmed_ids.append(pubmed_id_value.strip())
+
+        if dropped_pubmed_ids:
+            logger.info(
+                "PubMed open-access enforcement removed records without PMCID",
+                extra={
+                    "dropped_count": len(dropped_pubmed_ids),
+                    "dropped_pubmed_ids": dropped_pubmed_ids,
+                    "retained_count": len(retained),
+                },
+            )
+
+        return retained
 
     async def _fetch_article_details(
         self,

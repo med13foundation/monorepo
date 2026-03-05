@@ -8,9 +8,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.domain.entities.kernel.claim_evidence import KernelClaimEvidence
 from src.domain.entities.kernel.entities import KernelEntity
 from src.domain.entities.kernel.observations import KernelObservation
 from src.domain.entities.kernel.provenance import KernelProvenanceRecord
+from src.domain.entities.kernel.relation_claims import (
+    KernelRelationClaim,
+    KernelRelationConflictSummary,
+)
 from src.domain.entities.kernel.relations import KernelRelation
 from src.type_definitions.common import JSONObject, JSONValue
 
@@ -93,6 +98,130 @@ class KernelEntityListResponse(BaseModel):
     total: int
     offset: int
     limit: int
+
+
+class KernelEntitySimilarityScoreBreakdownResponse(BaseModel):
+    """Score components for one similar-entity result row."""
+
+    model_config = ConfigDict(strict=True)
+
+    vector_score: float = Field(ge=0.0, le=1.0)
+    graph_overlap_score: float = Field(ge=0.0, le=1.0)
+
+
+class KernelEntitySimilarityResponse(BaseModel):
+    """One similar-entity result row."""
+
+    model_config = ConfigDict(strict=True)
+
+    entity_id: UUID
+    entity_type: str = Field(min_length=1, max_length=64)
+    display_label: str | None = Field(default=None, max_length=512)
+    similarity_score: float = Field(ge=0.0, le=1.0)
+    score_breakdown: KernelEntitySimilarityScoreBreakdownResponse
+
+
+class KernelEntitySimilarityListResponse(BaseModel):
+    """List response for similar entities in one research space."""
+
+    model_config = ConfigDict(strict=True)
+
+    source_entity_id: UUID
+    results: list[KernelEntitySimilarityResponse]
+    total: int
+    limit: int
+    min_similarity: float = Field(ge=0.0, le=1.0)
+
+
+class KernelEntityEmbeddingRefreshRequest(BaseModel):
+    """Request payload for explicit kernel entity embedding refresh operations."""
+
+    # UUID input parsing can arrive as strings in request JSON.
+    model_config = ConfigDict(strict=False)
+
+    entity_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=500)
+    limit: int = Field(default=500, ge=1, le=5000)
+    model_name: str | None = Field(default=None, min_length=1, max_length=128)
+    embedding_version: int | None = Field(default=None, ge=1, le=1000)
+
+
+class KernelEntityEmbeddingRefreshResponse(BaseModel):
+    """Response summary for explicit embedding refresh operations."""
+
+    model_config = ConfigDict(strict=True)
+
+    requested: int
+    processed: int
+    refreshed: int
+    unchanged: int
+    missing_entities: list[str]
+
+
+class KernelRelationSuggestionRequest(BaseModel):
+    """Request payload for dictionary-constrained relation suggestion runs."""
+
+    # UUID input parsing can arrive as strings in request JSON.
+    model_config = ConfigDict(strict=False)
+
+    source_entity_ids: list[UUID] = Field(min_length=1, max_length=50)
+    limit_per_source: int = Field(default=10, ge=1, le=50)
+    min_score: float = Field(default=0.70, ge=0.0, le=1.0)
+    allowed_relation_types: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+    )
+    target_entity_types: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+    )
+    exclude_existing_relations: bool = True
+
+
+class KernelRelationSuggestionScoreBreakdownResponse(BaseModel):
+    """Score components for one relation suggestion row."""
+
+    model_config = ConfigDict(strict=True)
+
+    vector_score: float = Field(ge=0.0, le=1.0)
+    graph_overlap_score: float = Field(ge=0.0, le=1.0)
+    relation_prior_score: float = Field(ge=0.0, le=1.0)
+
+
+class KernelRelationSuggestionConstraintCheckResponse(BaseModel):
+    """Constraint trace proving dictionary validation for a suggestion row."""
+
+    model_config = ConfigDict(strict=True)
+
+    passed: bool
+    source_entity_type: str = Field(min_length=1, max_length=64)
+    relation_type: str = Field(min_length=1, max_length=64)
+    target_entity_type: str = Field(min_length=1, max_length=64)
+
+
+class KernelRelationSuggestionResponse(BaseModel):
+    """One relation suggestion row."""
+
+    model_config = ConfigDict(strict=True)
+
+    source_entity_id: UUID
+    target_entity_id: UUID
+    relation_type: str = Field(min_length=1, max_length=64)
+    final_score: float = Field(ge=0.0, le=1.0)
+    score_breakdown: KernelRelationSuggestionScoreBreakdownResponse
+    constraint_check: KernelRelationSuggestionConstraintCheckResponse
+
+
+class KernelRelationSuggestionListResponse(BaseModel):
+    """List response for constrained relation suggestions."""
+
+    model_config = ConfigDict(strict=True)
+
+    suggestions: list[KernelRelationSuggestionResponse]
+    total: int
+    limit_per_source: int
+    min_score: float = Field(ge=0.0, le=1.0)
 
 
 class KernelObservationCreateRequest(BaseModel):
@@ -189,6 +318,10 @@ class KernelRelationCreateRequest(BaseModel):
     target_id: UUID
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     evidence_summary: str | None = None
+    evidence_sentence: str | None = Field(default=None, max_length=2000)
+    evidence_sentence_source: str | None = Field(default=None, max_length=64)
+    evidence_sentence_confidence: str | None = Field(default=None, max_length=32)
+    evidence_sentence_rationale: str | None = Field(default=None, max_length=2000)
     evidence_tier: str | None = Field(None, max_length=32)
     provenance_id: UUID | None = None
 
@@ -199,6 +332,24 @@ class KernelRelationCurationUpdateRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
     curation_status: str = Field(..., min_length=1, max_length=32)
+
+
+class KernelRelationClaimTriageRequest(BaseModel):
+    """Request model for triaging relation-claim status."""
+
+    model_config = ConfigDict(strict=True)
+
+    claim_status: str = Field(..., min_length=1, max_length=32)
+
+
+class KernelRelationPaperLinkResponse(BaseModel):
+    """One source-paper link for relation evidence review."""
+
+    model_config = ConfigDict(strict=True)
+
+    label: str
+    url: str
+    source: str
 
 
 class KernelRelationResponse(BaseModel):
@@ -212,10 +363,17 @@ class KernelRelationResponse(BaseModel):
     relation_type: str
     target_id: UUID
 
+    confidence: float
     aggregate_confidence: float
     source_count: int
     highest_evidence_tier: str | None
     curation_status: str
+    evidence_summary: str | None = None
+    evidence_sentence: str | None = None
+    evidence_sentence_source: str | None = None
+    evidence_sentence_confidence: str | None = None
+    evidence_sentence_rationale: str | None = None
+    paper_links: list[KernelRelationPaperLinkResponse] = Field(default_factory=list)
 
     provenance_id: UUID | None
     reviewed_by: UUID | None
@@ -225,7 +383,26 @@ class KernelRelationResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, model: KernelRelation) -> KernelRelationResponse:
+    def _normalize_paper_links(
+        cls,
+        paper_links: list[KernelRelationPaperLinkResponse] | None,
+    ) -> list[KernelRelationPaperLinkResponse]:
+        if paper_links is None:
+            return []
+        return paper_links
+
+    @classmethod
+    def from_model(  # noqa: PLR0913
+        cls,
+        model: KernelRelation,
+        *,
+        evidence_summary: str | None = None,
+        evidence_sentence: str | None = None,
+        evidence_sentence_source: str | None = None,
+        evidence_sentence_confidence: str | None = None,
+        evidence_sentence_rationale: str | None = None,
+        paper_links: list[KernelRelationPaperLinkResponse] | None = None,
+    ) -> KernelRelationResponse:
         provenance_id_raw = model.provenance_id
         reviewed_by_raw = model.reviewed_by
         return cls(
@@ -234,10 +411,17 @@ class KernelRelationResponse(BaseModel):
             source_id=_to_uuid(model.source_id),
             relation_type=str(model.relation_type),
             target_id=_to_uuid(model.target_id),
+            confidence=float(model.aggregate_confidence),
             aggregate_confidence=float(model.aggregate_confidence),
             source_count=int(model.source_count),
             highest_evidence_tier=model.highest_evidence_tier,
             curation_status=str(model.curation_status),
+            evidence_summary=evidence_summary,
+            evidence_sentence=evidence_sentence,
+            evidence_sentence_source=evidence_sentence_source,
+            evidence_sentence_confidence=evidence_sentence_confidence,
+            evidence_sentence_rationale=evidence_sentence_rationale,
+            paper_links=cls._normalize_paper_links(paper_links),
             provenance_id=(
                 _to_uuid(provenance_id_raw) if provenance_id_raw is not None else None
             ),
@@ -256,6 +440,190 @@ class KernelRelationListResponse(BaseModel):
     model_config = ConfigDict(strict=True)
 
     relations: list[KernelRelationResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class KernelRelationClaimResponse(BaseModel):
+    """Response model for one extraction relation claim."""
+
+    model_config = ConfigDict(strict=True)
+
+    id: UUID
+    research_space_id: UUID
+    source_document_id: UUID | None
+    agent_run_id: str | None
+    source_type: str
+    relation_type: str
+    target_type: str
+    source_label: str | None
+    target_label: str | None
+    confidence: float
+    validation_state: str
+    validation_reason: str | None
+    persistability: str
+    claim_status: str
+    polarity: str
+    claim_text: str | None
+    claim_section: str | None
+    linked_relation_id: UUID | None
+    metadata: JSONObject
+    triaged_by: UUID | None
+    triaged_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_model(cls, model: KernelRelationClaim) -> KernelRelationClaimResponse:
+        source_document_id_raw = getattr(model, "source_document_id", None)
+        linked_relation_id_raw = getattr(model, "linked_relation_id", None)
+        triaged_by_raw = getattr(model, "triaged_by", None)
+        metadata_payload = getattr(model, "metadata_payload", {}) or {}
+        return cls(
+            id=_to_uuid(model.id),
+            research_space_id=_to_uuid(model.research_space_id),
+            source_document_id=(
+                _to_uuid(source_document_id_raw)
+                if source_document_id_raw is not None
+                else None
+            ),
+            agent_run_id=model.agent_run_id,
+            source_type=str(model.source_type),
+            relation_type=str(model.relation_type),
+            target_type=str(model.target_type),
+            source_label=model.source_label,
+            target_label=model.target_label,
+            confidence=float(model.confidence),
+            validation_state=str(model.validation_state),
+            validation_reason=model.validation_reason,
+            persistability=str(model.persistability),
+            claim_status=str(model.claim_status),
+            polarity=str(model.polarity),
+            claim_text=model.claim_text,
+            claim_section=model.claim_section,
+            linked_relation_id=(
+                _to_uuid(linked_relation_id_raw)
+                if linked_relation_id_raw is not None
+                else None
+            ),
+            metadata=dict(metadata_payload),
+            triaged_by=(
+                _to_uuid(triaged_by_raw) if triaged_by_raw is not None else None
+            ),
+            triaged_at=model.triaged_at,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+        )
+
+
+class KernelRelationClaimListResponse(BaseModel):
+    """List response for relation claims in one research space."""
+
+    model_config = ConfigDict(strict=True)
+
+    claims: list[KernelRelationClaimResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class KernelClaimEvidenceResponse(BaseModel):
+    """Response model for one claim evidence row."""
+
+    model_config = ConfigDict(strict=True)
+
+    id: UUID
+    claim_id: UUID
+    source_document_id: UUID | None
+    agent_run_id: str | None
+    sentence: str | None
+    sentence_source: str | None
+    sentence_confidence: str | None
+    sentence_rationale: str | None
+    figure_reference: str | None
+    table_reference: str | None
+    confidence: float
+    metadata: JSONObject
+    paper_links: list[KernelRelationPaperLinkResponse] = Field(default_factory=list)
+    created_at: datetime
+
+    @classmethod
+    def from_model(
+        cls,
+        model: KernelClaimEvidence,
+        *,
+        paper_links: list[KernelRelationPaperLinkResponse] | None = None,
+    ) -> KernelClaimEvidenceResponse:
+        source_document_id_raw = getattr(model, "source_document_id", None)
+        metadata_payload = getattr(model, "metadata_payload", {}) or {}
+        return cls(
+            id=_to_uuid(model.id),
+            claim_id=_to_uuid(model.claim_id),
+            source_document_id=(
+                _to_uuid(source_document_id_raw)
+                if source_document_id_raw is not None
+                else None
+            ),
+            agent_run_id=model.agent_run_id,
+            sentence=model.sentence,
+            sentence_source=model.sentence_source,
+            sentence_confidence=model.sentence_confidence,
+            sentence_rationale=model.sentence_rationale,
+            figure_reference=model.figure_reference,
+            table_reference=model.table_reference,
+            confidence=float(model.confidence),
+            metadata=dict(metadata_payload),
+            paper_links=[] if paper_links is None else paper_links,
+            created_at=model.created_at,
+        )
+
+
+class KernelClaimEvidenceListResponse(BaseModel):
+    """List response for claim evidence rows."""
+
+    model_config = ConfigDict(strict=True)
+
+    claim_id: UUID
+    evidence: list[KernelClaimEvidenceResponse]
+    total: int
+
+
+class KernelRelationConflictResponse(BaseModel):
+    """Conflict summary for one canonical relation."""
+
+    model_config = ConfigDict(strict=True)
+
+    relation_id: UUID
+    support_count: int
+    refute_count: int
+    support_claim_ids: list[UUID]
+    refute_claim_ids: list[UUID]
+
+    @classmethod
+    def from_model(
+        cls,
+        model: KernelRelationConflictSummary,
+    ) -> KernelRelationConflictResponse:
+        return cls(
+            relation_id=_to_uuid(model.relation_id),
+            support_count=int(model.support_count),
+            refute_count=int(model.refute_count),
+            support_claim_ids=[
+                _to_uuid(claim_id) for claim_id in model.support_claim_ids
+            ],
+            refute_claim_ids=[
+                _to_uuid(claim_id) for claim_id in model.refute_claim_ids
+            ],
+        )
+
+
+class KernelRelationConflictListResponse(BaseModel):
+    """List response for mixed-polarity relation conflicts."""
+
+    model_config = ConfigDict(strict=True)
+
+    conflicts: list[KernelRelationConflictResponse]
     total: int
     offset: int
     limit: int

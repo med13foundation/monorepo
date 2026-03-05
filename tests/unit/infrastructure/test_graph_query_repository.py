@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 
 
 def _seed_dictionary_primitives(db_session: Session) -> None:
-    db_session.add_all(
-        [
+    if db_session.get(DictionaryDataTypeModel, "STRING") is None:
+        db_session.add(
             DictionaryDataTypeModel(
                 id="STRING",
                 display_name="String",
@@ -38,20 +38,25 @@ def _seed_dictionary_primitives(db_session: Session) -> None:
                 description="Text",
                 constraint_schema={},
             ),
+        )
+    if db_session.get(DictionaryDomainContextModel, "general") is None:
+        db_session.add(
             DictionaryDomainContextModel(
                 id="general",
                 display_name="General",
                 description="General domain",
             ),
+        )
+    if db_session.get(DictionarySensitivityLevelModel, "INTERNAL") is None:
+        db_session.add(
             DictionarySensitivityLevelModel(
                 id="INTERNAL",
                 display_name="Internal",
                 description="Internal sensitivity",
             ),
-        ],
-    )
-    db_session.add_all(
-        [
+        )
+    if db_session.get(VariableDefinitionModel, "VAR_A") is None:
+        db_session.add(
             VariableDefinitionModel(
                 id="VAR_A",
                 canonical_name="var_a",
@@ -64,6 +69,9 @@ def _seed_dictionary_primitives(db_session: Session) -> None:
                 description="Test variable A",
                 created_by="seed",
             ),
+        )
+    if db_session.get(VariableDefinitionModel, "VAR_B") is None:
+        db_session.add(
             VariableDefinitionModel(
                 id="VAR_B",
                 canonical_name="var_b",
@@ -76,8 +84,7 @@ def _seed_dictionary_primitives(db_session: Session) -> None:
                 description="Test variable B",
                 created_by="seed",
             ),
-        ],
-    )
+        )
     db_session.flush()
 
 
@@ -194,6 +201,8 @@ def _seed_graph(
         relation_type="ASSOCIATED_WITH",
         target_id=str(entity_b),
         confidence=0.8,
+        evidence_summary="MED13 association supported by curated source.",
+        evidence_sentence="MED13 is associated with cardiomyopathy in this cohort.",
         evidence_tier="LITERATURE",
     )
     relation_repo.create(
@@ -202,6 +211,8 @@ def _seed_graph(
         relation_type="ASSOCIATED_WITH",
         target_id=str(entity_b),
         confidence=0.9,
+        evidence_summary="Independent replication support.",
+        evidence_sentence="Independent analysis replicated the MED13 phenotype link.",
         evidence_tier="EXPERIMENTAL",
     )
 
@@ -301,6 +312,11 @@ def test_graph_query_relation_evidence_returns_rows(db_session: Session) -> None
 
     assert len(evidences) == 2
     assert all(str(evidence.relation_id) == str(relation_id) for evidence in evidences)
+    assert any(
+        evidence.evidence_sentence
+        == "MED13 is associated with cardiomyopathy in this cohort."
+        for evidence in evidences
+    )
 
 
 def test_graph_query_entities_filters_by_type_and_query(db_session: Session) -> None:

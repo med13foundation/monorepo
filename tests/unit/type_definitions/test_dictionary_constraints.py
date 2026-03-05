@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
+
 import pytest
 from pydantic import ValidationError
 
@@ -13,8 +15,10 @@ from src.type_definitions.dictionary import (
     NumericConstraints,
     StringConstraints,
     get_constraint_schema_for_data_type,
+    is_value_compatible_with_data_type,
     normalize_dictionary_data_type,
     validate_constraints_for_data_type,
+    value_satisfies_dictionary_constraints,
 )
 from src.type_definitions.json_utils import to_json_value
 
@@ -317,3 +321,113 @@ def test_get_constraint_schema_returns_deep_copy() -> None:
 
 def test_get_constraint_schema_unknown_type_returns_empty_dict() -> None:
     assert get_constraint_schema_for_data_type("VECTOR") == {}
+
+
+def test_is_value_compatible_with_data_type_supports_all_core_types() -> None:
+    assert is_value_compatible_with_data_type(data_type="INTEGER", value=3)
+    assert not is_value_compatible_with_data_type(data_type="INTEGER", value=3.2)
+    assert is_value_compatible_with_data_type(data_type="FLOAT", value=3.2)
+    assert is_value_compatible_with_data_type(data_type="BOOLEAN", value=True)
+    assert is_value_compatible_with_data_type(data_type="STRING", value="abc")
+    assert is_value_compatible_with_data_type(data_type="DATE", value=date(2025, 1, 1))
+    assert is_value_compatible_with_data_type(
+        data_type="JSON",
+        value={"score": 0.8, "labels": ["a", "b"]},
+    )
+
+
+def test_value_satisfies_dictionary_constraints_enforces_numeric_bounds_and_precision() -> (
+    None
+):
+    assert value_satisfies_dictionary_constraints(
+        data_type="FLOAT",
+        constraints={"min": 0.0, "max": 1.0, "precision": 2},
+        value=0.75,
+    )
+    assert not value_satisfies_dictionary_constraints(
+        data_type="FLOAT",
+        constraints={"min": 0.0, "max": 1.0, "precision": 2},
+        value=1.5,
+    )
+    assert not value_satisfies_dictionary_constraints(
+        data_type="FLOAT",
+        constraints={"min": 0.0, "max": 1.0, "precision": 2},
+        value=0.123,
+    )
+
+
+def test_value_satisfies_dictionary_constraints_enforces_string_pattern_and_length() -> (
+    None
+):
+    constraints = {"min_length": 3, "max_length": 5, "pattern": r"^[A-Z]+$"}
+    assert value_satisfies_dictionary_constraints(
+        data_type="STRING",
+        constraints=constraints,
+        value="ABCD",
+    )
+    assert not value_satisfies_dictionary_constraints(
+        data_type="STRING",
+        constraints=constraints,
+        value="ab",
+    )
+    assert not value_satisfies_dictionary_constraints(
+        data_type="STRING",
+        constraints=constraints,
+        value="abcdef",
+    )
+
+
+def test_value_satisfies_dictionary_constraints_enforces_date_window() -> None:
+    constraints = {"min_date": "2025-01-01", "max_date": "2025-12-31"}
+    assert value_satisfies_dictionary_constraints(
+        data_type="DATE",
+        constraints=constraints,
+        value=datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC),
+    )
+    assert not value_satisfies_dictionary_constraints(
+        data_type="DATE",
+        constraints=constraints,
+        value=date(2024, 12, 31),
+    )
+
+
+def test_value_satisfies_dictionary_constraints_applies_json_schema() -> None:
+    constraints = {
+        "json_schema": {
+            "type": "object",
+            "properties": {"score": {"type": "number"}},
+            "required": ["score"],
+        },
+    }
+    assert value_satisfies_dictionary_constraints(
+        data_type="JSON",
+        constraints=constraints,
+        value={"score": 0.2},
+    )
+    assert not value_satisfies_dictionary_constraints(
+        data_type="JSON",
+        constraints=constraints,
+        value={"missing": True},
+    )
+
+
+def test_value_satisfies_dictionary_constraints_supports_legacy_allowed_values() -> (
+    None
+):
+    constraints = {"allowed_values": ["A", "B"]}
+    assert value_satisfies_dictionary_constraints(
+        data_type="STRING",
+        constraints=constraints,
+        value="A",
+    )
+    assert not value_satisfies_dictionary_constraints(
+        data_type="STRING",
+        constraints=constraints,
+        value="C",
+    )
+    assert not value_satisfies_dictionary_constraints(
+        data_type="STRING",
+        constraints=constraints,
+        value="A",
+        allow_legacy_allowed_values=False,
+    )

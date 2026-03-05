@@ -37,6 +37,14 @@ class _FullAutoResolutionSelf(Protocol):
 
 
 class _ExtractionRelationFullAutoHelpers:
+    _COMPONENT_ALIAS_MAP: dict[str, str] = {
+        "PUBMED": "PUBLICATION",
+        "PMID": "PUBLICATION",
+        "ARTICLE": "PUBLICATION",
+        "PAPER": "PUBLICATION",
+        "STUDY": "PUBLICATION",
+    }
+
     def _resolve_full_auto_candidate(
         self: _FullAutoResolutionSelf,
         *,
@@ -96,4 +104,8 @@ class _ExtractionRelationFullAutoHelpers:
 
     @staticmethod
     def _normalize_component(raw_value: str) -> str:
-        return raw_value.strip().upper()
+        normalized = raw_value.strip().upper()
+        return _ExtractionRelationFullAutoHelpers._COMPONENT_ALIAS_MAP.get(
+            normalized,
+            normalized,
+        )

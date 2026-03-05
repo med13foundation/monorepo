@@ -34,8 +34,13 @@ def relation_payload(relation: ExtractedRelation) -> JSONObject:
         "source_type": relation.source_type,
         "relation_type": relation.relation_type,
         "target_type": relation.target_type,
+        "polarity": relation.polarity,
+        "claim_text": relation.claim_text,
+        "claim_section": relation.claim_section,
         "source_label": relation.source_label,
         "target_label": relation.target_label,
+        "evidence_excerpt": relation.evidence_excerpt,
+        "evidence_locator": relation.evidence_locator,
         "confidence": float(relation.confidence),
     }
 
@@ -46,16 +51,28 @@ def candidate_payload(candidate: _ResolvedRelationCandidate) -> JSONObject:
         "source_type": candidate.source_type,
         "relation_type": candidate.relation_type,
         "target_type": candidate.target_type,
-        "source_entity_id": candidate.source_entity_id,
-        "target_entity_id": candidate.target_entity_id,
+        "polarity": candidate.polarity,
         "confidence": candidate.confidence,
         "validation_state": candidate.validation_state,
         "validation_reason": candidate.validation_reason,
+        "persistability": candidate.persistability,
     }
+    if candidate.source_entity_id is not None:
+        payload["source_entity_id"] = candidate.source_entity_id
+    if candidate.target_entity_id is not None:
+        payload["target_entity_id"] = candidate.target_entity_id
     if candidate.source_label is not None:
         payload["source_label"] = candidate.source_label
     if candidate.target_label is not None:
         payload["target_label"] = candidate.target_label
+    if candidate.evidence_excerpt is not None:
+        payload["evidence_excerpt"] = candidate.evidence_excerpt
+    if candidate.evidence_locator is not None:
+        payload["evidence_locator"] = candidate.evidence_locator
+    if candidate.claim_text is not None:
+        payload["claim_text"] = candidate.claim_text
+    if candidate.claim_section is not None:
+        payload["claim_section"] = candidate.claim_section
     return payload
 
 

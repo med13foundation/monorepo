@@ -6,6 +6,7 @@ import {
   FolderKanban,
   CloudDownload,
   ListChecks,
+  Network,
   BookOpen,
   BarChart3,
   Users,
@@ -145,6 +146,13 @@ export function buildSpaceNavItems(
         url: `/spaces/${spaceId}/knowledge-graph`,
         icon: KnowledgeGraphIcon,
         isActive: pathname.startsWith(`/spaces/${spaceId}/knowledge-graph`),
+      },
+      {
+        id: "concepts",
+        title: "Concepts",
+        url: `/spaces/${spaceId}/concepts`,
+        icon: Network,
+        isActive: pathname.startsWith(`/spaces/${spaceId}/concepts`),
       },
       {
         id: "observations",
@@ -313,6 +321,7 @@ export function buildBreadcrumbs(
         "data-sources": "Data Sources",
         curation: "Data Curation",
         "knowledge-graph": "Knowledge Graph",
+        concepts: "Concepts",
         members: "Members",
         settings: "Settings",
       }

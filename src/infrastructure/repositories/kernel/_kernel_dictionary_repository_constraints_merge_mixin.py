@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, inspect, select, update
 from sqlalchemy.exc import IntegrityError
 
 from src.domain.entities.kernel.dictionary import (
@@ -18,10 +18,13 @@ from src.domain.entities.kernel.dictionary import (
 )
 from src.models.database.kernel.dictionary import (
     DictionaryEntityTypeModel,
+    DictionaryRelationSynonymModel,
     DictionaryRelationTypeModel,
     RelationConstraintModel,
     VariableDefinitionModel,
 )
+from src.models.database.kernel.entities import EntityModel
+from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -284,6 +287,14 @@ class _KernelDictionaryRepositoryConstraintsMergeMixin:
         if not target.is_active:
             msg = f"Entity type '{target_entity_type_id}' must be active for merge"
             raise ValueError(msg)
+        if source.id == target.id:
+            msg = "source and target entity types must differ"
+            raise ValueError(msg)
+
+        for entity in self._session.scalars(
+            select(EntityModel).where(EntityModel.entity_type == source.id),
+        ).all():
+            entity.entity_type = target.id
 
         before_snapshot = _snapshot_model(source)
         source.review_status = "REVOKED"
@@ -305,7 +316,7 @@ class _KernelDictionaryRepositoryConstraintsMergeMixin:
         )
         return DictionaryEntityType.model_validate(source)
 
-    def merge_relation_type(
+    def merge_relation_type(  # noqa: C901, PLR0915
         self,
         source_relation_type_id: str,
         target_relation_type_id: str,
@@ -326,26 +337,156 @@ class _KernelDictionaryRepositoryConstraintsMergeMixin:
         if not target.is_active:
             msg = f"Relation type '{target_relation_type_id}' must be active for merge"
             raise ValueError(msg)
+        if source.id == target.id:
+            msg = "source and target relation types must differ"
+            raise ValueError(msg)
 
-        before_snapshot = _snapshot_model(source)
-        source.review_status = "REVOKED"
-        source.reviewed_by = reviewed_by
-        source.reviewed_at = datetime.now(UTC)
-        source.revocation_reason = reason
-        source.is_active = False
-        source.valid_to = datetime.now(UTC)
-        source.superseded_by = target.id
+        source_relations = list(
+            self._session.scalars(
+                select(RelationModel).where(RelationModel.relation_type == source.id),
+            ).all(),
+        )
+        affected_relation_ids: set[UUID] = set()
+        for source_relation in source_relations:
+            target_relation = self._session.scalars(
+                select(RelationModel).where(
+                    and_(
+                        RelationModel.research_space_id
+                        == source_relation.research_space_id,
+                        RelationModel.source_id == source_relation.source_id,
+                        RelationModel.target_id == source_relation.target_id,
+                        RelationModel.relation_type == target.id,
+                    ),
+                ),
+            ).first()
+            if target_relation is None:
+                source_relation.relation_type = target.id
+                affected_relation_ids.add(source_relation.id)
+                continue
+
+            self._session.execute(
+                update(RelationEvidenceModel)
+                .where(RelationEvidenceModel.relation_id == source_relation.id)
+                .values(relation_id=target_relation.id),
+            )
+            self._session.delete(source_relation)
+            affected_relation_ids.add(target_relation.id)
+
+        connection = self._session.connection()
+        if inspect(connection).has_table("dictionary_relation_synonyms"):
+            source_synonyms = list(
+                self._session.scalars(
+                    select(DictionaryRelationSynonymModel).where(
+                        DictionaryRelationSynonymModel.relation_type == source.id,
+                    ),
+                ).all(),
+            )
+            for synonym in source_synonyms:
+                conflicting_synonym = self._session.scalars(
+                    select(DictionaryRelationSynonymModel).where(
+                        and_(
+                            DictionaryRelationSynonymModel.relation_type == target.id,
+                            DictionaryRelationSynonymModel.synonym == synonym.synonym,
+                            DictionaryRelationSynonymModel.is_active.is_(True),
+                        ),
+                    ),
+                ).first()
+                if conflicting_synonym is not None:
+                    self._session.delete(synonym)
+                    continue
+                synonym.relation_type = target.id
+
         self._session.flush()
+        for relation_id in affected_relation_ids:
+            self._recompute_relation_aggregate(relation_id)
+
+        source_id = source.id
+        source_ref = source.source_ref
+        before_snapshot = _snapshot_model(source)
+        revoked_at = datetime.now(UTC)
+        self._session.execute(
+            update(DictionaryRelationTypeModel)
+            .where(DictionaryRelationTypeModel.id == source_id)
+            .values(
+                review_status="REVOKED",
+                reviewed_by=reviewed_by,
+                reviewed_at=revoked_at,
+                revocation_reason=reason,
+                is_active=False,
+                valid_to=revoked_at,
+                superseded_by=target.id,
+            ),
+        )
+        self._session.flush()
+        after_snapshot = dict(before_snapshot)
+        after_snapshot["review_status"] = "REVOKED"
+        after_snapshot["reviewed_by"] = reviewed_by
+        after_snapshot["reviewed_at"] = _to_json_value(revoked_at)
+        after_snapshot["revocation_reason"] = reason
+        after_snapshot["is_active"] = False
+        after_snapshot["valid_to"] = _to_json_value(revoked_at)
+        after_snapshot["superseded_by"] = target.id
         self._record_change(
             table_name=DictionaryRelationTypeModel.__tablename__,
-            record_id=source.id,
+            record_id=source_id,
             action="MERGE",
             before_snapshot=before_snapshot,
-            after_snapshot=_snapshot_model(source),
+            after_snapshot=after_snapshot,
             changed_by=reviewed_by,
-            source_ref=source.source_ref,
+            source_ref=source_ref,
         )
-        return DictionaryRelationType.model_validate(source)
+        return DictionaryRelationType.model_validate(after_snapshot)
+
+    def _recompute_relation_aggregate(self, relation_id: UUID) -> None:
+        relation_model = self._session.get(RelationModel, relation_id)
+        if relation_model is None:
+            return
+
+        evidences = list(
+            self._session.scalars(
+                select(RelationEvidenceModel).where(
+                    RelationEvidenceModel.relation_id == relation_id,
+                ),
+            ).all(),
+        )
+        if not evidences:
+            relation_model.aggregate_confidence = 0.0
+            relation_model.source_count = 0
+            relation_model.highest_evidence_tier = None
+            relation_model.updated_at = datetime.now(UTC)
+            return
+
+        rank_by_tier = {
+            "EXPERT_CURATED": 6,
+            "CLINICAL": 5,
+            "EXPERIMENTAL": 4,
+            "LITERATURE": 3,
+            "STRUCTURED_DATA": 2,
+            "COMPUTATIONAL": 1,
+        }
+        product = 1.0
+        highest_tier: str | None = None
+        highest_rank = 0
+        for evidence in evidences:
+            confidence = float(evidence.confidence)
+            confidence = max(confidence, 0.0)
+            confidence = min(confidence, 1.0)
+            product *= 1.0 - confidence
+
+            tier = evidence.evidence_tier.strip().upper()
+            rank = rank_by_tier.get(tier, 0)
+            if rank > highest_rank:
+                highest_rank = rank
+                highest_tier = tier
+
+        aggregate_confidence = 1.0 - product
+        aggregate_confidence = max(aggregate_confidence, 0.0)
+        aggregate_confidence = min(aggregate_confidence, 1.0)
+
+        relation_model.aggregate_confidence = aggregate_confidence
+        relation_model.source_count = len(evidences)
+        relation_model.highest_evidence_tier = highest_tier
+        relation_model.updated_at = datetime.now(UTC)
 
 
 __all__ = ["_KernelDictionaryRepositoryConstraintsMergeMixin"]

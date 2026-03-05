@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   deleteDataSourceAction,
@@ -52,9 +52,14 @@ import { getSourceAgentConfigSnapshot } from './sourceAgentConfig'
 import type { OrchestratedSessionState, SourceCatalogEntry } from '@/types/generated'
 import type { DataSource } from '@/types/data-source'
 import type { DataSourceListResponse } from '@/lib/api/data-sources'
+import type {
+  SpaceWorkflowBootstrapPayload,
+  SpaceWorkflowSourceCardPayload,
+} from '@/types/kernel'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
+import { useSpaceWorkflowStream } from '@/hooks/use-space-workflow-stream'
 
 interface DataSourcesListProps {
   spaceId: string
@@ -71,6 +76,10 @@ export interface SourceWorkflowCardStatus {
   last_failed_stage?: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
   pending_paper_count: number
   pending_relation_review_count: number
+  extraction_extracted_count: number
+  extraction_failed_count: number
+  extraction_skipped_count: number
+  extraction_timeout_failed_count: number
   graph_edges_delta_last_run: number
   graph_edges_total: number
   artana_progress?: Record<string, SourceWorkflowArtanaStage>
@@ -87,6 +96,7 @@ interface WorkflowSignal {
   pipelineStatus: string | null
   pendingPapers: number
   pendingReview: number
+  timeoutFailures: number
   newEdges: number
 }
 
@@ -99,11 +109,14 @@ interface WorkflowEventSignal {
   message: string
 }
 
+const WORKFLOW_SSE_ENABLED = process.env.NEXT_PUBLIC_WORKFLOW_SSE_ENABLED === 'true'
+
 function buildWorkflowSignal(status: SourceWorkflowCardStatus): WorkflowSignal {
   return {
     pipelineStatus: status.last_pipeline_status,
     pendingPapers: status.pending_paper_count,
     pendingReview: status.pending_relation_review_count,
+    timeoutFailures: status.extraction_timeout_failed_count ?? 0,
     newEdges: status.graph_edges_delta_last_run,
   }
 }
@@ -112,6 +125,18 @@ function describePipelineStage(status: SourceWorkflowCardStatus | undefined): st
   if (!status) return 'Connecting to monitor'
   if (status.last_pipeline_status === 'failed') {
     return 'Pipeline failed'
+  }
+  if (
+    status.last_pipeline_status === 'completed' &&
+    (status.extraction_timeout_failed_count ?? 0) > 0
+  ) {
+    return 'Completed with timeout failures'
+  }
+  if (
+    status.last_pipeline_status === 'completed' &&
+    (status.extraction_failed_count ?? 0) > 0
+  ) {
+    return 'Completed with extraction failures'
   }
   if (status.pending_paper_count > 0) {
     return 'Document ingestion and extraction'
@@ -180,6 +205,11 @@ function describeWorkflowChange(
   if (previousSignal.pendingReview !== nextSignal.pendingReview) {
     updates.push(
       `review ${previousSignal.pendingReview} -> ${nextSignal.pendingReview}`,
+    )
+  }
+  if (previousSignal.timeoutFailures !== nextSignal.timeoutFailures) {
+    updates.push(
+      `timeouts ${previousSignal.timeoutFailures} -> ${nextSignal.timeoutFailures}`,
     )
   }
   if (previousSignal.newEdges !== nextSignal.newEdges) {
@@ -253,6 +283,65 @@ export function DataSourcesList({
     [dataSources],
   )
 
+  const applyStreamCardPayload = useCallback((payload: SpaceWorkflowSourceCardPayload) => {
+    const sourceId = payload.source_id
+    const status = payload.workflow_status
+    const events: WorkflowEventSignal[] = payload.events.map((event) => ({
+      event_id: event.event_id,
+      occurred_at: event.occurred_at,
+      category: event.category,
+      stage: event.stage,
+      status: event.status,
+      message: event.message,
+    }))
+    const updateAtMs = Date.now()
+    const signal = buildWorkflowSignal(status)
+    const previousSignal = lastWorkflowSignalBySourceRef.current[sourceId]
+    const changeSummary = describeWorkflowChange(previousSignal, signal)
+    lastWorkflowRefreshAtBySourceRef.current[sourceId] = updateAtMs
+    if (changeSummary !== null) {
+      lastWorkflowChangeAtBySourceRef.current[sourceId] = updateAtMs
+      lastWorkflowChangeSummaryBySourceRef.current[sourceId] = changeSummary
+    } else if (!(sourceId in lastWorkflowChangeAtBySourceRef.current)) {
+      lastWorkflowChangeAtBySourceRef.current[sourceId] = updateAtMs
+      lastWorkflowChangeSummaryBySourceRef.current[sourceId] =
+        'Awaiting first progress signal.'
+    }
+    lastWorkflowSignalBySourceRef.current[sourceId] = signal
+    setLiveWorkflowStatusBySource((previous) => ({
+      ...previous,
+      [sourceId]: status,
+    }))
+    setLiveWorkflowEventsBySource((previous) => ({
+      ...previous,
+      [sourceId]: events,
+    }))
+    if (status.last_pipeline_status !== 'running') {
+      setRunningPipelineSourceId((current) => (current === sourceId ? null : current))
+    }
+  }, [])
+
+  const handleStreamBootstrap = useCallback(
+    (payload: SpaceWorkflowBootstrapPayload) => {
+      for (const row of payload.sources) {
+        applyStreamCardPayload(row)
+      }
+    },
+    [applyStreamCardPayload],
+  )
+
+  const {
+    isFallbackActive: isSseFallbackActive,
+  } = useSpaceWorkflowStream({
+    spaceId,
+    sourceIds: resolvedDataSources.map((source) => source.id),
+    enabled: WORKFLOW_SSE_ENABLED,
+    onBootstrap: handleStreamBootstrap,
+    onSourceCardStatus: applyStreamCardPayload,
+  })
+
+  const isPollingFallbackActive = !WORKFLOW_SSE_ENABLED || isSseFallbackActive
+
   useEffect(() => {
     if (initialExpandDoneRef.current || resolvedDataSources.length === 0) return
     initialExpandDoneRef.current = true
@@ -296,7 +385,7 @@ export function DataSourcesList({
   }, [pollingSourceIds.length, runningPipelineSourceId])
 
   useEffect(() => {
-    if (pollingSourceIds.length === 0) return
+    if (!isPollingFallbackActive || pollingSourceIds.length === 0) return
     let isMounted = true
     let isPolling = false
     const poll = async () => {
@@ -373,7 +462,7 @@ export function DataSourcesList({
       isMounted = false
       window.clearInterval(intervalId)
     }
-  }, [pollingSourceIds, runningPipelineSourceId, spaceId])
+  }, [isPollingFallbackActive, pollingSourceIds, runningPipelineSourceId, spaceId])
 
   if (dataSourcesError) {
     return (
@@ -629,11 +718,15 @@ export function DataSourcesList({
           pending_paper_count: current?.pending_paper_count ?? 0,
           pending_relation_review_count:
             current?.pending_relation_review_count ?? 0,
+          extraction_extracted_count: current?.extraction_extracted_count ?? 0,
+          extraction_failed_count: current?.extraction_failed_count ?? 0,
+          extraction_skipped_count: current?.extraction_skipped_count ?? 0,
+          extraction_timeout_failed_count:
+            current?.extraction_timeout_failed_count ?? 0,
           graph_edges_delta_last_run:
             current?.graph_edges_delta_last_run ?? 0,
           graph_edges_total: current?.graph_edges_total ?? 0,
         }
-        lastWorkflowSignalBySourceRef.current[source.id] = buildWorkflowSignal(nextStatus)
         return {
           ...previous,
           [source.id]: nextStatus,
@@ -759,6 +852,14 @@ export function DataSourcesList({
               {
                 label: 'Pending review',
                 value: String(workflowStatus?.pending_relation_review_count ?? 0),
+              },
+              {
+                label: 'Failed papers',
+                value: String(workflowStatus?.extraction_failed_count ?? 0),
+              },
+              {
+                label: 'Timeouts',
+                value: String(workflowStatus?.extraction_timeout_failed_count ?? 0),
               },
               {
                 label: 'New edges',
@@ -1038,6 +1139,26 @@ export function DataSourcesList({
                       <p className="text-sm text-amber-700">
                         Queue backlog: {workflowStatus?.pending_paper_count ?? 0} pending paper
                         {(workflowStatus?.pending_paper_count ?? 0) === 1 ? '' : 's'}.
+                      </p>
+                    )}
+                  {isExpanded &&
+                    !isRunning &&
+                    isActive &&
+                    (workflowStatus?.extraction_timeout_failed_count ?? 0) > 0 && (
+                      <p className="text-sm text-destructive">
+                        Timeout failures: {workflowStatus?.extraction_timeout_failed_count ?? 0}{' '}
+                        paper{(workflowStatus?.extraction_timeout_failed_count ?? 0) === 1 ? '' : 's'} hit
+                        timeout in the latest run.
+                      </p>
+                    )}
+                  {isExpanded &&
+                    !isRunning &&
+                    isActive &&
+                    (workflowStatus?.extraction_failed_count ?? 0) > 0 && (
+                      <p className="text-sm text-destructive">
+                        Extraction failures: {workflowStatus?.extraction_failed_count ?? 0} paper
+                        {(workflowStatus?.extraction_failed_count ?? 0) === 1 ? '' : 's'} failed in the
+                        latest run.
                       </p>
                     )}
                 </CardHeader>

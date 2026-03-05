@@ -80,6 +80,7 @@ class GraphQueryPort(ABC):
         research_space_id: str,
         entity_id: str,
         relation_types: list[str] | None = None,
+        curation_statuses: list[str] | None = None,
         direction: Literal["outgoing", "incoming", "both"] = "both",
         depth: int = 1,
         limit: int = 200,

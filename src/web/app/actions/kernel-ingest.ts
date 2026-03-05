@@ -27,6 +27,10 @@ export interface WorkflowCardStatusPayload {
   last_failed_stage: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
   pending_paper_count: number
   pending_relation_review_count: number
+  extraction_extracted_count: number
+  extraction_failed_count: number
+  extraction_skipped_count: number
+  extraction_timeout_failed_count: number
   graph_edges_delta_last_run: number
   graph_edges_total: number
   artana_progress?: Record<string, WorkflowCardArtanaStage>
@@ -294,6 +298,12 @@ export async function fetchSourceWorkflowCardStatusAction(
         last_failed_stage: extractLastFailedStage(monitor),
         pending_paper_count: toNumber(counters.pending_paper_count),
         pending_relation_review_count: toNumber(counters.pending_relation_review_count),
+        extraction_extracted_count: toNumber(counters.extraction_extracted_count),
+        extraction_failed_count: toNumber(counters.extraction_failed_count),
+        extraction_skipped_count: toNumber(counters.extraction_skipped_count),
+        extraction_timeout_failed_count: toNumber(
+          counters.extraction_timeout_failed_count,
+        ),
         graph_edges_delta_last_run: toNumber(counters.graph_edges_delta_last_run),
         graph_edges_total: toNumber(counters.graph_edges_total),
         artana_progress: parseArtanaProgress(monitor),

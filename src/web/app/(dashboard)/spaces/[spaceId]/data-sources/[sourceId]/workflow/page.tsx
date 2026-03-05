@@ -5,7 +5,7 @@ import { fetchSourcePipelineRuns, fetchSourceWorkflowMonitor } from '@/lib/api/k
 import { authOptions } from '@/lib/auth'
 import type { SourcePipelineRunsResponse, SourceWorkflowMonitorResponse } from '@/types/kernel'
 
-import { SourceWorkflowMonitorView } from './source-workflow-monitor-view'
+import { SourceWorkflowMonitorLiveClient } from './source-workflow-monitor-live-client'
 import type { WorkflowTabKey } from './source-workflow-monitor-tab-sections'
 
 interface SourceWorkflowMonitorPageProps {
@@ -71,12 +71,13 @@ export default async function SourceWorkflowMonitorPage({
   }
 
   return (
-    <SourceWorkflowMonitorView
+    <SourceWorkflowMonitorLiveClient
       spaceId={spaceId}
+      sourceId={sourceId}
       selectedRunId={selectedRunId}
-      monitor={monitor}
-      monitorError={monitorError}
-      pipelineRuns={pipelineRuns}
+      initialMonitor={monitor}
+      initialMonitorError={monitorError}
+      initialPipelineRuns={pipelineRuns}
       initialTab={initialTab}
     />
   )

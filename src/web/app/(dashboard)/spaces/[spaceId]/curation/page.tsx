@@ -2,11 +2,28 @@ import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import SpaceCurationClient from '../space-curation-client'
-import { fetchKernelEntities, fetchKernelRelations } from '@/lib/api/kernel'
+import {
+  fetchKernelEntities,
+  fetchKernelRelations,
+  fetchRelationClaims,
+  fetchRelationConflicts,
+} from '@/lib/api/kernel'
 import { fetchMyMembership } from '@/lib/api/research-spaces'
 import { MembershipRole } from '@/types/research-space'
 import { UserRole } from '@/types/auth'
-import type { KernelRelationListResponse } from '@/types/kernel'
+import type {
+  KernelRelationListResponse,
+  RelationClaimListResponse,
+  RelationConflictListResponse,
+} from '@/types/kernel'
+import {
+  errorMessage,
+  errorStatusCode,
+  firstString,
+  isTimeoutLikeError,
+  parseIntParam,
+  parseStringList,
+} from './page-helpers'
 
 interface SpaceCurationPageProps {
   params: Promise<{
@@ -15,78 +32,54 @@ interface SpaceCurationPageProps {
   searchParams?: Promise<Record<string, string | string[] | undefined>>
 }
 
-function firstString(value: string | string[] | undefined): string | undefined {
-  if (typeof value === 'string') {
-    return value
-  }
-  return Array.isArray(value) ? value[0] : undefined
-}
-
-function parseStringList(value: string | string[] | undefined): string[] {
-  if (value === undefined) {
-    return []
-  }
-  const raw = typeof value === 'string' ? [value] : value
-  return raw
-    .flatMap((entry) => entry.split(','))
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-}
-
-function parseIntParam(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback
-  }
-  const parsed = Number.parseInt(value, 10)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
-}
-
-function isTimeoutLikeError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) {
-    return false
-  }
-  const payload = error as Record<string, unknown>
-  const code = payload.code
-  if (typeof code === 'string' && code === 'ECONNABORTED') {
-    return true
-  }
-  const message = payload.message
-  if (typeof message === 'string') {
-    return message.toLowerCase().includes('timeout')
-  }
-  return false
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message
-  }
-  return 'Unable to load relations for this space.'
-}
-
 export default async function SpaceCurationPage({ params, searchParams }: SpaceCurationPageProps) {
   const { spaceId } = await params
   const resolvedSearchParams = searchParams ? await searchParams : undefined
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
+  const hypothesisGenerationEnabled = ['1', 'true', 'yes', 'on'].includes(
+    (process.env.MED13_ENABLE_HYPOTHESIS_GENERATION ?? '0').toLowerCase(),
+  )
 
   if (!session || !token) {
     redirect('/auth/login?error=SessionExpired')
   }
 
   let relations: KernelRelationListResponse | null = null
+  let claims: RelationClaimListResponse | null = null
+  let relationConflicts: RelationConflictListResponse | null = null
   let relationsError: string | null = null
+  let claimsError: string | null = null
   let entityLabelsById: Record<string, string> = {}
 
   const isPlatformAdmin = session.user.role === UserRole.ADMIN
   let effectiveRole: MembershipRole = isPlatformAdmin ? MembershipRole.ADMIN : MembershipRole.VIEWER
 
+  const tab = firstString(resolvedSearchParams?.tab) === 'claims' ? 'claims' : 'graph'
+  const graphMode =
+    firstString(resolvedSearchParams?.graph_mode) === 'claim_overlay'
+      ? 'claim_overlay'
+      : 'canonical'
   const relationType = firstString(resolvedSearchParams?.relation_type)
   const curationStatus = firstString(resolvedSearchParams?.curation_status)
+  const validationState = firstString(resolvedSearchParams?.validation_state)
+  const sourceDocumentId = firstString(resolvedSearchParams?.source_document_id)
+  const certaintyBand = firstString(resolvedSearchParams?.certainty_band)
   const nodeQuery = firstString(resolvedSearchParams?.node_query)
   const nodeIds = parseStringList(resolvedSearchParams?.node_ids)
+  const focusRelationId = firstString(resolvedSearchParams?.focus_relation_id)
   const offset = parseIntParam(firstString(resolvedSearchParams?.offset), 0)
   const limit = Math.min(parseIntParam(firstString(resolvedSearchParams?.limit), 25), 200)
+  const claimStatus = firstString(resolvedSearchParams?.claim_status)
+  const claimValidationState = firstString(resolvedSearchParams?.claim_validation_state)
+  const claimPersistability = firstString(resolvedSearchParams?.persistability)
+  const claimPolarity = firstString(resolvedSearchParams?.claim_polarity)
+  const claimRelationType = firstString(resolvedSearchParams?.claim_relation_type)
+  const claimSourceDocumentId = firstString(resolvedSearchParams?.claim_source_document_id)
+  const claimLinkedRelationId = firstString(resolvedSearchParams?.linked_relation_id)
+  const claimCertaintyBand = firstString(resolvedSearchParams?.claim_certainty_band)
+  const claimOffset = parseIntParam(firstString(resolvedSearchParams?.claim_offset), 0)
+  const claimLimit = Math.min(parseIntParam(firstString(resolvedSearchParams?.claim_limit), 25), 200)
   const membershipPromise = fetchMyMembership(spaceId, token)
 
   try {
@@ -95,6 +88,9 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
       {
         ...(relationType ? { relation_type: relationType } : {}),
         ...(curationStatus ? { curation_status: curationStatus } : {}),
+        ...(validationState ? { validation_state: validationState } : {}),
+        ...(sourceDocumentId ? { source_document_id: sourceDocumentId } : {}),
+        ...(certaintyBand ? { certainty_band: certaintyBand as 'HIGH' | 'MEDIUM' | 'LOW' } : {}),
         ...(nodeQuery ? { node_query: nodeQuery } : {}),
         ...(nodeIds.length > 0 ? { node_ids: nodeIds } : {}),
         offset,
@@ -111,6 +107,9 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
           {
             ...(relationType ? { relation_type: relationType } : {}),
             ...(curationStatus ? { curation_status: curationStatus } : {}),
+            ...(validationState ? { validation_state: validationState } : {}),
+            ...(sourceDocumentId ? { source_document_id: sourceDocumentId } : {}),
+            ...(certaintyBand ? { certainty_band: certaintyBand as 'HIGH' | 'MEDIUM' | 'LOW' } : {}),
             ...(nodeQuery ? { node_query: nodeQuery } : {}),
             ...(nodeIds.length > 0 ? { node_ids: nodeIds } : {}),
             offset,
@@ -125,6 +124,64 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
     } else {
       relationsError = errorMessage(error)
       console.warn(`[SpaceCurationPage] Relation lookup failed: ${relationsError}`)
+    }
+  }
+
+  try {
+    claims = await fetchRelationClaims(
+      spaceId,
+      {
+        ...(claimStatus
+          ? {
+              claim_status: claimStatus as 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED',
+            }
+          : {}),
+        ...(claimValidationState ? { validation_state: claimValidationState } : {}),
+        ...(claimPersistability
+          ? {
+              persistability: claimPersistability as 'PERSISTABLE' | 'NON_PERSISTABLE',
+            }
+          : {}),
+        ...(claimPolarity
+          ? {
+              polarity: claimPolarity as 'SUPPORT' | 'REFUTE' | 'UNCERTAIN' | 'HYPOTHESIS',
+            }
+          : {}),
+        ...(claimSourceDocumentId
+          ? { source_document_id: claimSourceDocumentId }
+          : {}),
+        ...(claimRelationType ? { relation_type: claimRelationType } : {}),
+        ...(claimLinkedRelationId ? { linked_relation_id: claimLinkedRelationId } : {}),
+        ...(claimCertaintyBand
+          ? { certainty_band: claimCertaintyBand as 'HIGH' | 'MEDIUM' | 'LOW' }
+          : {}),
+        offset: claimOffset,
+        limit: claimLimit,
+      },
+      token,
+    )
+  } catch (error) {
+    claimsError = errorMessage(error)
+    console.warn(`[SpaceCurationPage] Relation claims lookup failed: ${claimsError}`)
+  }
+
+  try {
+    relationConflicts = await fetchRelationConflicts(
+      spaceId,
+      { offset: 0, limit: 200 },
+      token,
+    )
+  } catch (error) {
+    const statusCode = errorStatusCode(error)
+    if (statusCode === 404 || statusCode === 405) {
+      relationConflicts = {
+        conflicts: [],
+        total: 0,
+        offset: 0,
+        limit: 200,
+      }
+    } else {
+      console.warn('[SpaceCurationPage] Relation conflicts lookup failed', error)
     }
   }
 
@@ -183,16 +240,39 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
   return (
     <SpaceCurationClient
       spaceId={spaceId}
+      activeTab={tab}
       relations={relations}
       relationsError={relationsError}
+      claims={claims}
+      claimsError={claimsError}
+      relationConflicts={relationConflicts}
       entityLabelsById={entityLabelsById}
       canCurate={canCurate}
-      filters={{
+      hypothesisGenerationEnabled={hypothesisGenerationEnabled}
+      relationFilters={{
+        graphMode,
         relationType: relationType ?? '',
         curationStatus: curationStatus ?? '',
+        validationState: validationState ?? '',
+        sourceDocumentId: sourceDocumentId ?? '',
+        certaintyBand: certaintyBand ?? '',
+        nodeQuery: nodeQuery ?? '',
         nodeIds,
+        focusRelationId: focusRelationId ?? '',
         offset,
         limit,
+      }}
+      claimFilters={{
+        claimStatus: claimStatus ?? '',
+        validationState: claimValidationState ?? '',
+        persistability: claimPersistability ?? '',
+        polarity: claimPolarity ?? '',
+        relationType: claimRelationType ?? '',
+        sourceDocumentId: claimSourceDocumentId ?? '',
+        linkedRelationId: claimLinkedRelationId ?? '',
+        certaintyBand: claimCertaintyBand ?? '',
+        offset: claimOffset,
+        limit: claimLimit,
       }}
     />
   )

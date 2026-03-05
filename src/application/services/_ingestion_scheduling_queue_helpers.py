@@ -126,11 +126,18 @@ class _IngestionSchedulingQueueHelpers:
     def _create_ingestion_job(
         self: IngestionSchedulingService,
         source: user_data_source.UserDataSource,
+        *,
+        trigger: ingestion_job.IngestionTrigger = ingestion_job.IngestionTrigger.SCHEDULED,
     ) -> ingestion_job.IngestionJob:
+        acquired_by = "ingestion-scheduler"
+        processing_steps: tuple[str, ...] = ("scheduled_ingestion",)
+        if trigger == ingestion_job.IngestionTrigger.API:
+            acquired_by = "ingestion-api"
+            processing_steps = ("api_triggered_ingestion",)
         return ingestion_job.IngestionJob(
             id=uuid4(),
             source_id=source.id,
-            trigger=ingestion_job.IngestionTrigger.SCHEDULED,
+            trigger=trigger,
             triggered_by=None,
             started_at=None,
             completed_at=None,
@@ -138,8 +145,8 @@ class _IngestionSchedulingQueueHelpers:
                 source=ProvenanceSource.COMPUTED,
                 source_version=None,
                 source_url=None,
-                acquired_by="ingestion-scheduler",
-                processing_steps=("scheduled_ingestion",),
+                acquired_by=acquired_by,
+                processing_steps=processing_steps,
                 quality_score=None,
             ),
             metadata={},

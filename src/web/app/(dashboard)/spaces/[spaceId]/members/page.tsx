@@ -26,18 +26,19 @@ export default async function SpaceMembersPage({ params }: SpaceMembersPageProps
   let memberships: ResearchSpaceMembership[] = []
   let membersError: string | null = null
   let currentMembership: ResearchSpaceMembership | null = null
+  let effectiveSpaceId = spaceId
 
-  const [spaceResult, membersResult, membershipResult] = await Promise.allSettled([
-    fetchResearchSpace(spaceId, token),
-    fetchSpaceMembers(spaceId, undefined, token),
-    fetchMyMembership(spaceId, token),
-  ])
-
-  if (spaceResult.status === 'fulfilled') {
-    space = spaceResult.value
-  } else {
-    console.error('[SpaceMembersPage] Failed to fetch research space', spaceResult.reason)
+  try {
+    space = await fetchResearchSpace(spaceId, token)
+    effectiveSpaceId = space.id
+  } catch (error) {
+    console.error('[SpaceMembersPage] Failed to fetch research space', error)
   }
+
+  const [membersResult, membershipResult] = await Promise.allSettled([
+    fetchSpaceMembers(effectiveSpaceId, undefined, token),
+    fetchMyMembership(effectiveSpaceId, token),
+  ])
 
   if (membersResult.status === 'fulfilled') {
     memberships = membersResult.value.memberships
@@ -71,7 +72,7 @@ export default async function SpaceMembersPage({ params }: SpaceMembersPageProps
 
   return (
     <SpaceMembersClient
-      spaceId={spaceId}
+      spaceId={effectiveSpaceId}
       space={space}
       memberships={memberships}
       membersError={membersError}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select
@@ -127,6 +128,8 @@ class SqlAlchemySourceDocumentRepository(SourceDocumentRepository):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         stmt = select(SourceDocumentModel).where(
             SourceDocumentModel.enrichment_status == EnrichmentStatus.PENDING.value,
@@ -137,6 +140,17 @@ class SqlAlchemySourceDocumentRepository(SourceDocumentRepository):
             stmt = stmt.where(
                 SourceDocumentModel.research_space_id == str(research_space_id),
             )
+        if ingestion_job_id is not None:
+            stmt = stmt.where(
+                SourceDocumentModel.ingestion_job_id == str(ingestion_job_id),
+            )
+        if isinstance(source_type, str):
+            normalized_source_type = source_type.strip().lower()
+            if normalized_source_type:
+                stmt = stmt.where(
+                    func.lower(SourceDocumentModel.source_type)
+                    == normalized_source_type,
+                )
         stmt = stmt.order_by(SourceDocumentModel.created_at.asc()).limit(max(limit, 1))
         models = self.session.execute(stmt).scalars().all()
         return [SourceDocumentMapper.to_domain(model) for model in models]
@@ -147,6 +161,8 @@ class SqlAlchemySourceDocumentRepository(SourceDocumentRepository):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         stmt = select(SourceDocumentModel).where(
             SourceDocumentModel.extraction_status
@@ -158,9 +174,80 @@ class SqlAlchemySourceDocumentRepository(SourceDocumentRepository):
             stmt = stmt.where(
                 SourceDocumentModel.research_space_id == str(research_space_id),
             )
+        if ingestion_job_id is not None:
+            stmt = stmt.where(
+                SourceDocumentModel.ingestion_job_id == str(ingestion_job_id),
+            )
+        if isinstance(source_type, str):
+            normalized_source_type = source_type.strip().lower()
+            if normalized_source_type:
+                stmt = stmt.where(
+                    func.lower(SourceDocumentModel.source_type)
+                    == normalized_source_type,
+                )
         stmt = stmt.order_by(SourceDocumentModel.created_at.asc()).limit(max(limit, 1))
         models = self.session.execute(stmt).scalars().all()
         return [SourceDocumentMapper.to_domain(model) for model in models]
+
+    def recover_stale_in_progress_extraction(
+        self,
+        *,
+        stale_before: datetime,
+        source_id: UUID | None = None,
+        research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        limit: int = 500,
+    ) -> int:
+        stmt = select(SourceDocumentModel).where(
+            SourceDocumentModel.extraction_status
+            == DocumentExtractionStatus.IN_PROGRESS.value,
+            SourceDocumentModel.updated_at < stale_before,
+        )
+        if source_id is not None:
+            stmt = stmt.where(SourceDocumentModel.source_id == str(source_id))
+        if research_space_id is not None:
+            stmt = stmt.where(
+                SourceDocumentModel.research_space_id == str(research_space_id),
+            )
+        if ingestion_job_id is not None:
+            stmt = stmt.where(
+                SourceDocumentModel.ingestion_job_id == str(ingestion_job_id),
+            )
+        stale_models = (
+            self.session.execute(
+                stmt.order_by(SourceDocumentModel.updated_at.asc()).limit(
+                    max(limit, 1),
+                ),
+            )
+            .scalars()
+            .all()
+        )
+        if not stale_models:
+            return 0
+
+        now = datetime.now(UTC)
+        recovered = 0
+        for model in stale_models:
+            metadata = (
+                dict(model.metadata_payload)
+                if isinstance(model.metadata_payload, dict)
+                else {}
+            )
+            metadata["extraction_stale_recovered_at"] = now.isoformat()
+            metadata["extraction_stale_previous_status"] = (
+                DocumentExtractionStatus.IN_PROGRESS.value
+            )
+            metadata["extraction_stale_recovery_reason"] = (
+                "in_progress_timeout_recovered_to_pending"
+            )
+            model.metadata_payload = metadata
+            model.extraction_status = DocumentExtractionStatus.PENDING.value
+            model.extraction_agent_run_id = None
+            model.updated_at = now
+            recovered += 1
+
+        self.session.commit()
+        return recovered
 
     def delete_by_source(self, source_id: UUID) -> int:
         stmt = delete(SourceDocumentModel).where(

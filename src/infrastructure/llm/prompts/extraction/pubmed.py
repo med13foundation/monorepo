@@ -19,6 +19,11 @@ PubMed extraction focus:
   publication year, journal/source, publication type, keywords/MeSH signals.
 - Use sentence-level grounding whenever possible:
   cite exact phrases from full text or title/abstract in evidence excerpts.
+- Set relation polarity using:
+  SUPPORT, REFUTE, UNCERTAIN, HYPOTHESIS.
+  Map speculative language ("may", "suggests", "possible") to HYPOTHESIS
+  or UNCERTAIN based on strength.
+  Map explicitly negative findings ("no association", "not linked") to REFUTE.
 
 Discovery policy:
 - Prioritize recall over strict filtering at this stage.
@@ -39,6 +44,7 @@ Output requirements:
 - source_type must be "pubmed"
 - include document_id
 - include observations, relations, rejected_facts
+- for each relation include polarity, claim_text (when available), claim_section (if available)
 - pipeline_payloads may be empty at discovery stage; keep them compact when present
 - evidence must reference concrete text spans or metadata fields
 """.strip()
@@ -68,6 +74,8 @@ Synthesis policy:
 - For relations, source_type and target_type must be entity TYPES
   (for example: GENE, PROTEIN, VARIANT, PHENOTYPE, PUBLICATION).
 - Put concrete symbols/names in source_label/target_label.
+- Every relation must include polarity in:
+  SUPPORT, REFUTE, UNCERTAIN, HYPOTHESIS.
 
 Use tools during synthesis:
 - validate_observation(variable_id, value, unit)
@@ -89,6 +97,7 @@ Output requirements:
 - source_type must be "pubmed"
 - include document_id
 - include observations, relations, rejected_facts
+- for each relation include polarity, claim_text (when available), claim_section (if available)
 - include pipeline_payloads only if compact and necessary (never copy full full_text)
 - evidence must reference concrete text spans or metadata fields
 """.strip()

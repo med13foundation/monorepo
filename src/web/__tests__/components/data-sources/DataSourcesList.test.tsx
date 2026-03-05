@@ -2,11 +2,26 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DataSourcesList } from '@/components/data-sources/DataSourcesList'
 import { DiscoverSourcesDialog } from '@/components/data-sources/DiscoverSourcesDialog'
+import {
+  fetchSourceWorkflowCardStatusAction,
+  fetchSourceWorkflowEventsAction,
+} from '@/app/actions/kernel-ingest'
 import type { DataSource } from '@/types/data-source'
 import type { DataSourceListResponse } from '@/lib/api/data-sources'
 import type { OrchestratedSessionState } from '@/types/generated'
+import type {
+  SpaceWorkflowBootstrapPayload,
+  SpaceWorkflowSourceCardPayload,
+} from '@/types/kernel'
 
 const mockRefresh = jest.fn()
+const mockStreamBootstrapPayloadState: {
+  current: SpaceWorkflowBootstrapPayload | null
+} = { current: null }
+const mockStreamCardPayloadsState: {
+  current: SpaceWorkflowSourceCardPayload[]
+} = { current: [] }
+const mockStreamFallbackState: { current: boolean } = { current: false }
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -48,6 +63,27 @@ jest.mock('@/components/data-discovery/DataDiscoveryContent', () => ({
   ),
 }))
 
+jest.mock('@/hooks/use-space-workflow-stream', () => {
+  const React = require('react')
+  return {
+    useSpaceWorkflowStream: jest.fn((options) => {
+      React.useEffect(() => {
+        if (mockStreamBootstrapPayloadState.current !== null) {
+          options.onBootstrap?.(mockStreamBootstrapPayloadState.current)
+        }
+        for (const payload of mockStreamCardPayloadsState.current) {
+          options.onSourceCardStatus?.(payload)
+        }
+      }, [options.onBootstrap, options.onSourceCardStatus])
+      return {
+        isConnected: true,
+        isFallbackActive: mockStreamFallbackState.current,
+        lastError: null,
+      }
+    }),
+  }
+})
+
 const mockDataSources: DataSource[] = [
   {
     id: 'source-1',
@@ -71,6 +107,31 @@ const dataSourcesResponse: DataSourceListResponse = {
   has_next: false,
   has_prev: false,
 }
+
+beforeEach(() => {
+  mockStreamBootstrapPayloadState.current = null
+  mockStreamCardPayloadsState.current = []
+  mockStreamFallbackState.current = false
+  ;(fetchSourceWorkflowCardStatusAction as jest.Mock).mockResolvedValue({
+    success: true,
+    data: {
+      last_pipeline_status: 'completed',
+      pending_paper_count: 0,
+      pending_relation_review_count: 0,
+      extraction_extracted_count: 0,
+      extraction_failed_count: 0,
+      extraction_skipped_count: 0,
+            extraction_timeout_failed_count: 0,
+      graph_edges_delta_last_run: 0,
+      graph_edges_total: 0,
+      last_failed_stage: null,
+    },
+  })
+  ;(fetchSourceWorkflowEventsAction as jest.Mock).mockResolvedValue({
+    success: true,
+    data: { events: [] },
+  })
+})
 
 describe('DataSourcesList - Auto-refresh on Source Addition', () => {
   beforeEach(() => {
@@ -393,6 +454,10 @@ describe('DataSourcesList - Artana progress display', () => {
             last_pipeline_status: 'completed',
             pending_paper_count: 0,
             pending_relation_review_count: 0,
+            extraction_extracted_count: 0,
+            extraction_failed_count: 0,
+            extraction_skipped_count: 0,
+            extraction_timeout_failed_count: 0,
             graph_edges_delta_last_run: 0,
             graph_edges_total: 10,
             artana_progress: {
@@ -409,5 +474,144 @@ describe('DataSourcesList - Artana progress display', () => {
     )
 
     expect(screen.getByText(/Artana extraction 45%/i)).toBeInTheDocument()
+  })
+})
+
+describe('DataSourcesList - Workflow streaming and fallback', () => {
+  it('applies stream bootstrap updates to live workflow UI', async () => {
+    mockStreamBootstrapPayloadState.current = {
+      generated_at: '2026-03-02T20:00:00+00:00',
+      sources: [
+        {
+          source_id: 'source-1',
+          generated_at: '2026-03-02T20:00:00+00:00',
+          workflow_status: {
+            last_pipeline_status: 'running',
+            last_failed_stage: null,
+            pending_paper_count: 2,
+            pending_relation_review_count: 1,
+            extraction_extracted_count: 1,
+            extraction_failed_count: 1,
+            extraction_skipped_count: 0,
+            extraction_timeout_failed_count: 0,
+            graph_edges_delta_last_run: 3,
+            graph_edges_total: 10,
+          },
+          events: [
+            {
+              event_id: 'stream-event-1',
+              occurred_at: '2026-03-02T20:00:00+00:00',
+              category: 'run',
+              stage: 'ingestion',
+              status: 'running',
+              message: 'Pipeline running from stream',
+            },
+          ],
+        },
+      ],
+    }
+    const draftDataSource: DataSource = {
+      ...mockDataSources[0],
+      status: 'draft',
+    }
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={{
+          items: [draftDataSource],
+          total: 1,
+          page: 1,
+          limit: 20,
+          has_next: false,
+          has_prev: false,
+        }}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+        workflowStatusBySource={{
+          'source-1': {
+            last_pipeline_status: 'running',
+            pending_paper_count: 0,
+            pending_relation_review_count: 0,
+            extraction_extracted_count: 0,
+            extraction_failed_count: 0,
+            extraction_skipped_count: 0,
+            extraction_timeout_failed_count: 0,
+            graph_edges_delta_last_run: 0,
+            graph_edges_total: 0,
+            last_failed_stage: null,
+          },
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/Live run in progress/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/Pipeline running from stream/i)).toBeInTheDocument()
+  })
+
+  it('keeps polling updates working when stream fallback is active', async () => {
+    mockStreamFallbackState.current = true
+    ;(fetchSourceWorkflowCardStatusAction as jest.Mock).mockResolvedValue({
+      success: true,
+      data: {
+        last_pipeline_status: 'running',
+        pending_paper_count: 1,
+        pending_relation_review_count: 0,
+        extraction_extracted_count: 0,
+        extraction_failed_count: 0,
+        extraction_skipped_count: 0,
+            extraction_timeout_failed_count: 0,
+        graph_edges_delta_last_run: 0,
+        graph_edges_total: 4,
+        last_failed_stage: null,
+      },
+    })
+    ;(fetchSourceWorkflowEventsAction as jest.Mock).mockResolvedValue({
+      success: true,
+      data: {
+        events: [
+          {
+            event_id: 'poll-event-1',
+            occurred_at: '2026-03-02T20:00:04+00:00',
+            category: 'run',
+            stage: 'ingestion',
+            status: 'running',
+            message: 'Poll backend event',
+          },
+        ],
+      },
+    })
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={dataSourcesResponse}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+        workflowStatusBySource={{
+          'source-1': {
+            last_pipeline_status: 'running',
+            pending_paper_count: 1,
+            pending_relation_review_count: 0,
+            extraction_extracted_count: 0,
+            extraction_failed_count: 0,
+            extraction_skipped_count: 0,
+            extraction_timeout_failed_count: 0,
+            graph_edges_delta_last_run: 0,
+            graph_edges_total: 4,
+            last_failed_stage: null,
+          },
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(fetchSourceWorkflowCardStatusAction).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/Poll backend event/i)).toBeInTheDocument()
+    })
   })
 })

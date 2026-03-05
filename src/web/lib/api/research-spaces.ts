@@ -12,6 +12,22 @@ import type {
   UpdateSpaceRequest,
 } from '@/types/research-space'
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function getAxiosStatus(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null) {
+    return null
+  }
+  const axiosError = error as AxiosError
+  const status = axiosError.response?.status
+  return typeof status === 'number' ? status : null
+}
+
+function isUuidLike(value: string): boolean {
+  return UUID_PATTERN.test(value)
+}
+
 /**
  * Research Spaces API client functions
  * All functions require authentication token
@@ -45,11 +61,43 @@ export async function fetchResearchSpace(
   if (!token) {
     throw new Error('Authentication token is required')
   }
-  const resp = await apiClient.get<ResearchSpace>(
-    `/research-spaces/${spaceId}`,
-    authHeaders(token),
-  )
-  return resp.data
+  const normalizedSpaceId = spaceId.trim()
+  try {
+    const resp = await apiClient.get<ResearchSpace>(
+      `/research-spaces/${normalizedSpaceId}`,
+      authHeaders(token),
+    )
+    return resp.data
+  } catch (error) {
+    const statusCode = getAxiosStatus(error)
+    const isPathResolutionError = statusCode === 404 || statusCode === 422
+    if (!isPathResolutionError || isUuidLike(normalizedSpaceId)) {
+      throw error
+    }
+
+    try {
+      const slugResp = await apiClient.get<ResearchSpace>(
+        `/research-spaces/slug/${encodeURIComponent(normalizedSpaceId)}`,
+        authHeaders(token),
+      )
+      return slugResp.data
+    } catch (slugError) {
+      const slugStatusCode = getAxiosStatus(slugError)
+      const isSlugLookupUnavailable = slugStatusCode === 404 || slugStatusCode === 422
+      if (!isSlugLookupUnavailable) {
+        throw slugError
+      }
+
+      const spaces = await fetchResearchSpaces({ limit: 200 }, token)
+      const matchedSpace = spaces.spaces.find(
+        (space) => space.slug.toLowerCase() === normalizedSpaceId.toLowerCase(),
+      )
+      if (matchedSpace !== undefined) {
+        return matchedSpace
+      }
+      throw error
+    }
+  }
 }
 
 export async function fetchResearchSpaceBySlug(

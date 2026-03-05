@@ -62,6 +62,20 @@ export function nodeVisualForEntityType(entityType: string): NodeVisualStyle {
       shape: 'hexagon',
     }
   }
+  if (normalized.includes('PAPER') || normalized.includes('PUBLICATION')) {
+    return {
+      fillColor: '#dbeafe',
+      borderColor: '#3b82f6',
+      shape: 'hexagon',
+    }
+  }
+  if (normalized.includes('DATASET') || normalized.includes('COHORT')) {
+    return {
+      fillColor: '#dcfce7',
+      borderColor: '#16a34a',
+      shape: 'diamond',
+    }
+  }
   if (normalized.includes('BIOCHEMICAL')) {
     return {
       fillColor: '#0ea5a4',
@@ -160,28 +174,34 @@ export function edgeColorForRelationType(relationType: string): string {
   ) {
     return '#0ea5a4'
   }
+  if (
+    normalized.includes('SUPPORTED_BY') ||
+    normalized.includes('DERIVED_FROM')
+  ) {
+    return '#0ea5e9'
+  }
 
   return '#475569'
 }
 
 export function edgeWidthForConfidence(confidence: number): number {
   if (confidence >= 0.95) {
-    return 4.6
+    return 6.2
   }
   if (confidence >= 0.85) {
-    return 4
+    return 5.2
   }
   if (confidence >= 0.7) {
-    return 3.3
+    return 4.2
   }
   if (confidence >= 0.5) {
-    return 2.6
+    return 3.1
   }
-  return 2
+  return 2.2
 }
 
 export function edgeOpacityForConfidence(confidence: number): number {
-  return Math.max(0.26, Math.min(0.82, 0.28 + confidence * 0.54))
+  return Math.max(0.22, Math.min(0.96, 0.2 + confidence * 0.76))
 }
 
 export function edgeStrengthScore(confidence: number, sourceCount: number): number {
@@ -191,7 +211,7 @@ export function edgeStrengthScore(confidence: number, sourceCount: number): numb
 }
 
 export function edgeWidthForStrength(confidence: number, sourceCount: number): number {
-  const base = edgeWidthForConfidence(confidence)
-  const evidenceLift = Math.min(1.1, Math.log10(Math.max(1, sourceCount) + 1) * 0.9)
-  return Number((base + evidenceLift).toFixed(2))
+  const confidenceWidth = edgeWidthForConfidence(confidence)
+  const evidenceLift = Math.min(0.55, Math.log10(Math.max(1, sourceCount) + 1) * 0.32)
+  return Number((confidenceWidth + evidenceLift).toFixed(2))
 }

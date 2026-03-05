@@ -4,11 +4,24 @@
 # (``src/models/database/research_space.py``). The kernel itself provides
 # dictionary + fact tables (entities/observations/relations/provenance).
 
+from .claim_evidence import ClaimEvidenceModel
+from .claim_participants import ClaimParticipantModel
+from .claim_relations import ClaimRelationModel
+from .concepts import (
+    ConceptAliasModel,
+    ConceptDecisionModel,
+    ConceptHarnessResultModel,
+    ConceptLinkModel,
+    ConceptMemberModel,
+    ConceptPolicyModel,
+    ConceptSetModel,
+)
 from .dictionary import (
     DictionaryChangelogModel,
     DictionaryDataTypeModel,
     DictionaryDomainContextModel,
     DictionaryEntityTypeModel,
+    DictionaryRelationSynonymModel,
     DictionaryRelationTypeModel,
     DictionarySensitivityLevelModel,
     EntityResolutionPolicyModel,
@@ -19,9 +32,10 @@ from .dictionary import (
     VariableDefinitionModel,
     VariableSynonymModel,
 )
-from .entities import EntityIdentifierModel, EntityModel
+from .entities import EntityEmbeddingModel, EntityIdentifierModel, EntityModel
 from .observations import ObservationModel
 from .provenance import ProvenanceModel
+from .relation_claims import RelationClaimModel
 from .relations import RelationEvidenceModel, RelationModel
 
 __all__ = [
@@ -30,6 +44,7 @@ __all__ = [
     "DictionaryDataTypeModel",
     "DictionaryDomainContextModel",
     "DictionaryEntityTypeModel",
+    "DictionaryRelationSynonymModel",
     "DictionaryRelationTypeModel",
     "DictionarySensitivityLevelModel",
     "VariableDefinitionModel",
@@ -39,11 +54,24 @@ __all__ = [
     "ValueSetItemModel",
     "EntityResolutionPolicyModel",
     "RelationConstraintModel",
+    # Concept Manager
+    "ConceptAliasModel",
+    "ConceptDecisionModel",
+    "ConceptHarnessResultModel",
+    "ConceptLinkModel",
+    "ConceptMemberModel",
+    "ConceptPolicyModel",
+    "ConceptSetModel",
+    "ClaimEvidenceModel",
+    "ClaimParticipantModel",
+    "ClaimRelationModel",
     # Core Data (Layer 2)
     "EntityModel",
     "EntityIdentifierModel",
+    "EntityEmbeddingModel",
     "ObservationModel",
     "RelationEvidenceModel",
+    "RelationClaimModel",
     "RelationModel",
     "ProvenanceModel",
 ]

@@ -78,6 +78,72 @@ class StubIngestionPipeline:
         return self.result
 
 
+@dataclass(frozen=True)
+class _DictionaryEntityType:
+    id: str
+    is_active: bool = True
+    review_status: str = "ACTIVE"
+
+
+class StubDictionaryService:
+    """Minimal dictionary double for extraction orchestration tests."""
+
+    def __init__(self) -> None:
+        self._entity_types: dict[str, _DictionaryEntityType] = {}
+
+    def get_entity_type(
+        self,
+        entity_type_id: str,
+        *,
+        include_inactive: bool = False,
+    ) -> _DictionaryEntityType | None:
+        normalized = entity_type_id.strip().upper()
+        entity_type = self._entity_types.get(normalized)
+        if entity_type is None:
+            return None
+        if include_inactive:
+            return entity_type
+        return entity_type if entity_type.is_active else None
+
+    def create_entity_type(self, **kwargs: object) -> _DictionaryEntityType:
+        normalized = str(kwargs["entity_type"]).strip().upper()
+        created = _DictionaryEntityType(
+            id=normalized,
+            is_active=True,
+            review_status="ACTIVE",
+        )
+        self._entity_types[normalized] = created
+        return created
+
+    def set_entity_type_review_status(
+        self,
+        entity_type_id: str,
+        *,
+        review_status: str,
+        reviewed_by: str,
+        revocation_reason: str | None = None,
+    ) -> _DictionaryEntityType:
+        _ = reviewed_by
+        _ = revocation_reason
+        normalized = entity_type_id.strip().upper()
+        existing = self._entity_types.get(normalized)
+        if existing is None:
+            msg = f"Unknown entity type: {normalized}"
+            raise ValueError(msg)
+        normalized_status = review_status.strip().upper()
+        updated = _DictionaryEntityType(
+            id=normalized,
+            is_active=normalized_status == "ACTIVE",
+            review_status=normalized_status,
+        )
+        self._entity_types[normalized] = updated
+        return updated
+
+
+def _build_dictionary_service() -> StubDictionaryService:
+    return StubDictionaryService()
+
+
 def _build_governance_service() -> GovernanceService:
     return GovernanceService(
         policy=GovernancePolicy(
@@ -206,6 +272,7 @@ async def test_extract_from_entity_recognition_writes_to_kernel() -> None:
         dependencies=ExtractionServiceDependencies(
             extraction_agent=StubExtractionAgent(extraction),
             ingestion_pipeline=ingestion,
+            dictionary_service=_build_dictionary_service(),
             governance_service=_build_governance_service(),
         ),
     )
@@ -235,6 +302,7 @@ async def test_extract_from_entity_recognition_respects_shadow_mode() -> None:
         dependencies=ExtractionServiceDependencies(
             extraction_agent=StubExtractionAgent(extraction),
             ingestion_pipeline=ingestion,
+            dictionary_service=_build_dictionary_service(),
             governance_service=_build_governance_service(),
         ),
     )
@@ -263,6 +331,7 @@ async def test_extract_from_entity_recognition_fails_without_research_space() ->
             ingestion_pipeline=StubIngestionPipeline(
                 IngestResult(success=True, entities_created=0, observations_created=0),
             ),
+            dictionary_service=_build_dictionary_service(),
             governance_service=_build_governance_service(),
         ),
     )
@@ -293,6 +362,7 @@ async def test_extract_from_entity_recognition_uses_relation_type_thresholds() -
         dependencies=ExtractionServiceDependencies(
             extraction_agent=StubExtractionAgent(extraction),
             ingestion_pipeline=ingestion,
+            dictionary_service=_build_dictionary_service(),
             governance_service=_build_governance_service(),
         ),
     )
@@ -339,6 +409,7 @@ async def test_extract_from_entity_recognition_enqueues_review_item() -> None:
         dependencies=ExtractionServiceDependencies(
             extraction_agent=StubExtractionAgent(extraction),
             ingestion_pipeline=ingestion,
+            dictionary_service=_build_dictionary_service(),
             governance_service=_build_governance_service(),
             review_queue_submitter=submit_review_item,
         ),

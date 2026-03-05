@@ -395,6 +395,8 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         pending = [
             document
@@ -411,6 +413,19 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
                 for document in pending
                 if document.research_space_id == research_space_id
             ]
+        if ingestion_job_id is not None:
+            pending = [
+                document
+                for document in pending
+                if document.ingestion_job_id == ingestion_job_id
+            ]
+        if isinstance(source_type, str) and source_type.strip():
+            normalized_source_type = source_type.strip().lower()
+            pending = [
+                document
+                for document in pending
+                if document.source_type.value.strip().lower() == normalized_source_type
+            ]
         return pending[: max(limit, 1)]
 
     def list_pending_extraction(
@@ -419,6 +434,8 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
         limit: int = 100,
         source_id: UUID | None = None,
         research_space_id: UUID | None = None,
+        ingestion_job_id: UUID | None = None,
+        source_type: str | None = None,
     ) -> list[SourceDocument]:
         pending = [
             document
@@ -434,6 +451,19 @@ class StubSourceDocumentRepository(SourceDocumentRepository):
                 document
                 for document in pending
                 if document.research_space_id == research_space_id
+            ]
+        if ingestion_job_id is not None:
+            pending = [
+                document
+                for document in pending
+                if document.ingestion_job_id == ingestion_job_id
+            ]
+        if isinstance(source_type, str) and source_type.strip():
+            normalized_source_type = source_type.strip().lower()
+            pending = [
+                document
+                for document in pending
+                if document.source_type.value.strip().lower() == normalized_source_type
             ]
         return pending[: max(limit, 1)]
 
@@ -585,6 +615,7 @@ async def test_ingest_skips_unchanged_records_using_ledger() -> None:
     assert summary.skipped_records == 1
     assert len(pipeline.calls) == 1
     assert len(pipeline.calls[0][0]) == 1
+    assert pipeline.calls[0][0][0].metadata["domain_context"] == "clinical"
     assert ledger.count_for_source(source.id) == 2
 
 

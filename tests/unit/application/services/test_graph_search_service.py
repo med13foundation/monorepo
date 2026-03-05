@@ -146,6 +146,7 @@ class StubGraphQueryService:
             relation_id=self.valid_relation.id,
             confidence=0.92,
             evidence_summary="Support from source document",
+            evidence_sentence="MED13 is associated with cardiomyopathy in the cited cohort.",
             evidence_tier="LITERATURE",
             provenance_id=uuid4(),
             source_document_id=uuid4(),
@@ -232,6 +233,7 @@ class StubGraphQueryService:
         research_space_id: str,
         entity_id: str,
         relation_types: list[str] | None = None,
+        curation_statuses: list[str] | None = None,
         direction: str = "both",
         depth: int = 1,
         limit: int = 200,
@@ -244,7 +246,17 @@ class StubGraphQueryService:
             self.entity.id,
         ):
             return []
-        return [self.valid_relation, self.rejected_relation]
+        relations = [self.valid_relation, self.rejected_relation]
+        if curation_statuses:
+            allowed_statuses = {
+                status.strip().upper() for status in curation_statuses if status.strip()
+            }
+            relations = [
+                relation
+                for relation in relations
+                if relation.curation_status.strip().upper() in allowed_statuses
+            ]
+        return relations
 
     def graph_query_by_observation(
         self,
@@ -359,7 +371,11 @@ async def test_graph_search_service_returns_ranked_results() -> None:
     assert contract.executed_path == "deterministic"
     assert contract.total_results == 1
     assert contract.results[0].entity_id == str(graph_query_service.entity.id)
-    assert "Filtered relation with rejected status" in " ".join(contract.warnings)
+    assert contract.results[0].evidence_chain
+    assert (
+        contract.results[0].evidence_chain[0].evidence_sentence
+        == "MED13 is associated with cardiomyopathy in the cited cohort."
+    )
 
 
 async def test_graph_search_force_agent_falls_back_when_unconfigured() -> None:
@@ -388,6 +404,34 @@ async def test_graph_search_force_agent_falls_back_when_unconfigured() -> None:
             contract.warnings,
         )
     )
+
+
+async def test_graph_search_applies_curation_status_filters() -> None:
+    graph_query_service = StubGraphQueryService()
+    search_service = GraphSearchService(
+        dependencies=GraphSearchServiceDependencies(
+            research_query_service=ResearchQueryService(
+                dictionary_service=StubDictionaryService(),
+            ),
+            graph_query_service=graph_query_service,
+            graph_search_agent=None,
+        ),
+    )
+
+    contract = await search_service.search(
+        question="Find MED13 evidence",
+        research_space_id=str(graph_query_service.research_space_id),
+        curation_statuses=["APPROVED"],
+    )
+
+    assert contract.results
+    matching_relation_ids = {
+        relation_id
+        for result in contract.results
+        for relation_id in result.matching_relation_ids
+    }
+    assert str(graph_query_service.valid_relation.id) in matching_relation_ids
+    assert str(graph_query_service.rejected_relation.id) not in matching_relation_ids
 
 
 async def test_graph_search_uses_agent_when_deterministic_has_no_results() -> None:

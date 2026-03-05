@@ -18,6 +18,7 @@ This directory is organized to reflect the current implementation path.
 12. `docs/type_examples.md` - Type safety patterns and examples.
 13. `docs/onboarding/architecture-overview.md` - Onboarding and contribution guide.
 14. `docs/extraction_agents/pubmed.md` - Paper extraction template (Postgres-first; TypeDB conversion optional).
+15. `docs/latest_plan_path/pubmed_to_graph_memory_orchestration.md` - PubMed→Dictionary→Graph "memory" flow with clear separation of concerns.
 
 ## Future/optional plans
 

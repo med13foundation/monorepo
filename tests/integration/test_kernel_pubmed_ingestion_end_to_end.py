@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
@@ -9,15 +10,77 @@ from sqlalchemy import select
 
 from src.database.seeds.seeder import seed_all
 from src.database.session import SessionLocal
+from src.domain.agents.contracts.mapping_judge import MappingJudgeContract
+from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
 from src.domain.entities.user import UserRole, UserStatus
+from src.domain.ports.dictionary_search_harness_port import DictionarySearchHarnessPort
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
 from src.infrastructure.ingestion.sources.pubmed import PubMedAdapter
+from src.infrastructure.repositories.kernel import SqlAlchemyDictionaryRepository
 from src.models.database.kernel.entities import EntityModel
 from src.models.database.kernel.observations import ObservationModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
+
+if TYPE_CHECKING:
+    from src.domain.agents.contexts.mapping_judge_context import MappingJudgeContext
+    from src.domain.entities.kernel.dictionary import DictionarySearchResult
+
+
+class NoopMappingJudgeAgent(MappingJudgePort):
+    """Deterministic stub for Artana-first dependency injection in tests."""
+
+    def judge(
+        self,
+        context: MappingJudgeContext,
+        *,
+        model_id: str | None = None,
+    ) -> MappingJudgeContract:
+        del model_id
+        return MappingJudgeContract(
+            decision="no_match",
+            selected_variable_id=None,
+            candidate_count=len(context.candidates),
+            selection_rationale="No remap needed.",
+            confidence_score=0.0,
+            rationale="No remap needed.",
+            evidence=[],
+            agent_run_id="noop-mapping-judge",
+        )
+
+    def close(self) -> None:
+        return None
+
+
+class DirectDictionarySearchHarness(DictionarySearchHarnessPort):
+    """Direct-only harness for deterministic end-to-end ingestion tests."""
+
+    def __init__(
+        self,
+        *,
+        dictionary_repo: SqlAlchemyDictionaryRepository,
+    ) -> None:
+        self._dictionary = dictionary_repo
+
+    def search(
+        self,
+        *,
+        terms: list[str],
+        dimensions: list[str] | None = None,
+        domain_context: str | None = None,
+        limit: int = 50,
+        include_inactive: bool = False,
+    ) -> list[DictionarySearchResult]:
+        return self._dictionary.search_dictionary(
+            terms=terms,
+            dimensions=dimensions,
+            domain_context=domain_context,
+            limit=limit,
+            query_embeddings=None,
+            include_inactive=include_inactive,
+        )
 
 
 @pytest.mark.integration
@@ -66,7 +129,13 @@ def test_pubmed_pipeline_writes_publication_entity_and_observations(
         session.add(space)
         session.flush()
 
-        pipeline = create_ingestion_pipeline(session)
+        pipeline = create_ingestion_pipeline(
+            session,
+            mapping_judge_agent=NoopMappingJudgeAgent(),
+            dictionary_search_harness=DirectDictionarySearchHarness(
+                dictionary_repo=SqlAlchemyDictionaryRepository(session),
+            ),
+        )
 
         records = [
             {

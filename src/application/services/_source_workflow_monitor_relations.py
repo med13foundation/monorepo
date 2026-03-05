@@ -1,5 +1,3 @@
-"""Relation/graph/review helpers for source workflow monitor."""
-
 from __future__ import annotations
 
 from collections import Counter
@@ -14,10 +12,15 @@ from src.models.database.extraction_queue import (
     ExtractionStatusEnum,
 )
 from src.models.database.kernel.entities import EntityModel
+from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 from src.models.database.review import ReviewRecord
 from src.models.database.source_document import SourceDocumentModel
 
+from ._source_workflow_monitor_paper_links import resolve_paper_links
+from ._source_workflow_monitor_quality_helpers import (
+    SourceWorkflowMonitorQualityMixin,
+)
 from ._source_workflow_monitor_shared import (
     PENDING_DOCUMENT_STATUSES,
     PENDING_RELATION_STATUSES,
@@ -44,7 +47,7 @@ _PENDING_QUEUE_STATUSES: tuple[ExtractionStatusEnum, ...] = (
 )
 
 
-class SourceWorkflowMonitorRelationsMixin:
+class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
     """Relation and graph summarization helpers for workflow monitor."""
 
     _session: Session
@@ -54,7 +57,7 @@ class SourceWorkflowMonitorRelationsMixin:
         *,
         space_id: UUID,
         document_ids: set[str],
-        document_external_record_id_by_id: dict[str, str],
+        document_context_by_id: dict[str, JSONObject],
         queue_id_to_document_id: dict[str, str],
         extraction_rows: list[JSONObject],
         limit: int,
@@ -62,7 +65,7 @@ class SourceWorkflowMonitorRelationsMixin:
         persisted = self._load_document_relations(
             space_id=space_id,
             document_ids=document_ids,
-            document_external_record_id_by_id=document_external_record_id_by_id,
+            document_context_by_id=document_context_by_id,
             limit=limit,
         )
         pending_relation_ids = {
@@ -76,6 +79,10 @@ class SourceWorkflowMonitorRelationsMixin:
             for item in persisted
             if item.get("relation_id") in pending_relation_ids
         ]
+        pending_claim_count = self._count_open_relation_claims_for_document_ids(
+            document_ids=document_ids,
+            space_id=space_id,
+        )
         rejected_by_document, rejected_reason_counts = (
             self._extract_rejected_relation_details(
                 extraction_rows=extraction_rows,
@@ -86,7 +93,8 @@ class SourceWorkflowMonitorRelationsMixin:
         return {
             "persisted_relation_rows": persisted,
             "pending_review_relation_rows": pending_relations,
-            "pending_review_relation_count": len(pending_relation_ids),
+            "pending_review_relation_count": len(pending_relation_ids)
+            + pending_claim_count,
             "review_queue_rows": review_queue,
             "rejected_relation_rows": rejected_by_document,
             "rejected_reason_counts": rejected_reason_counts,
@@ -97,7 +105,7 @@ class SourceWorkflowMonitorRelationsMixin:
         *,
         space_id: UUID,
         document_ids: set[str],
-        document_external_record_id_by_id: dict[str, str],
+        document_context_by_id: dict[str, JSONObject],
         limit: int,
     ) -> list[JSONObject]:
         if not document_ids:
@@ -124,6 +132,10 @@ class SourceWorkflowMonitorRelationsMixin:
                 RelationEvidenceModel.id,
                 RelationEvidenceModel.confidence,
                 RelationEvidenceModel.evidence_summary,
+                RelationEvidenceModel.evidence_sentence,
+                RelationEvidenceModel.evidence_sentence_source,
+                RelationEvidenceModel.evidence_sentence_confidence,
+                RelationEvidenceModel.evidence_sentence_rationale,
                 RelationEvidenceModel.agent_run_id,
                 source_entity.display_label,
                 target_entity.display_label,
@@ -140,27 +152,59 @@ class SourceWorkflowMonitorRelationsMixin:
             .limit(max(limit, 1) * 20)
         )
         rows = self._session.execute(statement).all()
-        return [
-            {
-                "document_id": document_uuid_to_id.get(row[0], str(row[0])),
-                "external_record_id": document_external_record_id_by_id.get(
-                    document_uuid_to_id.get(row[0], str(row[0])),
-                ),
-                "relation_id": str(row[1]),
-                "relation_type": row[2],
-                "curation_status": row[3],
-                "aggregate_confidence": float(row[4] or 0.0),
-                "source_entity_id": str(row[5]),
-                "target_entity_id": str(row[6]),
-                "evidence_id": str(row[7]),
-                "evidence_confidence": float(row[8] or 0.0),
-                "evidence_summary": row[9],
-                "agent_run_id": row[10],
-                "source_entity_label": row[11],
-                "target_entity_label": row[12],
-            }
-            for row in rows
-        ]
+        payload_rows: list[JSONObject] = []
+        for row in rows:
+            document_id = document_uuid_to_id.get(row[0], str(row[0]))
+            document_context = coerce_json_object(
+                document_context_by_id.get(document_id),
+            )
+            external_record_id = normalize_optional_string(
+                document_context.get("external_record_id"),
+            )
+            source_type = normalize_optional_string(document_context.get("source_type"))
+            metadata = coerce_json_object(document_context.get("metadata"))
+            paper_links = self._resolve_paper_links(
+                source_type=source_type,
+                external_record_id=external_record_id,
+                metadata=metadata,
+            )
+            payload_rows.append(
+                {
+                    "document_id": document_id,
+                    "external_record_id": external_record_id,
+                    "relation_id": str(row[1]),
+                    "relation_type": row[2],
+                    "curation_status": row[3],
+                    "aggregate_confidence": float(row[4] or 0.0),
+                    "source_entity_id": str(row[5]),
+                    "target_entity_id": str(row[6]),
+                    "evidence_id": str(row[7]),
+                    "evidence_confidence": float(row[8] or 0.0),
+                    "evidence_summary": row[9],
+                    "evidence_sentence": row[10],
+                    "evidence_sentence_source": row[11],
+                    "evidence_sentence_confidence": row[12],
+                    "evidence_sentence_rationale": row[13],
+                    "agent_run_id": row[14],
+                    "source_entity_label": row[15],
+                    "target_entity_label": row[16],
+                    "paper_links": paper_links,
+                },
+            )
+        return payload_rows
+
+    def _resolve_paper_links(
+        self,
+        *,
+        source_type: str | None,
+        external_record_id: str | None,
+        metadata: JSONObject,
+    ) -> list[JSONObject]:
+        return resolve_paper_links(
+            source_type=source_type,
+            external_record_id=external_record_id,
+            metadata=metadata,
+        )
 
     def _extract_rejected_relation_details(
         self,
@@ -302,12 +346,24 @@ class SourceWorkflowMonitorRelationsMixin:
         selected_run: PipelineRunRecord | None,
         graph_summary: JSONObject | None,
         relation_edge_delta: int,
+        selected_run_id: str | None,
+        selected_ingestion_job_id: str | None,
     ) -> JSONObject:
         pending_documents = self._count_pending_documents(source_id=source_id)
         pending_queue = self._count_pending_queue_items(source_id=source_id)
         pending_relation_reviews = self._count_pending_relation_reviews(
             space_id=space_id,
             source_id=source_id,
+        )
+        (
+            extraction_extracted_count,
+            extraction_failed_count,
+            extraction_skipped_count,
+            extraction_timeout_failed_count,
+        ) = self._count_document_extraction_outcomes(
+            source_id=source_id,
+            run_id=selected_run_id,
+            ingestion_job_id=selected_ingestion_job_id,
         )
         graph_edges_total = (
             safe_int(graph_summary.get("edge_count"))
@@ -334,43 +390,15 @@ class SourceWorkflowMonitorRelationsMixin:
             "pending_document_count": pending_documents,
             "pending_queue_count": pending_queue,
             "pending_relation_review_count": pending_relation_reviews,
+            "extraction_extracted_count": extraction_extracted_count,
+            "extraction_failed_count": extraction_failed_count,
+            "extraction_skipped_count": extraction_skipped_count,
+            "extraction_timeout_failed_count": extraction_timeout_failed_count,
             "graph_edges_total": graph_edges_total,
             "graph_edges_for_source": graph_edges_for_source,
             "graph_edges_delta_last_run": max(relation_edge_delta, 0),
             "stage_counters": stage_counters,
         }
-
-    def _build_warnings(self, *, extraction_rows: list[JSONObject]) -> list[str]:
-        warnings: list[str] = []
-        no_full_text_count = 0
-        all_rejected_count = 0
-
-        for extraction in extraction_rows:
-            text_source = normalize_optional_string(extraction.get("text_source"))
-            if text_source == "abstract":
-                no_full_text_count += 1
-            metadata = coerce_json_object(extraction.get("metadata"))
-            funnel = coerce_json_object(metadata.get("extraction_stage_funnel"))
-            generated = safe_int(funnel.get("relation_candidates_generated"))
-            persisted = safe_int(funnel.get("relation_candidates_persisted"))
-            if generated > 0 and persisted == 0:
-                all_rejected_count += 1
-
-        if no_full_text_count > 0:
-            warnings.append(
-                (
-                    f"{no_full_text_count} extraction(s) used abstract-only text because "
-                    "full text was unavailable."
-                ),
-            )
-        if all_rejected_count > 0:
-            warnings.append(
-                (
-                    f"{all_rejected_count} extraction(s) generated relation candidates "
-                    "but persisted zero relations."
-                ),
-            )
-        return warnings
 
     def _count_pending_documents(self, *, source_id: UUID) -> int:
         statement = (
@@ -413,6 +441,46 @@ class SourceWorkflowMonitorRelationsMixin:
             .where(RelationModel.research_space_id == space_id)
             .where(RelationModel.curation_status.in_(PENDING_RELATION_STATUSES))
             .where(RelationEvidenceModel.source_document_id.in_(source_document_ids))
+        )
+        pending_relations = int(self._session.execute(statement).scalar_one() or 0)
+        pending_claims = self._count_open_relation_claims_for_source_document_ids(
+            space_id=space_id,
+            source_document_ids=source_document_ids,
+        )
+        return pending_relations + pending_claims
+
+    def _count_open_relation_claims_for_document_ids(
+        self,
+        *,
+        document_ids: set[str],
+        space_id: UUID,
+    ) -> int:
+        source_document_ids = [
+            parsed_uuid
+            for document_id in document_ids
+            if (parsed_uuid := parse_uuid_runtime(document_id)) is not None
+        ]
+        if not source_document_ids:
+            return 0
+        return self._count_open_relation_claims_for_source_document_ids(
+            space_id=space_id,
+            source_document_ids=source_document_ids,
+        )
+
+    def _count_open_relation_claims_for_source_document_ids(
+        self,
+        *,
+        space_id: UUID,
+        source_document_ids: list[UUID],
+    ) -> int:
+        if not source_document_ids:
+            return 0
+        statement = (
+            select(func.count())
+            .select_from(RelationClaimModel)
+            .where(RelationClaimModel.research_space_id == space_id)
+            .where(RelationClaimModel.claim_status == "OPEN")
+            .where(RelationClaimModel.source_document_id.in_(source_document_ids))
         )
         return int(self._session.execute(statement).scalar_one() or 0)
 

@@ -35,6 +35,42 @@ export interface KernelEntityListResponse {
   limit: number
 }
 
+export interface KernelEntitySimilarityScoreBreakdown {
+  vector_score: number
+  graph_overlap_score: number
+}
+
+export interface KernelEntitySimilarityResponse {
+  entity_id: string
+  entity_type: string
+  display_label: string | null
+  similarity_score: number
+  score_breakdown: KernelEntitySimilarityScoreBreakdown
+}
+
+export interface KernelEntitySimilarityListResponse {
+  source_entity_id: string
+  results: KernelEntitySimilarityResponse[]
+  total: number
+  limit: number
+  min_similarity: number
+}
+
+export interface KernelEntityEmbeddingRefreshRequest {
+  entity_ids?: string[]
+  limit?: number
+  model_name?: string
+  embedding_version?: number
+}
+
+export interface KernelEntityEmbeddingRefreshResponse {
+  requested: number
+  processed: number
+  refreshed: number
+  unchanged: number
+  missing_entities: string[]
+}
+
 export interface KernelObservationCreateRequest {
   subject_id: string
   variable_id: string
@@ -80,12 +116,22 @@ export interface KernelRelationCreateRequest {
   target_id: string
   confidence?: number
   evidence_summary?: string | null
+  evidence_sentence?: string | null
+  evidence_sentence_source?: string | null
+  evidence_sentence_confidence?: string | null
+  evidence_sentence_rationale?: string | null
   evidence_tier?: string | null
   provenance_id?: string | null
 }
 
 export interface KernelRelationCurationUpdateRequest {
   curation_status: string
+}
+
+export interface KernelRelationPaperLink {
+  label: string
+  url: string
+  source: string
 }
 
 export interface KernelRelationResponse {
@@ -97,6 +143,11 @@ export interface KernelRelationResponse {
 
   confidence?: number
   evidence_summary?: string | null
+  evidence_sentence?: string | null
+  evidence_sentence_source?: string | null
+  evidence_sentence_confidence?: string | null
+  evidence_sentence_rationale?: string | null
+  paper_links?: KernelRelationPaperLink[]
   evidence_tier?: string | null
   aggregate_confidence?: number
   source_count?: number
@@ -116,6 +167,273 @@ export interface KernelRelationListResponse {
   total: number
   offset: number
   limit: number
+}
+
+export interface KernelRelationSuggestionRequest {
+  source_entity_ids: string[]
+  limit_per_source?: number
+  min_score?: number
+  allowed_relation_types?: string[]
+  target_entity_types?: string[]
+  exclude_existing_relations?: boolean
+}
+
+export interface KernelRelationSuggestionScoreBreakdown {
+  vector_score: number
+  graph_overlap_score: number
+  relation_prior_score: number
+}
+
+export interface KernelRelationSuggestionConstraintCheck {
+  passed: boolean
+  source_entity_type: string
+  relation_type: string
+  target_entity_type: string
+}
+
+export interface KernelRelationSuggestionResponse {
+  source_entity_id: string
+  target_entity_id: string
+  relation_type: string
+  final_score: number
+  score_breakdown: KernelRelationSuggestionScoreBreakdown
+  constraint_check: KernelRelationSuggestionConstraintCheck
+}
+
+export interface KernelRelationSuggestionListResponse {
+  suggestions: KernelRelationSuggestionResponse[]
+  total: number
+  limit_per_source: number
+  min_score: number
+}
+
+export interface RelationClaimResponse {
+  id: string
+  research_space_id: string
+  source_document_id: string | null
+  agent_run_id: string | null
+  source_type: string
+  relation_type: string
+  target_type: string
+  source_label: string | null
+  target_label: string | null
+  confidence: number
+  validation_state: string
+  validation_reason: string | null
+  persistability: 'PERSISTABLE' | 'NON_PERSISTABLE'
+  claim_status: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'
+  polarity: 'SUPPORT' | 'REFUTE' | 'UNCERTAIN' | 'HYPOTHESIS'
+  claim_text: string | null
+  claim_section: string | null
+  linked_relation_id: string | null
+  metadata: JSONObject
+  triaged_by: string | null
+  triaged_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface RelationClaimListResponse {
+  claims: RelationClaimResponse[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export interface CreateManualHypothesisRequest {
+  statement: string
+  rationale: string
+  seed_entity_ids?: string[]
+  source_type?: string
+}
+
+export interface GenerateHypothesesRequest {
+  seed_entity_ids?: string[] | null
+  source_type?: string
+  relation_types?: string[] | null
+  max_depth?: number
+  max_hypotheses?: number
+  model_id?: string | null
+}
+
+export interface HypothesisResponse {
+  claim_id: string
+  polarity: 'HYPOTHESIS' | 'SUPPORT' | 'REFUTE' | 'UNCERTAIN'
+  claim_status: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'
+  validation_state: string
+  persistability: 'PERSISTABLE' | 'NON_PERSISTABLE'
+  confidence: number
+  source_label: string | null
+  relation_type: string
+  target_label: string | null
+  claim_text: string | null
+  linked_relation_id?: string | null
+  origin: string
+  seed_entity_ids: string[]
+  supporting_provenance_ids: string[]
+  created_at: string
+  metadata: JSONObject
+}
+
+export interface HypothesisListResponse {
+  hypotheses: HypothesisResponse[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export interface GenerateHypothesesResponse {
+  run_id: string
+  requested_seed_count: number
+  used_seed_count: number
+  candidates_seen: number
+  created_count: number
+  deduped_count: number
+  errors: string[]
+  hypotheses: HypothesisResponse[]
+}
+
+export type ClaimRelationType =
+  | 'SUPPORTS'
+  | 'CONTRADICTS'
+  | 'REFINES'
+  | 'CAUSES'
+  | 'UPSTREAM_OF'
+  | 'DOWNSTREAM_OF'
+  | 'SAME_AS'
+  | 'GENERALIZES'
+  | 'INSTANCE_OF'
+
+export type ClaimRelationReviewStatus = 'PROPOSED' | 'ACCEPTED' | 'REJECTED'
+
+export interface ClaimRelationResponse {
+  id: string
+  research_space_id: string
+  source_claim_id: string
+  target_claim_id: string
+  relation_type: ClaimRelationType
+  agent_run_id: string | null
+  source_document_id: string | null
+  confidence: number
+  review_status: ClaimRelationReviewStatus
+  evidence_summary: string | null
+  metadata: JSONObject
+  created_at: string
+}
+
+export interface ClaimRelationListResponse {
+  claim_relations: ClaimRelationResponse[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export interface ClaimRelationCreateRequest {
+  source_claim_id: string
+  target_claim_id: string
+  relation_type: ClaimRelationType
+  agent_run_id?: string | null
+  source_document_id?: string | null
+  confidence?: number
+  review_status?: ClaimRelationReviewStatus
+  evidence_summary?: string | null
+  metadata?: JSONObject
+}
+
+export interface ClaimRelationReviewUpdateRequest {
+  review_status: ClaimRelationReviewStatus
+}
+
+export type ClaimParticipantRole =
+  | 'SUBJECT'
+  | 'OBJECT'
+  | 'MODIFIER'
+  | 'QUALIFIER'
+  | 'CONTEXT'
+  | 'OUTCOME'
+
+export interface ClaimParticipantResponse {
+  id: string
+  claim_id: string
+  research_space_id: string
+  label: string | null
+  entity_id: string | null
+  role: ClaimParticipantRole
+  position: number | null
+  qualifiers: JSONObject
+  created_at: string
+}
+
+export interface ClaimParticipantListResponse {
+  claim_id: string
+  participants: ClaimParticipantResponse[]
+  total: number
+}
+
+export interface ClaimParticipantCoverageResponse {
+  total_claims: number
+  claims_with_any_participants: number
+  claims_with_subject: number
+  claims_with_object: number
+  unresolved_subject_endpoints: number
+  unresolved_object_endpoints: number
+  unresolved_endpoint_rate: number
+}
+
+export interface ClaimParticipantBackfillRequest {
+  dry_run: boolean
+  limit?: number
+  offset?: number
+}
+
+export interface ClaimParticipantBackfillResponse {
+  scanned_claims: number
+  created_participants: number
+  skipped_existing: number
+  unresolved_endpoints: number
+  dry_run: boolean
+}
+
+export interface ClaimEvidenceResponse {
+  id: string
+  claim_id: string
+  source_document_id: string | null
+  agent_run_id: string | null
+  sentence: string | null
+  sentence_source: 'verbatim_span' | 'artana_generated' | null
+  sentence_confidence: 'low' | 'medium' | 'high' | null
+  sentence_rationale: string | null
+  figure_reference: string | null
+  table_reference: string | null
+  confidence: number
+  metadata: JSONObject
+  paper_links?: KernelRelationPaperLink[]
+  created_at: string
+}
+
+export interface ClaimEvidenceListResponse {
+  claim_id: string
+  evidence: ClaimEvidenceResponse[]
+  total: number
+}
+
+export interface RelationConflictResponse {
+  relation_id: string
+  support_count: number
+  refute_count: number
+  support_claim_ids: string[]
+  refute_claim_ids: string[]
+}
+
+export interface RelationConflictListResponse {
+  conflicts: RelationConflictResponse[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export interface RelationClaimTriageRequest {
+  claim_status: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED'
 }
 
 export interface KernelProvenanceResponse {
@@ -292,10 +610,65 @@ export interface SourceWorkflowEventsResponse {
   has_more: boolean
 }
 
+export interface SourceWorkflowCardStatusPayload {
+  last_pipeline_status: string | null
+  last_failed_stage: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
+  pending_paper_count: number
+  pending_relation_review_count: number
+  extraction_extracted_count: number
+  extraction_failed_count: number
+  extraction_skipped_count: number
+  extraction_timeout_failed_count: number
+  graph_edges_delta_last_run: number
+  graph_edges_total: number
+  artana_progress?: Record<string, ArtanaStageProgressSnapshot>
+}
+
+export interface WorkflowEventCardItem {
+  event_id: string
+  occurred_at: string | null
+  category: string | null
+  stage: string | null
+  status: string | null
+  message: string
+}
+
+export interface SourceWorkflowStreamBootstrapPayload {
+  monitor: SourceWorkflowMonitorResponse
+  events: SourceWorkflowEvent[]
+  generated_at: string
+  run_id: string | null
+}
+
+export interface SourceWorkflowStreamSnapshotPayload {
+  monitor: SourceWorkflowMonitorResponse
+  generated_at: string
+  run_id: string | null
+}
+
+export interface SourceWorkflowStreamEventsPayload {
+  events: SourceWorkflowEvent[]
+  generated_at: string
+  run_id: string | null
+}
+
+export interface SpaceWorkflowSourceCardPayload {
+  source_id: string
+  workflow_status: SourceWorkflowCardStatusPayload
+  events: WorkflowEventCardItem[]
+  generated_at: string
+}
+
+export interface SpaceWorkflowBootstrapPayload {
+  sources: SpaceWorkflowSourceCardPayload[]
+  generated_at: string
+}
+
 export interface GraphSearchRequest {
   question: string
   max_depth?: number
   top_k?: number
+  curation_statuses?: string[] | null
   include_evidence_chains?: boolean
   force_agent?: boolean
 }
@@ -313,6 +686,7 @@ export interface GraphSearchEvidenceChainItem {
   observation_id: string | null
   evidence_tier: string | null
   confidence: number | null
+  evidence_sentence: string | null
   source_ref: string | null
 }
 

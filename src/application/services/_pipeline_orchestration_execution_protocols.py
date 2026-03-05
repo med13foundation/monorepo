@@ -5,15 +5,21 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from uuid import UUID
 
+    from src.application.agents.services._content_enrichment_types import (
+        ContentEnrichmentRunSummary,
+    )
     from src.application.agents.services.content_enrichment_service import (
         ContentEnrichmentService,
     )
     from src.application.agents.services.entity_recognition_service import (
+        EntityRecognitionRunSummary,
         EntityRecognitionService,
     )
     from src.application.agents.services.graph_connection_service import (
+        GraphConnectionOutcome,
         GraphConnectionService,
     )
     from src.application.agents.services.graph_search_service import (
@@ -30,13 +36,21 @@ if TYPE_CHECKING:
     from src.domain.repositories.research_space_repository import (
         ResearchSpaceRepository,
     )
+    from src.type_definitions.common import JSONObject
 
 
 class _PipelineExecutionSelf(Protocol):
     _ingestion: IngestionSchedulingService
     _enrichment: ContentEnrichmentService
     _extraction: EntityRecognitionService
+    _enrichment_stage_runner: (
+        Callable[..., Awaitable[ContentEnrichmentRunSummary]] | None
+    )
+    _extraction_stage_runner: (
+        Callable[..., Awaitable[EntityRecognitionRunSummary]] | None
+    )
     _graph: GraphConnectionService | None
+    _graph_seed_runner: Callable[..., Awaitable[GraphConnectionOutcome]] | None
     _graph_search: GraphSearchService | None
     _research_spaces: ResearchSpaceRepository | None
 
@@ -61,6 +75,24 @@ class _PipelineExecutionSelf(Protocol):
         stage_status: PipelineStageStatus,
         overall_status: Literal["running", "completed", "failed"],
         stage_error: str | None = None,
+    ) -> IngestionJob | None: ...
+
+    def _persist_pipeline_run_progress(  # noqa: PLR0913
+        self,
+        *,
+        run_job: IngestionJob | None,
+        source_id: UUID,
+        research_space_id: UUID,
+        run_id: str,
+        resume_from_stage: PipelineStageName | None,
+        progress_key: str,
+        progress_payload: JSONObject,
+        overall_status: Literal[
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+        ] = "running",
     ) -> IngestionJob | None: ...
 
     def _finalize_pipeline_run_checkpoint(  # noqa: PLR0913

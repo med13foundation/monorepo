@@ -14,7 +14,8 @@ from uuid import uuid4
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-EXPECTED_HEAD_REVISION = "022_run_ids_as_text"
+EXPECTED_HEAD_REVISION = "024_claim_first_orchestration"
+CURRENT_HEAD_REVISION = "034_claim_participant_fk"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"
@@ -74,7 +75,7 @@ def test_upgrade_head_remaps_legacy_revision_alias(tmp_path: Path) -> None:
             .all()
         )
 
-    assert versions == [EXPECTED_HEAD_REVISION]
+    assert versions == [CURRENT_HEAD_REVISION]
 
 
 def test_022_run_id_columns_are_textual_after_upgrade(tmp_path: Path) -> None:
@@ -101,6 +102,264 @@ def test_022_run_id_columns_are_textual_after_upgrade(tmp_path: Path) -> None:
     assert source_doc_columns["extraction_agent_run_id"].startswith(("VARCHAR", "TEXT"))
     assert relation_evidence_columns["agent_run_id"].startswith(("VARCHAR", "TEXT"))
     assert provenance_columns["extraction_run_id"].startswith(("VARCHAR", "TEXT"))
+
+
+def _run_alembic_downgrade(*, database_url: str, revision: str) -> None:
+    env = dict(os.environ)
+    env["ALEMBIC_DATABASE_URL"] = database_url
+    venv_alembic = Path(sys.executable).with_name("alembic")
+    command = [str(venv_alembic), "downgrade", revision]
+    if not venv_alembic.exists():
+        fallback_alembic = which("alembic")
+        if fallback_alembic is None:
+            msg = "alembic executable not found on PATH"
+            raise RuntimeError(msg)
+        command = [fallback_alembic, "downgrade", revision]
+    subprocess.run(
+        command,
+        check=True,
+        cwd=REPOSITORY_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_027_relation_evidence_sentence_upgrade_and_downgrade(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'relation_evidence_sentence_migration.db'}"
+    engine = create_engine(database_url, future=True)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "026_concept_manager_foundation"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relation_evidence ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "evidence_summary TEXT"
+                ")",
+            ),
+        )
+
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision="027_relation_evidence_sentence",
+    )
+    inspector = inspect(engine)
+    upgraded_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspector.get_columns("relation_evidence")
+    }
+    assert "evidence_sentence" in upgraded_columns
+    assert upgraded_columns["evidence_sentence"].startswith(("VARCHAR", "TEXT"))
+
+    _run_alembic_downgrade(
+        database_url=database_url,
+        revision="026_concept_manager_foundation",
+    )
+    downgraded_columns = {
+        column["name"] for column in inspect(engine).get_columns("relation_evidence")
+    }
+    assert "evidence_sentence" not in downgraded_columns
+
+
+def test_028_relation_evidence_sentence_provenance_upgrade_and_downgrade(
+    tmp_path: Path,
+) -> None:
+    database_url = (
+        f"sqlite:///{tmp_path / 'relation_evidence_sentence_provenance_migration.db'}"
+    )
+    engine = create_engine(database_url, future=True)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "027_relation_evidence_sentence"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relation_evidence ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "evidence_summary TEXT, "
+                "evidence_sentence TEXT"
+                ")",
+            ),
+        )
+
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision="028_evidence_sentence_prov",
+    )
+    upgraded_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspect(engine).get_columns("relation_evidence")
+    }
+    assert "evidence_sentence_source" in upgraded_columns
+    assert "evidence_sentence_confidence" in upgraded_columns
+    assert "evidence_sentence_rationale" in upgraded_columns
+    assert upgraded_columns["evidence_sentence_source"].startswith(("VARCHAR", "TEXT"))
+    assert upgraded_columns["evidence_sentence_confidence"].startswith(
+        ("VARCHAR", "TEXT"),
+    )
+    assert upgraded_columns["evidence_sentence_rationale"].startswith(
+        ("VARCHAR", "TEXT"),
+    )
+
+    _run_alembic_downgrade(
+        database_url=database_url,
+        revision="027_relation_evidence_sentence",
+    )
+    downgraded_columns = {
+        column["name"] for column in inspect(engine).get_columns("relation_evidence")
+    }
+    assert "evidence_sentence_source" not in downgraded_columns
+    assert "evidence_sentence_confidence" not in downgraded_columns
+    assert "evidence_sentence_rationale" not in downgraded_columns
+
+
+def test_029_relation_claim_semantics_upgrade_and_downgrade(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'relation_claim_semantics_migration.db'}"
+    engine = create_engine(database_url, future=True)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "028_evidence_sentence_prov"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relation_claims ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "research_space_id VARCHAR(36) NOT NULL"
+                ")",
+            ),
+        )
+
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision="029_relation_claim_semantics",
+    )
+    inspector = inspect(engine)
+    upgraded_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspector.get_columns("relation_claims")
+    }
+    assert "polarity" in upgraded_columns
+    assert "claim_text" in upgraded_columns
+    assert "claim_section" in upgraded_columns
+    index_names = {index["name"] for index in inspector.get_indexes("relation_claims")}
+    assert "idx_relation_claims_space_polarity" in index_names
+
+    _run_alembic_downgrade(
+        database_url=database_url,
+        revision="028_evidence_sentence_prov",
+    )
+    downgraded_columns = {
+        column["name"] for column in inspect(engine).get_columns("relation_claims")
+    }
+    assert "polarity" not in downgraded_columns
+    assert "claim_text" not in downgraded_columns
+    assert "claim_section" not in downgraded_columns
+
+
+def test_030_claim_evidence_table_upgrade_and_downgrade(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'claim_evidence_table_migration.db'}"
+    engine = create_engine(database_url, future=True)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "029_relation_claim_semantics"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relation_claims ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "research_space_id VARCHAR(36) NOT NULL"
+                ")",
+            ),
+        )
+        connection.execute(
+            text("CREATE TABLE research_spaces (id VARCHAR(36) PRIMARY KEY)"),
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE research_space_memberships ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "space_id VARCHAR(36), "
+                "user_id VARCHAR(36), "
+                "is_active BOOLEAN"
+                ")",
+            ),
+        )
+
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision="030_claim_evidence_table",
+    )
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    assert "claim_evidence" in table_names
+    column_names = {
+        column["name"] for column in inspector.get_columns("claim_evidence")
+    }
+    assert {
+        "id",
+        "claim_id",
+        "source_document_id",
+        "agent_run_id",
+        "sentence",
+        "sentence_source",
+        "sentence_confidence",
+        "sentence_rationale",
+        "figure_reference",
+        "table_reference",
+        "confidence",
+        "metadata_payload",
+        "created_at",
+        "updated_at",
+    }.issubset(column_names)
+    index_names = {index["name"] for index in inspector.get_indexes("claim_evidence")}
+    assert "idx_claim_evidence_claim_id" in index_names
+    assert "idx_claim_evidence_source_document_id" in index_names
+    assert "idx_claim_evidence_created_at" in index_names
+
+    _run_alembic_downgrade(
+        database_url=database_url,
+        revision="029_relation_claim_semantics",
+    )
+    downgraded_tables = set(inspect(engine).get_table_names())
+    assert "claim_evidence" not in downgraded_tables
 
 
 def test_006_backfills_extraction_queue_payload_reference_columns(
@@ -561,3 +820,159 @@ def test_017_phi_identifier_encryption_columns_on_sqlite(tmp_path: Path) -> None
     }
     assert "idx_identifier_blind_lookup" in index_names
     assert "idx_identifier_entity_ns_blind_unique" in index_names
+
+
+def test_032_033_034_claim_overlay_schema_and_downgrade(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'claim_overlay_schema.db'}"
+    engine = create_engine(database_url, future=True)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "031_entity_embeddings_hybrid"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE research_spaces ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "owner_id VARCHAR(36)"
+                ")",
+            ),
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relation_claims ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "research_space_id VARCHAR(36) NOT NULL"
+                ")",
+            ),
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE entities ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "research_space_id VARCHAR(36) NOT NULL"
+                ")",
+            ),
+        )
+        connection.execute(
+            text("CREATE TABLE source_documents (id VARCHAR(36) PRIMARY KEY)"),
+        )
+
+    _run_alembic_upgrade(database_url=database_url, revision=CURRENT_HEAD_REVISION)
+
+    inspector = inspect(engine)
+
+    table_names = set(inspector.get_table_names())
+    assert "claim_participants" in table_names
+    assert "claim_relations" in table_names
+
+    participant_columns = {
+        column["name"] for column in inspector.get_columns("claim_participants")
+    }
+    assert {
+        "id",
+        "claim_id",
+        "research_space_id",
+        "label",
+        "entity_id",
+        "role",
+        "position",
+        "qualifiers",
+        "created_at",
+        "updated_at",
+    }.issubset(participant_columns)
+
+    relation_columns = {
+        column["name"] for column in inspector.get_columns("claim_relations")
+    }
+    assert {
+        "id",
+        "research_space_id",
+        "source_claim_id",
+        "target_claim_id",
+        "relation_type",
+        "agent_run_id",
+        "source_document_id",
+        "confidence",
+        "review_status",
+        "evidence_summary",
+        "metadata_payload",
+        "created_at",
+        "updated_at",
+    }.issubset(relation_columns)
+
+    relation_unique_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("claim_relations")
+    }
+    assert "uq_claim_relations_space_edge" in relation_unique_constraints
+
+    participant_checks = inspector.get_check_constraints("claim_participants")
+    participant_check_names = {
+        (constraint.get("name") or "").strip() for constraint in participant_checks
+    }
+    participant_check_sql = " ".join(
+        str(constraint.get("sqltext") or "") for constraint in participant_checks
+    ).upper()
+    assert (
+        "ck_claim_participants_anchor" in participant_check_names
+        or "LABEL IS NOT NULL OR ENTITY_ID IS NOT NULL" in participant_check_sql
+    )
+    assert (
+        "ck_claim_participants_role" in participant_check_names
+        or "ROLE IN ('SUBJECT', 'OBJECT', 'CONTEXT', 'QUALIFIER', 'MODIFIER')"
+        in participant_check_sql
+    )
+
+    relation_checks = inspector.get_check_constraints("claim_relations")
+    relation_check_names = {
+        (constraint.get("name") or "").strip() for constraint in relation_checks
+    }
+    relation_check_sql = " ".join(
+        str(constraint.get("sqltext") or "") for constraint in relation_checks
+    ).upper()
+    assert (
+        "ck_claim_relations_no_self_loop" in relation_check_names
+        or "SOURCE_CLAIM_ID <> TARGET_CLAIM_ID" in relation_check_sql
+    )
+    assert (
+        "ck_claim_relations_review_status" in relation_check_names
+        or "REVIEW_STATUS IN ('PROPOSED','ACCEPTED','REJECTED')" in relation_check_sql
+    )
+    assert (
+        "ck_claim_relations_confidence_range" in relation_check_names
+        or "CONFIDENCE >= 0.0 AND CONFIDENCE <= 1.0" in relation_check_sql
+    )
+
+    participant_foreign_keys = {
+        fk["name"]: fk for fk in inspector.get_foreign_keys("claim_participants")
+    }
+    assert "fk_claim_participants_claim_space" in participant_foreign_keys
+    assert "fk_claim_participants_entity_space" in participant_foreign_keys
+    entity_space_fk = participant_foreign_keys["fk_claim_participants_entity_space"]
+    ondelete = str((entity_space_fk.get("options") or {}).get("ondelete", "")).upper()
+    if ondelete:
+        assert ondelete in {"RESTRICT", "NO ACTION"}
+
+    _run_alembic_downgrade(
+        database_url=database_url,
+        revision="031_entity_embeddings_hybrid",
+    )
+
+    downgraded_inspector = inspect(engine)
+    downgraded_table_names = set(downgraded_inspector.get_table_names())
+    assert "claim_participants" not in downgraded_table_names
+    assert "claim_relations" not in downgraded_table_names
+
+    relation_claims_unique_constraints = {
+        constraint["name"]
+        for constraint in downgraded_inspector.get_unique_constraints("relation_claims")
+    }
+    assert "uq_relation_claims_id_space" not in relation_claims_unique_constraints

@@ -61,3 +61,4 @@ class ClinVarIngestionSummary:
     updated_records: int = 0
     unchanged_records: int = 0
     skipped_records: int = 0
+    ingestion_job_id: UUID | None = None

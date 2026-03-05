@@ -92,6 +92,7 @@ def _build_evidence() -> KernelRelationEvidence:
         relation_id=uuid4(),
         confidence=0.7,
         evidence_summary="shared profile evidence",
+        evidence_sentence="MED13 is linked to cardiomyopathy in the referenced sample.",
         evidence_tier="COMPUTATIONAL",
         provenance_id=None,
         source_document_id=None,
@@ -152,6 +153,10 @@ def test_build_graph_connection_tools_calls_dependencies() -> None:
 
     evidence = evidence_tool("relation-1")
     assert evidence[0]["evidence_tier"] == "COMPUTATIONAL"
+    assert (
+        evidence[0]["evidence_sentence"]
+        == "MED13 is linked to cardiomyopathy in the referenced sample."
+    )
 
     relation = upsert_tool(
         "source-1",
@@ -211,3 +216,7 @@ def test_build_graph_search_tools_calls_dependencies() -> None:
 
     evidence = evidence_tool("relation-1")
     assert evidence[0]["evidence_tier"] == "COMPUTATIONAL"
+    assert (
+        evidence[0]["evidence_sentence"]
+        == "MED13 is linked to cardiomyopathy in the referenced sample."
+    )

@@ -12,7 +12,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from src.type_definitions.common import RawRecord
 
 
-RELEVANCE_THRESHOLD: int = 5
+RELEVANCE_THRESHOLD: int = 4
 
 
 class PubMedRecordParserMixin:
@@ -25,11 +25,17 @@ class PubMedRecordParserMixin:
         try:
             root = ElementTree.fromstring(xml_content)
             records: list[RawRecord] = []
-
-            for citation in root.findall(".//MedlineCitation"):
-                record = self._parse_single_citation(citation)
-                if record:
-                    records.append(record)
+            articles = root.findall(".//PubmedArticle")
+            if articles:
+                for article in articles:
+                    record = self._parse_single_article(article)
+                    if record:
+                        records.append(record)
+            else:
+                for citation in root.findall(".//MedlineCitation"):
+                    record = self._parse_single_citation(citation)
+                    if record:
+                        records.append(record)
 
         except Exception as e:  # noqa: BLE001
             # Return error record for debugging
@@ -42,7 +48,19 @@ class PubMedRecordParserMixin:
         else:
             return records
 
-    def _parse_single_citation(self, citation: Element) -> RawRecord | None:
+    def _parse_single_article(self, article: Element) -> RawRecord | None:
+        """Parse a PubmedArticle element."""
+        citation = article.find("./MedlineCitation")
+        if citation is None:
+            return None
+        return self._parse_single_citation(citation, article=article)
+
+    def _parse_single_citation(
+        self,
+        citation: Element,
+        *,
+        article: Element | None = None,
+    ) -> RawRecord | None:
         """
         Parse a single MedlineCitation element.
         """
@@ -62,8 +80,8 @@ class PubMedRecordParserMixin:
                 "publication_date": self._extract_publication_date(citation),
                 "publication_types": self._extract_publication_types(citation),
                 "keywords": self._extract_keywords(citation),
-                "doi": self._extract_doi(citation),
-                "pmc_id": self._extract_pmc_id(citation),
+                "doi": self._extract_doi(citation, article=article),
+                "pmc_id": self._extract_pmc_id(citation, article=article),
             }
 
             record["med13_relevance"] = self._assess_med13_relevance(record)
@@ -148,7 +166,12 @@ class PubMedRecordParserMixin:
             if kw_elem.text
         ]
 
-    def _extract_doi(self, citation: Element) -> str | None:
+    def _extract_doi(
+        self,
+        citation: Element,
+        *,
+        article: Element | None = None,
+    ) -> str | None:
         """Extract DOI if available."""
         for id_elem in citation.findall(".//ArticleId"):
             id_type = (id_elem.get("IdType") or "").strip().lower()
@@ -158,19 +181,39 @@ class PubMedRecordParserMixin:
             id_type = (id_elem.get("EIdType") or "").strip().lower()
             if id_type == "doi" and id_elem.text:
                 return id_elem.text.strip()
+        if article is not None:
+            pubmed_data = article.find("./PubmedData")
+            if pubmed_data is not None:
+                for id_elem in pubmed_data.findall(".//ArticleId"):
+                    id_type = (id_elem.get("IdType") or "").strip().lower()
+                    if id_type == "doi" and id_elem.text:
+                        return id_elem.text.strip()
         return None
 
-    def _extract_pmc_id(self, citation: Element) -> str | None:
+    def _extract_pmc_id(
+        self,
+        citation: Element,
+        *,
+        article: Element | None = None,
+    ) -> str | None:
         """Extract PMC ID if available."""
-        pmc_from_article_ids = self._extract_pmc_from_article_ids(citation)
-        if pmc_from_article_ids is not None:
-            return pmc_from_article_ids
+        search_targets: list[Element] = [citation]
+        if article is not None:
+            pubmed_data = article.find("./PubmedData")
+            if pubmed_data is not None:
+                search_targets.append(pubmed_data)
 
-        pmc_from_other_ids = self._extract_pmc_from_other_ids(citation)
-        if pmc_from_other_ids is not None:
-            return pmc_from_other_ids
-
-        return self._extract_pmc_from_accession_numbers(citation)
+        extractors = (
+            self._extract_pmc_from_article_ids,
+            self._extract_pmc_from_other_ids,
+            self._extract_pmc_from_accession_numbers,
+        )
+        for target in search_targets:
+            for extractor in extractors:
+                candidate = extractor(target)
+                if candidate is not None:
+                    return candidate
+        return None
 
     def _extract_pmc_from_article_ids(self, citation: Element) -> str | None:
         for id_elem in citation.findall(".//ArticleId"):

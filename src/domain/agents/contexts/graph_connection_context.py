@@ -20,6 +20,8 @@ class GraphConnectionContext(BaseAgentContext):
     seed_entity_id: str = Field(..., min_length=1, max_length=64)
     source_type: str = Field(default="clinvar", min_length=1, max_length=64)
     research_space_id: str = Field(..., min_length=1, max_length=64)
+    source_id: str | None = Field(default=None, max_length=64)
+    pipeline_run_id: str | None = Field(default=None, max_length=128)
     research_space_settings: ResearchSpaceSettings = Field(
         default_factory=_empty_settings,
     )

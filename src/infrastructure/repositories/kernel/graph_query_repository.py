@@ -177,6 +177,7 @@ class SqlAlchemyGraphQueryRepository(GraphQueryPort):
         research_space_id: str,
         entity_id: str,
         relation_types: list[str] | None = None,
+        curation_statuses: list[str] | None = None,
         direction: str = "both",
         depth: int = 1,
         limit: int = 200,
@@ -191,6 +192,16 @@ class SqlAlchemyGraphQueryRepository(GraphQueryPort):
             for relation in relations
             if str(relation.research_space_id) == str(research_space_id)
         ]
+        if curation_statuses:
+            normalized_statuses = {
+                status.strip().upper() for status in curation_statuses if status.strip()
+            }
+            if normalized_statuses:
+                scoped = [
+                    relation
+                    for relation in scoped
+                    if relation.curation_status.strip().upper() in normalized_statuses
+                ]
         if direction == "outgoing":
             scoped = [
                 relation for relation in scoped if str(relation.source_id) == entity_id

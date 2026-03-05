@@ -35,13 +35,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-type RelationValidationState = Literal["ALLOWED", "FORBIDDEN", "UNDEFINED"]
+type RelationValidationState = Literal[
+    "ALLOWED",
+    "FORBIDDEN",
+    "UNDEFINED",
+    "INVALID_COMPONENTS",
+    "ENDPOINT_UNRESOLVED",
+    "SELF_LOOP",
+]
+type RelationPersistability = Literal["PERSISTABLE", "NON_PERSISTABLE"]
+type RelationClaimPolarity = Literal["SUPPORT", "REFUTE", "UNCERTAIN", "HYPOTHESIS"]
 
 
 @dataclass(frozen=True)
 class _ResolvedRelationCandidate:
-    source_entity_id: str
-    target_entity_id: str
+    source_entity_id: str | None
+    target_entity_id: str | None
     source_type: str
     relation_type: str
     target_type: str
@@ -50,6 +59,12 @@ class _ResolvedRelationCandidate:
     confidence: float
     validation_state: RelationValidationState
     validation_reason: str
+    evidence_excerpt: str | None = None
+    evidence_locator: str | None = None
+    polarity: RelationClaimPolarity = "UNCERTAIN"
+    claim_text: str | None = None
+    claim_section: str | None = None
+    persistability: RelationPersistability = "PERSISTABLE"
 
 
 @dataclass(frozen=True)
@@ -392,6 +407,7 @@ class _ExtractionRelationPolicyHelpers(_ExtractionRelationPolicyConstraintHelper
 
 
 __all__ = [
+    "RelationPersistability",
     "RelationGovernanceMode",
     "_ExtractionRelationPolicyHelpers",
     "_ResolvedRelationCandidate",

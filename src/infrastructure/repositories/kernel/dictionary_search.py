@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import and_, select
 
 from src.domain.entities.kernel.dictionary import DictionarySearchResult
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.models.database.kernel.dictionary import (
     DictionaryEntityTypeModel,
+    DictionaryRelationSynonymModel,
     DictionaryRelationTypeModel,
     RelationConstraintModel,
     VariableDefinitionModel,
@@ -116,6 +118,17 @@ def _normalize_search_terms(terms: list[str]) -> list[str]:
     return normalized
 
 
+def _domain_context_scope(
+    domain_context: str | None,
+) -> set[str] | None:
+    normalized = DomainContextResolver.normalize(domain_context)
+    if normalized is None:
+        return None
+    if normalized == DomainContextResolver.GENERAL_DEFAULT_DOMAIN:
+        return {normalized}
+    return {normalized, DomainContextResolver.GENERAL_DEFAULT_DOMAIN}
+
+
 def _ranked_search_results(
     result_map: dict[tuple[str, str], DictionarySearchResult],
     *,
@@ -169,8 +182,11 @@ def _search_variables(  # noqa: C901,PLR0912,PLR0913
                 VariableDefinitionModel.is_active.is_(True),
             ),
         )
-    if domain_context is not None:
-        stmt = stmt.where(VariableDefinitionModel.domain_context == domain_context)
+    domain_context_scope = _domain_context_scope(domain_context)
+    if domain_context_scope is not None:
+        stmt = stmt.where(
+            VariableDefinitionModel.domain_context.in_(domain_context_scope),
+        )
     variables = session.scalars(stmt).all()
 
     synonym_stmt = select(VariableSynonymModel)
@@ -314,8 +330,11 @@ def _search_entity_types(  # noqa: PLR0913
                 DictionaryEntityTypeModel.is_active.is_(True),
             ),
         )
-    if domain_context is not None:
-        stmt = stmt.where(DictionaryEntityTypeModel.domain_context == domain_context)
+    domain_context_scope = _domain_context_scope(domain_context)
+    if domain_context_scope is not None:
+        stmt = stmt.where(
+            DictionaryEntityTypeModel.domain_context.in_(domain_context_scope),
+        )
     rows = session.scalars(stmt).all()
 
     for row in rows:
@@ -390,7 +409,7 @@ def _search_entity_types(  # noqa: PLR0913
             )
 
 
-def _search_relation_types(  # noqa: PLR0913
+def _search_relation_types(  # noqa: C901, PLR0912, PLR0913
     session: Session,
     *,
     terms: list[str],
@@ -407,13 +426,37 @@ def _search_relation_types(  # noqa: PLR0913
                 DictionaryRelationTypeModel.is_active.is_(True),
             ),
         )
-    if domain_context is not None:
+    domain_context_scope = _domain_context_scope(domain_context)
+    if domain_context_scope is not None:
         stmt = stmt.where(
-            DictionaryRelationTypeModel.domain_context == domain_context,
+            DictionaryRelationTypeModel.domain_context.in_(domain_context_scope),
         )
     rows = session.scalars(stmt).all()
+    if not rows:
+        return
+    relation_type_ids = [row.id for row in rows]
+    synonym_stmt = select(DictionaryRelationSynonymModel)
+    if relation_type_ids:
+        synonym_stmt = synonym_stmt.where(
+            DictionaryRelationSynonymModel.relation_type.in_(relation_type_ids),
+        )
+    if not include_inactive:
+        synonym_stmt = synonym_stmt.where(
+            and_(
+                DictionaryRelationSynonymModel.review_status == "ACTIVE",
+                DictionaryRelationSynonymModel.is_active.is_(True),
+            ),
+        )
+    synonym_rows = session.scalars(synonym_stmt).all()
+    synonyms_by_relation_type: dict[str, list[str]] = {}
+    for synonym_row in synonym_rows:
+        synonyms_by_relation_type.setdefault(synonym_row.relation_type, []).append(
+            synonym_row.synonym,
+        )
 
     for row in rows:
+        relation_synonyms = synonyms_by_relation_type.get(row.id, [])
+        relation_synonym_keys = [synonym.casefold() for synonym in relation_synonyms]
         for term in terms:
             exact_fields = [row.id.casefold(), row.display_name.casefold()]
             if term in exact_fields:
@@ -430,6 +473,26 @@ def _search_relation_types(  # noqa: PLR0913
                         metadata={
                             "is_directional": row.is_directional,
                             "inverse_label": row.inverse_label,
+                        },
+                    ),
+                )
+                continue
+
+            if term in relation_synonym_keys:
+                _upsert_search_result(
+                    result_map,
+                    DictionarySearchResult(
+                        dimension="relation_types",
+                        entry_id=str(row.id),
+                        display_name=str(row.display_name),
+                        description=str(row.description),
+                        domain_context=str(row.domain_context),
+                        match_method="synonym",
+                        similarity_score=1.0,
+                        metadata={
+                            "is_directional": row.is_directional,
+                            "inverse_label": row.inverse_label,
+                            "synonyms": relation_synonyms,
                         },
                     ),
                 )
@@ -515,10 +578,14 @@ def _search_constraints(
         relation_type.id: relation_type.domain_context
         for relation_type in session.scalars(relation_type_stmt).all()
     }
+    domain_context_scope = _domain_context_scope(domain_context)
 
     for row in rows:
         row_domain_context = relation_context_map.get(row.relation_type)
-        if domain_context is not None and row_domain_context != domain_context:
+        if (
+            domain_context_scope is not None
+            and row_domain_context not in domain_context_scope
+        ):
             continue
 
         display_name = f"{row.source_type} -[{row.relation_type}]-> {row.target_type}"
@@ -588,6 +655,7 @@ def search_dictionary_entries(  # noqa: PLR0913
     normalized_terms = _normalize_search_terms(terms)
     if not normalized_terms:
         return []
+    normalized_domain_context = DomainContextResolver.normalize(domain_context)
     normalized_dimensions = _normalize_search_dimensions(dimensions)
     if not normalized_dimensions:
         return []
@@ -599,7 +667,7 @@ def search_dictionary_entries(  # noqa: PLR0913
         _search_variables(
             session,
             terms=normalized_terms,
-            domain_context=domain_context,
+            domain_context=normalized_domain_context,
             query_embeddings=query_embeddings,
             include_inactive=include_inactive,
             result_map=result_map,
@@ -608,7 +676,7 @@ def search_dictionary_entries(  # noqa: PLR0913
         _search_entity_types(
             session,
             terms=normalized_terms,
-            domain_context=domain_context,
+            domain_context=normalized_domain_context,
             query_embeddings=query_embeddings,
             include_inactive=include_inactive,
             result_map=result_map,
@@ -617,7 +685,7 @@ def search_dictionary_entries(  # noqa: PLR0913
         _search_relation_types(
             session,
             terms=normalized_terms,
-            domain_context=domain_context,
+            domain_context=normalized_domain_context,
             query_embeddings=query_embeddings,
             include_inactive=include_inactive,
             result_map=result_map,
@@ -626,7 +694,7 @@ def search_dictionary_entries(  # noqa: PLR0913
         _search_constraints(
             session,
             terms=normalized_terms,
-            domain_context=domain_context,
+            domain_context=normalized_domain_context,
             include_inactive=include_inactive,
             result_map=result_map,
         )
@@ -642,7 +710,8 @@ def search_dictionary_entries_by_domain(
     include_inactive: bool = False,
 ) -> list[DictionarySearchResult]:
     normalized_limit = max(1, min(limit, 500))
-    context = domain_context.strip()
+    normalized_context = DomainContextResolver.normalize(domain_context)
+    context = normalized_context or ""
     if not context:
         return []
 

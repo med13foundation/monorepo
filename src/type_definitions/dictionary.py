@@ -5,18 +5,25 @@ Phase 5 introduces typed constraint validation for variable definitions.
 This module centralizes:
 1) Pydantic models for each supported dictionary data type.
 2) JSON Schema payloads stored in dictionary_data_types.constraint_schema.
-3) Write-time constraint normalization/validation helpers.
+3) Write-time and ingestion-time executable constraint helpers.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from copy import deepcopy
 from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
+from math import isfinite
 from typing import Final
 
+from jsonschema import Draft7Validator
+from jsonschema.exceptions import SchemaError
+from jsonschema.exceptions import ValidationError as JSONSchemaValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from src.type_definitions.common import JSONObject  # noqa: TC001
+from src.type_definitions.common import JSONObject, JSONValue  # noqa: TC001
 from src.type_definitions.json_utils import to_json_value
 
 _SUPPORTED_DATA_TYPES: Final[frozenset[str]] = frozenset(
@@ -220,6 +227,9 @@ _CONSTRAINT_MODEL_BY_DATA_TYPE: Final[dict[str, type[_BaseConstraints]]] = {
 }
 
 
+ConstraintValue = JSONValue | date | datetime
+
+
 def normalize_dictionary_data_type(data_type: str) -> str:
     """Normalize a dictionary data type identifier."""
     normalized = data_type.strip().upper()
@@ -242,6 +252,53 @@ def get_constraint_schema_for_data_type(data_type: str) -> JSONObject:
     return deepcopy(schema)
 
 
+def _compile_constraints_model(
+    *,
+    data_type: str,
+    constraints: JSONObject | None,
+    allow_legacy_allowed_values: bool,
+) -> tuple[str, _BaseConstraints, tuple[str, ...] | None]:
+    normalized_data_type = normalize_dictionary_data_type(data_type)
+    if normalized_data_type not in _SUPPORTED_DATA_TYPES:
+        msg = f"Unsupported data_type '{data_type}'"
+        raise ValueError(msg)
+
+    payload = constraints or {}
+    payload_without_legacy_allowed_values = payload
+    legacy_allowed_values: tuple[str, ...] | None = None
+    if (
+        allow_legacy_allowed_values
+        and normalized_data_type in {"STRING", "CODED"}
+        and "allowed_values" in payload
+    ):
+        raw_allowed_values = payload.get("allowed_values")
+        if not isinstance(raw_allowed_values, list) or not all(
+            isinstance(item, str) for item in raw_allowed_values
+        ):
+            msg = (
+                f"Invalid constraints for data_type '{normalized_data_type}': "
+                "'allowed_values' must be a list[str]"
+            )
+            raise ValueError(msg)
+        legacy_allowed_values = tuple(raw_allowed_values)
+        payload_without_legacy_allowed_values = {
+            str(key): value for key, value in payload.items() if key != "allowed_values"
+        }
+
+    model_type = _CONSTRAINT_MODEL_BY_DATA_TYPE.get(normalized_data_type)
+    if model_type is None:
+        msg = f"Unsupported data_type '{normalized_data_type}'"
+        raise ValueError(msg)
+
+    try:
+        validated = model_type.model_validate(payload_without_legacy_allowed_values)
+    except ValidationError as exc:
+        msg = f"Invalid constraints for data_type '{normalized_data_type}': {exc}"
+        raise ValueError(msg) from exc
+
+    return normalized_data_type, validated, legacy_allowed_values
+
+
 def validate_constraints_for_data_type(
     *,
     data_type: str,
@@ -252,34 +309,225 @@ def validate_constraints_for_data_type(
 
     Returns a JSON-safe normalized payload suitable for persistence.
     """
-    normalized_data_type = normalize_dictionary_data_type(data_type)
-    if normalized_data_type not in _SUPPORTED_DATA_TYPES:
-        msg = f"Unsupported data_type '{data_type}'"
-        raise ValueError(msg)
-
-    payload = constraints or {}
-    model_type = _CONSTRAINT_MODEL_BY_DATA_TYPE.get(normalized_data_type)
-    if model_type is None:
-        return payload
-
-    try:
-        validated = model_type.model_validate(payload)
-    except ValidationError as exc:
-        msg = f"Invalid constraints for data_type '{normalized_data_type}': {exc}"
-        raise ValueError(msg) from exc
+    _, validated, _ = _compile_constraints_model(
+        data_type=data_type,
+        constraints=constraints,
+        allow_legacy_allowed_values=False,
+    )
 
     dumped = validated.model_dump(mode="json", exclude_none=True)
     return {str(key): to_json_value(value) for key, value in dumped.items()}
 
 
+def _normalize_temporal_value(value: ConstraintValue) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(UTC).replace(tzinfo=None)
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    return None
+
+
+def _count_decimal_places(value: float) -> int:
+    try:
+        decimal_value = Decimal(str(value)).normalize()
+    except InvalidOperation:
+        return 0
+    exponent = decimal_value.as_tuple().exponent
+    if not isinstance(exponent, int):
+        return 0
+    return max(0, -exponent)
+
+
+def _is_json_compatible_value(value: ConstraintValue) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool | str | int):
+        return True
+    if isinstance(value, float):
+        return isfinite(value)
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return all(_is_json_compatible_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _is_json_compatible_value(item)
+            for key, item in value.items()
+        )
+    return False
+
+
+def is_value_compatible_with_data_type(  # noqa: PLR0911
+    *,
+    data_type: str,
+    value: ConstraintValue,
+) -> bool:
+    """Return whether a candidate observation value matches the dictionary data type."""
+    if value is None:
+        return False
+
+    normalized_data_type = normalize_dictionary_data_type(data_type)
+
+    if normalized_data_type == "INTEGER":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if normalized_data_type == "FLOAT":
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            return False
+        return isfinite(float(value))
+    if normalized_data_type == "BOOLEAN":
+        return isinstance(value, bool)
+    if normalized_data_type in {"STRING", "CODED"}:
+        return isinstance(value, str)
+    if normalized_data_type == "DATE":
+        return isinstance(value, date | datetime)
+    if normalized_data_type == "JSON":
+        return _is_json_compatible_value(value)
+    return False
+
+
+def _numeric_value_satisfies_constraints(
+    *,
+    value: ConstraintValue,
+    constraints: NumericConstraints,
+) -> bool:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return False
+    numeric_value = float(value)
+    if not isfinite(numeric_value):
+        return False
+    if constraints.min is not None and numeric_value < float(constraints.min):
+        return False
+    if constraints.max is not None and numeric_value > float(constraints.max):
+        return False
+    if constraints.precision is None:
+        return True
+    return _count_decimal_places(float(value)) <= constraints.precision
+
+
+def _string_value_satisfies_constraints(
+    *,
+    value: ConstraintValue,
+    constraints: StringConstraints,
+) -> bool:
+    if not isinstance(value, str):
+        return False
+    if constraints.min_length is not None and len(value) < constraints.min_length:
+        return False
+    if constraints.max_length is not None and len(value) > constraints.max_length:
+        return False
+    if constraints.pattern is not None:
+        try:
+            if re.fullmatch(constraints.pattern, value) is None:
+                return False
+        except re.error:
+            return False
+    return True
+
+
+def _date_value_satisfies_constraints(
+    *,
+    value: ConstraintValue,
+    constraints: DateConstraints,
+) -> bool:
+    normalized_value = _normalize_temporal_value(value)
+    if normalized_value is None:
+        return False
+    if constraints.min_date is not None and normalized_value < _parse_iso_temporal(
+        constraints.min_date,
+    ):
+        return False
+    if constraints.max_date is None:
+        return True
+    return normalized_value <= _parse_iso_temporal(constraints.max_date)
+
+
+def _json_value_satisfies_constraints(
+    *,
+    value: ConstraintValue,
+    constraints: JsonConstraints,
+) -> bool:
+    if not _is_json_compatible_value(value):
+        return False
+
+    if constraints.json_schema is None:
+        return True
+
+    try:
+        Draft7Validator.check_schema(constraints.json_schema)
+        Draft7Validator(constraints.json_schema).validate(value)
+    except (SchemaError, JSONSchemaValidationError):
+        return False
+    return True
+
+
+def value_satisfies_dictionary_constraints(  # noqa: PLR0911
+    *,
+    data_type: str,
+    constraints: JSONObject | None,
+    value: ConstraintValue,
+    allow_legacy_allowed_values: bool = True,
+) -> bool:
+    """
+    Evaluate whether a value satisfies dictionary data-type constraints.
+
+    This is the executable constraint check used at ingestion time.
+    """
+    try:
+        normalized_data_type, compiled_constraints, legacy_allowed_values = (
+            _compile_constraints_model(
+                data_type=data_type,
+                constraints=constraints,
+                allow_legacy_allowed_values=allow_legacy_allowed_values,
+            )
+        )
+    except ValueError:
+        return False
+
+    if not is_value_compatible_with_data_type(
+        data_type=normalized_data_type,
+        value=value,
+    ):
+        return False
+
+    if legacy_allowed_values is not None:
+        if not isinstance(value, str):
+            return False
+        return value in legacy_allowed_values
+
+    if isinstance(compiled_constraints, NumericConstraints):
+        return _numeric_value_satisfies_constraints(
+            value=value,
+            constraints=compiled_constraints,
+        )
+    if isinstance(compiled_constraints, StringConstraints):
+        return _string_value_satisfies_constraints(
+            value=value,
+            constraints=compiled_constraints,
+        )
+    if isinstance(compiled_constraints, DateConstraints):
+        return _date_value_satisfies_constraints(
+            value=value,
+            constraints=compiled_constraints,
+        )
+    if isinstance(compiled_constraints, JsonConstraints):
+        return _json_value_satisfies_constraints(
+            value=value,
+            constraints=compiled_constraints,
+        )
+    return True
+
+
 __all__ = [
     "BooleanConstraints",
+    "ConstraintValue",
     "CodedConstraints",
     "DateConstraints",
     "JsonConstraints",
     "NumericConstraints",
     "StringConstraints",
     "get_constraint_schema_for_data_type",
+    "is_value_compatible_with_data_type",
     "normalize_dictionary_data_type",
     "validate_constraints_for_data_type",
+    "value_satisfies_dictionary_constraints",
 ]

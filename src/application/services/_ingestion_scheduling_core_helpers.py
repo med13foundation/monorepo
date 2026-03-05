@@ -59,7 +59,10 @@ class _IngestionSchedulingCoreHelpers(
         ):
             return
         try:
-            await self._run_ingestion_for_source(source)
+            await self._run_ingestion_for_source(
+                source,
+                trigger=ingestion_job.IngestionTrigger.SCHEDULED,
+            )
         except ValueError as exc:
             if ALREADY_RUNNING_ERROR_FRAGMENT in str(exc).lower():
                 logger.info(
@@ -73,7 +76,9 @@ class _IngestionSchedulingCoreHelpers(
         self: IngestionSchedulingService,
         source: user_data_source.UserDataSource,
         *,
+        trigger: ingestion_job.IngestionTrigger = ingestion_job.IngestionTrigger.SCHEDULED,
         skip_post_ingestion_hook: bool = False,
+        skip_legacy_extraction_queue: bool = False,
         force_recover_lock: bool = False,
     ) -> IngestionRunSummary:
         self._recover_stale_running_jobs(source_id=source.id)
@@ -89,7 +94,9 @@ class _IngestionSchedulingCoreHelpers(
         )
 
         try:
-            job = self._job_repository.save(self._create_ingestion_job(source))
+            job = self._job_repository.save(
+                self._create_ingestion_job(source, trigger=trigger),
+            )
             running = self._job_repository.save(job.start_execution())
             sync_state_before = self._prepare_sync_state_for_attempt(source)
             run_context = self._build_run_context(
@@ -142,24 +149,25 @@ class _IngestionSchedulingCoreHelpers(
                     sync_state_after=sync_state_after,
                 )
 
-                extraction_metadata = self._enqueue_extraction(
-                    source=source,
-                    ingestion_job_id=running.id,
-                    summary=summary,
-                )
-                if extraction_metadata:
-                    metadata = metadata.model_copy(
-                        update={"extraction_queue": extraction_metadata},
-                    )
-                    extraction_run = await self._run_extraction(
+                if not skip_legacy_extraction_queue:
+                    extraction_metadata = self._enqueue_extraction(
                         source=source,
                         ingestion_job_id=running.id,
-                        queued_count=extraction_metadata.queued,
+                        summary=summary,
                     )
-                    if extraction_run:
+                    if extraction_metadata:
                         metadata = metadata.model_copy(
-                            update={"extraction_run": extraction_run},
+                            update={"extraction_queue": extraction_metadata},
                         )
+                        extraction_run = await self._run_extraction(
+                            source=source,
+                            ingestion_job_id=running.id,
+                            queued_count=extraction_metadata.queued,
+                        )
+                        if extraction_run:
+                            metadata = metadata.model_copy(
+                                update={"extraction_run": extraction_run},
+                            )
 
                 completed = running.model_copy(
                     update={"metadata": metadata.to_json_object()},
@@ -206,12 +214,30 @@ class _IngestionSchedulingCoreHelpers(
         if hook is None:
             return
         try:
-            await hook(source, summary)
-        except Exception:  # noqa: BLE001 - hook must not fail ingestion completion
+            await asyncio.wait_for(
+                hook(source, summary),
+                timeout=self._post_ingestion_hook_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            logger.exception(
+                "Post-ingestion hook timed out",
+                extra={
+                    "source_id": str(source.id),
+                    "timeout_seconds": self._post_ingestion_hook_timeout_seconds,
+                },
+            )
+            msg = (
+                "Post-ingestion hook timed out after "
+                f"{self._post_ingestion_hook_timeout_seconds}s for source {source.id}"
+            )
+            raise RuntimeError(msg) from exc
+        except Exception as exc:
             logger.exception(
                 "Post-ingestion hook failed",
                 extra={"source_id": str(source.id)},
             )
+            msg = f"Post-ingestion hook failed for source {source.id}: {exc!s}"
+            raise RuntimeError(msg) from exc
 
     def _recover_stale_running_jobs(
         self: IngestionSchedulingService,
@@ -365,7 +391,11 @@ class _IngestionSchedulingCoreHelpers(
             and not self._source_has_running_job(source_id)
         ):
             stale_lock = repository.get_by_source(source_id)
-            if stale_lock is not None and repository.delete_by_source(source_id):
+            if (
+                stale_lock is not None
+                and stale_lock.lease_expires_at.astimezone(UTC) <= now
+                and repository.delete_by_source(source_id)
+            ):
                 logger.warning(
                     "Force-recovered source ingestion lock before retry",
                     extra={

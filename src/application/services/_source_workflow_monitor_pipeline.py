@@ -144,15 +144,73 @@ class SourceWorkflowMonitorPipelineMixin:
         metrics = coerce_json_object(row.metrics)
         metadata = coerce_json_object(row.job_metadata)
         extraction_queue_meta = coerce_json_object(metadata.get("extraction_queue"))
-        extraction_run_meta = coerce_json_object(metadata.get("extraction_run"))
+        extraction_run_meta = coerce_json_object(
+            pipeline_payload.get("extraction_run"),
+        )
+        if not extraction_run_meta:
+            extraction_run_meta = coerce_json_object(metadata.get("extraction_run"))
+        graph_progress = coerce_json_object(pipeline_payload.get("graph_progress"))
+        extraction_processed = safe_int(extraction_run_meta.get("processed"))
+        extraction_completed = safe_int(extraction_run_meta.get("completed"))
+        extraction_failed = safe_int(extraction_run_meta.get("failed"))
+        if extraction_run_meta.get("processed") is None:
+            extraction_processed = safe_int(graph_progress.get("extraction_processed"))
+        if extraction_run_meta.get("completed") is None:
+            extraction_completed = safe_int(graph_progress.get("extraction_completed"))
+        if extraction_run_meta.get("failed") is None:
+            extraction_failed = safe_int(graph_progress.get("extraction_failed"))
+        run_scope = coerce_json_object(pipeline_payload.get("run_scope"))
+        run_ingestion_job_id = normalize_optional_string(
+            run_scope.get("ingestion_job_id"),
+        )
+        if run_ingestion_job_id is None:
+            run_ingestion_job_id = normalize_optional_string(
+                pipeline_payload.get("ingestion_job_id"),
+            )
+        idempotency_checkpoint_after = self._resolve_idempotency_checkpoint_after(
+            row=row,
+            metadata=metadata,
+            ingestion_job_id=run_ingestion_job_id,
+        )
         stage_counters: JSONObject = {
             "records_processed": safe_int(metrics.get("records_processed")),
             "records_failed": safe_int(metrics.get("records_failed")),
             "records_skipped": safe_int(metrics.get("records_skipped")),
             "queued_for_extraction": safe_int(extraction_queue_meta.get("queued")),
-            "extraction_processed": safe_int(extraction_run_meta.get("processed")),
-            "extraction_completed": safe_int(extraction_run_meta.get("completed")),
-            "extraction_failed": safe_int(extraction_run_meta.get("failed")),
+            "extraction_processed": extraction_processed,
+            "extraction_completed": extraction_completed,
+            "extraction_failed": extraction_failed,
+            "graph_requested": safe_int(graph_progress.get("requested")),
+            "graph_processed": safe_int(graph_progress.get("processed")),
+            "graph_completed": safe_int(graph_progress.get("completed")),
+            "persisted_relations": safe_int(graph_progress.get("persisted_relations")),
+            "extraction_persisted_relations": safe_int(
+                graph_progress.get("extraction_persisted_relations"),
+            ),
+            "extraction_concept_members_created": safe_int(
+                graph_progress.get("extraction_concept_members_created"),
+            ),
+            "extraction_concept_aliases_created": safe_int(
+                graph_progress.get("extraction_concept_aliases_created"),
+            ),
+            "extraction_concept_decisions_proposed": safe_int(
+                graph_progress.get("extraction_concept_decisions_proposed"),
+            ),
+            "graph_stage_persisted_relations": safe_int(
+                graph_progress.get("graph_stage_persisted_relations"),
+            ),
+            "relevance_filtered_out_count": safe_int(
+                idempotency_checkpoint_after.get("filtered_out_count"),
+            ),
+            "relevance_pre_rescue_filtered_out_count": safe_int(
+                idempotency_checkpoint_after.get("pre_rescue_filtered_out_count"),
+            ),
+            "full_text_rescue_attempted_count": safe_int(
+                idempotency_checkpoint_after.get("full_text_rescue_attempted_count"),
+            ),
+            "full_text_rescued_count": safe_int(
+                idempotency_checkpoint_after.get("full_text_rescued_count"),
+            ),
         }
 
         source_snapshot = coerce_json_object(row.source_config_snapshot)
@@ -164,6 +222,7 @@ class SourceWorkflowMonitorPipelineMixin:
         return {
             "job_id": str(row.id),
             "run_id": str(pipeline_payload.get("run_id")),
+            "ingestion_job_id": run_ingestion_job_id,
             "status": normalize_optional_string(pipeline_payload.get("status"))
             or str(row.status.value),
             "triggered_at": row.triggered_at,
@@ -218,7 +277,38 @@ class SourceWorkflowMonitorPipelineMixin:
                 "use_research_space_context",
             ),
             "is_ai_managed": agent_config.get("is_ai_managed"),
+            "relevance_threshold": metadata.get("relevance_threshold"),
+            "full_text_entity_rescue_enabled": metadata.get(
+                "full_text_entity_rescue_enabled",
+            ),
+            "full_text_entity_rescue_terms": metadata.get(
+                "full_text_entity_rescue_terms",
+            ),
         }
+
+    def _resolve_idempotency_checkpoint_after(
+        self,
+        *,
+        row: IngestionJobModel,
+        metadata: JSONObject,
+        ingestion_job_id: str | None,
+    ) -> JSONObject:
+        idempotency = coerce_json_object(metadata.get("idempotency"))
+        checkpoint_after = coerce_json_object(idempotency.get("checkpoint_after"))
+        if checkpoint_after:
+            return checkpoint_after
+        if ingestion_job_id is None or ingestion_job_id == str(row.id):
+            return {}
+
+        statement = (
+            select(IngestionJobModel.job_metadata)
+            .where(IngestionJobModel.id == ingestion_job_id)
+            .limit(1)
+        )
+        linked_job_metadata_raw = self._session.execute(statement).scalar_one_or_none()
+        linked_job_metadata = coerce_json_object(linked_job_metadata_raw)
+        linked_idempotency = coerce_json_object(linked_job_metadata.get("idempotency"))
+        return coerce_json_object(linked_idempotency.get("checkpoint_after"))
 
     def _load_source_documents(
         self,

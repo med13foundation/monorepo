@@ -29,10 +29,13 @@ research_spaces_router = APIRouter(
 
 # Import route modules so decorators register against the router.
 from . import (  # noqa: E402,F401
+    claim_graph_routes,
+    concept_routes,
     content_enrichment_routes,
     curation_routes,
     data_source_routes,
     graph_connection_routes,
+    hypothesis_routes,
     kernel_entities_routes,
     kernel_graph_search_routes,
     kernel_ingestion_routes,
@@ -45,6 +48,7 @@ from . import (  # noqa: E402,F401
     pipeline_orchestration_routes,
     space_routes,
     workflow_monitor_routes,
+    workflow_monitor_stream_routes,
 )
 
 __all__ = ["research_spaces_router"]

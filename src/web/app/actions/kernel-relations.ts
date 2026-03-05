@@ -1,8 +1,12 @@
 "use server"
 
 import { revalidatePath } from 'next/cache'
-import { fetchKernelEntities, updateKernelRelationCurationStatus } from '@/lib/api/kernel'
-import type { KernelRelationResponse } from '@/types/kernel'
+import {
+  fetchKernelEntities,
+  updateKernelRelationCurationStatus,
+  updateRelationClaimStatus,
+} from '@/lib/api/kernel'
+import type { KernelRelationResponse, RelationClaimResponse } from '@/types/kernel'
 import { getActionErrorMessage, requireAccessToken } from '@/app/actions/action-utils'
 
 type ActionResult<T> =
@@ -48,6 +52,32 @@ export async function updateKernelRelationStatusAction(
     return {
       success: false,
       error: getActionErrorMessage(error, 'Failed to update relation status'),
+    }
+  }
+}
+
+export async function updateRelationClaimStatusAction(
+  spaceId: string,
+  claimId: string,
+  claimStatus: 'OPEN' | 'NEEDS_MAPPING' | 'REJECTED' | 'RESOLVED',
+): Promise<ActionResult<RelationClaimResponse>> {
+  try {
+    const token = await requireAccessToken()
+    const response = await updateRelationClaimStatus(
+      spaceId,
+      claimId,
+      { claim_status: claimStatus },
+      token,
+    )
+    revalidateCuration(spaceId)
+    return { success: true, data: response }
+  } catch (error: unknown) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('[ServerAction] updateRelationClaimStatus failed:', error)
+    }
+    return {
+      success: false,
+      error: getActionErrorMessage(error, 'Failed to update relation claim status'),
     }
   }
 }

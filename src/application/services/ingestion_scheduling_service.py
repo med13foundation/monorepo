@@ -15,6 +15,7 @@ from src.application.services._ingestion_scheduling_queue_helpers import (
     _IngestionSchedulingQueueHelpers,
 )
 from src.domain.entities import user_data_source
+from src.domain.entities.ingestion_job import IngestionTrigger
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -66,6 +67,7 @@ class IngestionSchedulingOptions:
     scheduler_lease_ttl_seconds: int = 120
     scheduler_stale_running_timeout_seconds: int = 300
     ingestion_job_hard_timeout_seconds: int = 7200
+    post_ingestion_hook_timeout_seconds: int = 1800
     # Backward-compatible aliases retained while transitioning option names.
     source_lock_repository: source_lock_repo.IngestionSourceLockRepository | None = None
     source_lock_lease_ttl_seconds: int | None = None
@@ -166,6 +168,10 @@ class IngestionSchedulingService(
         )
         self._retry_batch_size = max(resolved_options.retry_batch_size, 1)
         self._post_ingestion_hook = resolved_options.post_ingestion_hook
+        self._post_ingestion_hook_timeout_seconds = max(
+            resolved_options.post_ingestion_hook_timeout_seconds,
+            1,
+        )
 
     def get_job_repository(self) -> ingestion_job_repository.IngestionJobRepository:
         """Expose the ingestion-job repository for cross-service orchestration."""
@@ -215,6 +221,7 @@ class IngestionSchedulingService(
         source_id: UUID,
         *,
         skip_post_ingestion_hook: bool = False,
+        skip_legacy_extraction_queue: bool = False,
         force_recover_lock: bool = False,
     ) -> IngestionRunSummary:
         """Manually trigger ingestion for a source outside scheduler cadence."""
@@ -227,6 +234,8 @@ class IngestionSchedulingService(
             raise ValueError(msg)
         return await self._run_ingestion_for_source(
             source,
+            trigger=IngestionTrigger.API,
             skip_post_ingestion_hook=skip_post_ingestion_hook,
+            skip_legacy_extraction_queue=skip_legacy_extraction_queue,
             force_recover_lock=force_recover_lock,
         )

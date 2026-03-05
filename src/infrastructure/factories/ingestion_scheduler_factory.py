@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from src.application.services import (
     ClinVarIngestionService,
@@ -35,6 +37,9 @@ from src.infrastructure.extraction import (
 )
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
+)
+from src.infrastructure.llm.adapters.pubmed_relevance_agent_adapter import (
+    ArtanaPubMedRelevanceAdapter,
 )
 from src.infrastructure.llm.adapters.query_agent_adapter import ArtanaQueryAgentAdapter
 from src.infrastructure.repositories import (
@@ -80,10 +85,16 @@ _ENV_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS = (
 _ENV_INGESTION_JOB_HARD_TIMEOUT_SECONDS = "MED13_INGESTION_JOB_HARD_TIMEOUT_SECONDS"
 _ENV_ENABLE_POST_INGESTION_PIPELINE_HOOK = "MED13_ENABLE_POST_INGESTION_PIPELINE_HOOK"
 _ENV_ENABLE_POST_INGESTION_GRAPH_STAGE = "MED13_ENABLE_POST_INGESTION_GRAPH_STAGE"
+_ENV_POST_INGESTION_HOOK_TIMEOUT_SECONDS = "MED13_POST_INGESTION_HOOK_TIMEOUT_SECONDS"
+_ENV_POST_INGESTION_GRAPH_SEED_TIMEOUT_SECONDS = (
+    "MED13_POST_INGESTION_GRAPH_SEED_TIMEOUT_SECONDS"
+)
 _DEFAULT_SCHEDULER_HEARTBEAT_SECONDS = 30
 _DEFAULT_SCHEDULER_LEASE_TTL_SECONDS = 120
 _DEFAULT_SCHEDULER_STALE_RUNNING_TIMEOUT_SECONDS = 300
 _DEFAULT_INGESTION_JOB_HARD_TIMEOUT_SECONDS = 7200
+_DEFAULT_POST_INGESTION_HOOK_TIMEOUT_SECONDS = 1800
+_DEFAULT_POST_INGESTION_GRAPH_SEED_TIMEOUT_SECONDS = 180
 _MAX_POST_INGESTION_GRAPH_SEEDS = 200
 
 logger = logging.getLogger(__name__)
@@ -160,7 +171,7 @@ def _normalize_graph_seed_entity_ids(seed_entity_ids: tuple[str, ...]) -> list[s
     return normalized_ids
 
 
-def build_ingestion_scheduling_service(  # noqa: PLR0915
+def build_ingestion_scheduling_service(  # noqa: C901, PLR0915
     *,
     session: Session,
     scheduler: SchedulerPort | None = None,
@@ -210,65 +221,165 @@ def build_ingestion_scheduling_service(  # noqa: PLR0915
         )
 
         container = get_legacy_dependency_container()
-        content_enrichment_service = container.create_content_enrichment_service(
-            session,
-        )
-        entity_recognition_service = container.create_entity_recognition_service(
-            session,
-        )
         enable_post_ingestion_graph_stage = _read_bool_env(
             _ENV_ENABLE_POST_INGESTION_GRAPH_STAGE,
             default=True,
         )
-        graph_connection_service = (
-            container.create_graph_connection_service(session)
-            if enable_post_ingestion_graph_stage
-            else None
+        post_ingestion_graph_seed_timeout_seconds = _read_positive_int_env(
+            _ENV_POST_INGESTION_GRAPH_SEED_TIMEOUT_SECONDS,
+            default=_DEFAULT_POST_INGESTION_GRAPH_SEED_TIMEOUT_SECONDS,
         )
 
-        async def _run_post_ingestion_pipeline(
-            source: UserDataSource,
-            summary: IngestionRunSummary,
+        async def _run_enrichment_stage_isolated_uow(
+            *,
+            source_id: UUID,
+            research_space_id: UUID,
+            source_type: str,
+            ingestion_job_id: UUID | None,
         ) -> None:
-            _ = summary
-            if source.research_space_id is None:
-                return
-            source_type_value = source.source_type.value
-            await content_enrichment_service.process_pending_documents(
-                limit=200,
-                source_id=source.id,
-                research_space_id=source.research_space_id,
-                source_type=source_type_value,
-                model_id=None,
+            isolated_session = SessionLocal()
+            set_session_rls_context(isolated_session, bypass_rls=True)
+            isolated_enrichment_service = container.create_content_enrichment_service(
+                isolated_session,
             )
-            extraction_summary = (
-                await entity_recognition_service.process_pending_documents(
+            try:
+                await isolated_enrichment_service.process_pending_documents(
                     limit=200,
-                    source_id=source.id,
-                    research_space_id=source.research_space_id,
-                    source_type=source_type_value,
+                    source_id=source_id,
+                    ingestion_job_id=ingestion_job_id,
+                    research_space_id=research_space_id,
+                    source_type=source_type,
+                    model_id=None,
+                )
+            finally:
+                await isolated_enrichment_service.close()
+                isolated_session.close()
+
+        async def _run_extraction_stage_isolated_uow(
+            *,
+            source_id: UUID,
+            research_space_id: UUID,
+            source_type: str,
+            ingestion_job_id: UUID | None,
+        ) -> object:
+            isolated_session = SessionLocal()
+            set_session_rls_context(isolated_session, bypass_rls=True)
+            isolated_extraction_service = container.create_entity_recognition_service(
+                isolated_session,
+            )
+            try:
+                return await isolated_extraction_service.process_pending_documents(
+                    limit=200,
+                    source_id=source_id,
+                    ingestion_job_id=ingestion_job_id,
+                    research_space_id=research_space_id,
+                    source_type=source_type,
                     model_id=None,
                     shadow_mode=None,
                 )
+            finally:
+                await isolated_extraction_service.close()
+                isolated_session.close()
+
+        async def _run_graph_seed_isolated_uow(
+            *,
+            source_id: UUID,
+            research_space_id: UUID,
+            source_type: str,
+            seed_entity_id: str,
+        ) -> None:
+            isolated_session = SessionLocal()
+            set_session_rls_context(isolated_session, bypass_rls=True)
+            isolated_graph_service = container.create_graph_connection_service(
+                isolated_session,
+            )
+            try:
+                await isolated_graph_service.discover_connections_for_seed(
+                    research_space_id=str(research_space_id),
+                    seed_entity_id=seed_entity_id,
+                    source_id=str(source_id),
+                    source_type=source_type,
+                    model_id=None,
+                    relation_types=None,
+                    max_depth=2,
+                    shadow_mode=None,
+                    pipeline_run_id=None,
+                )
+            finally:
+                await isolated_graph_service.close()
+                isolated_session.close()
+
+        async def _run_post_ingestion_pipeline(  # noqa: C901
+            source: UserDataSource,
+            summary: IngestionRunSummary,
+        ) -> None:
+            if source.research_space_id is None:
+                return
+            ingestion_job_id: UUID | None = None
+            ingestion_job_id_raw: object = getattr(summary, "ingestion_job_id", None)
+            if isinstance(ingestion_job_id_raw, UUID):
+                ingestion_job_id = ingestion_job_id_raw
+            elif isinstance(ingestion_job_id_raw, str):
+                normalized_ingestion_job_id = ingestion_job_id_raw.strip()
+                if normalized_ingestion_job_id:
+                    try:
+                        ingestion_job_id = UUID(normalized_ingestion_job_id)
+                    except ValueError:
+                        logger.warning(
+                            "Post-ingestion hook summary had invalid ingestion_job_id",
+                            extra={
+                                "source_id": str(source.id),
+                                "ingestion_job_id": normalized_ingestion_job_id,
+                            },
+                        )
+            if ingestion_job_id is None:
+                logger.warning(
+                    "Post-ingestion hook running without ingestion_job_id scope",
+                    extra={"source_id": str(source.id)},
+                )
+            source_type_value = source.source_type.value
+            await _run_enrichment_stage_isolated_uow(
+                source_id=source.id,
+                research_space_id=source.research_space_id,
+                source_type=source_type_value,
+                ingestion_job_id=ingestion_job_id,
+            )
+            extraction_summary = await _run_extraction_stage_isolated_uow(
+                source_id=source.id,
+                ingestion_job_id=ingestion_job_id,
+                research_space_id=source.research_space_id,
+                source_type=source_type_value,
             )
             if not enable_post_ingestion_graph_stage:
                 return
-            if graph_connection_service is None:
-                return
+            extracted_seed_entity_ids = getattr(
+                extraction_summary,
+                "derived_graph_seed_entity_ids",
+                (),
+            )
             derived_seed_ids = _normalize_graph_seed_entity_ids(
-                extraction_summary.derived_graph_seed_entity_ids,
+                tuple(extracted_seed_entity_ids),
             )
             for seed_entity_id in derived_seed_ids:
                 try:
-                    await graph_connection_service.discover_connections_for_seed(
-                        research_space_id=str(source.research_space_id),
-                        seed_entity_id=seed_entity_id,
-                        source_type=source_type_value,
-                        model_id=None,
-                        relation_types=None,
-                        max_depth=2,
-                        shadow_mode=None,
-                        pipeline_run_id=None,
+                    await asyncio.wait_for(
+                        _run_graph_seed_isolated_uow(
+                            source_id=source.id,
+                            research_space_id=source.research_space_id,
+                            source_type=source_type_value,
+                            seed_entity_id=seed_entity_id,
+                        ),
+                        timeout=post_ingestion_graph_seed_timeout_seconds,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        (
+                            "Post-ingestion graph discovery timed out for "
+                            "source_id=%s, seed=%s, timeout_seconds=%s"
+                        ),
+                        source.id,
+                        seed_entity_id,
+                        post_ingestion_graph_seed_timeout_seconds,
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
@@ -285,11 +396,14 @@ def build_ingestion_scheduling_service(  # noqa: PLR0915
 
     # Initialize Query Agent
     query_agent = ArtanaQueryAgentAdapter()
+    pubmed_relevance_agent = ArtanaPubMedRelevanceAdapter()
 
     pipeline = create_ingestion_pipeline(session)
 
     pubmed_service = PubMedIngestionService(
-        gateway=PubMedSourceGateway(),
+        gateway=PubMedSourceGateway(
+            relevance_agent=pubmed_relevance_agent,
+        ),
         pipeline=pipeline,
         dependencies=PubMedIngestionDependencies(
             publication_repository=publication_repository,
@@ -348,6 +462,10 @@ def build_ingestion_scheduling_service(  # noqa: PLR0915
         _ENV_INGESTION_JOB_HARD_TIMEOUT_SECONDS,
         default=_DEFAULT_INGESTION_JOB_HARD_TIMEOUT_SECONDS,
     )
+    post_ingestion_hook_timeout_seconds = _read_positive_int_env(
+        _ENV_POST_INGESTION_HOOK_TIMEOUT_SECONDS,
+        default=_DEFAULT_POST_INGESTION_HOOK_TIMEOUT_SECONDS,
+    )
 
     ingestion_services: dict[
         SourceType,
@@ -376,6 +494,7 @@ def build_ingestion_scheduling_service(  # noqa: PLR0915
                 scheduler_stale_running_timeout_seconds
             ),
             ingestion_job_hard_timeout_seconds=ingestion_job_hard_timeout_seconds,
+            post_ingestion_hook_timeout_seconds=post_ingestion_hook_timeout_seconds,
             post_ingestion_hook=post_ingestion_hook,
         ),
     )

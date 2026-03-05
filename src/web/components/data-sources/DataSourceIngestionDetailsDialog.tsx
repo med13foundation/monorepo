@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { fetchIngestionJobHistoryAction } from '@/app/actions/data-sources'
 import { toast } from 'sonner'
+import { formatCheckpoint, formatRelevanceGateSummary } from './ingestionHistoryFormatting'
 
 export type ManualIngestionSummary = {
   source_id: string
@@ -51,16 +52,6 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
     <span className="text-right font-medium">{value}</span>
   </div>
 )
-
-const formatCheckpoint = (checkpoint?: Record<string, unknown> | null): string => {
-  if (!checkpoint || Object.keys(checkpoint).length === 0) {
-    return 'n/a'
-  }
-  return Object.entries(checkpoint)
-    .slice(0, 2)
-    .map(([key, value]) => `${key}=${String(value)}`)
-    .join(', ')
-}
 
 export function DataSourceIngestionDetailsDialog({
   source,
@@ -108,7 +99,6 @@ export function DataSourceIngestionDetailsDialog({
   }
 
   const schedule = source.ingestion_schedule
-
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -208,6 +198,9 @@ export function DataSourceIngestionDetailsDialog({
                       const countersSummary = idempotency
                         ? `N/U/Un ${idempotency.new_records}/${idempotency.updated_records}/${idempotency.unchanged_records}`
                         : null
+                      const relevanceGateSummary = formatRelevanceGateSummary(
+                        idempotency?.checkpoint_after ?? null,
+                      )
                       return (
                         <TableRow
                           key={job.id}
@@ -234,6 +227,11 @@ export function DataSourceIngestionDetailsDialog({
                               {countersSummary && (
                                 <span className="text-[10px] text-muted-foreground">
                                   {countersSummary}
+                                </span>
+                              )}
+                              {relevanceGateSummary && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  {relevanceGateSummary}
                                 </span>
                               )}
                               {queryGeneration?.decision && (

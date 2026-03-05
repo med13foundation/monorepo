@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from src.domain.value_objects.relation_types import normalize_relation_type
+
 if TYPE_CHECKING:
     from datetime import datetime
 
@@ -25,6 +27,9 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+_ALLOWED_CURATION_STATUSES = frozenset(
+    {"DRAFT", "UNDER_REVIEW", "APPROVED", "REJECTED", "RETRACTED"},
+)
 
 
 class KernelRelationService:
@@ -56,6 +61,10 @@ class KernelRelationService:
         target_id: str,
         confidence: float = 0.5,
         evidence_summary: str | None = None,
+        evidence_sentence: str | None = None,
+        evidence_sentence_source: str | None = None,
+        evidence_sentence_confidence: str | None = None,
+        evidence_sentence_rationale: str | None = None,
         evidence_tier: str | None = None,
         provenance_id: str | None = None,
         source_document_id: str | None = None,
@@ -88,14 +97,31 @@ class KernelRelationService:
             msg = f"Target entity {target_id} is not in research space {research_space_id}"
             raise ValueError(msg)
 
+        normalized_relation_type = normalize_relation_type(relation_type)
+        if not normalized_relation_type:
+            msg = "relation_type is required"
+            raise ValueError(msg)
+
+        canonical_relation_type = normalized_relation_type
+        resolved_relation_type = self._dictionary.resolve_relation_synonym(
+            normalized_relation_type,
+        )
+        if resolved_relation_type is not None:
+            resolved_relation_type_id = getattr(resolved_relation_type, "id", None)
+            if (
+                isinstance(resolved_relation_type_id, str)
+                and resolved_relation_type_id.strip()
+            ):
+                canonical_relation_type = resolved_relation_type_id.strip().upper()
+
         # 2. Check triple is allowed
         if not self._dictionary.is_triple_allowed(
             source.entity_type,
-            relation_type,
+            canonical_relation_type,
             target.entity_type,
         ):
             msg = (
-                f"Triple ({source.entity_type}, {relation_type}, "
+                f"Triple ({source.entity_type}, {canonical_relation_type}, "
                 f"{target.entity_type}) is not allowed by constraints"
             )
             raise ValueError(msg)
@@ -104,23 +130,27 @@ class KernelRelationService:
         if (
             self._dictionary.requires_evidence(
                 source.entity_type,
-                relation_type,
+                canonical_relation_type,
                 target.entity_type,
             )
             and not evidence_summary
         ):
             logger.warning(
                 "Creating relation %s without evidence (required by constraints)",
-                relation_type,
+                canonical_relation_type,
             )
 
         return self._relations.create(
             research_space_id=research_space_id,
             source_id=source_id,
-            relation_type=relation_type,
+            relation_type=canonical_relation_type,
             target_id=target_id,
             confidence=confidence,
             evidence_summary=evidence_summary,
+            evidence_sentence=evidence_sentence,
+            evidence_sentence_source=evidence_sentence_source,
+            evidence_sentence_confidence=evidence_sentence_confidence,
+            evidence_sentence_rationale=evidence_sentence_rationale,
             evidence_tier=evidence_tier,
             provenance_id=provenance_id,
             source_document_id=source_document_id,
@@ -138,9 +168,15 @@ class KernelRelationService:
         reviewed_at: datetime | None = None,
     ) -> KernelRelation:
         """Update the curation status of a relation."""
+        normalized_status = curation_status.strip().upper()
+        if normalized_status not in _ALLOWED_CURATION_STATUSES:
+            msg = "Invalid relation curation_status. Expected one of: " + ", ".join(
+                sorted(_ALLOWED_CURATION_STATUSES),
+            )
+            raise ValueError(msg)
         return self._relations.update_curation(
             relation_id,
-            curation_status=curation_status,
+            curation_status=normalized_status,
             reviewed_by=reviewed_by,
             reviewed_at=reviewed_at,
         )
@@ -207,6 +243,9 @@ class KernelRelationService:
         *,
         relation_type: str | None = None,
         curation_status: str | None = None,
+        validation_state: str | None = None,
+        source_document_id: str | None = None,
+        certainty_band: str | None = None,
         node_query: str | None = None,
         node_ids: list[str] | None = None,
         limit: int | None = None,
@@ -217,10 +256,37 @@ class KernelRelationService:
             research_space_id,
             relation_type=relation_type,
             curation_status=curation_status,
+            validation_state=validation_state,
+            source_document_id=source_document_id,
+            certainty_band=certainty_band,
             node_query=node_query,
             node_ids=node_ids,
             limit=limit,
             offset=offset,
+        )
+
+    def count_by_research_space(  # noqa: PLR0913
+        self,
+        research_space_id: str,
+        *,
+        relation_type: str | None = None,
+        curation_status: str | None = None,
+        validation_state: str | None = None,
+        source_document_id: str | None = None,
+        certainty_band: str | None = None,
+        node_query: str | None = None,
+        node_ids: list[str] | None = None,
+    ) -> int:
+        """Count relations in one research space with optional filters."""
+        return self._relations.count_by_research_space(
+            research_space_id,
+            relation_type=relation_type,
+            curation_status=curation_status,
+            validation_state=validation_state,
+            source_document_id=source_document_id,
+            certainty_band=certainty_band,
+            node_query=node_query,
+            node_ids=node_ids,
         )
 
     # ── Delete ────────────────────────────────────────────────────────

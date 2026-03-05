@@ -5,15 +5,20 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import type { GraphTrustPreset } from './use-knowledge-graph-controller'
 
 interface KnowledgeGraphFiltersCardProps {
-  availableRelationTypes: string[]
-  availableCurationStatuses: string[]
+  filterOptions: {
+    relationTypes: string[]
+    curationStatuses: string[]
+  }
+  trustPreset: GraphTrustPreset
   relationTypeFilter: Set<string>
   curationStatusFilter: Set<string>
-  onRelationTypeToggle: (relationType: string, checked: boolean) => void
-  onEnableAllRelationTypes: () => void
-  onCurationStatusToggle: (status: string, checked: boolean) => void
+  setTrustPreset: (preset: GraphTrustPreset) => void
+  toggleRelationType: (relationType: string, checked: boolean) => void
+  enableAllRelationTypes: () => void
+  toggleCurationStatus: (status: string, checked: boolean) => void
   variant?: 'default' | 'embedded'
   className?: string
 }
@@ -22,16 +27,19 @@ const RELATION_TYPE_INITIAL_BATCH = 80
 const RELATION_TYPE_BATCH_SIZE = 120
 
 export function KnowledgeGraphFiltersCard({
-  availableRelationTypes,
-  availableCurationStatuses,
+  filterOptions,
+  trustPreset,
   relationTypeFilter,
   curationStatusFilter,
-  onRelationTypeToggle,
-  onEnableAllRelationTypes,
-  onCurationStatusToggle,
+  setTrustPreset,
+  toggleRelationType,
+  enableAllRelationTypes,
+  toggleCurationStatus,
   variant = 'default',
   className,
 }: KnowledgeGraphFiltersCardProps) {
+  const availableRelationTypes = filterOptions.relationTypes
+  const availableCurationStatuses = filterOptions.curationStatuses
   const [relationTypeSearchInput, setRelationTypeSearchInput] = useState('')
   const [visibleRelationTypeCount, setVisibleRelationTypeCount] = useState(RELATION_TYPE_INITIAL_BATCH)
 
@@ -61,7 +69,7 @@ export function KnowledgeGraphFiltersCard({
     )
   }, [filteredRelationTypes.length, hasMoreRelationTypes])
 
-  const onRelationTypeListScroll = useCallback(
+  const relationTypeListScrollHandler = useCallback(
     (event: UIEvent<HTMLDivElement>): void => {
       const element = event.currentTarget
       if (element.scrollTop + element.clientHeight < element.scrollHeight - 24) {
@@ -74,12 +82,39 @@ export function KnowledgeGraphFiltersCard({
 
   const selectedRelationCount = relationTypeFilter.size
   const selectedStatusCount = curationStatusFilter.size
+  const hasExplicitRelationFilter = selectedRelationCount > 0
+  const enabledRelationCount = hasExplicitRelationFilter
+    ? selectedRelationCount
+    : availableRelationTypes.length
+  const trustPresetOptions: Array<{ value: GraphTrustPreset; label: string }> = [
+    { value: 'ALL', label: 'All' },
+    { value: 'APPROVED_ONLY', label: 'Approved only' },
+    { value: 'PENDING_REVIEW', label: 'Pending review' },
+    { value: 'REJECTED', label: 'Rejected' },
+  ]
   const body = (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm font-medium">Local Filters</div>
         <div className="text-xs text-muted-foreground">
-          {selectedRelationCount} relation types • {selectedStatusCount} statuses selected
+          {enabledRelationCount} relation types enabled • {selectedStatusCount} statuses selected
+        </div>
+      </div>
+      <div className="space-y-2 rounded-lg border border-border/70 bg-background/65 p-2">
+        <div className="text-xs font-semibold uppercase text-muted-foreground">Trust Preset</div>
+        <div className="flex flex-wrap items-center gap-2">
+          {trustPresetOptions.map((option) => (
+            <Button
+              key={option.value}
+              type="button"
+              size="sm"
+              variant={trustPreset === option.value ? 'default' : 'outline'}
+              className="h-7"
+              onClick={() => setTrustPreset(option.value)}
+            >
+              {option.label}
+            </Button>
+          ))}
         </div>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
@@ -87,7 +122,7 @@ export function KnowledgeGraphFiltersCard({
           <div className="flex items-center justify-between text-xs">
             <div className="font-semibold uppercase text-muted-foreground">Relation Type</div>
             <div className="text-muted-foreground">
-              {selectedRelationCount === 0
+              {!hasExplicitRelationFilter
                 ? `All enabled (${availableRelationTypes.length || 0})`
                 : `${selectedRelationCount}/${availableRelationTypes.length || 0}`}
             </div>
@@ -105,8 +140,8 @@ export function KnowledgeGraphFiltersCard({
                 size="sm"
                 variant="outline"
                 className="h-7"
-                onClick={onEnableAllRelationTypes}
-                disabled={relationTypeFilter.size === 0}
+                onClick={enableAllRelationTypes}
+                disabled={!hasExplicitRelationFilter}
               >
                 Enable all
               </Button>
@@ -116,7 +151,7 @@ export function KnowledgeGraphFiltersCard({
             </div>
             <div
               className="grid max-h-44 gap-2 overflow-auto rounded-md border border-border/70 bg-background/70 p-2"
-              onScroll={onRelationTypeListScroll}
+              onScroll={relationTypeListScrollHandler}
             >
               {availableRelationTypes.length === 0 ? (
                 <div className="text-xs text-muted-foreground">No relation types loaded yet.</div>
@@ -132,9 +167,9 @@ export function KnowledgeGraphFiltersCard({
                   >
                     <Checkbox
                       id={`relation-filter-${relationType}`}
-                      checked={relationTypeFilter.has(relationType)}
+                      checked={relationTypeFilter.size === 0 || relationTypeFilter.has(relationType)}
                       onCheckedChange={(checked) =>
-                        onRelationTypeToggle(relationType, checked === true)
+                        toggleRelationType(relationType, checked === true)
                       }
                     />
                     <Label htmlFor={`relation-filter-${relationType}`} className="font-mono text-xs">
@@ -173,7 +208,7 @@ export function KnowledgeGraphFiltersCard({
                 <Checkbox
                   id={`status-filter-${status}`}
                   checked={curationStatusFilter.has(status)}
-                  onCheckedChange={(checked) => onCurationStatusToggle(status, checked === true)}
+                  onCheckedChange={(checked) => toggleCurationStatus(status, checked === true)}
                 />
                 <Label htmlFor={`status-filter-${status}`} className="font-mono text-xs">
                   {status}

@@ -171,6 +171,29 @@ class DictionaryRelationType(BaseModel):
     updated_at: datetime
 
 
+class DictionaryRelationSynonym(BaseModel):
+    """Domain representation of a relation-type synonym row."""
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: int
+    relation_type: str = Field(..., min_length=1, max_length=64)
+    synonym: str = Field(..., min_length=1, max_length=64)
+    source: str | None = Field(default=None, max_length=64)
+    created_by: str = Field(default="seed", min_length=1, max_length=128)
+    is_active: bool = True
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    superseded_by: str | None = Field(default=None, max_length=64)
+    source_ref: str | None = Field(default=None, max_length=1024)
+    review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE"
+    reviewed_by: str | None = Field(default=None, max_length=128)
+    reviewed_at: datetime | None = None
+    revocation_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class DictionarySearchResult(BaseModel):
     """Unified dictionary search result across all semantic dimensions."""
 
@@ -348,6 +371,7 @@ __all__ = [
     "DictionaryDataType",
     "DictionaryDomainContext",
     "DictionaryEntityType",
+    "DictionaryRelationSynonym",
     "DictionaryRelationType",
     "DictionarySearchResult",
     "DictionarySensitivityLevel",

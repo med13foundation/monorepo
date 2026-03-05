@@ -7,6 +7,11 @@ type IssueObject = {
   loc?: unknown
 }
 
+type MessageDetailObject = {
+  message: string
+  code?: string
+}
+
 function isIssueObject(value: unknown): value is IssueObject {
   return (
     typeof value === 'object' &&
@@ -16,9 +21,24 @@ function isIssueObject(value: unknown): value is IssueObject {
   )
 }
 
+function isMessageDetailObject(value: unknown): value is MessageDetailObject {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'message' in value &&
+    typeof (value as MessageDetailObject).message === 'string'
+  )
+}
+
 function formatErrorDetail(detail: unknown): string | null {
   if (typeof detail === 'string') {
     return detail
+  }
+  if (isMessageDetailObject(detail)) {
+    if (typeof detail.code === 'string' && detail.code.trim().length > 0) {
+      return `${detail.code}: ${detail.message}`
+    }
+    return detail.message
   }
   if (isIssueObject(detail)) {
     const location = Array.isArray(detail.loc) ? detail.loc.join('.') : ''

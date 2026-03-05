@@ -80,14 +80,10 @@ define ensure_python_version
 	fi
 endef
 
-# Warn if venv is not active but exists
+# Keep command execution stable even when the virtual environment is not
+# explicitly activated, since commands already use the venv interpreter
+# when available.
 define check_venv
-	@if [ "$(VENV_ACTIVE)" = "false" ] && [ -d "$(VENV)" ] && [ "$(SUPPRESS_VENV_WARNING)" != "1" ]; then \
-		echo "⚠️  Virtual environment exists but not activated."; \
-		echo "   Run: source $(VENV)/bin/activate"; \
-		echo "   Or use: make activate"; \
-		echo ""; \
-	fi
 	$(call ensure_python_version)
 endef
 
@@ -120,7 +116,7 @@ define ensure_web_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait phi-backfill-dry-run phi-backfill-commit
+.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait phi-backfill-dry-run phi-backfill-commit
 
 PY_CHECK_PATHS := src tests scripts alembic
 PY_STRICT_CHECK_PATHS := src
@@ -261,9 +257,17 @@ lint-strict: ## Run all linting tools (fails on error)
 	@echo "Running bandit (strict)..."
 	@$(USE_PYTHON) -m bandit -r $(PY_CHECK_PATHS) -f json -o bandit-results.json 2>&1 | grep -vEi "(Test in comment|Unknown test found)" || true
 
+black-format: ## Format Python code with Black (uses pre-commit Black when available)
+	$(call check_venv)
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit run black --all-files; \
+	else \
+		$(USE_PYTHON) -m black $(PY_CHECK_PATHS); \
+	fi
+
 format: ## Format code with Black and sort imports with ruff
 	$(call check_venv)
-	@$(USE_PYTHON) -m black $(PY_CHECK_PATHS)
+	@$(MAKE) -s black-format SUPPRESS_VENV_WARNING=1
 	@$(USE_PYTHON) -m ruff check --fix $(PY_CHECK_PATHS) || echo "Ruff found linting issues (non-blocking)"
 
 format-check: ## Check code formatting without making changes
@@ -323,23 +327,27 @@ run-all-postgres: ## Restart Postgres, run migrations, seed admin, start backend
 	@$(MAKE) -s postgres-migrate SUPPRESS_VENV_WARNING=1
 	@$(MAKE) -s init-artana-schema SUPPRESS_VENV_WARNING=1
 	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin SUPPRESS_VENV_WARNING=1)
-	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s start-local SKIP_SETUP_POSTGRES=1 SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
 	@echo "Backend running in background. Starting Next.js..."
 	@$(MAKE) -s web-clean
-	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s start-web SKIP_SETUP_POSTGRES=1 SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
 	@echo "All services running. FastAPI logs: $(BACKEND_LOG) | Next.js logs: $(WEB_LOG)"
 
 dev-postgres: ## Start Postgres (if needed) + services for local development
 	$(call check_venv)
 	@$(MAKE) -s setup-postgres
 	@$(call run_with_postgres_env,$(MAKE) -s db-seed-admin SUPPRESS_VENV_WARNING=1)
-	@$(MAKE) -s start-local SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s start-local SKIP_SETUP_POSTGRES=1 SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
 	@echo "Backend running in background. Starting Next.js..."
-	@$(MAKE) -s start-web SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s start-web SKIP_SETUP_POSTGRES=1 SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
 	@echo "All services running. FastAPI logs: $(BACKEND_LOG) | Next.js logs: $(WEB_LOG)"
 start-local: ## Run FastAPI backend in the background (logs/backend.log)
 	$(call check_venv)
-	@$(MAKE) -s setup-postgres
+ifneq ($(SKIP_SETUP_POSTGRES),1)
+	@$(MAKE) -s setup-postgres SUPPRESS_VENV_WARNING=1
+else
+	@$(MAKE) -s postgres-wait SUPPRESS_VENV_WARNING=1
+endif
 	@mkdir -p $(dir $(BACKEND_LOG))
 	@if lsof -ti tcp:8080 >/dev/null 2>&1; then \
 		echo "Port 8080 already in use. Run 'make stop-local' or free the port before starting in background."; \
@@ -395,7 +403,11 @@ run-web-postgres: ## Run the Next.js admin interface with Postgres env vars load
 
 start-web: ## Run Next.js admin interface in the background (logs/web.log)
 	$(call check_venv)
-	@$(MAKE) -s setup-postgres
+ifneq ($(SKIP_SETUP_POSTGRES),1)
+	@$(MAKE) -s setup-postgres SUPPRESS_VENV_WARNING=1
+else
+	@$(MAKE) -s postgres-wait SUPPRESS_VENV_WARNING=1
+endif
 	$(call ensure_web_deps)
 	@mkdir -p $(dir $(WEB_LOG))
 	@if lsof -ti tcp:3000 >/dev/null 2>&1; then \
@@ -536,6 +548,13 @@ stop-all: ## Stop FastAPI, Next.js, Postgres, and remove PID files/log hints
 	@rm -f "$(WEB_PID_FILE)"
 	@echo "All services stopped (including Postgres)."
 
+restart: ## Fast restart backend + Next.js without stopping Postgres
+	@$(MAKE) -s stop-local
+	@$(MAKE) -s stop-web
+	@$(MAKE) -s start-local SKIP_SETUP_POSTGRES=1 SKIP_POSTGRES_MIGRATE=1 SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s start-web SKIP_SETUP_POSTGRES=1 SKIP_POSTGRES_MIGRATE=1 SKIP_ADMIN_SEED=1 SUPPRESS_VENV_WARNING=1
+	@echo "Backend and Next.js restarted (Postgres untouched)."
+
 run-docker: docker-build ## Build and run with Docker
 	docker run -p 8080:8080 med13-resource-library
 
@@ -631,10 +650,10 @@ init-artana-schema: ## Initialize the artana schema in Postgres
 	$(call run_with_postgres_env,$(USE_PYTHON) scripts/init_artana_schema.py)
 
 setup-postgres: ## Full PostgreSQL setup including artana schema
-	@$(MAKE) -s docker-postgres-up
-	@$(MAKE) -s postgres-wait
-	@$(MAKE) -s postgres-migrate
-	@$(MAKE) -s init-artana-schema
+	@$(MAKE) -s docker-postgres-up SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s postgres-wait SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s postgres-migrate SUPPRESS_VENV_WARNING=1
+	@$(MAKE) -s init-artana-schema SUPPRESS_VENV_WARNING=1
 	@echo "PostgreSQL setup complete with artana schema."
 
 # Database

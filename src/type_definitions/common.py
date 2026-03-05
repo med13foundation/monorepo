@@ -329,6 +329,21 @@ SourceMetadata = JSONObject
 
 
 # Research space settings types
+class RelationAutoPromotionSettings(TypedDict, total=False):
+    """Relation auto-promotion policy controls."""
+
+    enabled: bool
+    min_distinct_sources: int
+    min_aggregate_confidence: float
+    require_distinct_documents: bool
+    require_distinct_runs: bool
+    block_if_conflicting_evidence: bool
+    min_evidence_tier: str
+    computational_min_distinct_sources: int
+    computational_min_aggregate_confidence: float
+    conflicting_confidence_threshold: float
+
+
 class ResearchSpaceSettings(TypedDict, total=False):
     """Type-safe research space settings."""
 
@@ -339,7 +354,12 @@ class ResearchSpaceSettings(TypedDict, total=False):
     relation_default_review_threshold: float
     relation_review_thresholds: dict[str, float]
     relation_governance_mode: Literal["HUMAN_IN_LOOP", "FULL_AUTO"]
+    relation_auto_promotion: RelationAutoPromotionSettings
+    claim_non_persistable_baseline_ratio: float
+    claim_non_persistable_alert_ratio: float
     dictionary_agent_creation_policy: Literal["ACTIVE", "PENDING_REVIEW"]
+    concept_agent_creation_policy: Literal["ACTIVE", "PENDING_REVIEW"]
+    concept_policy_mode: Literal["PRECISION", "BALANCED", "DISCOVERY"]
 
     # Data source settings
     max_data_sources: int

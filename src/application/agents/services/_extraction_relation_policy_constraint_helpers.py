@@ -162,27 +162,32 @@ class _ExtractionRelationPolicyConstraintHelpers:
                 policy_settings=policy_settings,
             )
         except ValueError as exc:
-            if relation_governance_mode != "FULL_AUTO":
+            error_text = str(exc)
+            if not self._should_bootstrap_constraint_dependencies(error_text):
                 error = (
                     "relation_policy_proposal_store_failed:"
-                    f"{triple[0]}:{triple[1]}:{triple[2]}:{exc!s}"
+                    f"{triple[0]}:{triple[1]}:{triple[2]}:{error_text}"
                 )
                 return False, error
 
-            bootstrap_source_ref = f"{source_ref}:full_auto_bootstrap"
+            bootstrap_source_ref = f"{source_ref}:proposal_dependency_bootstrap"
             if not self._bootstrap_full_auto_proposal_dependencies(
                 triple=triple,
                 source_ref=bootstrap_source_ref,
                 policy_settings=policy_settings,
             ):
                 logger.warning(
-                    "Full-auto relation proposal bootstrap failed for %s:%s:%s (%s)",
+                    "Relation proposal bootstrap failed for %s:%s:%s (%s)",
                     triple[0],
                     triple[1],
                     triple[2],
                     exc,
                 )
-                return False, None
+                error = (
+                    "relation_policy_proposal_store_failed:"
+                    f"{triple[0]}:{triple[1]}:{triple[2]}:{error_text}"
+                )
+                return False, error
             try:
                 self._write_constraint(
                     triple=triple,
@@ -193,17 +198,35 @@ class _ExtractionRelationPolicyConstraintHelpers:
                 )
             except ValueError as retry_exc:
                 logger.warning(
-                    "Full-auto relation proposal store failed after bootstrap for "
+                    "Relation proposal store failed after bootstrap for "
                     "%s:%s:%s (%s)",
                     triple[0],
                     triple[1],
                     triple[2],
                     retry_exc,
                 )
-                return False, None
+                retry_error = (
+                    "relation_policy_proposal_store_failed:"
+                    f"{triple[0]}:{triple[1]}:{triple[2]}:{retry_exc!s}"
+                )
+                return False, retry_error
             return True, None
         else:
             return True, None
+
+    @staticmethod
+    def _should_bootstrap_constraint_dependencies(error_message: str) -> bool:
+        normalized = error_message.lower()
+        dependency_markers = (
+            "unknown relation type",
+            "relation type does not exist",
+            "source type",
+            "target type",
+            "entity type",
+            "not found",
+            "does not exist",
+        )
+        return any(marker in normalized for marker in dependency_markers)
 
     def _ensure_full_auto_allowed_constraint(
         self,
@@ -313,10 +336,7 @@ class _ExtractionRelationPolicyConstraintHelpers:
             self._dictionary.create_entity_type(
                 entity_type=entity_type,
                 display_name=entity_type.replace("_", " ").title(),
-                description=(
-                    "Auto-created to persist extraction policy proposal in "
-                    "FULL_AUTO mode."
-                ),
+                description=("Auto-created to persist extraction policy proposal."),
                 domain_context="general",
                 created_by=_POLICY_AGENT_CREATED_BY,
                 source_ref=source_ref,
@@ -331,7 +351,7 @@ class _ExtractionRelationPolicyConstraintHelpers:
             return False
         return True
 
-    def _ensure_relation_type_exists(
+    def _ensure_relation_type_exists(  # noqa: C901, PLR0911
         self,
         *,
         relation_type: str,
@@ -340,24 +360,57 @@ class _ExtractionRelationPolicyConstraintHelpers:
     ) -> bool:
         if self._dictionary is None:
             return False
-        if (
-            self._dictionary.get_relation_type(relation_type, include_inactive=True)
-            is not None
-        ):
+        creation_policy = str(
+            policy_settings.get("dictionary_agent_creation_policy", "ACTIVE"),
+        ).upper()
+        target_review_status: Literal["ACTIVE", "PENDING_REVIEW"] = (
+            "ACTIVE" if creation_policy == "ACTIVE" else "PENDING_REVIEW"
+        )
+        existing = self._dictionary.get_relation_type(
+            relation_type,
+            include_inactive=True,
+        )
+        if existing is not None:
+            if target_review_status == "ACTIVE":
+                if existing.is_active and existing.review_status == "ACTIVE":
+                    return True
+                try:
+                    self._dictionary.set_relation_type_review_status(
+                        relation_type,
+                        review_status="ACTIVE",
+                        reviewed_by=_POLICY_AGENT_CREATED_BY,
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "Failed to activate relation_type=%s for relation proposals (%s)",
+                        relation_type,
+                        exc,
+                    )
+                    return False
+                refreshed = self._dictionary.get_relation_type(
+                    relation_type,
+                    include_inactive=True,
+                )
+                return (
+                    refreshed is not None
+                    and refreshed.is_active
+                    and refreshed.review_status == "ACTIVE"
+                )
+            if existing.review_status == "PENDING_REVIEW":
+                return True
             return True
+
+        creation_settings = policy_settings
         try:
             self._dictionary.create_relation_type(
                 relation_type=relation_type,
                 display_name=relation_type.replace("_", " ").title(),
-                description=(
-                    "Auto-created to persist extraction policy proposal in "
-                    "FULL_AUTO mode."
-                ),
+                description=("Auto-created to persist extraction policy proposal."),
                 domain_context="general",
                 is_directional=True,
                 created_by=_POLICY_AGENT_CREATED_BY,
                 source_ref=source_ref,
-                research_space_settings=policy_settings,
+                research_space_settings=creation_settings,
             )
         except ValueError as exc:
             logger.warning(
@@ -366,7 +419,38 @@ class _ExtractionRelationPolicyConstraintHelpers:
                 exc,
             )
             return False
-        return True
+        created = self._dictionary.get_relation_type(
+            relation_type,
+            include_inactive=True,
+        )
+        if created is None:
+            return False
+        if target_review_status == "PENDING_REVIEW":
+            return True
+        if created.is_active and created.review_status == "ACTIVE":
+            return True
+        try:
+            self._dictionary.set_relation_type_review_status(
+                relation_type,
+                review_status="ACTIVE",
+                reviewed_by=_POLICY_AGENT_CREATED_BY,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "Failed to activate relation_type=%s after creation for relation proposals (%s)",
+                relation_type,
+                exc,
+            )
+            return False
+        activated = self._dictionary.get_relation_type(
+            relation_type,
+            include_inactive=True,
+        )
+        return (
+            activated is not None
+            and activated.is_active
+            and activated.review_status == "ACTIVE"
+        )
 
     def _proposal_triple_key(
         self,

@@ -11,6 +11,7 @@ import {
   ListChecks,
   LayoutDashboard,
   Users,
+  Network,
   EllipsisVertical,
 } from 'lucide-react'
 import { KnowledgeGraphIcon } from '@/components/icons/KnowledgeGraphIcon'
@@ -67,6 +68,12 @@ export function SpaceNavigation() {
       href: `${basePath}/knowledge-graph`,
       icon: KnowledgeGraphIcon,
       description: 'Explore knowledge graph',
+    },
+    {
+      label: 'Concepts',
+      href: `${basePath}/concepts`,
+      icon: Network,
+      description: 'Manage concept sets, aliases, and governance decisions',
     },
   ]
 

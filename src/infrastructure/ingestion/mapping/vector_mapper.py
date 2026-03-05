@@ -8,6 +8,7 @@ import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.infrastructure.ingestion.types import MappedObservation, RawRecord
 
 if TYPE_CHECKING:
@@ -123,11 +124,13 @@ class VectorMapper:
         ]
 
     def _extract_domain_context(self, record: RawRecord) -> str | None:
-        for key in ("domain_context", "domain"):
-            raw_value = record.metadata.get(key)
-            if isinstance(raw_value, str) and raw_value.strip():
-                return raw_value.strip()
-        return None
+        raw_source_type = record.metadata.get("type")
+        source_type = raw_source_type if isinstance(raw_source_type, str) else None
+        return DomainContextResolver.resolve(
+            metadata=record.metadata,
+            source_type=source_type,
+            fallback=None,
+        )
 
     def _extract_subject_anchor(self, record: RawRecord) -> JSONObject:
         anchors: JSONObject = {}

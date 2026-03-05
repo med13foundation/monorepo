@@ -162,6 +162,7 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
         raw_records = self._to_pipeline_records(
             filtered_records,
             original_source_id=str(source.id),
+            domain_context=config.domain_context,
         )
 
         observations_created = 0
@@ -196,6 +197,7 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
 
         return PubMedIngestionSummary(
             source_id=source.id,
+            ingestion_job_id=context.ingestion_job_id if context else None,
             fetched_records=fetch_result.fetched_records,
             parsed_publications=len(raw_records),
             created_publications=observations_created,

@@ -48,6 +48,34 @@ class _IngestionSchedulingObservabilityHelpers:
             "unchanged_records": unchanged_records,
             "dedup_ratio": round(dedup_ratio, 4),
         }
+        checkpoint_after_raw = getattr(summary, "checkpoint_after", None)
+        if isinstance(checkpoint_after_raw, dict):
+            pre_rescue_filtered_out_count = self._int_payload_field(
+                checkpoint_after_raw,
+                "pre_rescue_filtered_out_count",
+            )
+            filtered_out_count = self._int_payload_field(
+                checkpoint_after_raw,
+                "filtered_out_count",
+            )
+            full_text_rescue_attempted_count = self._int_payload_field(
+                checkpoint_after_raw,
+                "full_text_rescue_attempted_count",
+            )
+            full_text_rescued_count = self._int_payload_field(
+                checkpoint_after_raw,
+                "full_text_rescued_count",
+            )
+            log_extra.update(
+                {
+                    "pre_rescue_filtered_out_count": pre_rescue_filtered_out_count,
+                    "filtered_out_count": filtered_out_count,
+                    "full_text_rescue_attempted_count": (
+                        full_text_rescue_attempted_count
+                    ),
+                    "full_text_rescued_count": full_text_rescued_count,
+                },
+            )
         if dedup_ratio >= DEDUP_WARNING_THRESHOLD:
             logger.warning(
                 "High dedup ratio detected for source ingestion run",
@@ -137,3 +165,10 @@ class _IngestionSchedulingObservabilityHelpers:
             if isinstance(mode_raw, str) and mode_raw.strip():
                 break
         return fallback_count
+
+    @staticmethod
+    def _int_payload_field(payload: dict[object, object], key: str) -> int:
+        raw_value = payload.get(key)
+        if isinstance(raw_value, int):
+            return max(raw_value, 0)
+        return 0

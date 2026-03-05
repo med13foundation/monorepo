@@ -17,6 +17,7 @@ from uuid import uuid4
 from src.domain.entities import source_document
 from src.domain.entities.source_record_ledger import SourceRecordLedgerEntry
 from src.domain.services import pubmed_ingestion
+from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.domain.services.ingestion import IngestionExtractionTarget
 from src.type_definitions.ingestion import RawRecord as IngestionRawRecord
 from src.type_definitions.storage import StorageUseCase
@@ -210,7 +211,15 @@ class PubMedIngestionServiceHelpers:
         records: list[JSONObject],
         *,
         original_source_id: str,
+        domain_context: str,
     ) -> list[IngestionRawRecord]:
+        normalized_domain_context = DomainContextResolver.resolve(
+            explicit_domain_context=domain_context,
+            source_type="pubmed",
+            fallback=DomainContextResolver.PUBMED_DEFAULT_DOMAIN,
+        )
+        if normalized_domain_context is None:
+            normalized_domain_context = DomainContextResolver.PUBMED_DEFAULT_DOMAIN
         raw_records: list[IngestionRawRecord] = []
         for record in records:
             pmid = record.get("pmid")
@@ -226,6 +235,7 @@ class PubMedIngestionServiceHelpers:
                         "entity_type": "PUBLICATION",
                         "pmid": record.get("pmid"),
                         "doi": record.get("doi"),
+                        "domain_context": normalized_domain_context,
                     },
                 ),
             )
