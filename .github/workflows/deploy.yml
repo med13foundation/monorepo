@@ -219,6 +219,9 @@ jobs:
           NEXTAUTH_SECRET_SECRET_NAME: ${{ vars.NEXTAUTH_SECRET_SECRET_NAME_DEV }}
           API_PUBLIC: ${{ vars.API_PUBLIC_DEV }}
           ADMIN_PUBLIC: ${{ vars.ADMIN_PUBLIC_DEV }}
+          API_PUBLIC_URL: ${{ vars.API_PUBLIC_URL_DEV }}
+          API_PUBLIC_WS_URL: ${{ vars.API_PUBLIC_WS_URL_DEV }}
+          ADMIN_PUBLIC_URL: ${{ vars.ADMIN_PUBLIC_URL_DEV }}
           MIGRATION_JOB_NAME: ${{ vars.MIGRATION_JOB_NAME_DEV }}
           SYNC_ADMIN_URLS: ${{ vars.SYNC_ADMIN_URLS_DEV }}
         run: bash scripts/deploy/sync_cloud_run_runtime_config.sh
@@ -277,6 +280,9 @@ jobs:
           NEXTAUTH_SECRET_SECRET_NAME: ${{ vars.NEXTAUTH_SECRET_SECRET_NAME_STAGING }}
           API_PUBLIC: ${{ vars.API_PUBLIC_STAGING }}
           ADMIN_PUBLIC: ${{ vars.ADMIN_PUBLIC_STAGING }}
+          API_PUBLIC_URL: ${{ vars.API_PUBLIC_URL_STAGING }}
+          API_PUBLIC_WS_URL: ${{ vars.API_PUBLIC_WS_URL_STAGING }}
+          ADMIN_PUBLIC_URL: ${{ vars.ADMIN_PUBLIC_URL_STAGING }}
           MIGRATION_JOB_NAME: ${{ vars.MIGRATION_JOB_NAME_STAGING }}
           SYNC_ADMIN_URLS: ${{ vars.SYNC_ADMIN_URLS_STAGING }}
         run: bash scripts/deploy/sync_cloud_run_runtime_config.sh
@@ -333,6 +339,9 @@ jobs:
           NEXTAUTH_SECRET_SECRET_NAME: ${{ vars.NEXTAUTH_SECRET_SECRET_NAME_PROD }}
           API_PUBLIC: ${{ vars.API_PUBLIC_PROD }}
           ADMIN_PUBLIC: ${{ vars.ADMIN_PUBLIC_PROD }}
+          API_PUBLIC_URL: ${{ vars.API_PUBLIC_URL_PROD }}
+          API_PUBLIC_WS_URL: ${{ vars.API_PUBLIC_WS_URL_PROD }}
+          ADMIN_PUBLIC_URL: ${{ vars.ADMIN_PUBLIC_URL_PROD }}
           MIGRATION_JOB_NAME: ${{ vars.MIGRATION_JOB_NAME_PROD }}
           SYNC_ADMIN_URLS: ${{ vars.SYNC_ADMIN_URLS_PROD }}
         run: bash scripts/deploy/sync_cloud_run_runtime_config.sh
