@@ -44,7 +44,7 @@ This project has three working environments:
 Use Local for coding, debugging, and running tests quickly.
 
 **Prerequisites**
-- Python 3.12+
+- Python 3.13+
 - Node.js 18+
 - Docker Desktop (or Docker Engine + Compose)
 
