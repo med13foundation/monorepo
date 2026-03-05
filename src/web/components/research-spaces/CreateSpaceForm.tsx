@@ -93,8 +93,15 @@ export function CreateSpaceForm() {
         toast.error(result.error)
         return
       }
+      const createdSpaceId =
+        typeof result.data.id === 'string' ? result.data.id.trim() : ''
       toast.success('Research space created successfully!')
-      router.push(`/spaces/${result.data.id}/data-sources?onboarding=1`)
+      if (createdSpaceId.length === 0) {
+        toast.error('Research space was created, but the app did not receive a usable space id.')
+        router.push('/spaces')
+        return
+      }
+      router.push(`/spaces/${createdSpaceId}/data-sources?onboarding=1`)
     } catch (error) {
       if (error instanceof Error) {
         setSlugError(error.message)
