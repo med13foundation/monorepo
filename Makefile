@@ -27,6 +27,7 @@ NEXTAUTH_URL ?= http://localhost:3000
 NEXT_BUILD_ENV := NEXTAUTH_URL=$(NEXTAUTH_URL)
 WEB_WAIT_TIMEOUT_SECONDS ?= 120
 WEB_WAIT_INTERVAL_SECONDS ?= 2
+FRONTDOOR_PORT ?= 3010
 
 ADMIN_PASSWORD_EFFECTIVE := $(strip $(or $(ADMIN_PASSWORD),$(MED13_ADMIN_PASSWORD)))
 
@@ -116,7 +117,18 @@ define ensure_web_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait phi-backfill-dry-run phi-backfill-commit
+define ensure_frontdoor_deps
+	@if [ ! -d "apps/frontdoor/node_modules" ]; then \
+		echo "Installing frontdoor dependencies..."; \
+		if [ -f "apps/frontdoor/package-lock.json" ]; then \
+			(cd apps/frontdoor && npm ci); \
+		else \
+			(cd apps/frontdoor && npm install); \
+		fi; \
+	fi
+endef
+
+.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit
 
 PY_CHECK_PATHS := src tests scripts alembic
 PY_STRICT_CHECK_PATHS := src
@@ -810,6 +822,32 @@ web-security-check: ## Run full security check (audit + outdated packages)
 	cd src/web && npm run security:check
 
 test-web: web-test ## Alias for web-test
+
+# Front Door Website
+frontdoor-install: ## Install front door website dependencies
+	$(call ensure_frontdoor_deps)
+
+frontdoor-stop: ## Stop front door website process on configured port
+	@pid="$$(lsof -ti tcp:$(FRONTDOOR_PORT) -sTCP:LISTEN || true)"; \
+	if [ -n "$$pid" ]; then \
+		echo "Stopping frontdoor process on port $(FRONTDOOR_PORT): $$pid"; \
+		kill $$pid; \
+		sleep 1; \
+	else \
+		echo "No frontdoor process found on port $(FRONTDOOR_PORT)."; \
+	fi
+
+frontdoor-dev: frontdoor-stop ## Run front door website locally (default port: 3010)
+	$(call ensure_frontdoor_deps)
+	cd apps/frontdoor && NEXT_PUBLIC_SITE_URL=http://localhost:$(FRONTDOOR_PORT) PORT=$(FRONTDOOR_PORT) npm run dev:clean
+
+frontdoor-build: ## Build front door website
+	$(call ensure_frontdoor_deps)
+	cd apps/frontdoor && npm run build
+
+frontdoor-test: ## Run front door website unit tests
+	$(call ensure_frontdoor_deps)
+	cd apps/frontdoor && npm run test
 
 # Quality Assurance
 venv-check: ## Ensure virtual environment is active

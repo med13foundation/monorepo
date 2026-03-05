@@ -12,13 +12,14 @@ This directory is organized to reflect the current implementation path.
 6. `docs/extraction_pipeline_schema.md` - Queue schema and service interfaces.
 7. `docs/EngineeringArchitecture.md` - Clean Architecture foundation and growth strategy.
 8. `docs/frontend/EngineeringArchitectureNext.md` - Next.js admin architecture.
-9. `docs/security/HIPAA_COMPLIANCE_ASSESSMENT.md` - Compliance status and gaps.
-10. `docs/security/SECURITY_CHECKLIST.md` - Security requirements checklist.
-11. `docs/system_map.md` - UI and API navigation map.
-12. `docs/type_examples.md` - Type safety patterns and examples.
-13. `docs/onboarding/architecture-overview.md` - Onboarding and contribution guide.
-14. `docs/extraction_agents/pubmed.md` - Paper extraction template (Postgres-first; TypeDB conversion optional).
-15. `docs/latest_plan_path/pubmed_to_graph_memory_orchestration.md` - PubMed→Dictionary→Graph "memory" flow with clear separation of concerns.
+9. `docs/frontend/frontdoor_website_prd.md` - Public front door website product requirements and implementation scope.
+10. `docs/security/HIPAA_COMPLIANCE_ASSESSMENT.md` - Compliance status and gaps.
+11. `docs/security/SECURITY_CHECKLIST.md` - Security requirements checklist.
+12. `docs/system_map.md` - UI and API navigation map.
+13. `docs/type_examples.md` - Type safety patterns and examples.
+14. `docs/onboarding/architecture-overview.md` - Onboarding and contribution guide.
+15. `docs/extraction_agents/pubmed.md` - Paper extraction template (Postgres-first; TypeDB conversion optional).
+16. `docs/latest_plan_path/pubmed_to_graph_memory_orchestration.md` - PubMed→Dictionary→Graph "memory" flow with clear separation of concerns.
 
 ## Future/optional plans
 

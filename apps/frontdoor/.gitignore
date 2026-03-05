@@ -1,0 +1,9 @@
+node_modules
+.next
+.next-dev
+.swc
+coverage
+npm-debug.log*
+tsconfig.tsbuildinfo
+.env.local
+.env.*.local
