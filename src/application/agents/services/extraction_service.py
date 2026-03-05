@@ -49,6 +49,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         self._ingestion_pipeline = dependencies.ingestion_pipeline
         self._relations = dependencies.relation_repository
         self._relation_claims = dependencies.relation_claim_repository
+        self._claim_participants = dependencies.claim_participant_repository
         self._claim_evidences = dependencies.claim_evidence_repository
         self._entities = dependencies.entity_repository
         self._dictionary = dependencies.dictionary_service
@@ -58,6 +59,13 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         self._governance = dependencies.governance_service or GovernanceService()
         self._review_queue_submitter = dependencies.review_queue_submitter
         self._rollback_on_error = dependencies.rollback_on_error
+
+        if self._relation_claims is not None and self._claim_participants is None:
+            msg = (
+                "claim_participant_repository is required when "
+                "relation_claim_repository is configured"
+            )
+            raise ValueError(msg)
 
     async def extract_from_entity_recognition(  # noqa: PLR0913, PLR0911
         self,

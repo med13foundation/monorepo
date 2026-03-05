@@ -544,10 +544,18 @@ async def test_run_for_source_records_ingestion_scope_and_total_persisted_relati
     assert len(jobs) == 1
     pipeline_run = _coerce_json_object(jobs[0].metadata.get("pipeline_run"))
     run_scope = _coerce_json_object(pipeline_run.get("run_scope"))
+    extraction_run = _coerce_json_object(pipeline_run.get("extraction_run"))
     graph_progress = _coerce_json_object(pipeline_run.get("graph_progress"))
 
     assert run_scope.get("ingestion_job_id") == str(ingestion_job_id)
+    assert extraction_run.get("status") == "completed"
+    assert extraction_run.get("processed") == 3
+    assert extraction_run.get("completed") == 3
+    assert extraction_run.get("failed") == 0
     assert graph_progress.get("persisted_relations") == 7
+    assert graph_progress.get("extraction_processed") == 3
+    assert graph_progress.get("extraction_completed") == 3
+    assert graph_progress.get("extraction_failed") == 0
     assert graph_progress.get("extraction_persisted_relations") == 5
     assert graph_progress.get("extraction_concept_members_created") == 4
     assert graph_progress.get("extraction_concept_aliases_created") == 6

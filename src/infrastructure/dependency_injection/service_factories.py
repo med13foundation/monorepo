@@ -51,6 +51,7 @@ from src.infrastructure.repositories import (
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyGraphQueryRepository,
     SqlAlchemyKernelClaimEvidenceRepository,
+    SqlAlchemyKernelClaimParticipantRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationRepository,
@@ -233,6 +234,9 @@ class ApplicationServiceFactoryMixin(
                 relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
                     session,
                 ),
+                claim_participant_repository=(
+                    SqlAlchemyKernelClaimParticipantRepository(session)
+                ),
                 claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
                     session,
                 ),
@@ -285,6 +289,9 @@ class ApplicationServiceFactoryMixin(
                 relation_repository=SqlAlchemyKernelRelationRepository(session),
                 relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
                     session,
+                ),
+                claim_participant_repository=(
+                    SqlAlchemyKernelClaimParticipantRepository(session)
                 ),
                 claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
                     session,

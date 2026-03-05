@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         RelationConstraintProposal,
         RelationTypeMappingProposal,
     )
+    from src.domain.entities.kernel.claim_participants import ClaimParticipantRole
     from src.domain.entities.kernel.relation_claims import RelationClaimStatus
     from src.domain.entities.source_document import SourceDocument
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
@@ -515,6 +516,22 @@ def _create_relation_claim(  # noqa: PLR0913
 ) -> str | None:
     if context.helper._relation_claims is None:
         return None
+    if context.helper._claim_participants is None:
+        error_code = "relation_claim_persistence_missing_claim_participant_repository"
+        state.errors.append(error_code)
+        if should_log_candidate:
+            logger.warning(
+                "Persist relation candidate participant repository missing",
+                extra={
+                    "document_id": str(context.document.id),
+                    "run_id": context.run_id,
+                    "candidate_index": index,
+                    "candidate_total": context.total_candidates,
+                    "relation_type": candidate.relation_type,
+                    "error_code": error_code,
+                },
+            )
+        return None
     try:
         created_claim = context.helper._relation_claims.create(
             research_space_id=context.research_space_id,
@@ -535,6 +552,22 @@ def _create_relation_claim(  # noqa: PLR0913
             claim_section=candidate.claim_section,
             linked_relation_id=None,
             metadata=payload,
+        )
+        _create_claim_participant_if_anchor_present(
+            context=context,
+            claim_id=str(created_claim.id),
+            role="SUBJECT",
+            label=candidate.source_label,
+            entity_id=candidate.source_entity_id,
+            position=0,
+        )
+        _create_claim_participant_if_anchor_present(
+            context=context,
+            claim_id=str(created_claim.id),
+            role="OBJECT",
+            label=candidate.target_label,
+            entity_id=candidate.target_entity_id,
+            position=1,
         )
         state.relation_claims_count += 1
         increment_metric(
@@ -560,7 +593,7 @@ def _create_relation_claim(  # noqa: PLR0913
             state.claim_evidence_rows_created_count += 1
         state.errors.extend(claim_evidence_errors)
         return str(created_claim.id)
-    except (TypeError, ValueError, SQLAlchemyError) as exc:
+    except (RuntimeError, TypeError, ValueError, SQLAlchemyError) as exc:
         context.helper._rollback_after_persistence_error(
             context="relation_claim_create",
         )
@@ -582,6 +615,32 @@ def _create_relation_claim(  # noqa: PLR0913
                 },
             )
         return None
+
+
+def _create_claim_participant_if_anchor_present(  # noqa: PLR0913
+    *,
+    context: _PersistRunContext,
+    claim_id: str,
+    role: ClaimParticipantRole,
+    label: str | None,
+    entity_id: str | None,
+    position: int,
+) -> None:
+    if context.helper._claim_participants is None:
+        return
+    normalized_label = label.strip() if isinstance(label, str) else ""
+    normalized_entity_id = entity_id.strip() if isinstance(entity_id, str) else ""
+    if not normalized_label and not normalized_entity_id:
+        return
+    context.helper._claim_participants.create(
+        claim_id=claim_id,
+        research_space_id=context.research_space_id,
+        role=role,
+        label=normalized_label or None,
+        entity_id=normalized_entity_id or None,
+        position=position,
+        qualifiers=None,
+    )
 
 
 def _handle_non_persistable_candidate(  # noqa: PLR0913

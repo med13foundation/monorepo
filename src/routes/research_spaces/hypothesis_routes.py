@@ -13,7 +13,13 @@ from src.application.agents.services.hypothesis_generation_service import (
     HypothesisGenerationService,
 )
 from src.application.services.claim_first_metrics import increment_metric
-from src.application.services.kernel import KernelRelationClaimService
+from src.application.services.kernel import (
+    KernelEntityService,
+    KernelRelationClaimService,
+)
+from src.application.services.kernel.kernel_claim_participant_service import (
+    KernelClaimParticipantService,
+)
 from src.application.services.membership_management_service import (
     MembershipManagementService,
 )
@@ -36,6 +42,8 @@ from src.routes.research_spaces.hypothesis_schemas import (
 from src.routes.research_spaces.kernel_dependencies import (
     get_concept_service,
     get_hypothesis_generation_service,
+    get_kernel_claim_participant_service,
+    get_kernel_entity_service,
     get_kernel_relation_claim_service,
 )
 from src.type_definitions.common import JSONObject
@@ -115,7 +123,7 @@ def list_hypotheses(
     response_model=HypothesisResponse,
     summary="Log one manual hypothesis",
 )
-def create_manual_hypothesis(
+def create_manual_hypothesis(  # noqa: PLR0912
     space_id: UUID,
     request: CreateManualHypothesisRequest,
     current_user: User = Depends(get_current_active_user),
@@ -123,6 +131,10 @@ def create_manual_hypothesis(
     concept_service: ConceptPort = Depends(get_concept_service),
     relation_claim_service: KernelRelationClaimService = Depends(
         get_kernel_relation_claim_service,
+    ),
+    entity_service: KernelEntityService = Depends(get_kernel_entity_service),
+    claim_participant_service: KernelClaimParticipantService = Depends(
+        get_kernel_claim_participant_service,
     ),
     session: Session = Depends(get_session),
 ) -> HypothesisResponse:
@@ -145,6 +157,14 @@ def create_manual_hypothesis(
             raise ValueError(msg)
 
         seed_entity_ids = _normalize_seed_entity_ids(request.seed_entity_ids)
+        (
+            participant_seed_entity_ids,
+            unresolved_seed_entity_ids,
+        ) = _resolve_seed_entities_for_participants(
+            seed_entity_ids=seed_entity_ids,
+            space_id=space_id,
+            entity_service=entity_service,
+        )
         normalized_source_type = request.source_type.strip()
 
         concept_set_id = _resolve_hypothesis_concept_set_id(
@@ -159,8 +179,11 @@ def create_manual_hypothesis(
             "statement": normalized_statement,
             "rationale": normalized_rationale,
             "seed_entity_ids": seed_entity_ids,
+            "participant_seed_entity_ids": participant_seed_entity_ids,
             "source_type": normalized_source_type,
         }
+        if unresolved_seed_entity_ids:
+            decision_payload["unresolved_seed_entity_ids"] = unresolved_seed_entity_ids
         if concept_set_id is not None:
             try:
                 concept_decision = concept_service.propose_decision(
@@ -185,10 +208,16 @@ def create_manual_hypothesis(
             "origin": "manual",
             "statement": normalized_statement,
             "rationale": normalized_rationale,
-            "seed_entity_ids": seed_entity_ids,
+            "seed_entity_ids": participant_seed_entity_ids,
+            "requested_seed_entity_ids": seed_entity_ids,
             "source_type": normalized_source_type,
             "actor_user_id": str(current_user.id),
         }
+        if unresolved_seed_entity_ids:
+            metadata_payload["unresolved_seed_entity_ids"] = unresolved_seed_entity_ids
+            metadata_payload["manual_warnings"] = [
+                "some_seed_entity_ids_not_found_in_space",
+            ]
         if concept_decision_id is not None:
             metadata_payload["concept_decision_id"] = concept_decision_id
         if concept_decision_error is not None:
@@ -211,6 +240,27 @@ def create_manual_hypothesis(
             metadata=metadata_payload,
             claim_status="OPEN",
         )
+        if participant_seed_entity_ids:
+            for index, seed_entity_id in enumerate(participant_seed_entity_ids):
+                claim_participant_service.create_participant(
+                    claim_id=str(claim.id),
+                    research_space_id=str(space_id),
+                    role="SUBJECT",
+                    label=None,
+                    entity_id=seed_entity_id,
+                    position=index,
+                    qualifiers=None,
+                )
+        else:
+            claim_participant_service.create_participant(
+                claim_id=str(claim.id),
+                research_space_id=str(space_id),
+                role="SUBJECT",
+                label=normalized_statement,
+                entity_id=None,
+                position=0,
+                qualifiers=None,
+            )
 
         increment_metric(
             "hypotheses_manual_created_total",
@@ -344,6 +394,26 @@ def _resolve_hypothesis_concept_set_id(
     if existing_sets:
         return existing_sets[0].id
     return None
+
+
+def _resolve_seed_entities_for_participants(
+    *,
+    seed_entity_ids: list[str],
+    space_id: UUID,
+    entity_service: KernelEntityService,
+) -> tuple[list[str], list[str]]:
+    resolved: list[str] = []
+    unresolved: list[str] = []
+    for entity_id in seed_entity_ids:
+        entity = entity_service.get_entity(entity_id)
+        if entity is None:
+            unresolved.append(entity_id)
+            continue
+        if str(entity.research_space_id) != str(space_id):
+            unresolved.append(entity_id)
+            continue
+        resolved.append(str(entity.id))
+    return resolved, unresolved
 
 
 __all__ = [

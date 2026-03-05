@@ -40,6 +40,7 @@ import type {
   RelationClaimResponse,
 } from '@/types/kernel'
 import CurationHypothesesCard from './curation/curation-hypotheses-card'
+import ClaimOverlayGraphPanel from './curation/claim-overlay-graph-panel'
 
 interface SpaceCurationClientProps {
   spaceId: string
@@ -53,6 +54,7 @@ interface SpaceCurationClientProps {
   canCurate: boolean
   hypothesisGenerationEnabled: boolean
   relationFilters: {
+    graphMode: 'canonical' | 'claim_overlay'
     relationType: string
     curationStatus: string
     validationState: string
@@ -60,6 +62,7 @@ interface SpaceCurationClientProps {
     certaintyBand: string
     nodeQuery: string
     nodeIds: string[]
+    focusRelationId: string
     offset: number
     limit: number
   }
@@ -228,12 +231,16 @@ export default function SpaceCurationClient({
   const router = useRouter()
 
   const [relationType, setRelationType] = useState(relationFilters.relationType)
+  const [graphMode, setGraphMode] = useState<'canonical' | 'claim_overlay'>(
+    relationFilters.graphMode,
+  )
   const [curationStatus, setCurationStatus] = useState(relationFilters.curationStatus || ALL_VALUE)
   const [validationState, setValidationState] = useState(relationFilters.validationState || ALL_VALUE)
   const [sourceDocumentId, setSourceDocumentId] = useState(relationFilters.sourceDocumentId)
   const [certaintyBand, setCertaintyBand] = useState(relationFilters.certaintyBand || ALL_VALUE)
   const [nodeQuery, setNodeQuery] = useState(relationFilters.nodeQuery)
   const [selectedNodeIds, setSelectedNodeIds] = useState(relationFilters.nodeIds)
+  const [focusRelationId, setFocusRelationId] = useState(relationFilters.focusRelationId)
 
   const [claimStatus, setClaimStatus] = useState(claimFilters.claimStatus || ALL_VALUE)
   const [claimValidationState, setClaimValidationState] = useState(
@@ -275,6 +282,7 @@ export default function SpaceCurationClient({
   })
 
   useEffect(() => {
+    setGraphMode(relationFilters.graphMode)
     setRelationType(relationFilters.relationType)
     setCurationStatus(relationFilters.curationStatus || ALL_VALUE)
     setValidationState(relationFilters.validationState || ALL_VALUE)
@@ -282,6 +290,7 @@ export default function SpaceCurationClient({
     setCertaintyBand(relationFilters.certaintyBand || ALL_VALUE)
     setNodeQuery(relationFilters.nodeQuery)
     setSelectedNodeIds(relationFilters.nodeIds)
+    setFocusRelationId(relationFilters.focusRelationId)
   }, [relationFilters])
 
   useEffect(() => {
@@ -442,9 +451,17 @@ export default function SpaceCurationClient({
     setSelectedNodeIds((current) => current.filter((id) => id !== nodeId))
   }
 
-  function buildGraphParams(offset: number, limit: number): URLSearchParams {
+  function buildGraphParams(
+    offset: number,
+    limit: number,
+    mode: 'canonical' | 'claim_overlay' = graphMode,
+    focusRelationIdOverride: string | null = null,
+  ): URLSearchParams {
     const params = new URLSearchParams()
     params.set('tab', 'graph')
+    if (mode === 'claim_overlay') {
+      params.set('graph_mode', 'claim_overlay')
+    }
     appendIfValue(params, 'relation_type', relationType)
     appendIfValue(params, 'node_query', nodeQuery)
     appendIfValue(params, 'source_document_id', sourceDocumentId)
@@ -463,12 +480,24 @@ export default function SpaceCurationClient({
     if (normalizedNodeIds.length > 0) {
       params.set('node_ids', normalizedNodeIds.join(','))
     }
+    const resolvedFocusRelationId = (
+      focusRelationIdOverride !== null
+        ? focusRelationIdOverride
+        : focusRelationId
+    ).trim()
+    if (mode === 'canonical' && resolvedFocusRelationId.length > 0) {
+      params.set('focus_relation_id', resolvedFocusRelationId)
+    }
     params.set('offset', String(Math.max(0, offset)))
     params.set('limit', String(Math.max(1, limit)))
     return params
   }
 
-  function buildClaimParams(offset: number, limit: number): URLSearchParams {
+  function buildClaimParams(
+    offset: number,
+    limit: number,
+    linkedRelationIdOverride: string | null = null,
+  ): URLSearchParams {
     const params = new URLSearchParams()
     params.set('tab', 'claims')
     if (claimStatus !== ALL_VALUE) {
@@ -485,7 +514,11 @@ export default function SpaceCurationClient({
     }
     appendIfValue(params, 'claim_relation_type', claimRelationType)
     appendIfValue(params, 'claim_source_document_id', claimSourceDocumentId)
-    appendIfValue(params, 'linked_relation_id', claimLinkedRelationId)
+    appendIfValue(
+      params,
+      'linked_relation_id',
+      linkedRelationIdOverride !== null ? linkedRelationIdOverride : claimLinkedRelationId,
+    )
     if (claimCertaintyBand !== ALL_VALUE) {
       appendIfValue(params, 'claim_certainty_band', claimCertaintyBand)
     }
@@ -547,6 +580,30 @@ export default function SpaceCurationClient({
     params.set('source_type', claim.source_type)
     params.set('target_type', claim.target_type)
     router.push(`/admin/dictionary?${params.toString()}`)
+  }
+
+  function openClaimsForLinkedRelation(relationId: string): void {
+    setClaimLinkedRelationId(relationId)
+    router.push(
+      `/spaces/${spaceId}/curation?${buildClaimParams(
+        0,
+        claimFilters.limit,
+        relationId,
+      ).toString()}`,
+    )
+  }
+
+  function openGraphForLinkedRelation(relationId: string): void {
+    setGraphMode('canonical')
+    setFocusRelationId(relationId)
+    router.push(
+      `/spaces/${spaceId}/curation?${buildGraphParams(
+        0,
+        relationFilters.limit,
+        'canonical',
+        relationId,
+      ).toString()}`,
+    )
   }
 
   function claimResolveBlockedReason(claim: RelationClaimResponse): string | null {
@@ -626,13 +683,51 @@ export default function SpaceCurationClient({
           </div>
           <p className="text-xs text-muted-foreground">
             {activeTab === 'graph'
-              ? 'Graph Relations: curate canonical edges (DRAFT, UNDER_REVIEW, APPROVED, REJECTED).'
+              ? graphMode === 'canonical'
+                ? 'Graph Relations: curate canonical edges (DRAFT, UNDER_REVIEW, APPROVED, REJECTED).'
+                : 'Claim Overlay: inspect claim-to-claim links and participant context without canonical graph writes.'
               : 'Extraction Claims: triage candidate edges. Resolve promotes/links into canonical graph when allowed.'}
           </p>
 
           {activeTab === 'graph' ? (
             <>
               <Card className="border-border/80 bg-card">
+                <CardContent className="py-4">
+                  <div className="flex items-center gap-3">
+                    <Label className="font-semibold text-foreground">Graph Mode</Label>
+                    <Select
+                      value={graphMode}
+                      onValueChange={(value) => {
+                        const nextMode = value as 'canonical' | 'claim_overlay'
+                        setGraphMode(nextMode)
+                        if (nextMode !== 'canonical') {
+                          setFocusRelationId('')
+                        }
+                        router.push(
+                          `/spaces/${spaceId}/curation?${buildGraphParams(
+                            0,
+                            relationFilters.limit,
+                            nextMode,
+                            nextMode === 'canonical' ? null : '',
+                          ).toString()}`,
+                        )
+                      }}
+                    >
+                      <SelectTrigger className="w-64">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="canonical">Canonical Graph</SelectItem>
+                        <SelectItem value="claim_overlay">Claim Overlay</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {graphMode === 'canonical' ? (
+                <>
+                <Card className="border-border/80 bg-card">
                 <CardContent className="grid gap-4 py-6 md:grid-cols-3">
                   <div className="space-y-2">
                     <Label htmlFor="relation_type" className="font-semibold text-foreground">
@@ -831,6 +926,7 @@ export default function SpaceCurationClient({
                         setNodeSearchOptions([])
                         setNodeSearchHasMore(false)
                         setNodeSearchOffset(0)
+                        setFocusRelationId('')
                         router.push(`/spaces/${spaceId}/curation?tab=graph`)
                       }}
                     >
@@ -872,9 +968,22 @@ export default function SpaceCurationClient({
                     const showsAiGeneratedBadge =
                       relation.evidence_sentence_source === 'artana_generated' &&
                       evidenceSentence.length > 0
+                    const linkedClaims = claimRows.filter(
+                      (claim) => claim.linked_relation_id === relation.id,
+                    )
+                    const isFocusedRelation =
+                      focusRelationId.trim().length > 0 &&
+                      focusRelationId.trim() === relation.id
 
                     return (
-                      <Card key={relation.id} className="border-border bg-card shadow-sm">
+                      <Card
+                        key={relation.id}
+                        className={
+                          isFocusedRelation
+                            ? 'border-primary/70 bg-card shadow-sm ring-1 ring-primary/35'
+                            : 'border-border bg-card shadow-sm'
+                        }
+                      >
                         <CardContent className="space-y-4 p-5">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex flex-wrap items-center gap-2">
@@ -885,6 +994,9 @@ export default function SpaceCurationClient({
                                 <Badge variant="destructive">
                                   Conflict {conflictSummary.supportCount}/{conflictSummary.refuteCount}
                                 </Badge>
+                              ) : null}
+                              {isFocusedRelation ? (
+                                <Badge variant="secondary">Focused from claim queue</Badge>
                               ) : null}
                               <span className="font-mono text-xs text-muted-foreground">
                                 Relation {compactId(relation.id)}
@@ -950,6 +1062,39 @@ export default function SpaceCurationClient({
                             </div>
                           </div>
 
+                          <div className="space-y-2 rounded-md border border-border/70 bg-muted/20 p-3">
+                            <p className="text-xs font-semibold uppercase text-muted-foreground">
+                              Linked Claims
+                            </p>
+                            {linkedClaims.length > 0 ? (
+                              <div className="space-y-1">
+                                {linkedClaims.slice(0, 3).map((claim) => (
+                                  <p key={claim.id} className="text-xs text-foreground/85">
+                                    {compactId(claim.id)}: {claim.source_label || claim.source_type} {'->'}{' '}
+                                    {claim.relation_type} {'->'} {claim.target_label || claim.target_type}
+                                  </p>
+                                ))}
+                                {linkedClaims.length > 3 ? (
+                                  <p className="text-xs text-muted-foreground">
+                                    +{linkedClaims.length - 3} more linked claims in queue
+                                  </p>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">
+                                No linked claims in the current queue view.
+                              </p>
+                            )}
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openClaimsForLinkedRelation(relation.id)}
+                            >
+                              Open linked claims
+                            </Button>
+                          </div>
+
                           {canCurate ? (
                             <div className="flex flex-wrap items-center gap-2">
                               <Button
@@ -1011,6 +1156,15 @@ export default function SpaceCurationClient({
                   Next
                 </Button>
               </div>
+                </>
+              ) : (
+                <ClaimOverlayGraphPanel
+                  spaceId={spaceId}
+                  canCurate={canCurate}
+                  openClaimsTab={() => switchTab('claims')}
+                  openCanonicalGraphRelation={(relationId) => openGraphForLinkedRelation(relationId)}
+                />
+              )}
             </>
           ) : (
             <>
@@ -1225,6 +1379,10 @@ export default function SpaceCurationClient({
                     const resolveBlockedReason = claimResolveBlockedReason(claim)
                     const canResolveClaim = resolveBlockedReason === null
                     const isPendingClaimAction = pendingClaimId === claim.id
+                    const linkedConflictSummary =
+                      claim.linked_relation_id
+                        ? conflictByRelationId.get(claim.linked_relation_id)
+                        : undefined
                     return (
                       <Card key={claim.id} className="border-border bg-card shadow-sm">
                         <CardContent className="space-y-4 p-5">
@@ -1238,6 +1396,12 @@ export default function SpaceCurationClient({
                               <Badge variant={polarityBadgeVariant(claim.polarity)}>
                                 {humanizeToken(claim.polarity)}
                               </Badge>
+                              {linkedConflictSummary ? (
+                                <Badge variant="destructive">
+                                  Conflict {linkedConflictSummary.supportCount}/
+                                  {linkedConflictSummary.refuteCount}
+                                </Badge>
+                              ) : null}
                             </div>
                             <span className="text-xs text-muted-foreground">
                               Created {formatTimestamp(claim.created_at)}
@@ -1278,6 +1442,20 @@ export default function SpaceCurationClient({
                             <p className="text-xs text-muted-foreground">
                               Section: {humanizeToken(claim.claim_section)}
                             </p>
+                          ) : null}
+                          {claim.linked_relation_id ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                if (!claim.linked_relation_id) {
+                                  return;
+                                }
+                                openGraphForLinkedRelation(claim.linked_relation_id);
+                              }}
+                            >
+                              Highlight linked relation
+                            </Button>
                           ) : null}
 
                           {canCurate ? (

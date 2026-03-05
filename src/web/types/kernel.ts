@@ -267,6 +267,7 @@ export interface HypothesisResponse {
   relation_type: string
   target_label: string | null
   claim_text: string | null
+  linked_relation_id?: string | null
   origin: string
   seed_entity_ids: string[]
   supporting_provenance_ids: string[]
@@ -292,6 +293,107 @@ export interface GenerateHypothesesResponse {
   hypotheses: HypothesisResponse[]
 }
 
+export type ClaimRelationType =
+  | 'SUPPORTS'
+  | 'CONTRADICTS'
+  | 'REFINES'
+  | 'CAUSES'
+  | 'UPSTREAM_OF'
+  | 'DOWNSTREAM_OF'
+  | 'SAME_AS'
+  | 'GENERALIZES'
+  | 'INSTANCE_OF'
+
+export type ClaimRelationReviewStatus = 'PROPOSED' | 'ACCEPTED' | 'REJECTED'
+
+export interface ClaimRelationResponse {
+  id: string
+  research_space_id: string
+  source_claim_id: string
+  target_claim_id: string
+  relation_type: ClaimRelationType
+  agent_run_id: string | null
+  source_document_id: string | null
+  confidence: number
+  review_status: ClaimRelationReviewStatus
+  evidence_summary: string | null
+  metadata: JSONObject
+  created_at: string
+}
+
+export interface ClaimRelationListResponse {
+  claim_relations: ClaimRelationResponse[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export interface ClaimRelationCreateRequest {
+  source_claim_id: string
+  target_claim_id: string
+  relation_type: ClaimRelationType
+  agent_run_id?: string | null
+  source_document_id?: string | null
+  confidence?: number
+  review_status?: ClaimRelationReviewStatus
+  evidence_summary?: string | null
+  metadata?: JSONObject
+}
+
+export interface ClaimRelationReviewUpdateRequest {
+  review_status: ClaimRelationReviewStatus
+}
+
+export type ClaimParticipantRole =
+  | 'SUBJECT'
+  | 'OBJECT'
+  | 'MODIFIER'
+  | 'QUALIFIER'
+  | 'CONTEXT'
+  | 'OUTCOME'
+
+export interface ClaimParticipantResponse {
+  id: string
+  claim_id: string
+  research_space_id: string
+  label: string | null
+  entity_id: string | null
+  role: ClaimParticipantRole
+  position: number | null
+  qualifiers: JSONObject
+  created_at: string
+}
+
+export interface ClaimParticipantListResponse {
+  claim_id: string
+  participants: ClaimParticipantResponse[]
+  total: number
+}
+
+export interface ClaimParticipantCoverageResponse {
+  total_claims: number
+  claims_with_any_participants: number
+  claims_with_subject: number
+  claims_with_object: number
+  unresolved_subject_endpoints: number
+  unresolved_object_endpoints: number
+  unresolved_endpoint_rate: number
+}
+
+export interface ClaimParticipantBackfillRequest {
+  dry_run: boolean
+  limit?: number
+  offset?: number
+}
+
+export interface ClaimParticipantBackfillResponse {
+  scanned_claims: number
+  created_participants: number
+  skipped_existing: number
+  unresolved_endpoints: number
+  dry_run: boolean
+}
+
 export interface ClaimEvidenceResponse {
   id: string
   claim_id: string
@@ -305,6 +407,7 @@ export interface ClaimEvidenceResponse {
   table_reference: string | null
   confidence: number
   metadata: JSONObject
+  paper_links?: KernelRelationPaperLink[]
   created_at: string
 }
 

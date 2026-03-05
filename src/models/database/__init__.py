@@ -27,6 +27,8 @@ from . import (
     user_data_source,
 )
 from .kernel import (
+    ClaimParticipantModel,
+    ClaimRelationModel,
     ConceptAliasModel,
     ConceptDecisionModel,
     ConceptHarnessResultModel,
@@ -105,6 +107,8 @@ __all__ = [
     "ConceptPolicyModel",
     "ConceptDecisionModel",
     "ConceptHarnessResultModel",
+    "ClaimParticipantModel",
+    "ClaimRelationModel",
     # Kernel: Data (Layer 2)
     "EntityModel",
     "EntityIdentifierModel",

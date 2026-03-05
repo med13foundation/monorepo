@@ -30,6 +30,10 @@ class KernelRelationClaimService:
         """Fetch one relation claim by ID."""
         return self._claims.get_by_id(claim_id)
 
+    def list_claims_by_ids(self, claim_ids: list[str]) -> list[KernelRelationClaim]:
+        """Fetch multiple relation claims by IDs."""
+        return self._claims.list_by_ids(claim_ids)
+
     def list_by_research_space(  # noqa: PLR0913
         self,
         research_space_id: str,

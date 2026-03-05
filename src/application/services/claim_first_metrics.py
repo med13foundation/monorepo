@@ -34,6 +34,8 @@ MetricName = Literal[
     "hypotheses_auto_generated_total",
     "hypotheses_deduped_total",
     "hypotheses_generation_failed_total",
+    "claim_participants_backfilled_total",
+    "claim_participants_backfill_unresolved_total",
 ]
 GraphTrustPreset = Literal[
     "ALL",
@@ -56,6 +58,8 @@ _METRIC_NAMES: tuple[MetricName, ...] = (
     "hypotheses_auto_generated_total",
     "hypotheses_deduped_total",
     "hypotheses_generation_failed_total",
+    "claim_participants_backfilled_total",
+    "claim_participants_backfill_unresolved_total",
 )
 
 _logger = logging.getLogger("med13.metrics.claim_first")

@@ -6,7 +6,7 @@ import cytoscape, {
   type EventObjectNode,
   type LayoutOptions,
 } from 'cytoscape'
-import type { GraphEdge, GraphModel } from '@/lib/graph/model'
+import type { GraphEdge, GraphModel, GraphNode } from '@/lib/graph/model'
 import {
   edgeOpacityForConfidence,
   edgeColorForRelationType,
@@ -28,6 +28,7 @@ const CY_EDGE_FOCUS_LABEL_CLASS = 'kg-edge-label-focus'
 const CY_EDGE_HOVER_LABEL_CLASS = 'kg-edge-label-hover'
 const CY_NODE_HOVER_CLASS = 'kg-node-hover'
 const CY_EDGE_HOVER_CLASS = 'kg-edge-hover'
+const CY_EDGE_CONFLICT_CLASS = 'kg-edge-conflict'
 
 function normalizeToken(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
@@ -49,12 +50,56 @@ function nodeShapeClass(shape: string): string {
   return `kg-shape-${shape}`
 }
 
+function nodeOriginClass(node: GraphNode): string {
+  if (node.origin === 'claim') {
+    return 'kg-node-origin-claim'
+  }
+  if (node.origin === 'evidence') {
+    return 'kg-node-origin-evidence'
+  }
+  return 'kg-node-origin-entity'
+}
+
+function nodeClaimPolarityClass(node: GraphNode): string {
+  if (node.origin !== 'claim' || !node.claimPolarity) {
+    return 'kg-node-claim-polarity-none'
+  }
+  const normalized = normalizeToken(node.claimPolarity)
+  return `kg-node-claim-polarity-${normalized}`
+}
+
 function edgeStatusClass(status: string): string {
   return `kg-edge-status-${normalizeToken(status)}`
 }
 
 function edgeLineStyleClass(lineStyle: string): string {
   return `kg-edge-style-${lineStyle}`
+}
+
+function edgeOriginClass(edge: GraphEdge): string {
+  if (edge.origin === 'claim') {
+    return 'kg-edge-origin-claim'
+  }
+  if (edge.origin === 'evidence') {
+    return 'kg-edge-origin-evidence'
+  }
+  return 'kg-edge-origin-canonical'
+}
+
+function edgeConflictClass(edge: GraphEdge): string {
+  if (edge.origin === 'canonical' && edge.hasConflict) {
+    return CY_EDGE_CONFLICT_CLASS
+  }
+  return ''
+}
+
+function canonicalEdgeLabel(edge: GraphEdge): string {
+  const conflictSuffix = edge.hasConflict ? ' • CONFLICT' : ''
+  if (edge.canonicalClaimCount <= 0) {
+    return `${edge.relationType}${conflictSuffix}`
+  }
+  const suffix = edge.canonicalClaimCount === 1 ? 'claim' : 'claims'
+  return `${edge.relationType} (${edge.canonicalClaimCount} ${suffix})${conflictSuffix}`
 }
 
 function buildLayoutOptions(model: GraphModel): LayoutOptions {
@@ -136,17 +181,26 @@ function buildElements(model: GraphModel): ElementDefinition[] {
 
   const nodeElements: ElementDefinition[] = model.nodes.map((node) => {
     const visual = nodeVisualForEntityType(node.entityType)
+    const isClaimNode = node.origin === 'claim'
+    const nodeShape = isClaimNode ? 'round-rectangle' : visual.shape
+    const nodeLabel = isClaimNode ? 'Claim' : node.label
+    const nodeFillColor = isClaimNode ? '#e2e8f0' : visual.fillColor
+    const nodeBorderColor = isClaimNode ? '#475569' : visual.borderColor
     const degree = degreeByNodeId[node.id] ?? 0
     const size = nodeSizeForDegree(degree, maxDegree)
 
     return {
-      classes: nodeShapeClass(visual.shape),
+      classes: [
+        nodeShapeClass(nodeShape),
+        nodeOriginClass(node),
+        nodeClaimPolarityClass(node),
+      ].join(' '),
       data: {
         id: node.id,
-        label: node.label,
+        label: nodeLabel,
         entityType: node.entityType,
-        colorTop: visual.fillColor,
-        borderColor: visual.borderColor,
+        colorTop: nodeFillColor,
+        borderColor: nodeBorderColor,
         size,
         sizeSelected: sizeForFocus(size),
         degree,
@@ -167,12 +221,19 @@ function buildElements(model: GraphModel): ElementDefinition[] {
       classes: [
         edgeStatusClass(edge.curationStatus),
         edgeLineStyleClass(statusVisual.lineStyle),
+        edgeOriginClass(edge),
+        edgeConflictClass(edge),
       ].join(' '),
       data: {
         id: edge.id,
         source: edge.sourceId,
         target: edge.targetId,
-        label: edge.relationType,
+        label:
+          edge.origin === 'claim'
+            ? `Claim • ${edge.claimParticipantRole ?? edge.relationType}`
+            : edge.origin === 'evidence'
+              ? `Evidence • ${edge.relationType}`
+              : canonicalEdgeLabel(edge),
         curationStatus: edge.curationStatus,
         confidence: edge.confidence,
         color: edgeColorForRelationType(edge.relationType),
@@ -312,6 +373,65 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
           },
         },
         {
+          selector: 'node.kg-node-origin-claim',
+          style: {
+            'background-color': '#e2e8f0',
+            'background-opacity': 0.96,
+            color: '#0f172a',
+            'font-size': '10px',
+            'font-weight': 800,
+            'text-wrap': 'none',
+            'text-background-color': '#cbd5e1',
+            'text-background-opacity': 0.92,
+            'text-outline-color': '#e2e8f0',
+            'text-outline-width': 1,
+            'text-margin-y': 5,
+            'border-width': 3.8,
+          },
+        },
+        {
+          selector: 'node.kg-node-origin-evidence',
+          style: {
+            'background-color': '#e2e8f0',
+            'background-opacity': 0.96,
+            color: '#0f172a',
+            'font-size': '10px',
+            'font-weight': 700,
+            'text-wrap': 'wrap',
+            'text-max-width': '150px',
+            'text-background-color': '#cbd5e1',
+            'text-background-opacity': 0.9,
+            'text-outline-color': '#e2e8f0',
+            'text-outline-width': 1,
+            'border-color': '#64748b',
+            'border-width': 3.2,
+          },
+        },
+        {
+          selector: 'node.kg-node-claim-polarity-support',
+          style: {
+            'border-color': '#15803d',
+          },
+        },
+        {
+          selector: 'node.kg-node-claim-polarity-refute',
+          style: {
+            'border-color': '#dc2626',
+          },
+        },
+        {
+          selector: 'node.kg-node-claim-polarity-hypothesis',
+          style: {
+            'border-color': '#ca8a04',
+          },
+        },
+        {
+          selector: 'node.kg-node-claim-polarity-uncertain',
+          style: {
+            'border-color': '#64748b',
+          },
+        },
+        {
           selector: 'node.kg-shape-diamond',
           style: {
             shape: 'diamond',
@@ -365,6 +485,35 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
           selector: 'edge.kg-edge-style-dotted',
           style: {
             'line-style': 'dotted',
+          },
+        },
+        {
+          selector: 'edge.kg-edge-origin-claim',
+          style: {
+            'line-style': 'dashed',
+            'line-dash-pattern': [8, 4],
+            'target-arrow-shape': 'vee',
+            'arrow-scale': 0.8,
+            opacity: 0.9,
+          },
+        },
+        {
+          selector: 'edge.kg-edge-origin-evidence',
+          style: {
+            'line-style': 'dotted',
+            'line-dash-pattern': [4, 3],
+            'target-arrow-shape': 'triangle',
+            'arrow-scale': 0.72,
+            opacity: 0.9,
+          },
+        },
+        {
+          selector: `edge.${CY_EDGE_CONFLICT_CLASS}`,
+          style: {
+            'line-color': '#f59e0b',
+            'target-arrow-color': '#f59e0b',
+            width: 5.4,
+            opacity: 0.98,
           },
         },
         {
@@ -475,6 +624,19 @@ export class CytoscapeGraphViewAdapter implements GraphViewAdapter {
     })
     this.cy.on('tap', 'node', (event: EventObjectNode) => {
       this.handlers.onNodeClick?.(event.target.id())
+    })
+    this.cy.on('tap', 'edge', (event: EventObjectEdge) => {
+      this.handlers.onEdgeClick?.(event.target.id())
+      const neighborhood = event.target.connectedNodes().add(event.target)
+      this.cy?.stop()
+      this.cy?.animate({
+        fit: {
+          eles: neighborhood,
+          padding: 92,
+        },
+        duration: 320,
+        easing: 'ease-out-cubic',
+      })
     })
     this.cy.on('mouseover', 'node', (event: EventObjectNode) => {
       if (Date.now() < this.suppressHoverUntil) {

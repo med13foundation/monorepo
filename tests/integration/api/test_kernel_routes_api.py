@@ -27,6 +27,7 @@ from src.models.database.kernel.dictionary import TransformRegistryModel
 from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.kernel.relations import RelationEvidenceModel
 from src.models.database.research_space import ResearchSpaceModel
+from src.models.database.source_document import SourceDocumentModel
 from src.models.database.user import UserModel
 from src.models.database.user_data_source import (
     SourceStatusEnum,
@@ -503,6 +504,160 @@ def test_graph_subgraph_starter_mode_returns_bounded_sorted_edges(
     assert returned_statuses == ["APPROVED", "UNDER_REVIEW", "DRAFT", "REJECTED"]
 
 
+def test_graph_subgraph_starter_mode_defaults_to_single_connected_component(
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    # Component A
+    gene_a = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="GENE-A",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    phenotype_a_1 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype A-1",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    phenotype_a_2 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype A-2",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    relation_a_approved = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=gene_a,
+        target_id=phenotype_a_1,
+    )
+    _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=gene_a,
+        target_id=phenotype_a_2,
+    )
+
+    # Component B (disconnected from A)
+    gene_b = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="GENE-B",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    phenotype_b_1 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype B-1",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    phenotype_b_2 = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Phenotype B-2",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    relation_b_approved = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=gene_b,
+        target_id=phenotype_b_1,
+    )
+    _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=gene_b,
+        target_id=phenotype_b_2,
+    )
+
+    promote_a = test_client.put(
+        f"/research-spaces/{space.id}/relations/{relation_a_approved}",
+        headers=headers,
+        json={"curation_status": "APPROVED"},
+    )
+    assert promote_a.status_code == 200, promote_a.text
+
+    promote_b = test_client.put(
+        f"/research-spaces/{space.id}/relations/{relation_b_approved}",
+        headers=headers,
+        json={"curation_status": "APPROVED"},
+    )
+    assert promote_b.status_code == 200, promote_b.text
+
+    response = test_client.post(
+        f"/research-spaces/{space.id}/graph/subgraph",
+        headers=headers,
+        json={
+            "mode": "starter",
+            "seed_entity_ids": [],
+            "depth": 2,
+            "top_k": 25,
+            "max_nodes": 20,
+            "max_edges": 20,
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["edges"]) >= 1
+
+    adjacency: dict[str, set[str]] = {}
+    for edge in payload["edges"]:
+        source_id = str(edge["source_id"])
+        target_id = str(edge["target_id"])
+        adjacency.setdefault(source_id, set()).add(target_id)
+        adjacency.setdefault(target_id, set()).add(source_id)
+
+    assert adjacency
+    visited: set[str] = set()
+    pending: list[str] = [next(iter(adjacency))]
+    while pending:
+        node_id = pending.pop()
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        pending.extend(
+            neighbor_id
+            for neighbor_id in adjacency[node_id]
+            if neighbor_id not in visited
+        )
+
+    assert visited == set(adjacency.keys())
+
+
 def test_graph_subgraph_seeded_mode_honors_filters_and_bounds(
     test_client,
     db_session,
@@ -874,6 +1029,45 @@ def test_relation_claim_evidence_and_conflict_endpoints(
 
     claim_id: UUID
     with _session_for_api(db_session) as session:
+        source = UserDataSourceModel(
+            id=str(uuid4()),
+            owner_id=str(researcher_user.id),
+            research_space_id=str(space.id),
+            name="PubMed source",
+            description="",
+            source_type=SourceTypeEnum.PUBMED,
+            template_id=None,
+            configuration={},
+            status=SourceStatusEnum.ACTIVE,
+            ingestion_schedule={},
+            quality_metrics={},
+            last_ingested_at=None,
+            tags=[],
+            version="1.0",
+        )
+        session.add(source)
+        source_document_id = str(uuid4())
+        session.add(
+            SourceDocumentModel(
+                id=source_document_id,
+                research_space_id=str(space.id),
+                source_id=source.id,
+                ingestion_job_id=None,
+                external_record_id="40214304",
+                source_type="pubmed",
+                document_format="json",
+                raw_storage_key=None,
+                enriched_storage_key=None,
+                content_hash=None,
+                content_length_chars=None,
+                enrichment_status="pending",
+                enrichment_method=None,
+                enrichment_agent_run_id=None,
+                extraction_status="pending",
+                extraction_agent_run_id=None,
+                metadata_payload={},
+            ),
+        )
         support_claim = RelationClaimModel(
             research_space_id=space.id,
             source_document_id=None,
@@ -926,7 +1120,7 @@ def test_relation_claim_evidence_and_conflict_endpoints(
         session.add(
             ClaimEvidenceModel(
                 claim_id=support_claim.id,
-                source_document_id=None,
+                source_document_id=source_document_id,
                 agent_run_id="run-conflict-support",
                 sentence=(
                     "MED13 variants were associated with cardiomyopathy "
@@ -952,6 +1146,13 @@ def test_relation_claim_evidence_and_conflict_endpoints(
     assert evidence_payload["claim_id"] == str(claim_id)
     assert evidence_payload["total"] == 1
     assert evidence_payload["evidence"][0]["sentence_source"] == "verbatim_span"
+    assert evidence_payload["evidence"][0]["paper_links"] == [
+        {
+            "label": "PubMed",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/40214304/",
+            "source": "external_record_id",
+        },
+    ]
 
     conflict_response = test_client.get(
         f"/research-spaces/{space.id}/relations/conflicts",

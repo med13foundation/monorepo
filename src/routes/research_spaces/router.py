@@ -29,6 +29,7 @@ research_spaces_router = APIRouter(
 
 # Import route modules so decorators register against the router.
 from . import (  # noqa: E402,F401
+    claim_graph_routes,
     concept_routes,
     content_enrichment_routes,
     curation_routes,

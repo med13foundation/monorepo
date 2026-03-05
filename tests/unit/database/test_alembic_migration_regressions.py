@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_HEAD_REVISION = "024_claim_first_orchestration"
-CURRENT_HEAD_REVISION = "031_entity_embeddings_hybrid"
+CURRENT_HEAD_REVISION = "034_claim_participant_fk"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"
@@ -820,3 +820,159 @@ def test_017_phi_identifier_encryption_columns_on_sqlite(tmp_path: Path) -> None
     }
     assert "idx_identifier_blind_lookup" in index_names
     assert "idx_identifier_entity_ns_blind_unique" in index_names
+
+
+def test_032_033_034_claim_overlay_schema_and_downgrade(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'claim_overlay_schema.db'}"
+    engine = create_engine(database_url, future=True)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "031_entity_embeddings_hybrid"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE research_spaces ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "owner_id VARCHAR(36)"
+                ")",
+            ),
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relation_claims ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "research_space_id VARCHAR(36) NOT NULL"
+                ")",
+            ),
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE entities ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "research_space_id VARCHAR(36) NOT NULL"
+                ")",
+            ),
+        )
+        connection.execute(
+            text("CREATE TABLE source_documents (id VARCHAR(36) PRIMARY KEY)"),
+        )
+
+    _run_alembic_upgrade(database_url=database_url, revision=CURRENT_HEAD_REVISION)
+
+    inspector = inspect(engine)
+
+    table_names = set(inspector.get_table_names())
+    assert "claim_participants" in table_names
+    assert "claim_relations" in table_names
+
+    participant_columns = {
+        column["name"] for column in inspector.get_columns("claim_participants")
+    }
+    assert {
+        "id",
+        "claim_id",
+        "research_space_id",
+        "label",
+        "entity_id",
+        "role",
+        "position",
+        "qualifiers",
+        "created_at",
+        "updated_at",
+    }.issubset(participant_columns)
+
+    relation_columns = {
+        column["name"] for column in inspector.get_columns("claim_relations")
+    }
+    assert {
+        "id",
+        "research_space_id",
+        "source_claim_id",
+        "target_claim_id",
+        "relation_type",
+        "agent_run_id",
+        "source_document_id",
+        "confidence",
+        "review_status",
+        "evidence_summary",
+        "metadata_payload",
+        "created_at",
+        "updated_at",
+    }.issubset(relation_columns)
+
+    relation_unique_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("claim_relations")
+    }
+    assert "uq_claim_relations_space_edge" in relation_unique_constraints
+
+    participant_checks = inspector.get_check_constraints("claim_participants")
+    participant_check_names = {
+        (constraint.get("name") or "").strip() for constraint in participant_checks
+    }
+    participant_check_sql = " ".join(
+        str(constraint.get("sqltext") or "") for constraint in participant_checks
+    ).upper()
+    assert (
+        "ck_claim_participants_anchor" in participant_check_names
+        or "LABEL IS NOT NULL OR ENTITY_ID IS NOT NULL" in participant_check_sql
+    )
+    assert (
+        "ck_claim_participants_role" in participant_check_names
+        or "ROLE IN ('SUBJECT', 'OBJECT', 'CONTEXT', 'QUALIFIER', 'MODIFIER')"
+        in participant_check_sql
+    )
+
+    relation_checks = inspector.get_check_constraints("claim_relations")
+    relation_check_names = {
+        (constraint.get("name") or "").strip() for constraint in relation_checks
+    }
+    relation_check_sql = " ".join(
+        str(constraint.get("sqltext") or "") for constraint in relation_checks
+    ).upper()
+    assert (
+        "ck_claim_relations_no_self_loop" in relation_check_names
+        or "SOURCE_CLAIM_ID <> TARGET_CLAIM_ID" in relation_check_sql
+    )
+    assert (
+        "ck_claim_relations_review_status" in relation_check_names
+        or "REVIEW_STATUS IN ('PROPOSED','ACCEPTED','REJECTED')" in relation_check_sql
+    )
+    assert (
+        "ck_claim_relations_confidence_range" in relation_check_names
+        or "CONFIDENCE >= 0.0 AND CONFIDENCE <= 1.0" in relation_check_sql
+    )
+
+    participant_foreign_keys = {
+        fk["name"]: fk for fk in inspector.get_foreign_keys("claim_participants")
+    }
+    assert "fk_claim_participants_claim_space" in participant_foreign_keys
+    assert "fk_claim_participants_entity_space" in participant_foreign_keys
+    entity_space_fk = participant_foreign_keys["fk_claim_participants_entity_space"]
+    ondelete = str((entity_space_fk.get("options") or {}).get("ondelete", "")).upper()
+    if ondelete:
+        assert ondelete in {"RESTRICT", "NO ACTION"}
+
+    _run_alembic_downgrade(
+        database_url=database_url,
+        revision="031_entity_embeddings_hybrid",
+    )
+
+    downgraded_inspector = inspect(engine)
+    downgraded_table_names = set(downgraded_inspector.get_table_names())
+    assert "claim_participants" not in downgraded_table_names
+    assert "claim_relations" not in downgraded_table_names
+
+    relation_claims_unique_constraints = {
+        constraint["name"]
+        for constraint in downgraded_inspector.get_unique_constraints("relation_claims")
+    }
+    assert "uq_relation_claims_id_space" not in relation_claims_unique_constraints

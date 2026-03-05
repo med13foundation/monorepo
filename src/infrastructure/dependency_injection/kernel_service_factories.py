@@ -15,6 +15,8 @@ from src.application.services.kernel import (
     ConceptManagementService,
     DictionaryManagementService,
     KernelClaimEvidenceService,
+    KernelClaimParticipantService,
+    KernelClaimRelationService,
     KernelEntityService,
     KernelEntitySimilarityService,
     KernelObservationService,
@@ -37,6 +39,8 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyEntityEmbeddingRepository,
     SqlAlchemyGraphQueryRepository,
     SqlAlchemyKernelClaimEvidenceRepository,
+    SqlAlchemyKernelClaimParticipantRepository,
+    SqlAlchemyKernelClaimRelationRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
     SqlAlchemyKernelRelationClaimRepository,
@@ -161,6 +165,22 @@ class KernelServiceFactoryMixin:
         relation_claim_repo = SqlAlchemyKernelRelationClaimRepository(session)
         return KernelRelationClaimService(relation_claim_repo=relation_claim_repo)
 
+    def create_kernel_claim_participant_service(
+        self,
+        session: Session,
+    ) -> KernelClaimParticipantService:
+        claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(session)
+        return KernelClaimParticipantService(
+            claim_participant_repo=claim_participant_repo,
+        )
+
+    def create_kernel_claim_relation_service(
+        self,
+        session: Session,
+    ) -> KernelClaimRelationService:
+        claim_relation_repo = SqlAlchemyKernelClaimRelationRepository(session)
+        return KernelClaimRelationService(claim_relation_repo=claim_relation_repo)
+
     def create_kernel_claim_evidence_service(
         self,
         session: Session,
@@ -223,6 +243,9 @@ class KernelServiceFactoryMixin:
             dependencies=HypothesisGenerationServiceDependencies(
                 graph_connection_agent=graph_connection_agent,
                 relation_claim_service=self.create_kernel_relation_claim_service(
+                    session,
+                ),
+                claim_participant_service=self.create_kernel_claim_participant_service(
                     session,
                 ),
                 entity_repository=self._build_entity_repository(session),

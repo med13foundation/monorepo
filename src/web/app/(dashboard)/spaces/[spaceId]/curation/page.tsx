@@ -56,6 +56,10 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
   let effectiveRole: MembershipRole = isPlatformAdmin ? MembershipRole.ADMIN : MembershipRole.VIEWER
 
   const tab = firstString(resolvedSearchParams?.tab) === 'claims' ? 'claims' : 'graph'
+  const graphMode =
+    firstString(resolvedSearchParams?.graph_mode) === 'claim_overlay'
+      ? 'claim_overlay'
+      : 'canonical'
   const relationType = firstString(resolvedSearchParams?.relation_type)
   const curationStatus = firstString(resolvedSearchParams?.curation_status)
   const validationState = firstString(resolvedSearchParams?.validation_state)
@@ -63,6 +67,7 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
   const certaintyBand = firstString(resolvedSearchParams?.certainty_band)
   const nodeQuery = firstString(resolvedSearchParams?.node_query)
   const nodeIds = parseStringList(resolvedSearchParams?.node_ids)
+  const focusRelationId = firstString(resolvedSearchParams?.focus_relation_id)
   const offset = parseIntParam(firstString(resolvedSearchParams?.offset), 0)
   const limit = Math.min(parseIntParam(firstString(resolvedSearchParams?.limit), 25), 200)
   const claimStatus = firstString(resolvedSearchParams?.claim_status)
@@ -245,6 +250,7 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
       canCurate={canCurate}
       hypothesisGenerationEnabled={hypothesisGenerationEnabled}
       relationFilters={{
+        graphMode,
         relationType: relationType ?? '',
         curationStatus: curationStatus ?? '',
         validationState: validationState ?? '',
@@ -252,6 +258,7 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
         certaintyBand: certaintyBand ?? '',
         nodeQuery: nodeQuery ?? '',
         nodeIds,
+        focusRelationId: focusRelationId ?? '',
         offset,
         limit,
       }}

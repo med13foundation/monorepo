@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import KnowledgeGraphClient from '@/app/(dashboard)/spaces/[spaceId]/knowledge-graph-client'
 import {
+  fetchClaimParticipants,
   fetchKernelSubgraph,
   fetchRelationClaims,
   fetchRelationConflicts,
@@ -27,6 +28,7 @@ jest.mock('@/lib/api/kernel', () => ({
   fetchKernelSubgraph: jest.fn(),
   fetchRelationClaims: jest.fn(),
   fetchRelationConflicts: jest.fn(),
+  fetchClaimParticipants: jest.fn(),
   searchKernelGraph: jest.fn(),
 }))
 
@@ -177,6 +179,9 @@ describe('KnowledgeGraphClient', () => {
   const mockFetchRelationClaims = fetchRelationClaims as jest.MockedFunction<
     typeof fetchRelationClaims
   >
+  const mockFetchClaimParticipants = fetchClaimParticipants as jest.MockedFunction<
+    typeof fetchClaimParticipants
+  >
   const mockFetchRelationConflicts = fetchRelationConflicts as jest.MockedFunction<
     typeof fetchRelationConflicts
   >
@@ -189,6 +194,11 @@ describe('KnowledgeGraphClient', () => {
       total: 0,
       offset: 0,
       limit: 200,
+    })
+    mockFetchClaimParticipants.mockResolvedValue({
+      claim_id: 'claim-1',
+      participants: [],
+      total: 0,
     })
     mockFetchRelationConflicts.mockResolvedValue({
       conflicts: [],

@@ -8,6 +8,13 @@ for entities, observations, relations, dictionary, and provenance.
 from .concept_management_service import ConceptManagementService
 from .dictionary_management_service import DictionaryManagementService
 from .kernel_claim_evidence_service import KernelClaimEvidenceService
+from .kernel_claim_participant_backfill_service import (
+    ClaimParticipantBackfillSummary,
+    ClaimParticipantCoverageSummary,
+    KernelClaimParticipantBackfillService,
+)
+from .kernel_claim_participant_service import KernelClaimParticipantService
+from .kernel_claim_relation_service import KernelClaimRelationService
 from .kernel_entity_service import KernelEntityService
 from .kernel_entity_similarity_service import (
     EntityEmbeddingRefreshSummary,
@@ -23,6 +30,11 @@ __all__ = [
     "ConceptManagementService",
     "DictionaryManagementService",
     "KernelClaimEvidenceService",
+    "KernelClaimParticipantBackfillService",
+    "ClaimParticipantBackfillSummary",
+    "ClaimParticipantCoverageSummary",
+    "KernelClaimParticipantService",
+    "KernelClaimRelationService",
     "KernelEntityService",
     "KernelEntitySimilarityService",
     "EntityEmbeddingRefreshSummary",

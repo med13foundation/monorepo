@@ -7,6 +7,10 @@ using SQLAlchemy ORM against the PostgreSQL database.
 
 from .graph_query_repository import SqlAlchemyGraphQueryRepository
 from .kernel_claim_evidence_repository import SqlAlchemyKernelClaimEvidenceRepository
+from .kernel_claim_participant_repository import (
+    SqlAlchemyKernelClaimParticipantRepository,
+)
+from .kernel_claim_relation_repository import SqlAlchemyKernelClaimRelationRepository
 from .kernel_concept_repository import SqlAlchemyConceptRepository
 from .kernel_dictionary_repository import SqlAlchemyDictionaryRepository
 from .kernel_entity_embedding_repository import SqlAlchemyEntityEmbeddingRepository
@@ -22,6 +26,8 @@ __all__ = [
     "SqlAlchemyEntityEmbeddingRepository",
     "SqlAlchemyGraphQueryRepository",
     "SqlAlchemyKernelClaimEvidenceRepository",
+    "SqlAlchemyKernelClaimParticipantRepository",
+    "SqlAlchemyKernelClaimRelationRepository",
     "SqlAlchemyKernelEntityRepository",
     "SqlAlchemyKernelObservationRepository",
     "SqlAlchemyKernelRelationClaimRepository",

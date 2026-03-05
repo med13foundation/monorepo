@@ -127,6 +127,23 @@ class _FakeRelationRowsSession:
         return _FakeRelationRowsExecuteResult(self._rows)
 
 
+@dataclass(frozen=True)
+class _PipelineJobStatus:
+    value: str
+
+
+@dataclass(frozen=True)
+class _PipelineRunRow:
+    id: str
+    metrics: dict[str, object]
+    job_metadata: dict[str, object]
+    source_config_snapshot: dict[str, object]
+    status: _PipelineJobStatus
+    triggered_at: datetime | None
+    started_at: datetime | None
+    completed_at: datetime | None
+
+
 class _PrefetchCaptureService(SourceWorkflowMonitorService):
     def __init__(self) -> None:
         super().__init__(session=Mock(), run_progress=None)
@@ -593,6 +610,44 @@ def test_monitor_run_scope_prefers_underlying_ingestion_job_id_when_present() ->
     assert service.captured["documents"] == ("run-match", "ingestion-job-123")
     assert service.captured["queue"] == ("run-match", "ingestion-job-123")
     assert service.captured["extractions"] == ("run-match", "ingestion-job-123")
+
+
+def test_build_pipeline_run_payload_falls_back_to_graph_extraction_counters() -> None:
+    now = datetime.now(UTC)
+    service = SourceWorkflowMonitorService(
+        session=cast("Session", Mock()),
+        run_progress=None,
+    )
+    row = _PipelineRunRow(
+        id="pipeline-job-id",
+        metrics={},
+        job_metadata={"extraction_queue": {"queued": 4}},
+        source_config_snapshot={},
+        status=_PipelineJobStatus(value="completed"),
+        triggered_at=now,
+        started_at=now,
+        completed_at=now,
+    )
+
+    payload = service._build_pipeline_run_payload(
+        row=row,
+        pipeline_payload={
+            "run_id": "run-1",
+            "status": "completed",
+            "graph_progress": {
+                "extraction_processed": 12,
+                "extraction_completed": 9,
+                "extraction_failed": 3,
+            },
+        },
+    )
+
+    stage_counters = payload.get("stage_counters")
+    assert isinstance(stage_counters, dict)
+    assert stage_counters.get("queued_for_extraction") == 4
+    assert stage_counters.get("extraction_processed") == 12
+    assert stage_counters.get("extraction_completed") == 9
+    assert stage_counters.get("extraction_failed") == 3
 
 
 def test_count_document_extraction_outcomes_reports_timeout_failures() -> None:

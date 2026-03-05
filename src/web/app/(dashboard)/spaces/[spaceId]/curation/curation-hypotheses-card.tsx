@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { HypothesisComposer } from './hypotheses/hypothesis-composer'
 import { HypothesisFilters } from './hypotheses/hypothesis-filters'
 import { HypothesisList } from './hypotheses/hypothesis-list'
+import { HypothesisClaimRelations } from './hypotheses/hypothesis-claim-relations'
 import { useHypothesesCardController } from './hypotheses/use-hypotheses-card-controller'
 
 interface CurationHypothesesCardProps {
@@ -83,6 +84,12 @@ export default function CurationHypothesesCard({
             triageHypothesis={controller.triageHypothesis}
           />
         )}
+
+        <HypothesisClaimRelations
+          spaceId={spaceId}
+          canEdit={canEdit}
+          hypotheses={controller.hypotheses}
+        />
       </CardContent>
     </Card>
   )

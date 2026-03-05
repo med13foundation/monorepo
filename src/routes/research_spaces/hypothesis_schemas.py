@@ -50,6 +50,7 @@ class HypothesisResponse(BaseModel):
     relation_type: str
     target_label: str | None
     claim_text: str | None
+    linked_relation_id: UUID | None
     origin: str
     seed_entity_ids: list[str]
     supporting_provenance_ids: list[str]
@@ -76,6 +77,11 @@ class HypothesisResponse(BaseModel):
             relation_type=str(claim.relation_type),
             target_label=claim.target_label,
             claim_text=claim.claim_text,
+            linked_relation_id=(
+                _to_uuid(claim.linked_relation_id)
+                if claim.linked_relation_id is not None
+                else None
+            ),
             origin=_resolve_origin(metadata_payload),
             seed_entity_ids=seed_entity_ids,
             supporting_provenance_ids=supporting_provenance_ids,

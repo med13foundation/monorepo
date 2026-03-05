@@ -5,6 +5,8 @@
 # dictionary + fact tables (entities/observations/relations/provenance).
 
 from .claim_evidence import ClaimEvidenceModel
+from .claim_participants import ClaimParticipantModel
+from .claim_relations import ClaimRelationModel
 from .concepts import (
     ConceptAliasModel,
     ConceptDecisionModel,
@@ -61,6 +63,8 @@ __all__ = [
     "ConceptPolicyModel",
     "ConceptSetModel",
     "ClaimEvidenceModel",
+    "ClaimParticipantModel",
+    "ClaimRelationModel",
     # Core Data (Layer 2)
     "EntityModel",
     "EntityIdentifierModel",

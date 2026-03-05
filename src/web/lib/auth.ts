@@ -68,6 +68,7 @@ const authApiClient = axios.create({
 })
 
 let hasLoggedRecoverableJwtWarning = false
+let hasLoggedTokenExpiryWarning = false
 
 function formatAxiosError(error: unknown): string {
   if (!axios.isAxiosError(error)) {
@@ -377,11 +378,14 @@ export const authOptions: NextAuthOptions = {
 
       // If token expired or missing, return null to force re-authentication
       if (!expiresAt || Date.now() >= expiresAt) {
-        console.warn("JWT callback: Token expired or missing expires_at", {
-          expiresAt,
-          now: Date.now(),
-          hasAccessToken: !!token.access_token
-        })
+        if (process.env.NODE_ENV === "development" && !hasLoggedTokenExpiryWarning) {
+          hasLoggedTokenExpiryWarning = true
+          console.debug("[jwt callback] Token expired or missing expires_at", {
+            expiresAt,
+            now: Date.now(),
+            hasAccessToken: !!token.access_token,
+          })
+        }
       }
 
       // Access token has expired, try to refresh it

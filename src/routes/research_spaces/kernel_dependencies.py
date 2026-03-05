@@ -12,6 +12,9 @@ from src.application.services.kernel import (
     ConceptManagementService,
     DictionaryManagementService,
     KernelClaimEvidenceService,
+    KernelClaimParticipantBackfillService,
+    KernelClaimParticipantService,
+    KernelClaimRelationService,
     KernelEntityService,
     KernelEntitySimilarityService,
     KernelObservationService,
@@ -41,6 +44,8 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyDictionaryRepository,
     SqlAlchemyEntityEmbeddingRepository,
     SqlAlchemyKernelClaimEvidenceRepository,
+    SqlAlchemyKernelClaimParticipantRepository,
+    SqlAlchemyKernelClaimRelationRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
     SqlAlchemyKernelRelationClaimRepository,
@@ -182,6 +187,38 @@ def get_kernel_relation_claim_service(
     return KernelRelationClaimService(relation_claim_repo=relation_claim_repo)
 
 
+def get_kernel_claim_participant_service(
+    session: Session = Depends(get_session),
+) -> KernelClaimParticipantService:
+    """Kernel claim-participant service (structured participant rows)."""
+    claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(session)
+    return KernelClaimParticipantService(
+        claim_participant_repo=claim_participant_repo,
+    )
+
+
+def get_kernel_claim_participant_backfill_service(
+    session: Session = Depends(get_session),
+) -> KernelClaimParticipantBackfillService:
+    """Backfill/coverage service for structured claim participants."""
+    return KernelClaimParticipantBackfillService(
+        relation_claim_service=get_kernel_relation_claim_service(session),
+        claim_participant_service=get_kernel_claim_participant_service(session),
+        entity_repository=_build_entity_repository(session),
+        concept_service=get_concept_service(session),
+    )
+
+
+def get_kernel_claim_relation_service(
+    session: Session = Depends(get_session),
+) -> KernelClaimRelationService:
+    """Kernel claim-relation service (claim-to-claim graph edges)."""
+    claim_relation_repo = SqlAlchemyKernelClaimRelationRepository(session)
+    return KernelClaimRelationService(
+        claim_relation_repo=claim_relation_repo,
+    )
+
+
 def get_kernel_claim_evidence_service(
     session: Session = Depends(get_session),
 ) -> KernelClaimEvidenceService:
@@ -218,6 +255,9 @@ __all__ = [
     "get_dictionary_service",
     "get_kernel_entity_service",
     "get_kernel_entity_similarity_service",
+    "get_kernel_claim_participant_service",
+    "get_kernel_claim_participant_backfill_service",
+    "get_kernel_claim_relation_service",
     "get_kernel_claim_evidence_service",
     "get_kernel_observation_service",
     "get_kernel_relation_service",

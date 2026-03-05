@@ -75,6 +75,9 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.claim_evidence_repository import (
         KernelClaimEvidenceRepository,
     )
+    from src.domain.repositories.kernel.claim_participant_repository import (
+        KernelClaimParticipantRepository,
+    )
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
     from src.domain.repositories.kernel.relation_claim_repository import (
         KernelRelationClaimRepository,
@@ -173,6 +176,7 @@ class _ExtractionRelationPersistenceHelpers(
 ):
     _relations: KernelRelationRepository | None
     _relation_claims: KernelRelationClaimRepository | None
+    _claim_participants: KernelClaimParticipantRepository | None
     _claim_evidences: KernelClaimEvidenceRepository | None
     _entities: KernelEntityRepository | None
     _concepts: ConceptPort | None

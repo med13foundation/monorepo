@@ -856,6 +856,31 @@ class _PipelineOrchestrationExecutionHelpers(
                     "watchdog_timeout_seconds": extraction_watchdog_timeout_seconds,
                 },
             )
+            pipeline_run_job = self._persist_pipeline_run_progress(
+                run_job=pipeline_run_job,
+                source_id=source_id,
+                research_space_id=research_space_id,
+                run_id=normalized_run_id,
+                resume_from_stage=normalized_resume_stage,
+                progress_key="extraction_run",
+                progress_payload={
+                    "status": extraction_status,
+                    "processed": extraction_processed,
+                    "completed": extraction_extracted,
+                    "failed": extraction_failed,
+                    "persisted_relations": extraction_persisted_relations,
+                    "concept_members_created": extraction_concept_members_created,
+                    "concept_aliases_created": extraction_concept_aliases_created,
+                    "concept_decisions_proposed": (
+                        extraction_concept_decisions_proposed
+                    ),
+                    "quality_gate_failed": extraction_quality_gate_failed,
+                    "failure_ratio": extraction_failure_ratio,
+                    "failure_ratio_threshold": extraction_failure_ratio_threshold,
+                    "last_error": extraction_stage_error,
+                },
+                overall_status="running",
+            )
             pipeline_run_job = self._persist_pipeline_stage_checkpoint(
                 run_job=pipeline_run_job,
                 source_id=source_id,
@@ -984,6 +1009,9 @@ class _PipelineOrchestrationExecutionHelpers(
                     "requested": graph_requested,
                     "completed": graph_completed_count,
                     "processed": graph_processed,
+                    "extraction_processed": extraction_processed,
+                    "extraction_completed": extraction_extracted,
+                    "extraction_failed": extraction_failed,
                     "persisted_relations": total_persisted_relations,
                     "extraction_persisted_relations": extraction_persisted_relations,
                     "extraction_concept_members_created": (
@@ -1183,6 +1211,9 @@ class _PipelineOrchestrationExecutionHelpers(
                         "requested": graph_requested,
                         "completed": graph_completed_count,
                         "processed": graph_processed,
+                        "extraction_processed": extraction_processed,
+                        "extraction_completed": extraction_extracted,
+                        "extraction_failed": extraction_failed,
                         "persisted_relations": total_persisted_relations,
                         "extraction_persisted_relations": (
                             extraction_persisted_relations
@@ -1226,6 +1257,9 @@ class _PipelineOrchestrationExecutionHelpers(
                     "requested": graph_requested,
                     "completed": graph_completed_count,
                     "processed": graph_processed,
+                    "extraction_processed": extraction_processed,
+                    "extraction_completed": extraction_extracted,
+                    "extraction_failed": extraction_failed,
                     "persisted_relations": total_persisted_relations,
                     "extraction_persisted_relations": extraction_persisted_relations,
                     "extraction_concept_members_created": (

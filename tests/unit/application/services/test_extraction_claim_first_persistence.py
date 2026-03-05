@@ -54,6 +54,7 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyConceptRepository,
     SqlAlchemyDictionaryRepository,
     SqlAlchemyKernelClaimEvidenceRepository,
+    SqlAlchemyKernelClaimParticipantRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationRepository,
@@ -343,6 +344,7 @@ def _build_optional_missing_span_harness_fixture(
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
     relation_repo = SqlAlchemyKernelRelationRepository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(db_session)
     claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
     _ = entity_repo.create(
         research_space_id=str(space.id),
@@ -404,6 +406,7 @@ def _build_optional_missing_span_harness_fixture(
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
             dictionary_service=dictionary_service,
@@ -531,6 +534,7 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
     relation_repo = SqlAlchemyKernelRelationRepository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(db_session)
     claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
     _ = entity_repo.create(
         research_space_id=str(space.id),
@@ -636,6 +640,7 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
             dictionary_service=dictionary_service,
@@ -681,6 +686,28 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
         "ENDPOINT_UNRESOLVED",
         "SELF_LOOP",
     }
+
+    support_claim = next(
+        claim
+        for claim in claims
+        if claim.claim_text == "MED13 variants are associated with cardiomyopathy."
+    )
+    support_participants = claim_participant_repo.find_by_claim_id(
+        str(support_claim.id),
+    )
+    participant_roles = {participant.role for participant in support_participants}
+    assert participant_roles == {"SUBJECT", "OBJECT"}
+    participants_by_role = {
+        participant.role: participant for participant in support_participants
+    }
+    subject_participant = participants_by_role["SUBJECT"]
+    object_participant = participants_by_role["OBJECT"]
+    assert subject_participant.entity_id is not None
+    assert object_participant.entity_id is not None
+    assert isinstance(subject_participant.label, str)
+    assert bool(subject_participant.label.strip())
+    assert isinstance(object_participant.label, str)
+    assert bool(object_participant.label.strip())
 
     persistable_claims = [
         claim for claim in claims if claim.persistability == "PERSISTABLE"
@@ -812,6 +839,7 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
     relation_repo = SqlAlchemyKernelRelationRepository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(db_session)
     claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
     _ = entity_repo.create(
         research_space_id=str(space.id),
@@ -892,6 +920,7 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
             dictionary_service=dictionary_service,
@@ -1227,6 +1256,7 @@ async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
     relation_repo = SqlAlchemyKernelRelationRepository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(db_session)
     claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
     _ = entity_repo.create(
         research_space_id=str(space.id),
@@ -1288,6 +1318,7 @@ async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
             dictionary_service=dictionary_service,

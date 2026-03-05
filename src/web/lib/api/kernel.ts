@@ -20,6 +20,16 @@ import type {
   CreateManualHypothesisRequest,
   GenerateHypothesesRequest,
   GenerateHypothesesResponse,
+  ClaimRelationCreateRequest,
+  ClaimRelationListResponse,
+  ClaimRelationResponse,
+  ClaimRelationReviewStatus,
+  ClaimRelationType,
+  ClaimRelationReviewUpdateRequest,
+  ClaimParticipantBackfillRequest,
+  ClaimParticipantBackfillResponse,
+  ClaimParticipantCoverageResponse,
+  ClaimParticipantListResponse,
   HypothesisListResponse,
   HypothesisResponse,
   KernelProvenanceListResponse,
@@ -417,6 +427,147 @@ export async function generateHypotheses(
     `/research-spaces/${spaceId}/hypotheses/generate`,
     payload,
     { token, timeout: 0 },
+  )
+}
+
+export interface ClaimRelationListParams {
+  relation_type?: ClaimRelationType
+  review_status?: ClaimRelationReviewStatus
+  source_claim_id?: string
+  target_claim_id?: string
+  claim_id?: string
+  offset?: number
+  limit?: number
+}
+
+export async function fetchClaimRelations(
+  spaceId: string,
+  params: ClaimRelationListParams = {},
+  token?: string,
+): Promise<ClaimRelationListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchClaimRelations')
+  }
+
+  const options: ApiRequestOptions<ClaimRelationListResponse> = {
+    token,
+    params: {
+      ...(params.relation_type ? { relation_type: params.relation_type } : {}),
+      ...(params.review_status ? { review_status: params.review_status } : {}),
+      ...(params.source_claim_id ? { source_claim_id: params.source_claim_id } : {}),
+      ...(params.target_claim_id ? { target_claim_id: params.target_claim_id } : {}),
+      ...(params.claim_id ? { claim_id: params.claim_id } : {}),
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 100,
+    },
+  }
+
+  return apiGet<ClaimRelationListResponse>(
+    `/research-spaces/${spaceId}/claim-relations`,
+    options,
+  )
+}
+
+export async function createClaimRelation(
+  spaceId: string,
+  payload: ClaimRelationCreateRequest,
+  token?: string,
+): Promise<ClaimRelationResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for createClaimRelation')
+  }
+
+  return apiPost<ClaimRelationResponse>(
+    `/research-spaces/${spaceId}/claim-relations`,
+    payload,
+    { token },
+  )
+}
+
+export async function updateClaimRelationReview(
+  spaceId: string,
+  relationId: string,
+  payload: ClaimRelationReviewUpdateRequest,
+  token?: string,
+): Promise<ClaimRelationResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for updateClaimRelationReview')
+  }
+
+  return apiPatch<ClaimRelationResponse>(
+    `/research-spaces/${spaceId}/claim-relations/${relationId}`,
+    payload,
+    { token },
+  )
+}
+
+export async function fetchClaimParticipants(
+  spaceId: string,
+  claimId: string,
+  token?: string,
+): Promise<ClaimParticipantListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchClaimParticipants')
+  }
+  return apiGet<ClaimParticipantListResponse>(
+    `/research-spaces/${spaceId}/claims/${claimId}/participants`,
+    { token },
+  )
+}
+
+export async function fetchClaimsByEntity(
+  spaceId: string,
+  entityId: string,
+  params: { limit?: number; offset?: number } = {},
+  token?: string,
+): Promise<RelationClaimListResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchClaimsByEntity')
+  }
+  return apiGet<RelationClaimListResponse>(
+    `/research-spaces/${spaceId}/claims/by-entity/${entityId}`,
+    {
+      token,
+      params: {
+        limit: params.limit ?? 20,
+        offset: params.offset ?? 0,
+      },
+    },
+  )
+}
+
+export async function fetchClaimParticipantCoverage(
+  spaceId: string,
+  params: { limit?: number; offset?: number } = {},
+  token?: string,
+): Promise<ClaimParticipantCoverageResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchClaimParticipantCoverage')
+  }
+  return apiGet<ClaimParticipantCoverageResponse>(
+    `/research-spaces/${spaceId}/claim-participants/coverage`,
+    {
+      token,
+      params: {
+        limit: params.limit ?? 500,
+        offset: params.offset ?? 0,
+      },
+    },
+  )
+}
+
+export async function runClaimParticipantBackfill(
+  spaceId: string,
+  payload: ClaimParticipantBackfillRequest,
+  token?: string,
+): Promise<ClaimParticipantBackfillResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for runClaimParticipantBackfill')
+  }
+  return apiPost<ClaimParticipantBackfillResponse>(
+    `/research-spaces/${spaceId}/claim-participants/backfill`,
+    payload,
+    { token },
   )
 }
 

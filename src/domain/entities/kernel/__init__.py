@@ -11,6 +11,12 @@ from .claim_evidence import (
     ClaimEvidenceSentenceSource,
     KernelClaimEvidence,
 )
+from .claim_participants import ClaimParticipantRole, KernelClaimParticipant
+from .claim_relations import (
+    ClaimRelationReviewStatus,
+    ClaimRelationType,
+    KernelClaimRelation,
+)
 from .concepts import (
     ConceptAlias,
     ConceptDecision,
@@ -92,6 +98,11 @@ __all__ = [
     "KernelRelationClaim",
     "KernelRelationConflictSummary",
     "KernelClaimEvidence",
+    "KernelClaimParticipant",
+    "ClaimParticipantRole",
+    "KernelClaimRelation",
+    "ClaimRelationType",
+    "ClaimRelationReviewStatus",
     "ClaimEvidenceSentenceSource",
     "ClaimEvidenceSentenceConfidence",
     "RelationClaimPolarity",

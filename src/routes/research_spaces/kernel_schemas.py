@@ -545,10 +545,16 @@ class KernelClaimEvidenceResponse(BaseModel):
     table_reference: str | None
     confidence: float
     metadata: JSONObject
+    paper_links: list[KernelRelationPaperLinkResponse] = Field(default_factory=list)
     created_at: datetime
 
     @classmethod
-    def from_model(cls, model: KernelClaimEvidence) -> KernelClaimEvidenceResponse:
+    def from_model(
+        cls,
+        model: KernelClaimEvidence,
+        *,
+        paper_links: list[KernelRelationPaperLinkResponse] | None = None,
+    ) -> KernelClaimEvidenceResponse:
         source_document_id_raw = getattr(model, "source_document_id", None)
         metadata_payload = getattr(model, "metadata_payload", {}) or {}
         return cls(
@@ -568,6 +574,7 @@ class KernelClaimEvidenceResponse(BaseModel):
             table_reference=model.table_reference,
             confidence=float(model.confidence),
             metadata=dict(metadata_payload),
+            paper_links=[] if paper_links is None else paper_links,
             created_at=model.created_at,
         )
 

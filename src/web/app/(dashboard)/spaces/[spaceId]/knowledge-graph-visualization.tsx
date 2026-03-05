@@ -5,7 +5,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import KnowledgeGraphCanvas from '@/components/knowledge-graph/KnowledgeGraphCanvas'
-import type { GraphEdge, GraphModel } from '@/lib/graph/model'
+import {
+  resolveEvidenceArticleUrlFromMetadata,
+  type GraphEdge,
+  type GraphModel,
+} from '@/lib/graph/model'
 import {
   edgeColorForRelationType,
   edgeVisualForStatus,
@@ -13,6 +17,7 @@ import {
 } from '@/lib/graph/style'
 import { cn } from '@/lib/utils'
 import type { KernelGraphSubgraphMeta } from '@/types/kernel'
+import type { ClaimEvidencePreview } from './use-knowledge-graph-controller'
 
 interface KnowledgeGraphVisualizationProps {
   filteredGraph: GraphModel
@@ -28,8 +33,11 @@ interface KnowledgeGraphVisualizationProps {
   }
   selectedNodeId: string | null
   onNodeClick: (nodeId: string) => void
+  onEdgeClick: (edgeId: string) => void
   onHoverNodeChange: (nodeId: string | null) => void
+  onHoverEdgeChange: (edgeId: string | null) => void
   onClearSelection: () => void
+  claimEvidenceByClaimId: Readonly<Record<string, ClaimEvidencePreview>>
   /** Called when the user taps anywhere on the canvas (background, node, or edge). Use e.g. to collapse the controls panel. */
   onCanvasTap?: () => void
   topControls?: ReactNode
@@ -51,6 +59,12 @@ function isGraphEdge(value: GraphEdge | undefined): value is GraphEdge {
   return Boolean(value)
 }
 
+const EVIDENCE_STRENGTH_LEGEND = [
+  { label: 'High', width: 5, opacity: 0.95 },
+  { label: 'Medium', width: 3.5, opacity: 0.72 },
+  { label: 'Low', width: 2.2, opacity: 0.45 },
+] as const
+
 function FocusInspector({
   selectedNode,
   selectedEdges,
@@ -59,6 +73,8 @@ function FocusInspector({
   className,
 }: FocusInspectorProps) {
   const selectedEvidenceCount = selectedEdges.reduce((sum, edge) => sum + edge.sourceCount, 0)
+  const claimOverlayEdgeCount = selectedEdges.filter((edge) => edge.origin === 'claim').length
+  const canonicalEdgeCount = selectedEdges.length - claimOverlayEdgeCount
   const curatedEdgeCount = selectedEdges.filter(
     (edge) => edge.curationStatus === 'APPROVED' || edge.curationStatus === 'UNDER_REVIEW',
   ).length
@@ -75,6 +91,11 @@ function FocusInspector({
       .sort((left, right) => right[1] - left[1])
       .slice(0, 4)
   }, [selectedEdges])
+  const selectedNodeType = selectedNode?.entityType.trim().toUpperCase() ?? null
+  const selectedPaperArticleUrl =
+    selectedNode && selectedNodeType === 'PAPER'
+      ? resolveEvidenceArticleUrlFromMetadata(selectedNode.metadata)
+      : null
 
   return (
     <div className={cn('rounded-xl border border-border/70 bg-background/85 p-4 backdrop-blur', className)}>
@@ -102,9 +123,22 @@ function FocusInspector({
           <div>
             <div className="text-muted-foreground">{selectedNode.entityType}</div>
             <div className="text-sm font-semibold text-foreground">{selectedNode.label}</div>
-            <div className="truncate font-mono text-[11px] text-muted-foreground">
-              {selectedNode.id}
-            </div>
+            {selectedNodeType === 'PAPER' ? (
+              selectedPaperArticleUrl ? (
+                <a
+                  href={selectedPaperArticleUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="mt-1 inline-flex text-xs font-medium text-sky-400 underline-offset-2 hover:text-sky-300 hover:underline"
+                >
+                  Open article
+                </a>
+              ) : (
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  Article link unavailable in evidence metadata.
+                </div>
+              )
+            ) : null}
           </div>
           <div className="grid grid-cols-2 gap-2 rounded-lg border border-border/70 bg-muted/30 p-2">
             <div className="text-muted-foreground">Degree</div>
@@ -115,11 +149,18 @@ function FocusInspector({
             <div className="text-right font-semibold">{confidenceValue(averageConfidence)}</div>
             <div className="text-muted-foreground">Curated Links</div>
             <div className="text-right font-semibold">{curatedEdgeCount}</div>
+            <div className="text-muted-foreground">Claim Overlay Links</div>
+            <div className="text-right font-semibold">
+              {claimOverlayEdgeCount} / {canonicalEdgeCount} canonical
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Badge variant={curatedEdgeCount > 0 ? 'default' : 'secondary'}>
               {curatedEdgeCount > 0 ? 'Curated Evidence Present' : 'Inferred / Draft Heavy'}
             </Badge>
+            {claimOverlayEdgeCount > 0 ? (
+              <Badge variant="secondary">Claim Overlay Present</Badge>
+            ) : null}
             <Badge variant="outline">Neighborhood: {neighborhoodNodeCount} nodes</Badge>
           </div>
           <div className="space-y-1.5">
@@ -155,8 +196,11 @@ export function KnowledgeGraphVisualization({
   neighborhood,
   selectedNodeId,
   onNodeClick,
+  onEdgeClick,
   onHoverNodeChange,
+  onHoverEdgeChange,
   onClearSelection,
+  claimEvidenceByClaimId,
   onCanvasTap,
   topControls,
 }: KnowledgeGraphVisualizationProps) {
@@ -194,6 +238,12 @@ export function KnowledgeGraphVisualization({
   )
 
   const selectedNode = selectedNodeId ? renderGraph.nodeById[selectedNodeId] ?? null : null
+  const expandingNodeLabel = isExpandingNodeId
+    ? (renderGraph.nodeById[isExpandingNodeId]?.label ?? 'selected node')
+    : null
+  const canonicalEdgeCount = filteredGraph.edges.filter((edge) => edge.origin === 'canonical').length
+  const claimOverlayEdgeCount = filteredGraph.edges.filter((edge) => edge.origin === 'claim').length
+  const evidenceOverlayEdgeCount = filteredGraph.edges.filter((edge) => edge.origin === 'evidence').length
 
   const selectedEdges = useMemo(
     () =>
@@ -213,7 +263,10 @@ export function KnowledgeGraphVisualization({
           highlightedNodeIds={neighborhood.nodeIds}
           highlightedEdgeIds={neighborhood.edgeIds}
           onNodeClick={onNodeClick}
+          onEdgeClick={onEdgeClick}
           onHoverNodeChange={onHoverNodeChange}
+          onHoverEdgeChange={onHoverEdgeChange}
+          claimEvidenceByClaimId={claimEvidenceByClaimId}
           onCanvasTap={onCanvasTap}
           chrome="minimal"
           className="h-[calc(100svh-72px)] min-h-[620px] rounded-none border-0 bg-transparent"
@@ -243,6 +296,26 @@ export function KnowledgeGraphVisualization({
                     variant="outline"
                     className="shrink-0 rounded-full bg-background/95 shadow-brand-sm"
                   >
+                    Canonical: {canonicalEdgeCount}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 rounded-full bg-background/95 shadow-brand-sm"
+                  >
+                    Claim Overlay: {claimOverlayEdgeCount}
+                  </Badge>
+                  {evidenceOverlayEdgeCount > 0 ? (
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 rounded-full bg-background/95 shadow-brand-sm"
+                    >
+                      Evidence Overlay: {evidenceOverlayEdgeCount}
+                    </Badge>
+                  ) : null}
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 rounded-full bg-background/95 shadow-brand-sm"
+                  >
                     Rendered: {renderGraph.stats.nodeCount} nodes / {renderGraph.stats.edgeCount} edges
                   </Badge>
                   {subgraphMeta ? (
@@ -267,7 +340,7 @@ export function KnowledgeGraphVisualization({
                       variant="outline"
                       className="shrink-0 rounded-full bg-background/95 shadow-brand-sm"
                     >
-                      Expanding {isExpandingNodeId}
+                      Expanding {expandingNodeLabel}
                     </Badge>
                   ) : null}
                 </div>
@@ -290,6 +363,62 @@ export function KnowledgeGraphVisualization({
                     <span>{item.label}</span>
                   </span>
                 ))}
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="h-2.5 w-3.5 rounded-sm border-2"
+                    style={{
+                      backgroundColor: '#e2e8f0',
+                      borderColor: '#ca8a04',
+                    }}
+                  />
+                  <span>Claim node (rounded rectangle, border = polarity)</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="h-0 w-4 border-t-2"
+                    style={{
+                      borderTopColor: '#475569',
+                      borderTopStyle: 'dashed',
+                    }}
+                  />
+                  <span>Claim edge (participant role → claim)</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="h-0 w-4 border-t-[3px]"
+                    style={{
+                      borderTopColor: '#f59e0b',
+                      borderTopStyle: 'solid',
+                    }}
+                  />
+                  <span>Conflict edge (support + refute)</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="h-0 w-4 border-t-2"
+                    style={{
+                      borderTopColor: '#0ea5e9',
+                      borderTopStyle: 'dotted',
+                    }}
+                  />
+                  <span>Evidence edge (SUPPORTED_BY / DERIVED_FROM)</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="text-foreground">Confidence strength:</span>
+                  {EVIDENCE_STRENGTH_LEGEND.map((item) => (
+                    <span key={item.label} className="inline-flex items-center gap-1">
+                      <span
+                        className="h-0 w-4 border-t"
+                        style={{
+                          borderTopWidth: item.width,
+                          borderTopColor: '#475569',
+                          opacity: item.opacity,
+                        }}
+                      />
+                      <span>{item.label}</span>
+                    </span>
+                  ))}
+                </span>
                 {statusLegend.map((item) => (
                   <span key={item.label} className="inline-flex items-center gap-1.5">
                     <span

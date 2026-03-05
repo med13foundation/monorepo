@@ -1,9 +1,16 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import SpaceCurationClient from '@/app/(dashboard)/spaces/[spaceId]/space-curation-client'
 
 const routerPushMock = jest.fn()
 const routerRefreshMock = jest.fn()
+const listClaimRelationsActionMock = jest.fn()
+const listClaimParticipantsActionMock = jest.fn()
+const listClaimsByEntityActionMock = jest.fn()
+const updateClaimRelationReviewActionMock = jest.fn()
+const getClaimParticipantCoverageActionMock = jest.fn()
+const runClaimParticipantBackfillActionMock = jest.fn()
+const listHypothesesActionMock = jest.fn()
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -20,6 +27,19 @@ jest.mock('@/app/actions/kernel-relations', () => ({
   }),
   updateKernelRelationStatusAction: jest.fn().mockResolvedValue({ success: true, data: {} }),
   updateRelationClaimStatusAction: jest.fn().mockResolvedValue({ success: true, data: {} }),
+}))
+
+jest.mock('@/app/actions/kernel-claim-relations', () => ({
+  listClaimRelationsAction: (...args: unknown[]) => listClaimRelationsActionMock(...args),
+  listClaimParticipantsAction: (...args: unknown[]) => listClaimParticipantsActionMock(...args),
+  listClaimsByEntityAction: (...args: unknown[]) => listClaimsByEntityActionMock(...args),
+  updateClaimRelationReviewAction: (...args: unknown[]) => updateClaimRelationReviewActionMock(...args),
+  getClaimParticipantCoverageAction: (...args: unknown[]) => getClaimParticipantCoverageActionMock(...args),
+  runClaimParticipantBackfillAction: (...args: unknown[]) => runClaimParticipantBackfillActionMock(...args),
+}))
+
+jest.mock('@/app/actions/kernel-hypotheses', () => ({
+  listHypothesesAction: (...args: unknown[]) => listHypothesesActionMock(...args),
 }))
 
 jest.mock('@/app/actions/kernel-hybrid-duplicates', () => ({
@@ -48,6 +68,36 @@ jest.mock('sonner', () => ({
 describe('SpaceCurationClient', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    listClaimRelationsActionMock.mockResolvedValue({ success: true, data: [] })
+    listClaimParticipantsActionMock.mockResolvedValue({ success: true, data: [] })
+    listClaimsByEntityActionMock.mockResolvedValue({
+      success: true,
+      data: { claims: [], total: 0, offset: 0, limit: 20 },
+    })
+    updateClaimRelationReviewActionMock.mockResolvedValue({ success: true, data: {} })
+    getClaimParticipantCoverageActionMock.mockResolvedValue({
+      success: true,
+      data: {
+        total_claims: 0,
+        claims_with_any_participants: 0,
+        claims_with_subject: 0,
+        claims_with_object: 0,
+        unresolved_subject_endpoints: 0,
+        unresolved_object_endpoints: 0,
+        unresolved_endpoint_rate: 0,
+      },
+    })
+    runClaimParticipantBackfillActionMock.mockResolvedValue({
+      success: true,
+      data: {
+        scanned_claims: 0,
+        created_participants: 0,
+        skipped_existing: 0,
+        unresolved_endpoints: 0,
+        dry_run: true,
+      },
+    })
+    listHypothesesActionMock.mockResolvedValue({ success: true, data: [] })
   })
 
   const baseProps = {
@@ -125,6 +175,7 @@ describe('SpaceCurationClient', () => {
     canCurate: true,
     hypothesisGenerationEnabled: true,
     relationFilters: {
+      graphMode: 'canonical' as const,
       relationType: '',
       curationStatus: '',
       validationState: '',
@@ -132,6 +183,7 @@ describe('SpaceCurationClient', () => {
       certaintyBand: '',
       nodeQuery: '',
       nodeIds: [],
+      focusRelationId: '',
       offset: 0,
       limit: 25,
     },
@@ -248,5 +300,475 @@ describe('SpaceCurationClient', () => {
     const lastCall = routerPushMock.mock.calls[routerPushMock.mock.calls.length - 1]?.[0]
     expect(String(lastCall)).toContain('/spaces/space-1/curation?')
     expect(String(lastCall)).toContain('tab=claims')
+  })
+
+  it('renders claim overlay mode with empty-state CTA in graph tab', async () => {
+    render(
+      <SpaceCurationClient
+        {...baseProps}
+        activeTab="graph"
+        relationFilters={{
+          ...baseProps.relationFilters,
+          graphMode: 'claim_overlay',
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(listClaimRelationsActionMock).toHaveBeenCalledWith('space-1', {
+        offset: 0,
+        limit: 200,
+      })
+    })
+    expect(screen.getByText('Claim Overlay')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'No claim overlay edges exist yet. Create/review links from the hypotheses workflow.',
+      ),
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Create Or Review Claim Links' }))
+    expect(routerPushMock).toHaveBeenCalled()
+    const lastCall = routerPushMock.mock.calls[routerPushMock.mock.calls.length - 1]?.[0]
+    expect(String(lastCall)).toContain('tab=claims')
+  })
+
+  it('renders populated claim overlay and supports review/backfill actions', async () => {
+    listClaimRelationsActionMock.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          id: 'edge-1',
+          research_space_id: 'space-1',
+          source_claim_id: 'claim-1',
+          target_claim_id: 'claim-2',
+          relation_type: 'SUPPORTS',
+          agent_run_id: null,
+          source_document_id: null,
+          confidence: 0.82,
+          review_status: 'PROPOSED',
+          evidence_summary: null,
+          metadata: {},
+          created_at: '2026-03-04T00:00:00Z',
+        },
+      ],
+    })
+    listHypothesesActionMock.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          claim_id: 'claim-1',
+          polarity: 'HYPOTHESIS',
+          claim_status: 'OPEN',
+          validation_state: 'ALLOWED',
+          persistability: 'PERSISTABLE',
+          confidence: 0.9,
+          source_label: 'MED13',
+          relation_type: 'ASSOCIATED_WITH',
+          target_label: 'Autism',
+          claim_text: 'Claim one',
+          origin: 'graph_agent',
+          seed_entity_ids: [],
+          supporting_provenance_ids: [],
+          created_at: '2026-03-03T00:00:00Z',
+          metadata: {},
+        },
+        {
+          claim_id: 'claim-2',
+          polarity: 'HYPOTHESIS',
+          claim_status: 'OPEN',
+          validation_state: 'ALLOWED',
+          persistability: 'PERSISTABLE',
+          confidence: 0.88,
+          source_label: 'Mediator',
+          relation_type: 'CAUSES',
+          target_label: 'Dysregulation',
+          claim_text: 'Claim two',
+          origin: 'graph_agent',
+          seed_entity_ids: [],
+          supporting_provenance_ids: [],
+          created_at: '2026-03-03T00:00:00Z',
+          metadata: {},
+        },
+      ],
+    })
+    listClaimParticipantsActionMock.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          id: 'participant-1',
+          claim_id: 'claim-1',
+          research_space_id: 'space-1',
+          label: 'MED13',
+          entity_id: 'ent-1',
+          role: 'SUBJECT',
+          position: 0,
+          qualifiers: {},
+          created_at: '2026-03-04T00:00:00Z',
+        },
+      ],
+    })
+    updateClaimRelationReviewActionMock.mockResolvedValueOnce({
+      success: true,
+      data: {
+        id: 'edge-1',
+        research_space_id: 'space-1',
+        source_claim_id: 'claim-1',
+        target_claim_id: 'claim-2',
+        relation_type: 'SUPPORTS',
+        agent_run_id: null,
+        source_document_id: null,
+        confidence: 0.82,
+        review_status: 'ACCEPTED',
+        evidence_summary: null,
+        metadata: {},
+        created_at: '2026-03-04T00:00:00Z',
+      },
+    })
+
+    render(
+      <SpaceCurationClient
+        {...baseProps}
+        activeTab="graph"
+        relationFilters={{
+          ...baseProps.relationFilters,
+          graphMode: 'claim_overlay',
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Source participants' })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Source participants' }))
+    await waitFor(() => {
+      expect(listClaimParticipantsActionMock).toHaveBeenCalledWith('space-1', 'claim-1')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }))
+    await waitFor(() => {
+      expect(updateClaimRelationReviewActionMock).toHaveBeenCalledWith(
+        'space-1',
+        'edge-1',
+        'ACCEPTED',
+      )
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dry-run backfill' }))
+    await waitFor(() => {
+      expect(runClaimParticipantBackfillActionMock).toHaveBeenCalledWith('space-1', true)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Backfill participants' }))
+    await waitFor(() => {
+      expect(runClaimParticipantBackfillActionMock).toHaveBeenCalledWith('space-1', false)
+    })
+  })
+
+  it('opens claims queue filtered by relation when selecting canonical linked claims', () => {
+    render(<SpaceCurationClient {...baseProps} activeTab="graph" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open linked claims' }))
+
+    expect(routerPushMock).toHaveBeenCalled()
+    const lastCall = routerPushMock.mock.calls[routerPushMock.mock.calls.length - 1]?.[0]
+    expect(String(lastCall)).toContain('tab=claims')
+    expect(String(lastCall)).toContain('linked_relation_id=rel-1')
+  })
+
+  it('opens graph view focused on linked relation from a claim', () => {
+    render(
+      <SpaceCurationClient
+        {...baseProps}
+        activeTab="claims"
+        claims={{
+          ...baseProps.claims,
+          claims: [
+            {
+              ...baseProps.claims.claims[0],
+              linked_relation_id: 'rel-1',
+            },
+          ],
+        }}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Highlight linked relation' }))
+    expect(routerPushMock).toHaveBeenCalled()
+    const lastCall = routerPushMock.mock.calls[routerPushMock.mock.calls.length - 1]?.[0]
+    expect(String(lastCall)).toContain('tab=graph')
+    expect(String(lastCall)).toContain('focus_relation_id=rel-1')
+  })
+
+  it('renders conflict badge in claim queue for linked conflicting relations', () => {
+    render(
+      <SpaceCurationClient
+        {...baseProps}
+        activeTab="claims"
+        claims={{
+          ...baseProps.claims,
+          claims: [
+            {
+              ...baseProps.claims.claims[0],
+              linked_relation_id: 'rel-1',
+            },
+          ],
+        }}
+        relationConflicts={{
+          conflicts: [
+            {
+              relation_id: 'rel-1',
+              support_count: 5,
+              refute_count: 2,
+              support_claim_ids: ['claim-a'],
+              refute_claim_ids: ['claim-b'],
+            },
+          ],
+          total: 1,
+          offset: 0,
+          limit: 50,
+        }}
+      />,
+    )
+
+    expect(screen.getByText('Conflict 5/2')).toBeInTheDocument()
+  })
+
+  it('finds and highlights focus path in claim overlay mode', async () => {
+    listClaimRelationsActionMock.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          id: 'edge-1',
+          research_space_id: 'space-1',
+          source_claim_id: 'claim-1',
+          target_claim_id: 'claim-2',
+          relation_type: 'SUPPORTS',
+          agent_run_id: null,
+          source_document_id: null,
+          confidence: 0.82,
+          review_status: 'PROPOSED',
+          evidence_summary: 'Overlay path edge',
+          metadata: {},
+          created_at: '2026-03-04T00:00:00Z',
+        },
+      ],
+    })
+    listHypothesesActionMock.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          claim_id: 'claim-1',
+          polarity: 'HYPOTHESIS',
+          claim_status: 'OPEN',
+          validation_state: 'ALLOWED',
+          persistability: 'PERSISTABLE',
+          confidence: 0.9,
+          source_label: 'MED13',
+          relation_type: 'ASSOCIATED_WITH',
+          target_label: 'Autism',
+          claim_text: 'Claim one',
+          origin: 'graph_agent',
+          seed_entity_ids: [],
+          supporting_provenance_ids: [],
+          created_at: '2026-03-03T00:00:00Z',
+          metadata: {},
+        },
+        {
+          claim_id: 'claim-2',
+          polarity: 'HYPOTHESIS',
+          claim_status: 'OPEN',
+          validation_state: 'ALLOWED',
+          persistability: 'PERSISTABLE',
+          confidence: 0.88,
+          source_label: 'Mediator',
+          relation_type: 'CAUSES',
+          target_label: 'Dysregulation',
+          claim_text: 'Claim two',
+          origin: 'graph_agent',
+          seed_entity_ids: [],
+          supporting_provenance_ids: [],
+          created_at: '2026-03-03T00:00:00Z',
+          metadata: {},
+        },
+      ],
+    })
+    listClaimsByEntityActionMock
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          claims: [
+            {
+              ...baseProps.claims.claims[0],
+              id: 'claim-1',
+            },
+          ],
+          total: 1,
+          offset: 0,
+          limit: 200,
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          claims: [
+            {
+              ...baseProps.claims.claims[0],
+              id: 'claim-2',
+            },
+          ],
+          total: 1,
+          offset: 0,
+          limit: 200,
+        },
+      })
+
+    render(
+      <SpaceCurationClient
+        {...baseProps}
+        activeTab="graph"
+        relationFilters={{
+          ...baseProps.relationFilters,
+          graphMode: 'claim_overlay',
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Find path' })).toBeInTheDocument()
+    })
+
+    fireEvent.change(screen.getByLabelText('From entity ID'), {
+      target: { value: 'entity-source' },
+    })
+    fireEvent.change(screen.getByLabelText('To entity ID'), {
+      target: { value: 'entity-target' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Find path' }))
+
+    await waitFor(() => {
+      expect(listClaimsByEntityActionMock).toHaveBeenCalledWith(
+        'space-1',
+        'entity-source',
+        { offset: 0, limit: 200 },
+      )
+      expect(listClaimsByEntityActionMock).toHaveBeenCalledWith(
+        'space-1',
+        'entity-target',
+        { offset: 0, limit: 200 },
+      )
+    })
+    expect(
+      screen.getByText('Focused path with 2 claims across 1 links.'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Focus path')).toBeInTheDocument()
+  })
+
+  it('opens canonical graph relation directly from claim overlay edges', async () => {
+    listClaimRelationsActionMock.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          id: 'edge-1',
+          research_space_id: 'space-1',
+          source_claim_id: 'claim-1',
+          target_claim_id: 'claim-2',
+          relation_type: 'SUPPORTS',
+          agent_run_id: null,
+          source_document_id: null,
+          confidence: 0.82,
+          review_status: 'PROPOSED',
+          evidence_summary: 'Overlay path edge',
+          metadata: {},
+          created_at: '2026-03-04T00:00:00Z',
+        },
+      ],
+    })
+    listHypothesesActionMock.mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          claim_id: 'claim-1',
+          polarity: 'HYPOTHESIS',
+          claim_status: 'OPEN',
+          validation_state: 'ALLOWED',
+          persistability: 'PERSISTABLE',
+          confidence: 0.9,
+          source_label: 'MED13',
+          relation_type: 'ASSOCIATED_WITH',
+          target_label: 'Autism',
+          claim_text: 'Claim one',
+          linked_relation_id: 'rel-1',
+          origin: 'graph_agent',
+          seed_entity_ids: [],
+          supporting_provenance_ids: [],
+          created_at: '2026-03-03T00:00:00Z',
+          metadata: {},
+        },
+        {
+          claim_id: 'claim-2',
+          polarity: 'HYPOTHESIS',
+          claim_status: 'OPEN',
+          validation_state: 'ALLOWED',
+          persistability: 'PERSISTABLE',
+          confidence: 0.88,
+          source_label: 'Mediator',
+          relation_type: 'CAUSES',
+          target_label: 'Dysregulation',
+          claim_text: 'Claim two',
+          linked_relation_id: null,
+          origin: 'graph_agent',
+          seed_entity_ids: [],
+          supporting_provenance_ids: [],
+          created_at: '2026-03-03T00:00:00Z',
+          metadata: {},
+        },
+      ],
+    })
+
+    render(
+      <SpaceCurationClient
+        {...baseProps}
+        activeTab="graph"
+        relationFilters={{
+          ...baseProps.relationFilters,
+          graphMode: 'claim_overlay',
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Open canonical relation' })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open canonical relation' }))
+    expect(routerPushMock).toHaveBeenCalled()
+    const lastCall = routerPushMock.mock.calls[routerPushMock.mock.calls.length - 1]?.[0]
+    expect(String(lastCall)).toContain('tab=graph')
+    expect(String(lastCall)).toContain('focus_relation_id=rel-1')
+  })
+
+  it('renders focused relation badge when graph is opened from linked claim context', () => {
+    render(
+      <SpaceCurationClient
+        {...baseProps}
+        activeTab="graph"
+        relationFilters={{
+          ...baseProps.relationFilters,
+          focusRelationId: 'rel-1',
+        }}
+        claims={{
+          ...baseProps.claims,
+          claims: [
+            {
+              ...baseProps.claims.claims[0],
+              linked_relation_id: 'rel-1',
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.getByText('Focused from claim queue')).toBeInTheDocument()
   })
 })

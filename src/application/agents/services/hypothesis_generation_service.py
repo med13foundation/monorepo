@@ -13,6 +13,9 @@ from src.domain.agents.contexts.graph_connection_context import GraphConnectionC
 from src.domain.value_objects.relation_types import normalize_relation_type
 
 if TYPE_CHECKING:
+    from src.application.services.kernel.kernel_claim_participant_service import (
+        KernelClaimParticipantService,
+    )
     from src.application.services.kernel.kernel_relation_claim_service import (
         KernelRelationClaimService,
     )
@@ -39,6 +42,7 @@ class HypothesisGenerationServiceDependencies:
 
     graph_connection_agent: GraphConnectionPort
     relation_claim_service: KernelRelationClaimService
+    claim_participant_service: KernelClaimParticipantService
     entity_repository: KernelEntityRepository
     relation_repository: KernelRelationRepository
     dictionary_service: DictionaryPort
@@ -96,6 +100,7 @@ class HypothesisGenerationService:
     ) -> None:
         self._graph_agent = dependencies.graph_connection_agent
         self._claims = dependencies.relation_claim_service
+        self._participants = dependencies.claim_participant_service
         self._entities = dependencies.entity_repository
         self._relations = dependencies.relation_repository
         self._dictionary = dependencies.dictionary_service
@@ -512,7 +517,7 @@ class HypothesisGenerationService:
             "graph_agent_run_id": candidate.raw.graph_agent_run_id,
         }
 
-        return self._claims.create_hypothesis_claim(
+        claim = self._claims.create_hypothesis_claim(
             research_space_id=research_space_id,
             source_document_id=None,
             agent_run_id=run_id,
@@ -529,6 +534,25 @@ class HypothesisGenerationService:
             metadata=metadata,
             claim_status="OPEN",
         )
+        self._participants.create_participant(
+            claim_id=str(claim.id),
+            research_space_id=research_space_id,
+            role="SUBJECT",
+            label=candidate.raw.source_label,
+            entity_id=candidate.raw.source_entity_id,
+            position=0,
+            qualifiers=None,
+        )
+        self._participants.create_participant(
+            claim_id=str(claim.id),
+            research_space_id=research_space_id,
+            role="OBJECT",
+            label=candidate.raw.target_label,
+            entity_id=candidate.raw.target_entity_id,
+            position=1,
+            qualifiers=None,
+        )
+        return claim
 
     def _resolve_novelty(
         self,

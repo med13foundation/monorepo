@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Float, ForeignKey, Index, String, Text
+from sqlalchemy import Float, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -94,6 +94,11 @@ class RelationClaimModel(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "research_space_id",
+            name="uq_relation_claims_id_space",
+        ),
         Index("idx_relation_claims_space", "research_space_id"),
         Index("idx_relation_claims_status", "claim_status"),
         Index("idx_relation_claims_space_polarity", "research_space_id", "polarity"),

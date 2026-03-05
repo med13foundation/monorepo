@@ -144,8 +144,21 @@ class SourceWorkflowMonitorPipelineMixin:
         metrics = coerce_json_object(row.metrics)
         metadata = coerce_json_object(row.job_metadata)
         extraction_queue_meta = coerce_json_object(metadata.get("extraction_queue"))
-        extraction_run_meta = coerce_json_object(metadata.get("extraction_run"))
+        extraction_run_meta = coerce_json_object(
+            pipeline_payload.get("extraction_run"),
+        )
+        if not extraction_run_meta:
+            extraction_run_meta = coerce_json_object(metadata.get("extraction_run"))
         graph_progress = coerce_json_object(pipeline_payload.get("graph_progress"))
+        extraction_processed = safe_int(extraction_run_meta.get("processed"))
+        extraction_completed = safe_int(extraction_run_meta.get("completed"))
+        extraction_failed = safe_int(extraction_run_meta.get("failed"))
+        if extraction_run_meta.get("processed") is None:
+            extraction_processed = safe_int(graph_progress.get("extraction_processed"))
+        if extraction_run_meta.get("completed") is None:
+            extraction_completed = safe_int(graph_progress.get("extraction_completed"))
+        if extraction_run_meta.get("failed") is None:
+            extraction_failed = safe_int(graph_progress.get("extraction_failed"))
         run_scope = coerce_json_object(pipeline_payload.get("run_scope"))
         run_ingestion_job_id = normalize_optional_string(
             run_scope.get("ingestion_job_id"),
@@ -164,9 +177,9 @@ class SourceWorkflowMonitorPipelineMixin:
             "records_failed": safe_int(metrics.get("records_failed")),
             "records_skipped": safe_int(metrics.get("records_skipped")),
             "queued_for_extraction": safe_int(extraction_queue_meta.get("queued")),
-            "extraction_processed": safe_int(extraction_run_meta.get("processed")),
-            "extraction_completed": safe_int(extraction_run_meta.get("completed")),
-            "extraction_failed": safe_int(extraction_run_meta.get("failed")),
+            "extraction_processed": extraction_processed,
+            "extraction_completed": extraction_completed,
+            "extraction_failed": extraction_failed,
             "graph_requested": safe_int(graph_progress.get("requested")),
             "graph_processed": safe_int(graph_progress.get("processed")),
             "graph_completed": safe_int(graph_progress.get("completed")),

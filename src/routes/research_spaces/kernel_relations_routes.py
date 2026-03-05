@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal, NamedTuple
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from src.application.services._source_workflow_monitor_paper_links import (
+    resolve_paper_links,
+)
 from src.application.services.claim_first_metrics import (
     emit_graph_filter_preset_usage,
     increment_metric,
 )
 from src.database.session import get_session
 from src.domain.entities.user import User
+from src.models.database.source_document import SourceDocumentModel
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
@@ -46,10 +50,18 @@ from src.routes.research_spaces.kernel_schemas import (
     KernelRelationCreateRequest,
     KernelRelationCurationUpdateRequest,
     KernelRelationListResponse,
+    KernelRelationPaperLinkResponse,
     KernelRelationResponse,
 )
+from src.type_definitions.common import JSONObject  # noqa: TC001
 
 from ._kernel_relation_evidence_presenter import load_relation_evidence_presentation
+from ._kernel_relation_subgraph_helpers import (
+    collect_candidate_relations,
+    limit_relations_to_anchor_component,
+    materialize_nodes,
+    ordered_node_ids_for_relations,
+)
 from .router import (
     HTTP_201_CREATED,
     HTTP_400_BAD_REQUEST,
@@ -75,17 +87,11 @@ if TYPE_CHECKING:
     from src.application.services.membership_management_service import (
         MembershipManagementService,
     )
-    from src.domain.entities.kernel.relations import KernelRelation
     from src.domain.ports.dictionary_port import DictionaryPort
 
-_CURATION_STATUS_PRIORITY: dict[str, int] = {
-    "APPROVED": 5,
-    "UNDER_REVIEW": 4,
-    "DRAFT": 3,
-    "REJECTED": 2,
-    "RETRACTED": 1,
-}
-_CANONICAL_CURATION_STATUSES = frozenset(_CURATION_STATUS_PRIORITY.keys())
+_CANONICAL_CURATION_STATUSES = frozenset(
+    {"APPROVED", "UNDER_REVIEW", "DRAFT", "REJECTED", "RETRACTED"},
+)
 _CURATION_STATUS_ALIAS: dict[str, str] = {"PENDING_REVIEW": "DRAFT"}
 _CLAIM_STATUSES = frozenset({"OPEN", "NEEDS_MAPPING", "REJECTED", "RESOLVED"})
 _CLAIM_VALIDATION_STATES = frozenset(
@@ -101,7 +107,6 @@ _CLAIM_VALIDATION_STATES = frozenset(
 _CLAIM_PERSISTABILITY = frozenset({"PERSISTABLE", "NON_PERSISTABLE"})
 _CLAIM_POLARITIES = frozenset({"SUPPORT", "REFUTE", "UNCERTAIN", "HYPOTHESIS"})
 _CERTAINTY_BANDS = frozenset({"HIGH", "MEDIUM", "LOW"})
-_STARTER_FETCH_MULTIPLIER = 6
 _ClaimStatus = Literal["OPEN", "NEEDS_MAPPING", "REJECTED", "RESOLVED"]
 _ClaimValidationState = Literal[
     "ALLOWED",
@@ -184,6 +189,54 @@ def _claim_resolution_evidence_summary(claim: object) -> str:
     if claim_id is None:
         return "Promoted from resolved extraction claim."
     return f"Promoted from resolved extraction claim ({claim_id})."
+
+
+def _resolve_claim_evidence_paper_links(
+    *,
+    source_document: SourceDocumentModel | None,
+    evidence_metadata: JSONObject,
+) -> list[KernelRelationPaperLinkResponse]:
+    combined_links: list[JSONObject] = []
+    metadata_links = resolve_paper_links(
+        source_type=None,
+        external_record_id=None,
+        metadata=evidence_metadata,
+    )
+    combined_links.extend(metadata_links)
+
+    if source_document is not None:
+        source_document_metadata_payload = source_document.metadata_payload
+        source_document_metadata: JSONObject = (
+            source_document_metadata_payload
+            if isinstance(source_document_metadata_payload, dict)
+            else {}
+        )
+        source_document_links = resolve_paper_links(
+            source_type=source_document.source_type,
+            external_record_id=source_document.external_record_id,
+            metadata=source_document_metadata,
+        )
+        combined_links.extend(source_document_links)
+
+    normalized_links: list[KernelRelationPaperLinkResponse] = []
+    seen_urls: set[str] = set()
+    for link in combined_links:
+        label = _normalize_optional_text(link.get("label"))
+        url = _normalize_optional_text(link.get("url"))
+        source = _normalize_optional_text(link.get("source"))
+        if label is None or url is None or source is None:
+            continue
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        normalized_links.append(
+            KernelRelationPaperLinkResponse(
+                label=label,
+                url=url,
+                source=source,
+            ),
+        )
+    return normalized_links
 
 
 def _resolve_claim_resolution_evidence(
@@ -279,10 +332,6 @@ def _parse_node_ids_param(node_ids: list[str] | None) -> list[str]:
     for raw in node_ids:
         normalized.extend(part.strip() for part in raw.split(",") if part.strip())
     return normalized
-
-
-def _status_priority(status: str) -> int:
-    return _CURATION_STATUS_PRIORITY.get(status.strip().upper(), 0)
 
 
 def _normalize_curation_status_filter(status: str | None) -> str | None:
@@ -402,128 +451,6 @@ def _normalize_certainty_band(value: str | None) -> _CertaintyBand | None:
     if normalized == "MEDIUM":
         return "MEDIUM"
     return "LOW"
-
-
-def _sort_relations_for_subgraph(
-    relations: Iterable[KernelRelation],
-) -> list[KernelRelation]:
-    return sorted(
-        relations,
-        key=lambda relation: (
-            _status_priority(str(relation.curation_status)),
-            relation.updated_at,
-        ),
-        reverse=True,
-    )
-
-
-def _filter_relations(
-    relations: Iterable[KernelRelation],
-    *,
-    relation_types: set[str] | None,
-    curation_statuses: set[str] | None,
-) -> list[KernelRelation]:
-    filtered: list[KernelRelation] = []
-    for relation in relations:
-        relation_type_normalized = str(relation.relation_type).strip().upper()
-        curation_status_normalized = str(relation.curation_status).strip().upper()
-        if (
-            relation_types is not None
-            and relation_type_normalized not in relation_types
-        ):
-            continue
-        if (
-            curation_statuses is not None
-            and curation_status_normalized not in curation_statuses
-        ):
-            continue
-        filtered.append(relation)
-    return filtered
-
-
-def _ordered_node_ids_for_relations(
-    relations: Iterable[KernelRelation],
-    *,
-    seed_entity_ids: list[str],
-) -> list[str]:
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for seed_id in seed_entity_ids:
-        if seed_id not in seen:
-            seen.add(seed_id)
-            ordered.append(seed_id)
-    for relation in relations:
-        for entity_id in (str(relation.source_id), str(relation.target_id)):
-            if entity_id in seen:
-                continue
-            seen.add(entity_id)
-            ordered.append(entity_id)
-    return ordered
-
-
-def _collect_candidate_relations(
-    *,
-    mode: Literal["starter", "seeded"],
-    space_id: str,
-    request: KernelGraphSubgraphRequest,
-    relation_service: KernelRelationService,
-    relation_types: set[str] | None,
-    curation_statuses: set[str] | None,
-) -> list[KernelRelation]:
-    if mode == "starter":
-        fetch_limit = max(
-            request.max_edges * _STARTER_FETCH_MULTIPLIER,
-            request.top_k * _STARTER_FETCH_MULTIPLIER,
-            200,
-        )
-        relations = relation_service.list_by_research_space(
-            space_id,
-            limit=fetch_limit,
-            offset=0,
-        )
-        filtered = _filter_relations(
-            relations,
-            relation_types=relation_types,
-            curation_statuses=curation_statuses,
-        )
-        return _sort_relations_for_subgraph(filtered)
-
-    deduped: dict[str, KernelRelation] = {}
-    for seed_entity_id in request.seed_entity_ids:
-        seed_relations = relation_service.get_neighborhood_in_space(
-            space_id,
-            str(seed_entity_id),
-            depth=request.depth,
-            relation_types=list(relation_types) if relation_types is not None else None,
-            limit=request.top_k,
-        )
-        filtered_seed_relations = _filter_relations(
-            seed_relations,
-            relation_types=relation_types,
-            curation_statuses=curation_statuses,
-        )
-        for relation in _sort_relations_for_subgraph(filtered_seed_relations)[
-            : request.top_k
-        ]:
-            deduped[str(relation.id)] = relation
-    return _sort_relations_for_subgraph(deduped.values())
-
-
-def _materialize_nodes(
-    *,
-    entity_ids: list[str],
-    space_id: str,
-    entity_service: KernelEntityService,
-) -> list[KernelEntityResponse]:
-    nodes: list[KernelEntityResponse] = []
-    for entity_id in entity_ids:
-        entity = entity_service.get_entity(entity_id)
-        if entity is None:
-            continue
-        if str(entity.research_space_id) != space_id:
-            continue
-        nodes.append(KernelEntityResponse.from_model(entity))
-    return nodes
 
 
 @research_spaces_router.get(
@@ -820,7 +747,7 @@ def get_kernel_subgraph(
         )
 
     try:
-        candidate_relations = _collect_candidate_relations(
+        candidate_relations = collect_candidate_relations(
             mode=mode,
             space_id=space_id_str,
             request=request,
@@ -834,6 +761,12 @@ def get_kernel_subgraph(
             detail=str(e),
         ) from e
 
+    if mode == "starter":
+        candidate_relations = limit_relations_to_anchor_component(
+            relations=candidate_relations,
+            preferred_seed_entity_ids=seed_entity_ids,
+        )
+
     pre_cap_node_ids = set(seed_entity_ids)
     for relation in candidate_relations:
         pre_cap_node_ids.add(str(relation.source_id))
@@ -843,7 +776,7 @@ def get_kernel_subgraph(
 
     bounded_relations = candidate_relations[: request.max_edges]
 
-    ordered_node_ids = _ordered_node_ids_for_relations(
+    ordered_node_ids = ordered_node_ids_for_relations(
         bounded_relations,
         seed_entity_ids=seed_entity_ids,
     )
@@ -857,13 +790,13 @@ def get_kernel_subgraph(
         and str(relation.target_id) in bounded_node_id_set
     ]
 
-    final_node_ids = _ordered_node_ids_for_relations(
+    final_node_ids = ordered_node_ids_for_relations(
         final_relations,
         seed_entity_ids=seed_entity_ids,
     )
     final_node_ids = final_node_ids[: request.max_nodes]
 
-    nodes = _materialize_nodes(
+    nodes = materialize_nodes(
         entity_ids=final_node_ids,
         space_id=space_id_str,
         entity_service=entity_service,
@@ -1046,9 +979,42 @@ def list_relation_claim_evidence(
             detail="Relation claim not found",
         )
     evidence_rows = claim_evidence_service.list_for_claim(str(claim_id))
+    source_document_ids = {
+        str(evidence_row.source_document_id)
+        for evidence_row in evidence_rows
+        if evidence_row.source_document_id is not None
+    }
+    source_documents_by_id: dict[str, SourceDocumentModel] = {}
+    if source_document_ids:
+        source_documents = session.scalars(
+            select(SourceDocumentModel).where(
+                SourceDocumentModel.id.in_(source_document_ids),
+            ),
+        ).all()
+        source_documents_by_id = {
+            str(source_document.id): source_document
+            for source_document in source_documents
+        }
+
+    response_rows: list[KernelClaimEvidenceResponse] = []
+    for evidence_row in evidence_rows:
+        source_document = (
+            source_documents_by_id.get(str(evidence_row.source_document_id))
+            if evidence_row.source_document_id is not None
+            else None
+        )
+        response_rows.append(
+            KernelClaimEvidenceResponse.from_model(
+                evidence_row,
+                paper_links=_resolve_claim_evidence_paper_links(
+                    source_document=source_document,
+                    evidence_metadata=evidence_row.metadata_payload,
+                ),
+            ),
+        )
     return KernelClaimEvidenceListResponse(
         claim_id=claim_id,
-        evidence=[KernelClaimEvidenceResponse.from_model(row) for row in evidence_rows],
+        evidence=response_rows,
         total=len(evidence_rows),
     )
 

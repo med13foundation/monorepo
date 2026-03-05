@@ -111,6 +111,15 @@ class StubRelationClaimService:
 
 
 @dataclass
+class StubClaimParticipantService:
+    def __post_init__(self) -> None:
+        self.created_payloads: list[dict[str, object]] = []
+
+    def create_participant(self, **kwargs: object) -> None:
+        self.created_payloads.append(kwargs)
+
+
+@dataclass
 class StubEntityRepository:
     entities: dict[str, KernelEntity]
     fallback_entities: list[KernelEntity]
@@ -402,6 +411,7 @@ async def test_generate_hypotheses_uses_claim_seed_fallback() -> None:
                 discovery_seed_claims=[discovery_claim],
                 existing_hypothesis_claims=[],
             ),
+            claim_participant_service=StubClaimParticipantService(),
             entity_repository=StubEntityRepository(
                 entities={str(source_id): source_entity, str(target_id): target_entity},
                 fallback_entities=[source_entity],
@@ -463,10 +473,12 @@ async def test_generate_hypotheses_scores_and_maps_claim_payload() -> None:
         discovery_seed_claims=[],
         existing_hypothesis_claims=[],
     )
+    participant_service = StubClaimParticipantService()
     service = HypothesisGenerationService(
         dependencies=HypothesisGenerationServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent({str(seed_id): contract}),
             relation_claim_service=claim_service,
+            claim_participant_service=participant_service,
             entity_repository=StubEntityRepository(
                 entities={str(source_id): source_entity, str(target_id): target_entity},
                 fallback_entities=[source_entity],
@@ -502,6 +514,18 @@ async def test_generate_hypotheses_scores_and_maps_claim_payload() -> None:
     assert metadata.get("source_entity_id") == str(source_id)
     assert metadata.get("target_entity_id") == str(target_id)
     assert isinstance(metadata.get("candidate_score"), float)
+    assert len(participant_service.created_payloads) == 2
+    participants_by_role = {
+        str(payload["role"]): payload
+        for payload in participant_service.created_payloads
+    }
+    assert set(participants_by_role) == {"SUBJECT", "OBJECT"}
+    subject_payload = participants_by_role["SUBJECT"]
+    object_payload = participants_by_role["OBJECT"]
+    assert str(subject_payload["entity_id"]) == str(source_id)
+    assert str(object_payload["entity_id"]) == str(target_id)
+    assert str(subject_payload["label"]) == "MED13"
+    assert str(object_payload["label"]) == "Autism"
 
 
 @pytest.mark.asyncio
@@ -558,6 +582,7 @@ async def test_generate_hypotheses_dedupes_existing_fingerprint() -> None:
         dependencies=HypothesisGenerationServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent({str(seed_id): contract}),
             relation_claim_service=claim_service,
+            claim_participant_service=StubClaimParticipantService(),
             entity_repository=StubEntityRepository(
                 entities={str(source_id): source_entity, str(target_id): target_entity},
                 fallback_entities=[source_entity],

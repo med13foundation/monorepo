@@ -6,6 +6,7 @@ import { useCallback, useState } from 'react'
 import { Filter, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import type { GraphDisplayMode } from '@/lib/graph/model'
 import { cn } from '@/lib/utils'
 
 import { KnowledgeGraphFeedbackCards } from './knowledge-graph-feedback-cards'
@@ -49,6 +50,11 @@ export default function KnowledgeGraphClient({
   const [showControlsPanel, setShowControlsPanel] = useState(true)
   const [activeControlsTab, setActiveControlsTab] = useState<'search' | 'filters'>('search')
   const handleCanvasTap = useCallback(() => setShowControlsPanel(false), [])
+  const displayModeOptions: Array<{ value: GraphDisplayMode; label: string }> = [
+    { value: 'RELATIONS_ONLY', label: 'Relations only' },
+    { value: 'CLAIMS', label: 'Claims' },
+    { value: 'EVIDENCE', label: 'Evidence' },
+  ]
 
   return (
     <div className="space-y-4 px-0">
@@ -71,8 +77,11 @@ export default function KnowledgeGraphClient({
         neighborhood={controller.neighborhood}
         selectedNodeId={controller.selectedNodeId}
         onNodeClick={controller.onNodeClick}
+        onEdgeClick={controller.onEdgeClick}
         onHoverNodeChange={controller.onHoverNodeChange}
+        onHoverEdgeChange={controller.onHoverEdgeChange}
         onClearSelection={controller.clearSelection}
+        claimEvidenceByClaimId={controller.claimEvidenceByClaimId}
         onCanvasTap={handleCanvasTap}
         topControls={
           <div className="w-[min(96vw,460px)]">
@@ -123,6 +132,27 @@ export default function KnowledgeGraphClient({
                     <PanelLeftClose className="mr-1 size-4" />
                     Hide
                   </Button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
+                  <span className="text-xs font-medium text-muted-foreground">Show:</span>
+                  {displayModeOptions.map((option) => (
+                    <Button
+                      key={option.value}
+                      type="button"
+                      size="sm"
+                      variant={controller.graphDisplayMode === option.value ? 'default' : 'outline'}
+                      className="h-7"
+                      onClick={() => controller.setGraphDisplayMode(option.value)}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                  {controller.graphDisplayMode === 'EVIDENCE' ? (
+                    <span className="text-xs text-muted-foreground">
+                      Evidence mode enabled: claim evidence expands into paper/dataset links.
+                    </span>
+                  ) : null}
                 </div>
 
                 {activeControlsTab === 'search' ? (

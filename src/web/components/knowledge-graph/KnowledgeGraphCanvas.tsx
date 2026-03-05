@@ -14,11 +14,20 @@ interface KnowledgeGraphCanvasProps {
   highlightedNodeIds: ReadonlySet<string>
   highlightedEdgeIds: ReadonlySet<string>
   onNodeClick: (nodeId: string) => void
+  onEdgeClick?: (edgeId: string) => void
   onHoverNodeChange?: (nodeId: string | null) => void
+  onHoverEdgeChange?: (edgeId: string | null) => void
+  claimEvidenceByClaimId?: Readonly<Record<string, ClaimEvidencePreview>>
   /** Called on any tap on the canvas (background, node, or edge). Use e.g. to collapse overlays. */
   onCanvasTap?: () => void
   chrome?: 'full' | 'minimal' | 'none'
   className?: string
+}
+
+interface ClaimEvidencePreview {
+  state: 'loading' | 'ready' | 'empty' | 'error'
+  sentence: string | null
+  sourceLabel: string | null
 }
 
 interface TooltipPosition {
@@ -64,14 +73,29 @@ function formattedDate(value: string): string {
 }
 
 function NodeTooltipContent({ node, degree }: { node: GraphNode; degree: number }) {
+  const isClaimNode = node.origin === 'claim'
   return (
     <div className="space-y-2">
       <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {node.entityType}
+        {isClaimNode ? 'CLAIM NODE' : node.entityType}
       </div>
       <div className="text-sm font-medium text-foreground">{node.label}</div>
-      <div className="truncate font-mono text-[11px] text-muted-foreground">{node.id}</div>
+      {isClaimNode && node.claimText ? (
+        <p className="text-xs text-foreground/85">{node.claimText}</p>
+      ) : null}
       <div className="grid grid-cols-2 gap-x-2 gap-y-1 border-t pt-2 text-[11px] text-muted-foreground">
+        {isClaimNode ? (
+          <>
+            <div>Polarity</div>
+            <div className="text-right font-semibold text-foreground">
+              {node.claimPolarity ?? 'Unknown'}
+            </div>
+            <div>Status</div>
+            <div className="text-right font-semibold text-foreground">
+              {node.claimStatus ?? 'Unknown'}
+            </div>
+          </>
+        ) : null}
         <div>Connections</div>
         <div className="text-right font-semibold text-foreground">{degree}</div>
         <div>Updated</div>
@@ -81,7 +105,62 @@ function NodeTooltipContent({ node, degree }: { node: GraphNode; degree: number 
   )
 }
 
-function EdgeTooltipContent({ edge }: { edge: GraphEdge }) {
+function normalizeSentence(text: string): string {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) {
+    return trimmed
+  }
+  if (/[.!?]$/.test(trimmed)) {
+    return trimmed
+  }
+  return `${trimmed}.`
+}
+
+function relationPhrase(relationType: string): string {
+  return relationType.trim().toLowerCase().replace(/_/g, ' ')
+}
+
+function buildFallbackClaimSummary(edge: GraphEdge, graph: GraphModel): string {
+  const source = graph.nodeById[edge.sourceId]?.label?.trim() || 'Unknown source'
+  const target = graph.nodeById[edge.targetId]?.label?.trim() || 'Unknown target'
+  const relation = relationPhrase(edge.relationType)
+  return normalizeSentence(`${source} ${relation} ${target}`)
+}
+
+function EdgeTooltipContent({
+  edge,
+  claimSummary,
+  relationSummary,
+  topEvidenceSentence,
+  topEvidenceSourceLabel,
+  topEvidenceState,
+}: {
+  edge: GraphEdge
+  claimSummary: string | null
+  relationSummary: string
+  topEvidenceSentence: string | null
+  topEvidenceSourceLabel: string | null
+  topEvidenceState: 'loading' | 'ready' | 'empty' | 'error' | null
+}) {
+  const isClaimEdge = edge.origin === 'claim'
+  const isEvidenceEdge = edge.origin === 'evidence'
+  const isConflictedCanonicalEdge = !isClaimEdge && edge.hasConflict
+  const participantRole = isClaimEdge
+    ? edge.claimParticipantRole ?? edge.relationType
+    : null
+  const evidenceBadges: string[] = []
+  if (edge.evidenceSourceType) {
+    evidenceBadges.push(edge.evidenceSourceType.toUpperCase())
+  }
+  if (edge.evidenceSourceBadge) {
+    evidenceBadges.push(edge.evidenceSourceBadge)
+  }
+  if (edge.evidenceSentenceSource) {
+    evidenceBadges.push(edge.evidenceSentenceSource)
+  }
+  if (edge.evidenceSentenceConfidence) {
+    evidenceBadges.push(edge.evidenceSentenceConfidence)
+  }
   return (
     <div className="space-y-2">
       <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -90,8 +169,80 @@ function EdgeTooltipContent({ edge }: { edge: GraphEdge }) {
       <div className="text-sm font-medium text-foreground">
         {edge.curationStatus} • {confidencePercent(edge.confidence)}
       </div>
-      <div className="truncate font-mono text-[11px] text-muted-foreground">{edge.id}</div>
+      <div className="rounded-md border border-border/70 bg-muted/35 px-2 py-1">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {isClaimEdge ? 'Claim' : isEvidenceEdge ? 'Evidence link' : 'Relation'}
+        </div>
+        <p className="text-sm text-foreground">
+          {(isClaimEdge || isEvidenceEdge) ? claimSummary ?? relationSummary : relationSummary}
+        </p>
+      </div>
+      {isClaimEdge ? (
+        <div className="rounded-md border border-border/70 bg-muted/35 px-2 py-1">
+          Claim participant edge{participantRole ? ` • ${participantRole}` : ''}
+          {edge.claimRelationType ? ` • ${edge.claimRelationType}` : ''}
+          {edge.claimPolarity ? ` • ${edge.claimPolarity}` : ''}
+          {edge.claimStatus ? ` • ${edge.claimStatus}` : ''}
+          {edge.linkedRelationId ? ' • linked canonical relation' : ''}
+        </div>
+      ) : null}
+      {isEvidenceEdge ? (
+        <div className="rounded-md border border-sky-400/40 bg-sky-400/10 px-2 py-1 text-xs text-foreground">
+          <div className="font-semibold uppercase tracking-wide text-sky-100">
+            {edge.relationType}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {evidenceBadges.length > 0 ? evidenceBadges.map((badge) => (
+              <span
+                key={badge}
+                className="rounded-full border border-sky-300/60 bg-background/70 px-2 py-0.5 text-[10px] uppercase tracking-wide text-foreground"
+              >
+                {badge}
+              </span>
+            )) : (
+              <span className="text-foreground/75">Evidence metadata unavailable.</span>
+            )}
+          </div>
+        </div>
+      ) : null}
+      {isConflictedCanonicalEdge ? (
+        <div className="rounded-md border border-amber-400/60 bg-amber-400/10 px-2 py-1 text-xs text-amber-100">
+          <div className="font-semibold uppercase tracking-wide">⚠ conflicting evidence</div>
+          <p className="mt-1 text-foreground/85">
+            Support: {edge.supportClaimCount} • Refute: {edge.refuteClaimCount}
+          </p>
+        </div>
+      ) : null}
+      {isClaimEdge ? (
+        <div className="rounded-md border border-border/70 bg-muted/35 px-2 py-1 text-[11px] text-muted-foreground">
+          <div className="font-semibold uppercase tracking-wide">Top evidence</div>
+          {topEvidenceState === 'loading' ? (
+            <p className="text-foreground/85">Loading evidence...</p>
+          ) : topEvidenceState === 'error' ? (
+            <p className="text-foreground/85">Evidence preview unavailable.</p>
+          ) : topEvidenceSentence ? (
+            <p className="text-foreground/85">
+              &ldquo;{topEvidenceSentence}&rdquo;
+            </p>
+          ) : (
+            <p className="text-foreground/85">No evidence sentence available.</p>
+          )}
+          {topEvidenceSourceLabel ? <p>{topEvidenceSourceLabel}</p> : null}
+        </div>
+      ) : null}
       <div className="grid grid-cols-2 gap-x-2 gap-y-1 border-t pt-2 text-[11px] text-muted-foreground">
+        <div>Origin</div>
+        <div className="text-right font-semibold text-foreground">
+          {isClaimEdge ? 'Claim overlay' : isEvidenceEdge ? 'Evidence overlay' : 'Canonical relation'}
+        </div>
+        {!isClaimEdge && !isEvidenceEdge ? (
+          <>
+            <div>Linked claims</div>
+            <div className="text-right font-semibold text-foreground">
+              {edge.canonicalClaimCount}
+            </div>
+          </>
+        ) : null}
         <div>Evidence Sources</div>
         <div className="text-right font-semibold text-foreground">{edge.sourceCount}</div>
         <div>Tier</div>
@@ -106,7 +257,10 @@ export default function KnowledgeGraphCanvas({
   highlightedNodeIds,
   highlightedEdgeIds,
   onNodeClick,
+  onEdgeClick,
   onHoverNodeChange,
+  onHoverEdgeChange,
+  claimEvidenceByClaimId = {},
   onCanvasTap,
   chrome = 'full',
   className,
@@ -116,6 +270,7 @@ export default function KnowledgeGraphCanvas({
   const [hoverEvent, setHoverEvent] = useState<GraphHoverEvent | null>(null)
   const hoverKeyRef = useRef<string>('none')
   const hoveredNodeIdRef = useRef<string | null>(null)
+  const hoveredEdgeIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -128,6 +283,7 @@ export default function KnowledgeGraphCanvas({
         onNodeClick(nodeId)
         adapterRef.current?.focusNode(nodeId)
       },
+      onEdgeClick,
       onCanvasTap,
       onHoverChange: (event) => {
         const nextHoverKey = event ? `${event.kind}:${event.id}` : 'none'
@@ -141,6 +297,12 @@ export default function KnowledgeGraphCanvas({
           hoveredNodeIdRef.current = nextHoveredNodeId
           onHoverNodeChange?.(nextHoveredNodeId)
         }
+
+        const nextHoveredEdgeId = !event || event.kind !== 'edge' ? null : event.id
+        if (nextHoveredEdgeId !== hoveredEdgeIdRef.current) {
+          hoveredEdgeIdRef.current = nextHoveredEdgeId
+          onHoverEdgeChange?.(nextHoveredEdgeId)
+        }
       },
     })
     adapter.mount(container)
@@ -151,8 +313,9 @@ export default function KnowledgeGraphCanvas({
       adapterRef.current = null
       hoverKeyRef.current = 'none'
       hoveredNodeIdRef.current = null
+      hoveredEdgeIdRef.current = null
     }
-  }, [onCanvasTap, onHoverNodeChange, onNodeClick])
+  }, [onCanvasTap, onEdgeClick, onHoverEdgeChange, onHoverNodeChange, onNodeClick])
 
   useEffect(() => {
     adapterRef.current?.setGraph(graph)
@@ -189,11 +352,35 @@ export default function KnowledgeGraphCanvas({
     if (!edge) {
       return null
     }
+    const claimSummary =
+      edge.origin === 'claim'
+        ? normalizeSentence(edge.claimText?.trim() || '') ||
+          buildFallbackClaimSummary(edge, graph)
+        : null
+    const evidencePreview = edge.claimId
+      ? claimEvidenceByClaimId[edge.claimId]
+      : undefined
+    const topEvidenceSentence = normalizeSentence(evidencePreview?.sentence?.trim() || '') || null
+    const topEvidenceSourceLabel = evidencePreview?.sourceLabel ?? null
+    const relationSummary = buildFallbackClaimSummary(edge, graph)
     return {
-      content: <EdgeTooltipContent edge={edge} />,
+      content: (
+        <EdgeTooltipContent
+          edge={edge}
+          claimSummary={claimSummary}
+          relationSummary={relationSummary}
+          topEvidenceSentence={topEvidenceSentence}
+          topEvidenceSourceLabel={topEvidenceSourceLabel}
+          topEvidenceState={evidencePreview?.state ?? null}
+        />
+      ),
       position,
     }
-  }, [graph.edgeById, graph.incidentEdges, graph.nodeById, hoverEvent])
+  }, [
+    claimEvidenceByClaimId,
+    graph,
+    hoverEvent,
+  ])
 
   const isMinimalChrome = chrome === 'minimal'
 

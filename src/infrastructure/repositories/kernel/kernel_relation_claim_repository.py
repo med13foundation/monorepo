@@ -110,6 +110,37 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
             return None
         return KernelRelationClaim.model_validate(model)
 
+    def list_by_ids(self, claim_ids: list[str]) -> list[KernelRelationClaim]:
+        if not claim_ids:
+            return []
+
+        normalized_ids: list[str] = []
+        uuids: list[UUID] = []
+        seen: set[str] = set()
+        for claim_id in claim_ids:
+            normalized_uuid = _try_as_uuid(claim_id)
+            if normalized_uuid is None:
+                continue
+            normalized_id = str(normalized_uuid)
+            if normalized_id in seen:
+                continue
+            seen.add(normalized_id)
+            normalized_ids.append(normalized_id)
+            uuids.append(normalized_uuid)
+
+        if not uuids:
+            return []
+
+        models = self._session.scalars(
+            select(RelationClaimModel).where(RelationClaimModel.id.in_(uuids)),
+        ).all()
+        indexed = {str(model.id): model for model in models}
+        return [
+            KernelRelationClaim.model_validate(indexed[claim_id])
+            for claim_id in normalized_ids
+            if claim_id in indexed
+        ]
+
     def find_by_research_space(  # noqa: PLR0913
         self,
         research_space_id: str,
@@ -168,8 +199,12 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
             relation_type=relation_type,
             linked_relation_id=linked_relation_id,
             certainty_band=certainty_band,
-        ).with_only_columns(func.count(), maintain_column_froms=True)
-        return int(self._session.execute(stmt).scalar_one())
+        ).subquery()
+        return int(
+            self._session.execute(
+                select(func.count()).select_from(stmt),
+            ).scalar_one(),
+        )
 
     def update_triage_status(
         self,
