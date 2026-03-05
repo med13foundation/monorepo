@@ -34,7 +34,7 @@ export function DataDiscoveryContent({
 }: DataDiscoveryContentProps) {
   const [state, setState] = useState<OrchestratedSessionState | null>(orchestratedState)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
-    () => new Set(orchestratedState?.session.selected_sources ?? []),
+    () => new Set(orchestratedState?.session?.selected_sources ?? []),
   )
   const [isAdding, setIsAdding] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -44,15 +44,16 @@ export function DataDiscoveryContent({
   }, [orchestratedState])
 
   useEffect(() => {
-    if (!state) {
+    if (!state?.session) {
       setSelectedIds(new Set())
       return
     }
     setSelectedIds(new Set(state.session.selected_sources))
-  }, [state?.session.selected_sources, state])
+  }, [state?.session?.selected_sources, state])
 
   const issues: ValidationIssueDTO[] = state?.validation?.issues ?? []
   const isValid = state?.validation?.is_valid !== false
+  const viewContext = state?.view_context
 
   const groupedCatalog = useMemo(() => {
     const groups: Record<string, SourceCatalogEntry[]> = {}
@@ -67,7 +68,7 @@ export function DataDiscoveryContent({
   }, [catalog])
 
   const handleToggle = (sourceId: string) => {
-    if (!state) {
+    if (!state?.session) {
       toast.error('Discovery session is unavailable. Please refresh.')
       return
     }
@@ -99,7 +100,7 @@ export function DataDiscoveryContent({
   }
 
   const handleAddSelectedToSpace = async () => {
-    if (!state) {
+    if (!state?.session) {
       toast.error('Discovery session is unavailable. Please refresh.')
       return
     }
@@ -144,6 +145,14 @@ export function DataDiscoveryContent({
       return (
         <div className="rounded-lg border border-dashed border-muted-foreground/40 bg-muted/40 p-4 text-sm text-muted-foreground">
           Loading discovery session...
+        </div>
+      )
+    }
+
+    if (!state.session) {
+      return (
+        <div className="rounded-lg border border-dashed border-muted-foreground/40 bg-muted/40 p-4 text-sm text-muted-foreground">
+          Discovery session is unavailable. Refresh the page to try again.
         </div>
       )
     }
@@ -194,16 +203,16 @@ export function DataDiscoveryContent({
         {children}
       </DashboardSection>
 
-      {state && (
+      {state && viewContext && (
         <div className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
           <div className="flex items-center justify-between">
             <div>
               <div className="font-medium text-foreground">Session overview</div>
-              <div>Selected sources: {state.view_context.selected_count}</div>
-              <div>Total available: {state.view_context.total_available}</div>
+              <div>Selected sources: {viewContext.selected_count}</div>
+              <div>Total available: {viewContext.total_available}</div>
             </div>
-            <Button variant="outline" disabled={!state.view_context.can_run_search}>
-              {state.view_context.can_run_search
+            <Button variant="outline" disabled={!viewContext.can_run_search}>
+              {viewContext.can_run_search
                 ? 'Run search (backend orchestrated)'
                 : 'Select at least one source'}
             </Button>

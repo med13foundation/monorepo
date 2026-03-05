@@ -11,7 +11,7 @@ import { ValidationFeedback } from '@/components/shared/ValidationFeedback'
 import { toast } from 'sonner'
 
 interface DataDiscoveryClientProps {
-  orchestratedState: OrchestratedSessionState
+  orchestratedState: OrchestratedSessionState | null
   catalog: SourceCatalogEntry[]
 }
 
@@ -19,10 +19,11 @@ export default function DataDiscoveryClient({
   orchestratedState,
   catalog,
 }: DataDiscoveryClientProps) {
-  const [state, setState] = useState<OrchestratedSessionState>(orchestratedState)
+  const [state, setState] = useState<OrchestratedSessionState | null>(orchestratedState)
   const [isPending, startTransition] = useTransition()
 
-  const selectedIds = useMemo(() => new Set(state.session.selected_sources), [state.session.selected_sources])
+  const selectedSourceIds = state?.session?.selected_sources ?? []
+  const selectedIds = useMemo(() => new Set(selectedSourceIds), [selectedSourceIds])
 
   const groupedCatalog = useMemo(() => {
     const groups: Record<string, SourceCatalogEntry[]> = {}
@@ -37,6 +38,11 @@ export default function DataDiscoveryClient({
   }, [catalog])
 
   const handleToggle = (sourceId: string) => {
+    if (!state?.session) {
+      toast.error('Discovery session is unavailable. Please refresh.')
+      return
+    }
+
     const next = new Set(selectedIds)
     if (next.has(sourceId)) {
       next.delete(sourceId)
@@ -60,8 +66,29 @@ export default function DataDiscoveryClient({
     })
   }
 
-  const issues = state.validation?.issues ?? []
-  const isValid = state.validation?.is_valid !== false
+  const issues = state?.validation?.issues ?? []
+  const isValid = state?.validation?.is_valid !== false
+  const viewContext = state?.view_context
+
+  if (!state?.session) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold">Data Discovery</h1>
+            <p className="text-muted-foreground">
+              Select sources to orchestrate searches; backend derives capabilities and validation.
+            </p>
+          </div>
+          <Badge variant="outline">Unavailable</Badge>
+        </div>
+
+        <div className="rounded-lg border border-dashed border-muted-foreground/40 bg-muted/40 p-4 text-sm text-muted-foreground">
+          Discovery session is unavailable. Refresh the page to try again.
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -129,11 +156,11 @@ export default function DataDiscoveryClient({
         <div className="flex items-center justify-between">
           <div>
             <div className="font-medium text-foreground">Session overview</div>
-            <div>Selected sources: {state.view_context.selected_count}</div>
-            <div>Total available: {state.view_context.total_available}</div>
+            <div>Selected sources: {viewContext?.selected_count ?? selectedIds.size}</div>
+            <div>Total available: {viewContext?.total_available ?? catalog.length}</div>
           </div>
-          <Button variant="outline" disabled={!state.view_context.can_run_search}>
-            {state.view_context.can_run_search ? 'Run search (backend orchestrated)' : 'Select at least one source'}
+          <Button variant="outline" disabled={!viewContext?.can_run_search}>
+            {viewContext?.can_run_search ? 'Run search (backend orchestrated)' : 'Select at least one source'}
           </Button>
         </div>
       </div>
