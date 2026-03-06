@@ -96,12 +96,7 @@ function LoginContent() {
   return (
     <AuthShell
       title="MED13 Admin"
-      description="Sign in to access the administrative interface."
-      footer={
-        <div className="text-center text-sm text-muted-foreground">
-          Need help? <Link href="https://med13foundation.org/contact" className="text-primary hover:underline">Contact support</Link>
-        </div>
-      }
+      description="Sign in to access Research Spaces."
     >
       {error && (
         <Alert variant="destructive" className="mb-4">
@@ -111,15 +106,6 @@ function LoginContent() {
       )}
 
       <LoginForm onSubmit={handleLogin} isLoading={isLoading} />
-
-      <div className="mt-4 text-center text-sm">
-        <Link
-          href="/auth/forgot-password"
-          className="text-primary hover:underline"
-        >
-          Forgot your password?
-        </Link>
-      </div>
 
       <div className="mt-2 text-center text-sm text-muted-foreground">
         Don&apos;t have an account?{" "}
@@ -137,7 +123,7 @@ export default function LoginPage() {
       fallback={
         <AuthShell
           title="MED13 Admin"
-          description="Sign in to access the administrative interface."
+          description="Sign in to access Research Spaces."
           isLoading
         >
           <div />

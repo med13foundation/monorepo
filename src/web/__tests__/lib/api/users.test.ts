@@ -1,6 +1,6 @@
 import type { AxiosError } from 'axios'
-import { apiGet } from '@/lib/api/client'
-import { fetchUserStatistics } from '@/lib/api/users'
+import { apiGet, apiPost } from '@/lib/api/client'
+import { activateUser, fetchUserStatistics } from '@/lib/api/users'
 
 jest.mock('@/lib/api/client', () => ({
   apiGet: jest.fn(),
@@ -28,6 +28,7 @@ const buildAxiosError = (status: number): AxiosError =>
 
 describe('users api', () => {
   const mockApiGet = apiGet as jest.MockedFunction<typeof apiGet>
+  const mockApiPost = apiPost as jest.MockedFunction<typeof apiPost>
 
   beforeEach(() => {
     jest.clearAllMocks()
@@ -54,5 +55,13 @@ describe('users api', () => {
     await expect(fetchUserStatistics(TOKEN)).rejects.toMatchObject({
       response: { status: 401 },
     })
+  })
+
+  it('posts to the admin activation endpoint', async () => {
+    mockApiPost.mockResolvedValue({ message: 'ok' })
+
+    await expect(activateUser('user-123', TOKEN)).resolves.toEqual({ message: 'ok' })
+
+    expect(mockApiPost).toHaveBeenCalledWith('/users/user-123/activate', {}, { token: TOKEN })
   })
 })

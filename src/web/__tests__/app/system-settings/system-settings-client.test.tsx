@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SystemSettingsClient from '@/app/(dashboard)/system-settings/system-settings-client'
 import type {
@@ -14,12 +14,14 @@ import type { DataSourceAvailability } from '@/lib/api/data-source-activation'
 import type { ResearchSpace } from '@/types/research-space'
 
 const mockCreateUserAction = jest.fn()
+const mockActivateUserAction = jest.fn()
 const mockLockUserAction = jest.fn()
 const mockUnlockUserAction = jest.fn()
 const mockDeleteUserAction = jest.fn()
 
 jest.mock('@/app/actions/users', () => ({
   createUserAction: (...args: unknown[]) => mockCreateUserAction(...args),
+  activateUserAction: (...args: unknown[]) => mockActivateUserAction(...args),
   lockUserAction: (...args: unknown[]) => mockLockUserAction(...args),
   unlockUserAction: (...args: unknown[]) => mockUnlockUserAction(...args),
   deleteUserAction: (...args: unknown[]) => mockDeleteUserAction(...args),
@@ -112,6 +114,7 @@ describe('SystemSettingsClient', () => {
         },
       },
     })
+    mockActivateUserAction.mockResolvedValue({ success: true, data: { message: 'ok' } })
     mockLockUserAction.mockResolvedValue({ success: true, data: { message: 'ok' } })
     mockUnlockUserAction.mockResolvedValue({ success: true, data: { message: 'ok' } })
     mockDeleteUserAction.mockResolvedValue({ success: true, data: { message: 'ok' } })
@@ -154,6 +157,47 @@ describe('SystemSettingsClient', () => {
     await waitFor(() => {
       expect(mockLockUserAction).toHaveBeenCalledWith('user-1')
     })
+
+    const row = screen.getByText('Researcher One').closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('Suspended')).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByRole('button', { name: /Activate/i })).toBeInTheDocument()
+  })
+
+  it('activates a pending verification user', async () => {
+    const user = userEvent.setup()
+    renderClient({
+      users: {
+        users: [
+          {
+            id: 'user-2',
+            email: 'pending@med13.org',
+            username: 'pendinguser',
+            full_name: 'Pending User',
+            role: 'researcher',
+            status: 'pending_verification',
+            email_verified: false,
+            last_login: null,
+            created_at: '2026-03-01T00:00:00.000Z',
+          },
+        ],
+        total: 1,
+        skip: 0,
+        limit: 25,
+      },
+      currentUserId: 'admin-1',
+    })
+
+    await user.click(screen.getByRole('button', { name: /Activate/i }))
+
+    await waitFor(() => {
+      expect(mockActivateUserAction).toHaveBeenCalledWith('user-2')
+    })
+
+    const row = screen.getByText('Pending User').closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('Active')).toBeInTheDocument()
+    expect(within(row as HTMLElement).getByRole('button', { name: /Suspend/i })).toBeInTheDocument()
   })
 
   it('creates a user from the dialog form', async () => {

@@ -104,11 +104,6 @@ class User(BaseModel):
     @model_validator(mode="after")
     def validate_business_rules(self) -> "User":
         """Apply business rules and cross-field validations."""
-        # Admin users must be active
-        if self.role == UserRole.ADMIN and self.status != UserStatus.ACTIVE:
-            msg = "Admin users must have active status"
-            raise ValueError(msg)
-
         # Check password reset token expiration
         if (
             self.password_reset_token
@@ -161,8 +156,18 @@ class User(BaseModel):
     def unlock_account(self) -> None:
         """Unlock user account."""
         self.locked_until = None
+        self.login_attempts = 0
         if self.status == UserStatus.SUSPENDED:
             self.status = UserStatus.ACTIVE
+
+    def activate_account(self) -> None:
+        """Activate an account and bypass email verification requirements."""
+        self.status = UserStatus.ACTIVE
+        self.locked_until = None
+        self.login_attempts = 0
+        self.email_verified = True
+        self.email_verification_token = None
+        self.updated_at = datetime.now(UTC)
 
     def mark_email_verified(self) -> None:
         """Mark user email as verified."""

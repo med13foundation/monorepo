@@ -240,12 +240,8 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
             await self.engine.dispose()
 
     async def health_check(self) -> dict[str, bool]:
-        health_status: dict[str, bool] = {
-            "database": False,
-            "jwt_provider": False,
-            "password_hasher": False,  # nosec B105
-            "services": False,
-        }
+        health_status_keys = ("database", "jwt_provider", "password_hasher", "services")
+        health_status: dict[str, bool] = dict.fromkeys(health_status_keys, False)
 
         try:
             # Test database connection

@@ -177,3 +177,14 @@ export async function unlockUser(
 
   return apiPost<GenericSuccessResponse>(`/users/${userId}/unlock`, {}, { token })
 }
+
+export async function activateUser(
+  userId: string,
+  token?: string,
+): Promise<GenericSuccessResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for activateUser')
+  }
+
+  return apiPost<GenericSuccessResponse>(`/users/${userId}/activate`, {}, { token })
+}

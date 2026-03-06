@@ -350,6 +350,8 @@ Configure GitHub **Environment Variables** per environment suffix
 - `READ_API_KEY_SECRET_NAME_<ENV>`
 - `NEXTAUTH_SECRET_SECRET_NAME_<ENV>`
 - `MED13_ALLOWED_ORIGINS_<ENV>`
+- `API_MIN_INSTANCES_<ENV>`
+- `ADMIN_MIN_INSTANCES_<ENV>`
 - `API_PUBLIC_<ENV>` (`true`/`false`)
 - `ADMIN_PUBLIC_<ENV>` (`true`/`false`)
 - `MIGRATION_JOB_NAME_<ENV>`

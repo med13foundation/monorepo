@@ -233,6 +233,29 @@ class TestUserEntity:
         assert user.email_verified is True
         assert user.email_verification_token is None
 
+    def test_activate_account_bypasses_email_verification(self):
+        """Test admin activation promotes a pending user to an active verified account."""
+        user = User(
+            email="test@example.com",
+            username="testuser",
+            full_name="Test User",
+            hashed_password="hash",
+            status=UserStatus.PENDING_VERIFICATION,
+            email_verification_token="pending-token",
+            login_attempts=3,
+            locked_until=datetime.now(UTC) + timedelta(hours=1),
+        )
+        original_updated_at = user.updated_at
+
+        user.activate_account()
+
+        assert user.status == UserStatus.ACTIVE
+        assert user.email_verified is True
+        assert user.email_verification_token is None
+        assert user.locked_until is None
+        assert user.login_attempts == 0
+        assert user.updated_at > original_updated_at
+
     def test_password_reset_workflow(self):
         """Test password reset token workflow."""
         user = User(
@@ -287,19 +310,7 @@ class TestUserEntity:
         assert user.updated_at > original_updated_at
 
     def test_admin_user_business_rules(self):
-        """Test business rules for admin users."""
-        # Admin users must be active
-        with pytest.raises(ValueError):
-            User(
-                email="admin@example.com",
-                username="admin",
-                full_name="Admin User",
-                hashed_password="hash",
-                role=UserRole.ADMIN,
-                status=UserStatus.INACTIVE,
-            )
-
-        # Valid admin user
+        """Test admin users may exist in non-active states but cannot authenticate."""
         admin_user = User(
             email="admin@example.com",
             username="admin",
@@ -310,6 +321,18 @@ class TestUserEntity:
         )
         assert admin_user.role == UserRole.ADMIN
         assert admin_user.status == UserStatus.ACTIVE
+
+        suspended_admin = User(
+            email="suspended-admin@example.com",
+            username="suspended-admin",
+            full_name="Suspended Admin",
+            hashed_password="hash",
+            role=UserRole.ADMIN,
+            status=UserStatus.SUSPENDED,
+        )
+        assert suspended_admin.role == UserRole.ADMIN
+        assert suspended_admin.status == UserStatus.SUSPENDED
+        assert suspended_admin.can_authenticate() is False
 
     def test_business_rules_validation(self):
         """Test cross-field business rules validation."""

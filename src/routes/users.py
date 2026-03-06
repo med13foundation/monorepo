@@ -1,8 +1,4 @@
-"""
-User management routes for MED13 Resource Library.
-
-Provides REST API endpoints for administrative user management operations.
-"""
+"""User management routes."""
 
 from uuid import UUID
 
@@ -36,7 +32,6 @@ from src.domain.value_objects.permission import Permission
 from src.infrastructure.dependency_injection.container import container
 from src.routes.auth import get_current_active_user
 
-# HTTP status codes
 HTTP_201_CREATED = 201
 HTTP_400_BAD_REQUEST = 400
 HTTP_403_FORBIDDEN = 403
@@ -44,8 +39,6 @@ HTTP_404_NOT_FOUND = 404
 HTTP_409_CONFLICT = 409
 HTTP_500_INTERNAL_SERVER_ERROR = 500
 
-
-# Create router
 users_router = APIRouter(
     prefix="/users",
     tags=["user-management"],
@@ -292,6 +285,36 @@ async def delete_user(
         raise HTTPException(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"User deletion failed: {e!s}",
+        )
+
+
+@users_router.post(
+    "/{user_id}/activate",
+    response_model=GenericSuccessResponse,
+    summary="Activate user account",
+    description="Activate a user account and bypass email verification (admin only)",
+)
+async def activate_user_account(
+    user_id: str,
+    current_user: User = Depends(get_current_active_user),
+    user_service: UserManagementService = Depends(
+        container.get_user_management_service,
+    ),
+    authz_service: AuthorizationService = Depends(container.get_authorization_service),
+) -> GenericSuccessResponse:
+    """
+    Activate a user account (administrative operation).
+    """
+    try:
+        await _ensure_permission(current_user, "user:update", authz_service)
+        await user_service.activate_user_account(UUID(user_id))
+        return GenericSuccessResponse(message="User account activated successfully")
+    except UserNotFoundError:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="User not found")
+    except UserManagementError as e:
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Account activation failed: {e!s}",
         )
 
 
