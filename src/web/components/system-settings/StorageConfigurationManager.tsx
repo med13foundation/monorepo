@@ -1,5 +1,6 @@
 "use client"
 
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -67,6 +68,11 @@ import { STORAGE_PROVIDERS, STORAGE_USE_CASES } from '@/types/storage'
 import { cn } from '@/lib/utils'
 import type { StorageConfigurationListResponse } from '@/types/storage'
 import type { MaintenanceModeResponse } from '@/types/system-status'
+import { queryKeys } from '@/lib/query/query-keys'
+import {
+  storageConfigurationsQueryOptions,
+  storageOverviewQueryOptions,
+} from '@/lib/query/query-options'
 
 const storageUseCaseEnum = z.enum(STORAGE_USE_CASES)
 const STORAGE_DASHBOARD_BETA =
@@ -485,11 +491,102 @@ interface StorageConfigurationManagerProps {
   maintenanceState: MaintenanceModeResponse | null
 }
 
+const STORAGE_QUERY_PARAMS = {
+  page: 1,
+  per_page: 100,
+  include_disabled: true,
+} as const
+
+function upsertOverviewConfiguration(
+  overview: StorageOverviewResponse,
+  configuration: StorageConfiguration,
+): StorageOverviewResponse {
+  const existingEntry = overview.configurations.find(
+    (entry) => entry.configuration.id === configuration.id,
+  )
+  const configurations = existingEntry
+    ? overview.configurations.map((entry) =>
+        entry.configuration.id === configuration.id
+          ? { ...entry, configuration }
+          : entry,
+      )
+    : [{ configuration, usage: null, health: null }, ...overview.configurations]
+
+  const enabledDelta = existingEntry
+    ? Number(configuration.enabled) - Number(existingEntry.configuration.enabled)
+    : Number(configuration.enabled)
+  const disabledDelta = existingEntry ? -enabledDelta : Number(!configuration.enabled)
+
+  return {
+    ...overview,
+    configurations,
+    totals: {
+      ...overview.totals,
+      total_configurations: existingEntry
+        ? overview.totals.total_configurations
+        : overview.totals.total_configurations + 1,
+      enabled_configurations: Math.max(overview.totals.enabled_configurations + enabledDelta, 0),
+      disabled_configurations: Math.max(overview.totals.disabled_configurations + disabledDelta, 0),
+    },
+  }
+}
+
+function removeOverviewConfiguration(
+  overview: StorageOverviewResponse,
+  configurationId: string,
+): StorageOverviewResponse {
+  const existingEntry = overview.configurations.find(
+    (entry) => entry.configuration.id === configurationId,
+  )
+  if (!existingEntry) {
+    return overview
+  }
+
+  const { usage, health, configuration } = existingEntry
+
+  return {
+    ...overview,
+    configurations: overview.configurations.filter(
+      (entry) => entry.configuration.id !== configurationId,
+    ),
+    totals: {
+      ...overview.totals,
+      total_configurations: Math.max(overview.totals.total_configurations - 1, 0),
+      enabled_configurations: Math.max(
+        overview.totals.enabled_configurations - Number(configuration.enabled),
+        0,
+      ),
+      disabled_configurations: Math.max(
+        overview.totals.disabled_configurations - Number(!configuration.enabled),
+        0,
+      ),
+      healthy_configurations: Math.max(
+        overview.totals.healthy_configurations - Number(health?.status === 'healthy'),
+        0,
+      ),
+      degraded_configurations: Math.max(
+        overview.totals.degraded_configurations - Number(health?.status === 'degraded'),
+        0,
+      ),
+      offline_configurations: Math.max(
+        overview.totals.offline_configurations - Number(health?.status === 'offline'),
+        0,
+      ),
+      total_files: Math.max(overview.totals.total_files - (usage?.total_files ?? 0), 0),
+      total_size_bytes: Math.max(
+        overview.totals.total_size_bytes - (usage?.total_size_bytes ?? 0),
+        0,
+      ),
+    },
+  }
+}
+
 export function StorageConfigurationManager({
   configurations: configurationResponse,
   overview,
   maintenanceState,
 }: StorageConfigurationManagerProps) {
+  const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [testingId, setTestingId] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
@@ -516,19 +613,25 @@ export function StorageConfigurationManager({
     } as StorageFormValues,
   })
 
+  const configurationQuery = useQuery(
+    storageConfigurationsQueryOptions(STORAGE_QUERY_PARAMS, configurationResponse ?? undefined),
+  )
+  const overviewQuery = useQuery(storageOverviewQueryOptions(overview ?? undefined))
+  const configurationData = configurationQuery.data ?? configurationResponse
+  const resolvedOverview = overviewQuery.data ?? overview
   const selectedProvider = form.watch('provider')
   const configurations = useMemo(
-    () => configurationResponse?.data ?? [],
-    [configurationResponse?.data],
+    () => configurationData?.data ?? [],
+    [configurationData?.data],
   )
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
   const overviewMap = useMemo(() => {
     const map = new Map<string, StorageConfigurationStats>()
-    overview?.configurations.forEach((entry) => {
+    resolvedOverview?.configurations.forEach((entry) => {
       map.set(entry.configuration.id, entry)
     })
     return map
-  }, [overview])
+  }, [resolvedOverview])
 
   useEffect(() => {
     if (!configurations.length && selectedIds.length) {
@@ -548,9 +651,30 @@ export function StorageConfigurationManager({
         toast.error(result.error)
         return
       }
+      queryClient.setQueryData<StorageConfigurationListResponse>(
+        queryKeys.storageConfigurations(STORAGE_QUERY_PARAMS),
+        (current) =>
+          current === undefined
+            ? current
+            : {
+                ...current,
+                data: [result.data, ...current.data.filter((entry) => entry.id !== result.data.id)],
+                total: current.data.some((entry) => entry.id === result.data.id)
+                  ? current.total
+                  : current.total + 1,
+              },
+      )
+      queryClient.setQueryData<StorageOverviewResponse>(
+        queryKeys.storageOverview(),
+        (current) => (current === undefined ? current : upsertOverviewConfiguration(current, result.data)),
+      )
       toast.success(`Created storage configuration "${values.name}"`)
       form.reset()
       setDialogOpen(false)
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.storageConfigurationsRoot() }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.storageOverview() }),
+      ])
     } catch (error) {
       console.error('[StorageConfigurationManager] Failed to create configuration', error)
       toast.error('Unable to create storage configuration')
@@ -586,7 +710,27 @@ export function StorageConfigurationManager({
         toast.error(result.error)
         return
       }
+      queryClient.setQueryData<StorageConfigurationListResponse>(
+        queryKeys.storageConfigurations(STORAGE_QUERY_PARAMS),
+        (current) =>
+          current === undefined
+            ? current
+            : {
+                ...current,
+                data: current.data.map((entry) =>
+                  entry.id === result.data.id ? result.data : entry,
+                ),
+              },
+      )
+      queryClient.setQueryData<StorageOverviewResponse>(
+        queryKeys.storageOverview(),
+        (current) => (current === undefined ? current : upsertOverviewConfiguration(current, result.data)),
+      )
       toast.success(`${configuration.name} ${enabled ? 'enabled' : 'disabled'}`)
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.storageConfigurationsRoot() }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.storageOverview() }),
+      ])
     } catch (error) {
       console.error('[StorageConfigurationManager] Failed to toggle configuration', error)
       toast.error('Unable to update configuration status')
@@ -652,7 +796,50 @@ export function StorageConfigurationManager({
         toast.error(result.error)
         return
       }
+      if (force) {
+        queryClient.setQueryData<StorageConfigurationListResponse>(
+          queryKeys.storageConfigurations(STORAGE_QUERY_PARAMS),
+          (current) =>
+            current === undefined
+              ? current
+              : {
+                  ...current,
+                  data: current.data.filter((entry) => entry.id !== configuration.id),
+                  total: Math.max(current.total - 1, 0),
+                },
+        )
+        queryClient.setQueryData<StorageOverviewResponse>(
+          queryKeys.storageOverview(),
+          (current) =>
+            current === undefined ? current : removeOverviewConfiguration(current, configuration.id),
+        )
+      } else {
+        const disabledConfiguration = { ...configuration, enabled: false }
+        queryClient.setQueryData<StorageConfigurationListResponse>(
+          queryKeys.storageConfigurations(STORAGE_QUERY_PARAMS),
+          (current) =>
+            current === undefined
+              ? current
+              : {
+                  ...current,
+                  data: current.data.map((entry) =>
+                    entry.id === configuration.id ? disabledConfiguration : entry,
+                  ),
+                },
+        )
+        queryClient.setQueryData<StorageOverviewResponse>(
+          queryKeys.storageOverview(),
+          (current) =>
+            current === undefined
+              ? current
+              : upsertOverviewConfiguration(current, disabledConfiguration),
+        )
+      }
       toast.success(force ? 'Configuration deleted' : 'Configuration disabled')
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.storageConfigurationsRoot() }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.storageOverview() }),
+      ])
     } catch (error) {
       console.error('[StorageConfigurationManager] Failed to delete configuration', error)
       toast.error('Unable to delete configuration')
@@ -720,8 +907,8 @@ export function StorageConfigurationManager({
         <Button onClick={() => setDialogOpen(true)}>Add Configuration</Button>
       </div>
 
-      {overview ? (
-        <StorageOverviewSection overview={overview} showBeta={showDashboardBeta} />
+      {resolvedOverview ? (
+        <StorageOverviewSection overview={resolvedOverview} showBeta={showDashboardBeta} />
       ) : null}
 
       {configurationResponse === null ? (

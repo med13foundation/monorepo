@@ -5,7 +5,7 @@ import pytest
 from src.database.engine_config import build_engine_kwargs
 
 
-def test_build_engine_kwargs_uses_conservative_postgres_pool_defaults(
+def test_build_engine_kwargs_uses_request_concurrency_postgres_pool_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("MED13_DB_POOL_SIZE", raising=False)
@@ -18,8 +18,8 @@ def test_build_engine_kwargs_uses_conservative_postgres_pool_defaults(
 
     assert kwargs == {
         "pool_pre_ping": True,
-        "pool_size": 2,
-        "max_overflow": 0,
+        "pool_size": 10,
+        "max_overflow": 10,
         "pool_timeout": 30,
         "pool_recycle": 1800,
         "pool_use_lifo": True,

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { AlertTriangle, Loader2, Power, Shield } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -10,19 +11,24 @@ import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { disableMaintenanceAction, enableMaintenanceAction } from '@/app/actions/system-status'
 import type { MaintenanceModeResponse } from '@/types/system-status'
-import { useRouter } from 'next/navigation'
+import { maintenanceStateQueryOptions } from '@/lib/query/query-options'
+import { queryKeys } from '@/lib/query/query-keys'
 
 interface MaintenanceModePanelProps {
   maintenanceState: MaintenanceModeResponse | null
 }
 
 export function MaintenanceModePanel({ maintenanceState }: MaintenanceModePanelProps) {
-  const router = useRouter()
+  const queryClient = useQueryClient()
   const [message, setMessage] = useState('')
   const [forceLogout, setForceLogout] = useState(true)
   const [isUpdating, setIsUpdating] = useState(false)
+  const maintenanceQuery = useQuery(
+    maintenanceStateQueryOptions(maintenanceState ?? undefined),
+  )
+  const resolvedMaintenanceState = maintenanceQuery.data ?? maintenanceState
 
-  const isActive = maintenanceState?.state.is_active ?? false
+  const isActive = resolvedMaintenanceState?.state.is_active ?? false
   const isLoading = isUpdating
 
   const handleEnable = async () => {
@@ -36,8 +42,9 @@ export function MaintenanceModePanel({ maintenanceState }: MaintenanceModePanelP
         toast.error(result.error)
         return
       }
+      queryClient.setQueryData(queryKeys.maintenanceState(), result.data)
       toast.success('Maintenance mode enabled')
-      router.refresh()
+      void queryClient.invalidateQueries({ queryKey: queryKeys.maintenanceState() })
     } catch {
       toast.error('Unable to enable maintenance mode')
     } finally {
@@ -53,9 +60,10 @@ export function MaintenanceModePanel({ maintenanceState }: MaintenanceModePanelP
         toast.error(result.error)
         return
       }
+      queryClient.setQueryData(queryKeys.maintenanceState(), result.data)
       toast.success('Maintenance mode disabled')
       setMessage('')
-      router.refresh()
+      void queryClient.invalidateQueries({ queryKey: queryKeys.maintenanceState() })
     } catch {
       toast.error('Unable to disable maintenance mode')
     } finally {

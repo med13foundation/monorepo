@@ -1,5 +1,6 @@
 "use client"
 
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -20,7 +21,9 @@ import type { PermissionLevel, DataSourceAvailability } from '@/lib/api/data-sou
 import type { SourceCatalogEntry } from '@/lib/types/data-discovery'
 import type { ResearchSpace } from '@/types/research-space'
 import { toast } from 'sonner'
-import { useRouter } from 'next/navigation'
+import { mergeAvailabilitySummaries } from '@/lib/query/admin-cache'
+import { queryKeys } from '@/lib/query/query-keys'
+import { availabilitySummariesQueryOptions } from '@/lib/query/query-options'
 
 const PERMISSION_LABELS: Record<PermissionLevel, string> = {
   available: 'Available',
@@ -67,13 +70,17 @@ export function SpaceSourcePermissionsManager({
   availabilitySummaries,
   spaces,
 }: SpaceSourcePermissionsManagerProps) {
-  const router = useRouter()
+  const queryClient = useQueryClient()
   const [isApplying, setIsApplying] = useState(false)
+  const availabilityQuery = useQuery(
+    availabilitySummariesQueryOptions(availabilitySummaries),
+  )
+  const resolvedAvailabilitySummaries = availabilityQuery.data ?? availabilitySummaries
 
   const summaryMap = useMemo(() => {
-    const data = availabilitySummaries ?? []
+    const data = resolvedAvailabilitySummaries ?? []
     return new Map(data.map((summary) => [summary.catalog_entry_id, summary]))
-  }, [availabilitySummaries])
+  }, [resolvedAvailabilitySummaries])
 
   const handlePermissionChange = async (
     sourceId: string,
@@ -88,14 +95,22 @@ export function SpaceSourcePermissionsManager({
           toast.error(result.error)
           return
         }
+        queryClient.setQueryData<DataSourceAvailability[]>(
+          queryKeys.availabilitySummaries(),
+          (current) => mergeAvailabilitySummaries(current ?? [], [result.data]),
+        )
       } else {
         const result = await updateProjectAvailabilityAction(sourceId, spaceId, value)
         if (!result.success) {
           toast.error(result.error)
           return
         }
+        queryClient.setQueryData<DataSourceAvailability[]>(
+          queryKeys.availabilitySummaries(),
+          (current) => mergeAvailabilitySummaries(current ?? [], [result.data]),
+        )
       }
-      router.refresh()
+      void queryClient.invalidateQueries({ queryKey: queryKeys.availabilitySummaries() })
     } finally {
       setIsApplying(false)
     }

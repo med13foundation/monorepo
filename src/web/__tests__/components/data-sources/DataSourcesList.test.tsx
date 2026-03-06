@@ -1,4 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DataSourcesList } from '@/components/data-sources/DataSourcesList'
 import { DiscoverSourcesDialog } from '@/components/data-sources/DiscoverSourcesDialog'
@@ -22,6 +24,7 @@ const mockStreamCardPayloadsState: {
   current: SpaceWorkflowSourceCardPayload[]
 } = { current: [] }
 const mockStreamFallbackState: { current: boolean } = { current: false }
+const mockFetchSpaceDataSourcesQueryAction = jest.fn()
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -48,6 +51,11 @@ jest.mock('@/app/actions/kernel-ingest', () => ({
   fetchSourceWorkflowEventsAction: jest.fn(),
   fetchSourceWorkflowCardStatusAction: jest.fn(),
   runSpaceSourcePipelineAction: jest.fn(),
+}))
+
+jest.mock('@/app/actions/admin-query', () => ({
+  fetchSpaceDataSourcesQueryAction: (...args: unknown[]) =>
+    mockFetchSpaceDataSourcesQueryAction(...args),
 }))
 
 jest.mock('@/components/data-discovery/DataDiscoveryContent', () => ({
@@ -108,10 +116,26 @@ const dataSourcesResponse: DataSourceListResponse = {
   has_prev: false,
 }
 
+function render(ui: ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+      mutations: { retry: false },
+    },
+  })
+
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    ),
+  })
+}
+
 beforeEach(() => {
   mockStreamBootstrapPayloadState.current = null
   mockStreamCardPayloadsState.current = []
   mockStreamFallbackState.current = false
+  mockFetchSpaceDataSourcesQueryAction.mockResolvedValue(dataSourcesResponse)
   ;(fetchSourceWorkflowCardStatusAction as jest.Mock).mockResolvedValue({
     success: true,
     data: {
@@ -138,7 +162,7 @@ describe('DataSourcesList - Auto-refresh on Source Addition', () => {
     jest.clearAllMocks()
   })
 
-  it('refreshes the router when onSourceAdded callback is triggered', async () => {
+  it('invalidates the data source query when onSourceAdded callback is triggered', async () => {
     const user = userEvent.setup()
 
     render(
@@ -163,7 +187,7 @@ describe('DataSourcesList - Auto-refresh on Source Addition', () => {
     const mockAddButton = screen.getByTestId('mock-add-source')
     await user.click(mockAddButton)
 
-    expect(mockRefresh).toHaveBeenCalled()
+    expect(mockRefresh).not.toHaveBeenCalled()
   })
 
   it('displays updated data sources after rerender', async () => {
@@ -300,7 +324,7 @@ describe('DataSourcesList - AI Controls', () => {
 
     await user.click(configureButton)
 
-    expect(screen.getByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /^schedule$/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /ai config/i })).toBeInTheDocument()
   })
@@ -361,7 +385,7 @@ describe('DataSourcesList - AI Controls', () => {
 
     await user.click(configureButton)
 
-    expect(screen.getByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /^schedule$/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /ai config/i })).toBeInTheDocument()
   })
@@ -419,7 +443,7 @@ describe('DataSourcesList - AI Controls', () => {
 
     await user.click(configureButton)
 
-    expect(screen.getByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: /configure source/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /^schedule$/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /ai config/i })).toBeInTheDocument()
   })
@@ -613,5 +637,92 @@ describe('DataSourcesList - Workflow streaming and fallback', () => {
     await waitFor(() => {
       expect(screen.getByText(/Poll backend event/i)).toBeInTheDocument()
     })
+  })
+
+  it('does not restart fallback polling on every status refresh while a run is active', async () => {
+    mockStreamFallbackState.current = true
+    ;(fetchSourceWorkflowCardStatusAction as jest.Mock).mockClear()
+    ;(fetchSourceWorkflowEventsAction as jest.Mock).mockClear()
+    ;(fetchSourceWorkflowCardStatusAction as jest.Mock).mockResolvedValue({
+      success: true,
+      data: {
+        last_pipeline_status: 'running',
+        pending_paper_count: 2,
+        pending_relation_review_count: 17,
+        extraction_extracted_count: 0,
+        extraction_failed_count: 0,
+        extraction_skipped_count: 0,
+        extraction_timeout_failed_count: 0,
+        graph_edges_delta_last_run: 0,
+        graph_edges_total: 4,
+        last_failed_stage: null,
+      },
+    })
+    ;(fetchSourceWorkflowEventsAction as jest.Mock).mockResolvedValue({
+      success: true,
+      data: { events: [] },
+    })
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={dataSourcesResponse}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+        workflowStatusBySource={{
+          'source-1': {
+            last_pipeline_status: 'running',
+            pending_paper_count: 2,
+            pending_relation_review_count: 17,
+            extraction_extracted_count: 0,
+            extraction_failed_count: 0,
+            extraction_skipped_count: 0,
+            extraction_timeout_failed_count: 0,
+            graph_edges_delta_last_run: 0,
+            graph_edges_total: 4,
+            last_failed_stage: null,
+          },
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(fetchSourceWorkflowCardStatusAction).toHaveBeenCalledTimes(1)
+      expect(fetchSourceWorkflowEventsAction).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('does not keep polling forever when only review backlog remains after completion', async () => {
+    mockStreamFallbackState.current = true
+    ;(fetchSourceWorkflowCardStatusAction as jest.Mock).mockClear()
+    ;(fetchSourceWorkflowEventsAction as jest.Mock).mockClear()
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={dataSourcesResponse}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+        workflowStatusBySource={{
+          'source-1': {
+            last_pipeline_status: 'completed',
+            pending_paper_count: 0,
+            pending_relation_review_count: 17,
+            extraction_extracted_count: 42,
+            extraction_failed_count: 0,
+            extraction_skipped_count: 0,
+            extraction_timeout_failed_count: 0,
+            graph_edges_delta_last_run: 8,
+            graph_edges_total: 21,
+            last_failed_stage: null,
+          },
+        }}
+      />,
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    expect(fetchSourceWorkflowCardStatusAction).not.toHaveBeenCalled()
+    expect(fetchSourceWorkflowEventsAction).not.toHaveBeenCalled()
   })
 })

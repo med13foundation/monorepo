@@ -37,6 +37,12 @@ type IssueObject = {
   loc?: unknown
 }
 
+type HttpErrorShape = {
+  response?: {
+    status?: number
+  }
+}
+
 function isIssueObject(value: unknown): value is IssueObject {
   return (
     typeof value === "object" &&
@@ -63,11 +69,27 @@ function formatErrorDetail(detail: unknown): string | null {
   return null
 }
 
+function getErrorStatusCode(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) {
+    return null
+  }
+
+  const httpError = error as HttpErrorShape
+  const statusCode = httpError.response?.status
+  return typeof statusCode === "number" ? statusCode : null
+}
+
 function getErrorMessage(error: unknown, fallback: string): string {
   const axiosError = error as AxiosError<{ detail?: unknown }>
   const statusCode = axiosError.response?.status
   if (statusCode === 401) {
     return "Session expired. Please sign in again."
+  }
+  if (statusCode === 403) {
+    return "You do not have access to this research space."
+  }
+  if (statusCode === 404) {
+    return "Research space not found."
   }
   const timeoutCode = typeof axiosError.code === "string" ? axiosError.code : ""
   const timeoutMessage =
@@ -156,7 +178,15 @@ export async function fetchSpaceDiscoveryState(
     }
   } catch (error: unknown) {
     if (process.env.NODE_ENV !== "test") {
-      console.error("[ServerAction] fetchSpaceDiscoveryState failed:", error)
+      const statusCode = getErrorStatusCode(error)
+      if (statusCode === 403 || statusCode === 404) {
+        console.warn("[ServerAction] fetchSpaceDiscoveryState unavailable:", {
+          spaceId,
+          statusCode,
+        })
+      } else {
+        console.error("[ServerAction] fetchSpaceDiscoveryState failed:", error)
+      }
     }
     return {
       success: false,

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, RefreshCcw, ShieldCheck, ShieldX } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -13,6 +13,9 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { UserListResponse, UserPublic } from '@/lib/api/users'
+import { replaceUserInLists, updateUserStatsCache } from '@/lib/query/admin-cache'
+import { queryKeys } from '@/lib/query/query-keys'
+import { usersQueryOptions } from '@/lib/query/query-options'
 
 interface PhiAccessClientProps {
   users: UserListResponse | null
@@ -29,8 +32,11 @@ export default function PhiAccessClient({
   usersError,
   currentUserId,
 }: PhiAccessClientProps) {
-  const router = useRouter()
-  const rows = users?.users ?? []
+  const queryClient = useQueryClient()
+  const usersQuery = useQuery(
+    usersQueryOptions({ skip: 0, limit: 500 }, users ?? undefined),
+  )
+  const rows = usersQuery.data?.users ?? users?.users ?? []
   const [roleDrafts, setRoleDrafts] = useState<Record<string, UserPublic['role']>>({})
   const [pendingUserId, setPendingUserId] = useState<string | null>(null)
 
@@ -53,8 +59,18 @@ export default function PhiAccessClient({
         toast.error(result.error)
         return
       }
+      replaceUserInLists(queryClient, result.data.user)
+      updateUserStatsCache(queryClient, user, result.data.user)
+      setRoleDrafts((prev) => {
+        const next = { ...prev }
+        delete next[user.id]
+        return next
+      })
       toast.success(`Updated role for ${user.full_name}`)
-      router.refresh()
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.usersRoot() }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.userStats() }),
+      ])
     } catch (error) {
       console.error('[PhiAccessClient] Failed to update role', error)
       toast.error('Unable to update user role')
@@ -72,9 +88,15 @@ export default function PhiAccessClient({
             PHI access is enforced via role-based policy. Admins can access PHI-scoped identifiers.
           </p>
         </div>
-        <Button variant="outline" onClick={() => router.refresh()}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.usersRoot() })
+          }}
+          disabled={usersQuery.isFetching}
+        >
           <RefreshCcw className="mr-2 size-4" />
-          Refresh
+          {usersQuery.isFetching ? 'Refreshing…' : 'Refresh'}
         </Button>
       </div>
 
@@ -111,7 +133,7 @@ export default function PhiAccessClient({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {usersError ? (
+          {usersError || usersQuery.isError ? (
             <div className="text-sm text-destructive">{usersError}</div>
           ) : rows.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">No users found.</div>

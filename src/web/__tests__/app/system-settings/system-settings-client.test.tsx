@@ -1,4 +1,5 @@
 import type { ComponentProps } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SystemSettingsClient from '@/app/(dashboard)/system-settings/system-settings-client'
@@ -92,7 +93,18 @@ const baseProps: SystemSettingsProps = {
 }
 
 const renderClient = (overrides: Partial<SystemSettingsProps> = {}) => {
-  return render(<SystemSettingsClient {...baseProps} {...overrides} />)
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  })
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <SystemSettingsClient {...baseProps} {...overrides} />
+    </QueryClientProvider>,
+  )
 }
 
 describe('SystemSettingsClient', () => {
@@ -221,5 +233,46 @@ describe('SystemSettingsClient', () => {
         role: 'researcher',
       })
     })
+
+    expect(screen.getByText('new@med13.org')).toBeInTheDocument()
+  })
+
+  it('removes a user immediately after delete succeeds', async () => {
+    const user = userEvent.setup()
+    renderClient({
+      users: {
+        users: [
+          {
+            id: 'user-3',
+            email: 'remove@med13.org',
+            username: 'remove-user',
+            full_name: 'Remove User',
+            role: 'researcher',
+            status: 'active',
+            email_verified: true,
+            last_login: null,
+            created_at: '2026-03-01T00:00:00.000Z',
+          },
+        ],
+        total: 1,
+        skip: 0,
+        limit: 25,
+      },
+      userStats: {
+        ...baseUserStats,
+        total_users: 1,
+        active_users: 1,
+        by_role: { researcher: 1 },
+      },
+    })
+
+    await user.click(screen.getByRole('button', { name: /Remove/i }))
+    await user.click(screen.getByRole('button', { name: /Remove User/i }))
+
+    await waitFor(() => {
+      expect(mockDeleteUserAction).toHaveBeenCalledWith('user-3')
+    })
+
+    expect(screen.queryByText('Remove User')).not.toBeInTheDocument()
   })
 })
