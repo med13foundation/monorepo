@@ -169,7 +169,7 @@ jobs:
           test -s "${PIP_AUDIT_RESULTS_PATH}"
 
       - name: Upload Audit Results
-        if: always()
+        if: always() && hashFiles('pip-audit-results.json') != ''
         uses: actions/upload-artifact@v4
         with:
           name: pip-audit-results
@@ -187,7 +187,7 @@ jobs:
           test -s "${COVERAGE_XML_PATH}"
 
       - name: Upload coverage
-        if: always()
+        if: always() && hashFiles('coverage.xml') != ''
         uses: codecov/codecov-action@v5
         with:
           files: ${{ env.COVERAGE_XML_PATH }}

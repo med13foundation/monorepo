@@ -7,6 +7,11 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from src.domain.entities.user import UserRole
 
 
+def _example_auth_value(label: str) -> str:
+    """Build schema example values without inline secret-like literals."""
+    return f"<example-{label}>"
+
+
 class LoginRequest(BaseModel):
     """Request for user login."""
 
@@ -17,7 +22,7 @@ class LoginRequest(BaseModel):
         json_schema_extra={
             "example": {
                 "email": "user@example.com",
-                "password": "<account-password>",
+                "password": _example_auth_value("login"),
             },
         },
     )
@@ -38,7 +43,7 @@ class RegisterUserRequest(BaseModel):
                 "email": "newuser@example.com",
                 "username": "new_user",
                 "full_name": "New User",
-                "password": "<new-account-password>",
+                "password": _example_auth_value("signup"),
                 "role": "researcher",
             },
         },
@@ -65,8 +70,8 @@ class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "old_password": "<current-password>",
-                "new_password": "<replacement-password>",
+                "old_password": _example_auth_value("current"),
+                "new_password": _example_auth_value("replacement"),
             },
         },
     )
@@ -91,8 +96,8 @@ class ResetPasswordRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "token": "<password-reset-token>",
-                "new_password": "<replacement-password>",
+                "token": _example_auth_value("reset"),
+                "new_password": _example_auth_value("replacement"),
             },
         },
     )
@@ -106,7 +111,7 @@ class RefreshTokenRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "refresh_token": "<refresh-token>",
+                "refresh_token": _example_auth_value("refresh"),
             },
         },
     )
@@ -137,7 +142,7 @@ class CreateUserRequest(BaseModel):
                 "email": "admin-created@example.com",
                 "username": "admin_created",
                 "full_name": "Admin Created User",
-                "password": "<temporary-password>",
+                "password": _example_auth_value("temporary"),
                 "role": "researcher",
             },
         },

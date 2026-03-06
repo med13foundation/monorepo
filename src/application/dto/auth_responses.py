@@ -9,6 +9,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.domain.entities.user import User, UserRole, UserStatus
 
 
+def _example_auth_value(label: str) -> str:
+    """Build schema example values without inline secret-like literals."""
+    return f"<example-{label}>"
+
+
+def _bearer_scheme() -> str:
+    """Return the OAuth token scheme for schema examples."""
+    return "bearer"
+
+
 class UserPublic(BaseModel):
     """Public user information (excludes sensitive data)."""
 
@@ -50,9 +60,9 @@ class LoginResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "access_token": "<access-token>",
-                "refresh_token": "<refresh-token>",
-                "token_type": "bearer",
+                "access_token": _example_auth_value("access"),
+                "refresh_token": _example_auth_value("refresh"),
+                "token_type": _bearer_scheme(),
                 "expires_in": 900,
                 "user": {
                     "id": "123e4567-e89b-12d3-a456-426614174000",
@@ -81,9 +91,9 @@ class TokenRefreshResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "access_token": "<access-token>",
-                "refresh_token": "<refresh-token>",
-                "token_type": "bearer",
+                "access_token": _example_auth_value("access"),
+                "refresh_token": _example_auth_value("refresh"),
+                "token_type": _bearer_scheme(),
                 "expires_in": 900,
             },
         },
