@@ -241,9 +241,7 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
 
     async def health_check(self) -> dict[str, bool]:
         health_status_keys = ("database", "jwt_provider", "password_hasher", "services")
-        health_status: dict[str, bool] = {
-            service_name: False for service_name in health_status_keys
-        }
+        health_status: dict[str, bool] = dict.fromkeys(health_status_keys, False)
 
         try:
             # Test database connection
