@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StorageConfigurationManager } from '@/components/system-settings/StorageConfigurationManager'
@@ -87,13 +88,24 @@ const renderManager = ({
   overview?: StorageOverviewResponse | null
   maintenanceState?: MaintenanceModeResponse | null
 } = {}) =>
-  render(
-    <StorageConfigurationManager
-      configurations={configurations}
-      overview={overview}
-      maintenanceState={maintenanceState}
-    />,
-  )
+  {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <StorageConfigurationManager
+          configurations={configurations}
+          overview={overview}
+          maintenanceState={maintenanceState}
+        />
+      </QueryClientProvider>,
+    )
+  }
 
 describe('StorageConfigurationManager', () => {
   beforeEach(() => {

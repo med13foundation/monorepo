@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DataSourceAvailabilitySection } from '@/components/system-settings/DataSourceAvailabilitySection'
@@ -73,6 +74,25 @@ const baseSpaces: ResearchSpace[] = [
 ]
 
 describe('DataSourceAvailabilitySection', () => {
+  const renderSection = (entries: SourceCatalogEntry[], summaries: DataSourceAvailability[]) => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <DataSourceAvailabilitySection
+          catalogEntries={entries}
+          availabilitySummaries={summaries}
+          spaces={baseSpaces}
+        />
+      </QueryClientProvider>,
+    )
+  }
+
   beforeEach(() => {
     jest.clearAllMocks()
     mockUpdateGlobalAvailabilityAction.mockResolvedValue({
@@ -98,25 +118,13 @@ describe('DataSourceAvailabilitySection', () => {
   })
 
   it('renders list of data sources', () => {
-    render(
-      <DataSourceAvailabilitySection
-        catalogEntries={[baseCatalogEntry]}
-        availabilitySummaries={[baseAvailability]}
-        spaces={baseSpaces}
-      />,
-    )
+    renderSection([baseCatalogEntry], [baseAvailability])
     expect(screen.getByText('Global API')).toBeInTheDocument()
   })
 
   it('opens manage dialog when button is clicked', async () => {
     const user = userEvent.setup()
-    render(
-      <DataSourceAvailabilitySection
-        catalogEntries={[baseCatalogEntry]}
-        availabilitySummaries={[baseAvailability]}
-        spaces={baseSpaces}
-      />,
-    )
+    renderSection([baseCatalogEntry], [baseAvailability])
 
     await user.click(screen.getByRole('button', { name: /manage availability/i }))
     expect(await screen.findByText(/Global availability/i)).toBeInTheDocument()
@@ -124,13 +132,7 @@ describe('DataSourceAvailabilitySection', () => {
 
   it('calls mutation when activating globally', async () => {
     const user = userEvent.setup()
-    render(
-      <DataSourceAvailabilitySection
-        catalogEntries={[baseCatalogEntry]}
-        availabilitySummaries={[baseAvailability]}
-        spaces={baseSpaces}
-      />,
-    )
+    renderSection([baseCatalogEntry], [baseAvailability])
 
     await user.click(screen.getByRole('button', { name: /manage availability/i }))
     const dialog = await screen.findByRole('dialog')
@@ -148,18 +150,15 @@ describe('DataSourceAvailabilitySection', () => {
       name: 'Beta Source',
       description: 'Secondary beta data',
     }
-    render(
-      <DataSourceAvailabilitySection
-        catalogEntries={[baseCatalogEntry, secondEntry]}
-        availabilitySummaries={[
-          baseAvailability,
-          {
-            ...baseAvailability,
-            catalog_entry_id: 'catalog-2',
-          },
-        ]}
-        spaces={baseSpaces}
-      />,
+    renderSection(
+      [baseCatalogEntry, secondEntry],
+      [
+        baseAvailability,
+        {
+          ...baseAvailability,
+          catalog_entry_id: 'catalog-2',
+        },
+      ],
     )
 
     const input = screen.getByPlaceholderText(/search by name/i)
@@ -178,18 +177,15 @@ describe('DataSourceAvailabilitySection', () => {
       name: 'Beta Source',
       description: 'Secondary beta data',
     }
-    render(
-      <DataSourceAvailabilitySection
-        catalogEntries={[baseCatalogEntry, secondEntry]}
-        availabilitySummaries={[
-          baseAvailability,
-          {
-            ...baseAvailability,
-            catalog_entry_id: 'catalog-2',
-          },
-        ]}
-        spaces={baseSpaces}
-      />,
+    renderSection(
+      [baseCatalogEntry, secondEntry],
+      [
+        baseAvailability,
+        {
+          ...baseAvailability,
+          catalog_entry_id: 'catalog-2',
+        },
+      ],
     )
 
     const input = screen.getByPlaceholderText(/search by name/i)

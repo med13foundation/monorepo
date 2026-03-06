@@ -239,6 +239,10 @@ describe('CurationHypothesesCard', () => {
       })
     })
 
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Needs mapping' }).length).toBeGreaterThan(0)
+    })
+
     fireEvent.click(screen.getAllByRole('button', { name: 'Needs mapping' })[0])
     await waitFor(() => {
       expect(updateRelationClaimStatusActionMock).toHaveBeenCalledWith(

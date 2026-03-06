@@ -1,5 +1,6 @@
 "use client"
 
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
@@ -60,6 +61,9 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { useSpaceWorkflowStream } from '@/hooks/use-space-workflow-stream'
+import { mergeSpaceDataSource, removeSpaceDataSource } from '@/lib/query/admin-cache'
+import { queryKeys } from '@/lib/query/query-keys'
+import { spaceDataSourcesQueryOptions } from '@/lib/query/query-options'
 
 interface DataSourcesListProps {
   spaceId: string
@@ -69,6 +73,7 @@ interface DataSourcesListProps {
   discoveryCatalog: SourceCatalogEntry[]
   discoveryError?: string | null
   workflowStatusBySource?: Record<string, SourceWorkflowCardStatus>
+  initialNowMs?: number
 }
 
 export interface SourceWorkflowCardStatus {
@@ -223,6 +228,23 @@ function describeWorkflowChange(
   return updates.join(' | ')
 }
 
+function shouldPollWorkflowCard(
+  status: SourceWorkflowCardStatus | undefined,
+  isRunActive: boolean,
+): boolean {
+  if (isRunActive) {
+    return true
+  }
+  if (!status) {
+    return false
+  }
+
+  // The list page should only live-poll while ingestion/extraction work is still moving.
+  // Review backlog can remain nonzero for long periods and would otherwise trigger
+  // endless polling on an idle page.
+  return (status.pending_paper_count ?? 0) > 0
+}
+
 function formatElapsedSeconds(nowMs: number, timestampMs: number | undefined, fallback: string): string {
   if (typeof timestampMs !== 'number') {
     return fallback
@@ -250,8 +272,10 @@ export function DataSourcesList({
   discoveryCatalog,
   discoveryError,
   workflowStatusBySource,
+  initialNowMs,
 }: DataSourcesListProps) {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const [detailSourceId, setDetailSourceId] = useState<string | null>(null)
   const [isDiscoverDialogOpen, setIsDiscoverDialogOpen] = useState(false)
   const [configurationDialogSource, setConfigurationDialogSource] = useState<DataSource | null>(null)
@@ -276,12 +300,22 @@ export function DataSourcesList({
   const lastWorkflowRefreshAtBySourceRef = useRef<Record<string, number>>({})
   const lastWorkflowChangeAtBySourceRef = useRef<Record<string, number>>({})
   const lastWorkflowChangeSummaryBySourceRef = useRef<Record<string, string>>({})
-  const [liveStatusNowMs, setLiveStatusNowMs] = useState<number>(() => Date.now())
+  const [liveStatusNowMs, setLiveStatusNowMs] = useState<number>(() => initialNowMs ?? Date.now())
+  const dataSourcesQuery = useQuery(
+    spaceDataSourcesQueryOptions(spaceId, {}, dataSources ?? undefined),
+  )
+  const resolvedDataSourceResponse = dataSourcesQuery.data ?? dataSources
 
   const resolvedDataSources = useMemo(
-    () => dataSources?.items ?? [],
-    [dataSources],
+    () => resolvedDataSourceResponse?.items ?? [],
+    [resolvedDataSourceResponse],
   )
+
+  useEffect(() => {
+    if (dataSources !== null) {
+      queryClient.setQueryData(queryKeys.spaceDataSources(spaceId, {}), dataSources)
+    }
+  }, [dataSources, queryClient, spaceId])
 
   const applyStreamCardPayload = useCallback((payload: SpaceWorkflowSourceCardPayload) => {
     const sourceId = payload.source_id
@@ -362,15 +396,13 @@ export function DataSourcesList({
       const isRunActive =
         runningPipelineSourceId === source.id ||
         status?.last_pipeline_status === 'running'
-      const hasBacklog =
-        (status?.pending_paper_count ?? 0) > 0 ||
-        (status?.pending_relation_review_count ?? 0) > 0
-      if (isRunActive || hasBacklog) {
+      if (shouldPollWorkflowCard(status, isRunActive)) {
         ids.push(source.id)
       }
     }
     return ids
   }, [liveWorkflowStatusBySource, resolvedDataSources, runningPipelineSourceId])
+  const pollingSourceIdsKey = useMemo(() => pollingSourceIds.join(','), [pollingSourceIds])
 
   useEffect(() => {
     if (pollingSourceIds.length === 0 && runningPipelineSourceId === null) {
@@ -385,15 +417,16 @@ export function DataSourcesList({
   }, [pollingSourceIds.length, runningPipelineSourceId])
 
   useEffect(() => {
-    if (!isPollingFallbackActive || pollingSourceIds.length === 0) return
+    if (!isPollingFallbackActive || pollingSourceIdsKey.length === 0) return
     let isMounted = true
     let isPolling = false
+    const sourceIdsToPoll = pollingSourceIdsKey.split(',').filter((value) => value.length > 0)
     const poll = async () => {
       if (isPolling || !isMounted) return
       isPolling = true
       try {
         const results = await Promise.all(
-          pollingSourceIds.map(async (sourceId) => {
+          sourceIdsToPoll.map(async (sourceId) => {
             const [statusResult, eventsResult] = await Promise.all([
               fetchSourceWorkflowCardStatusAction(spaceId, sourceId),
               fetchSourceWorkflowEventsAction(spaceId, sourceId, {
@@ -447,8 +480,8 @@ export function DataSourcesList({
             item.statusResult.success &&
             item.statusResult.data.last_pipeline_status === 'running',
         )
-        if (!hasBackendRunning && runningPipelineSourceId !== null) {
-          setRunningPipelineSourceId(null)
+        if (!hasBackendRunning) {
+          setRunningPipelineSourceId((current) => (current === null ? current : null))
         }
       } finally {
         isPolling = false
@@ -462,14 +495,14 @@ export function DataSourcesList({
       isMounted = false
       window.clearInterval(intervalId)
     }
-  }, [isPollingFallbackActive, pollingSourceIds, runningPipelineSourceId, spaceId])
+  }, [isPollingFallbackActive, pollingSourceIdsKey, spaceId])
 
-  if (dataSourcesError) {
+  if (dataSourcesError || dataSourcesQuery.isError) {
     return (
       <Card>
         <CardContent className="pt-6">
           <p className="text-destructive">
-            Failed to load data sources: {dataSourcesError}
+            Failed to load data sources: {dataSourcesError ?? 'Unable to refresh the list.'}
           </p>
         </CardContent>
       </Card>
@@ -505,12 +538,17 @@ export function DataSourcesList({
         toast.error(result.error)
         return
       }
+      queryClient.setQueryData(
+        queryKeys.spaceDataSources(spaceId, {}),
+        (current: DataSourceListResponse | undefined) =>
+          current === undefined ? current : mergeSpaceDataSource(current, result.data),
+      )
       toast.success(
         shouldActivate
           ? `${source.name} is now active`
           : `${source.name} is now paused`,
       )
-      router.refresh()
+      void queryClient.invalidateQueries({ queryKey: queryKeys.spaceDataSources(spaceId, {}) })
     } catch (error) {
       // Error toast is handled by the mutation
     } finally {
@@ -527,8 +565,13 @@ export function DataSourcesList({
         toast.error(result.error)
         return
       }
+      queryClient.setQueryData(
+        queryKeys.spaceDataSources(spaceId, {}),
+        (current: DataSourceListResponse | undefined) =>
+          current === undefined ? current : removeSpaceDataSource(current, deleteSourceId),
+      )
       setDeleteSourceId(null)
-      router.refresh()
+      void queryClient.invalidateQueries({ queryKey: queryKeys.spaceDataSources(spaceId, {}) })
     } catch (error) {
       // Error toast is handled by the mutation
     } finally {
@@ -596,7 +639,7 @@ export function DataSourcesList({
     return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString()
   }
 
-  const formatRelativeTime = (value?: string | null) => {
+  const formatRelativeTime = (value?: string | null, nowMs?: number) => {
     if (!value) {
       return 'Never'
     }
@@ -604,7 +647,7 @@ export function DataSourcesList({
     if (Number.isNaN(target.getTime())) {
       return 'Unknown'
     }
-    const diffMs = target.getTime() - Date.now()
+    const diffMs = target.getTime() - (nowMs ?? Date.now())
     const absMs = Math.abs(diffMs)
     const units: [number, Intl.RelativeTimeFormatUnit][] = [
       [1000, 'second'],
@@ -786,7 +829,7 @@ export function DataSourcesList({
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted-foreground">
-            {dataSources?.total || 0} data source{dataSources?.total !== 1 ? 's' : ''} in this space
+            {resolvedDataSourceResponse?.total || 0} data source{resolvedDataSourceResponse?.total !== 1 ? 's' : ''} in this space
           </p>
         </div>
         <div className="flex gap-2">
@@ -838,7 +881,7 @@ export function DataSourcesList({
               schedule?.enabled === true && String(schedule.frequency) !== 'manual'
             const nextRunRelative =
               hasRunnableSchedule && schedule?.next_run_at
-                ? formatRelativeTime(schedule.next_run_at)
+                ? formatRelativeTime(schedule.next_run_at, liveStatusNowMs)
                 : null
             const countTelemetryMetrics: Array<{
               label: string
@@ -883,7 +926,7 @@ export function DataSourcesList({
               'Awaiting first progress signal.'
             const workflowEventSignals = liveWorkflowEventsBySource[source.id] ?? []
             const recentWorkflowEventSignals = workflowEventSignals.slice(0, 3)
-            const lastRunMetric = formatRelativeTime(lastExecutionAt)
+            const lastRunMetric = formatRelativeTime(lastExecutionAt, liveStatusNowMs)
             const isActive = source.status === 'active'
             const isArchived = source.status === 'archived'
             const backendRunning = workflowStatus?.last_pipeline_status === 'running'
@@ -1356,7 +1399,9 @@ export function DataSourcesList({
         discoveryState={discoveryState}
         discoveryCatalog={discoveryCatalog}
         discoveryError={discoveryError}
-        onSourceAdded={() => router.refresh()}
+        onSourceAdded={() => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.spaceDataSources(spaceId, {}) })
+        }}
       />
       <Dialog open={Boolean(deleteSourceId)} onOpenChange={(open) => !open && setDeleteSourceId(null)}>
         <DialogContent>

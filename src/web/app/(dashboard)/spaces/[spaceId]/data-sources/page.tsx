@@ -118,6 +118,7 @@ export default async function SpaceDataSourcesPage({
   params,
   searchParams,
 }: SpaceDataSourcesPageProps) {
+  const initialNowMs = Date.now()
   const { spaceId } = await params
   if (!isValidSpaceId(spaceId)) {
     redirect('/spaces/new')
@@ -244,6 +245,7 @@ export default async function SpaceDataSourcesPage({
       workflowStatusBySource={workflowStatusBySource}
       workflowMonitorEnabled={workflowMonitorEnabled}
       onboarding={onboarding}
+      initialNowMs={initialNowMs}
     />
   )
 }

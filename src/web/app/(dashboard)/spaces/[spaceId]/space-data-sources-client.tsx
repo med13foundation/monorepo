@@ -19,6 +19,7 @@ interface SpaceDataSourcesClientProps {
   workflowStatusBySource?: Record<string, SourceWorkflowCardStatus>
   workflowMonitorEnabled?: boolean
   onboarding?: boolean
+  initialNowMs?: number
 }
 
 export default function SpaceDataSourcesClient({
@@ -31,6 +32,7 @@ export default function SpaceDataSourcesClient({
   workflowStatusBySource,
   workflowMonitorEnabled = true,
   onboarding = false,
+  initialNowMs,
 }: SpaceDataSourcesClientProps) {
   return (
     <div className="space-y-6">
@@ -63,6 +65,7 @@ export default function SpaceDataSourcesClient({
         discoveryCatalog={discoveryCatalog}
         discoveryError={discoveryError}
         workflowStatusBySource={workflowStatusBySource}
+        initialNowMs={initialNowMs}
       />
     </div>
   )

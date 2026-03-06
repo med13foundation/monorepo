@@ -51,6 +51,10 @@ function getErrorStatusCode(error: unknown): number | null {
   return typeof statusCode === 'number' ? statusCode : null
 }
 
+function shouldUseLegacyOverviewFallback(statusCode: number | null): boolean {
+  return statusCode === 403 || statusCode === 404 || statusCode === 422
+}
+
 async function fetchRelationSample(
   spaceId: string,
   token: string,
@@ -228,9 +232,9 @@ export default async function SpaceDetailPage({ params }: SpaceDetailPageProps) 
     showMembershipNotice = overview.access.show_membership_notice
   } else {
     const overviewStatusCode = getErrorStatusCode(overviewResult.reason)
-    if (overviewStatusCode === 404 || overviewStatusCode === 422) {
+    if (shouldUseLegacyOverviewFallback(overviewStatusCode)) {
       console.warn(
-        '[SpaceDetailPage] Overview endpoint unavailable, using legacy multi-call fallback',
+        '[SpaceDetailPage] Overview endpoint unavailable or access-limited, using legacy multi-call fallback',
       )
       try {
         space = await fetchResearchSpace(spaceId, token)

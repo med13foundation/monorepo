@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
@@ -61,6 +62,14 @@ import type { MaintenanceModeResponse } from '@/types/system-status'
 import type { SourceCatalogEntry } from '@/lib/types/data-discovery'
 import type { DataSourceAvailability } from '@/lib/api/data-source-activation'
 import type { ResearchSpace } from '@/types/research-space'
+import {
+  removeUserFromLists,
+  replaceUserInLists,
+  updateUserStatsCache,
+  upsertUserInLists,
+} from '@/lib/query/admin-cache'
+import { queryKeys } from '@/lib/query/query-keys'
+import { userStatsQueryOptions, usersQueryOptions } from '@/lib/query/query-options'
 
 interface SystemSettingsClientProps {
   initialParams: UserListParams
@@ -128,55 +137,6 @@ const emptyUserListResponse: UserListResponse = {
   limit: 0,
 }
 
-function updateUserStatusInList(
-  listData: UserListResponse,
-  userId: string,
-  nextStatus: UserPublic['status'],
-): UserListResponse {
-  return {
-    ...listData,
-    users: listData.users.map((user) =>
-      user.id === userId
-        ? {
-            ...user,
-            status: nextStatus,
-            email_verified: nextStatus === 'active' ? true : user.email_verified,
-          }
-        : user,
-    ),
-  }
-}
-
-function updateStatusCount(
-  stats: UserStatisticsResponse,
-  status: UserPublic['status'],
-  delta: number,
-): UserStatisticsResponse {
-  switch (status) {
-    case 'active':
-      return { ...stats, active_users: stats.active_users + delta }
-    case 'inactive':
-      return { ...stats, inactive_users: stats.inactive_users + delta }
-    case 'suspended':
-      return { ...stats, suspended_users: stats.suspended_users + delta }
-    case 'pending_verification':
-      return { ...stats, pending_verification: stats.pending_verification + delta }
-  }
-}
-
-function updateUserStatsForStatusChange(
-  stats: UserStatisticsResponse | null,
-  previousStatus: UserPublic['status'],
-  nextStatus: UserPublic['status'],
-): UserStatisticsResponse | null {
-  if (stats === null || previousStatus === nextStatus) {
-    return stats
-  }
-
-  const decremented = updateStatusCount(stats, previousStatus, -1)
-  return updateStatusCount(decremented, nextStatus, 1)
-}
-
 export default function SystemSettingsClient({
   initialParams,
   users,
@@ -191,6 +151,7 @@ export default function SystemSettingsClient({
   isAdmin,
 }: SystemSettingsClientProps) {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const [filters, setFilters] = useState<UserListParams>(initialParams)
   const [search, setSearch] = useState('')
   const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -199,19 +160,24 @@ export default function SystemSettingsClient({
   const [isRefreshing, startRefresh] = useTransition()
   const [isCreatingUser, setIsCreatingUser] = useState(false)
   const [isDeletingUser, setIsDeletingUser] = useState(false)
-  const [listData, setListData] = useState<UserListResponse>(users ?? emptyUserListResponse)
-  const [statsData, setStatsData] = useState<UserStatisticsResponse | null>(userStats)
+  const usersQuery = useQuery(usersQueryOptions(initialParams, users ?? undefined))
+  const statsQuery = useQuery(userStatsQueryOptions(userStats ?? undefined))
+  const listData = usersQuery.data ?? emptyUserListResponse
+  const statsData = statsQuery.data ?? null
+  const statsLoading = statsQuery.isPending && statsData === null
+  const userListError =
+    usersQuery.isError || users === null
+      ? 'Unable to load user inventory. Please retry.'
+      : null
 
-  useEffect(() => {
-    setListData(users ?? emptyUserListResponse)
-  }, [users])
-
-  useEffect(() => {
-    setStatsData(userStats)
-  }, [userStats])
-
-  const statsLoading = statsData === null
-  const userListError = users === null ? 'Unable to load user inventory. Please retry.' : null
+  const refreshUserQueries = () => {
+    startRefresh(() => {
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.usersRoot() }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.userStats() }),
+      ])
+    })
+  }
 
   const filteredUsers = useMemo(() => {
     let filtered = listData.users
@@ -273,9 +239,11 @@ export default function SystemSettingsClient({
         toast.error(result.error)
         return
       }
+      upsertUserInLists(queryClient, result.data.user)
+      updateUserStatsCache(queryClient, null, result.data.user)
       toast.success(`User ${payload.full_name || payload.email} created`)
       setIsCreateOpen(false)
-      router.refresh()
+      refreshUserQueries()
     } catch (error) {
       console.error('Failed to create user', error)
       toast.error('Failed to create user')
@@ -287,14 +255,13 @@ export default function SystemSettingsClient({
   const handleStatusAction = async (user: UserPublic) => {
     setPendingUserId(user.id)
     try {
+      const nextStatus: UserPublic['status'] = user.status === 'active' ? 'suspended' : 'active'
       if (user.status === 'active') {
         const result = await lockUserAction(user.id)
         if (!result.success) {
           toast.error(result.error)
           return
         }
-        setListData((prev) => updateUserStatusInList(prev, user.id, 'suspended'))
-        setStatsData((prev) => updateUserStatsForStatusChange(prev, user.status, 'suspended'))
         toast.success(`Suspended ${user.full_name}`)
       } else {
         const result = await activateUserAction(user.id)
@@ -302,11 +269,16 @@ export default function SystemSettingsClient({
           toast.error(result.error)
           return
         }
-        setListData((prev) => updateUserStatusInList(prev, user.id, 'active'))
-        setStatsData((prev) => updateUserStatsForStatusChange(prev, user.status, 'active'))
         toast.success(`Activated ${user.full_name}`)
       }
-      startRefresh(() => router.refresh())
+      const updatedUser: UserPublic = {
+        ...user,
+        status: nextStatus,
+        email_verified: nextStatus === 'active' ? true : user.email_verified,
+      }
+      replaceUserInLists(queryClient, updatedUser)
+      updateUserStatsCache(queryClient, user, updatedUser)
+      refreshUserQueries()
     } catch (error) {
       console.error('Failed to update user status', error)
       toast.error('Unable to update user status')
@@ -327,9 +299,11 @@ export default function SystemSettingsClient({
         toast.error(result.error)
         return
       }
+      removeUserFromLists(queryClient, deleteTarget.id)
+      updateUserStatsCache(queryClient, deleteTarget, null)
       toast.success(`Removed ${deleteTarget.full_name}`)
       setDeleteTarget(null)
-      router.refresh()
+      refreshUserQueries()
     } catch (error) {
       console.error('Failed to delete user', error)
       toast.error('Unable to delete user')
@@ -404,10 +378,10 @@ export default function SystemSettingsClient({
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button
                 variant="outline"
-                onClick={() => startRefresh(() => router.refresh())}
-                disabled={isRefreshing}
+                onClick={refreshUserQueries}
+                disabled={isRefreshing || usersQuery.isFetching || statsQuery.isFetching}
               >
-                {isRefreshing ? (
+                {isRefreshing || usersQuery.isFetching || statsQuery.isFetching ? (
                   <>
                     <Loader2 className="mr-2 size-4 animate-spin" />
                     Refreshing…

@@ -637,6 +637,9 @@ describe('SpaceCurationClient', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Find path' })).toBeInTheDocument()
     })
+    await waitFor(() => {
+      expect(screen.getByText('Overlay path edge')).toBeInTheDocument()
+    })
 
     fireEvent.change(screen.getByLabelText('From entity ID'), {
       target: { value: 'entity-source' },
@@ -658,9 +661,11 @@ describe('SpaceCurationClient', () => {
         { offset: 0, limit: 200 },
       )
     })
-    expect(
-      screen.getByText('Focused path with 2 claims across 1 links.'),
-    ).toBeInTheDocument()
+    await waitFor(() => {
+      expect(
+        screen.getByText('Focused path with 2 claims across 1 links.'),
+      ).toBeInTheDocument()
+    })
     expect(screen.getByText('Focus path')).toBeInTheDocument()
   })
 

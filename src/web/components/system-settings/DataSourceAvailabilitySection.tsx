@@ -1,5 +1,6 @@
 "use client"
 
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -36,7 +37,9 @@ import type {
 } from '@/lib/api/data-source-activation'
 import { toast } from 'sonner'
 import type { ResearchSpace } from '@/types/research-space'
-import { useRouter } from 'next/navigation'
+import { mergeAvailabilitySummaries } from '@/lib/query/admin-cache'
+import { queryKeys } from '@/lib/query/query-keys'
+import { availabilitySummariesQueryOptions } from '@/lib/query/query-options'
 
 const PERMISSION_LABELS: Record<PermissionLevel, string> = {
   available: 'Available',
@@ -93,27 +96,28 @@ export function DataSourceAvailabilitySection({
   availabilitySummaries,
   spaces,
 }: DataSourceAvailabilitySectionProps) {
-  const router = useRouter()
+  const queryClient = useQueryClient()
   const [selectedSource, setSelectedSource] = useState<SourceCatalogEntry | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
-  const [selectedAvailability, setSelectedAvailability] = useState<DataSourceAvailability | null>(null)
   const [isApplying, setIsApplying] = useState(false)
   const totalSpaces = spaces.length
+  const availabilityQuery = useQuery(
+    availabilitySummariesQueryOptions(availabilitySummaries),
+  )
+  const resolvedAvailabilitySummaries = availabilityQuery.data ?? availabilitySummaries
 
   const availabilitySummaryMap = useMemo(() => {
     const entries = new Map<string, NonNullable<typeof availabilitySummaries>[number]>()
-    availabilitySummaries.forEach((summary) => {
+    resolvedAvailabilitySummaries.forEach((summary) => {
       entries.set(summary.catalog_entry_id, summary)
     })
     return entries
-  }, [availabilitySummaries])
+  }, [resolvedAvailabilitySummaries])
 
   const activeAvailability =
     selectedSource
-      ? selectedAvailability ??
-        availabilitySummaryMap.get(selectedSource.id) ??
-        createDefaultAvailability(selectedSource.id)
+      ? availabilitySummaryMap.get(selectedSource.id) ?? createDefaultAvailability(selectedSource.id)
       : null
 
   const filteredEntries = useMemo(() => {
@@ -186,9 +190,6 @@ export function DataSourceAvailabilitySection({
 
   const handleManage = (source: SourceCatalogEntry) => {
     setSelectedSource(source)
-    setSelectedAvailability(
-      availabilitySummaryMap.get(source.id) ?? createDefaultAvailability(source.id),
-    )
     setDialogOpen(true)
   }
 
@@ -201,9 +202,12 @@ export function DataSourceAvailabilitySection({
         toast.error(result.error)
         return
       }
-      setSelectedAvailability(result.data)
+      queryClient.setQueryData<DataSourceAvailability[]>(
+        queryKeys.availabilitySummaries(),
+        (current) => mergeAvailabilitySummaries(current ?? [], [result.data]),
+      )
       toast.success(`Global permission set to ${PERMISSION_LABELS[permissionLevel]}`)
-      router.refresh()
+      void queryClient.invalidateQueries({ queryKey: queryKeys.availabilitySummaries() })
     } catch (error) {
       toast.error('Failed to update global permission')
     } finally {
@@ -220,9 +224,12 @@ export function DataSourceAvailabilitySection({
         toast.error(result.error)
         return
       }
-      setSelectedAvailability(result.data)
+      queryClient.setQueryData<DataSourceAvailability[]>(
+        queryKeys.availabilitySummaries(),
+        (current) => mergeAvailabilitySummaries(current ?? [], [result.data]),
+      )
       toast.success('Global override removed')
-      router.refresh()
+      void queryClient.invalidateQueries({ queryKey: queryKeys.availabilitySummaries() })
     } catch (error) {
       toast.error('Failed to reset global availability')
     } finally {
@@ -243,9 +250,12 @@ export function DataSourceAvailabilitySection({
         toast.error(result.error)
         return
       }
-      setSelectedAvailability(result.data)
+      queryClient.setQueryData<DataSourceAvailability[]>(
+        queryKeys.availabilitySummaries(),
+        (current) => mergeAvailabilitySummaries(current ?? [], [result.data]),
+      )
       toast.success('Permission updated for research space')
-      router.refresh()
+      void queryClient.invalidateQueries({ queryKey: queryKeys.availabilitySummaries() })
     } catch (error) {
       toast.error('Failed to update research space permission')
     } finally {
@@ -262,9 +272,12 @@ export function DataSourceAvailabilitySection({
         toast.error(result.error)
         return
       }
-      setSelectedAvailability(result.data)
+      queryClient.setQueryData<DataSourceAvailability[]>(
+        queryKeys.availabilitySummaries(),
+        (current) => mergeAvailabilitySummaries(current ?? [], [result.data]),
+      )
       toast.success('Project override removed')
-      router.refresh()
+      void queryClient.invalidateQueries({ queryKey: queryKeys.availabilitySummaries() })
     } catch (error) {
       toast.error('Failed to remove project override')
     } finally {
@@ -295,7 +308,11 @@ export function DataSourceAvailabilitySection({
           affectedCount === 1 ? '' : 's'
         } globally`,
       )
-      router.refresh()
+      queryClient.setQueryData<DataSourceAvailability[]>(
+        queryKeys.availabilitySummaries(),
+        (current) => mergeAvailabilitySummaries(current ?? [], result.data),
+      )
+      void queryClient.invalidateQueries({ queryKey: queryKeys.availabilitySummaries() })
     } catch (error) {
       toast.error('Failed to apply bulk update')
     } finally {
@@ -432,7 +449,6 @@ export function DataSourceAvailabilitySection({
           setDialogOpen(open)
           if (!open) {
             setSelectedSource(null)
-            setSelectedAvailability(null)
           }
         }}
       >
