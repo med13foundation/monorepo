@@ -154,6 +154,9 @@ fi
 if [[ -n "${READ_API_KEY_SECRET_NAME:-}" ]]; then
   backend_secret_pairs+=("READ_API_KEY=${READ_API_KEY_SECRET_NAME}:latest")
 fi
+if [[ -n "${OPENAI_API_KEY_SECRET_NAME:-}" ]]; then
+  backend_secret_pairs+=("OPENAI_API_KEY=${OPENAI_API_KEY_SECRET_NAME}:latest")
+fi
 
 if ((${#backend_secret_pairs[@]} > 0)); then
   backend_update_secrets="$(IFS=,; echo "${backend_secret_pairs[*]}")"
