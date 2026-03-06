@@ -72,6 +72,11 @@ def require_space_access(
     if current_user.role == UserRole.ADMIN:
         return
 
+    space_repo = SqlAlchemyResearchSpaceRepository(context.db_session)
+    space = space_repo.find_by_id(context.service.space_id)
+    if space is not None and space.owner_id == current_user.id:
+        return
+
     membership_repo = SqlAlchemyResearchSpaceMembershipRepository(
         context.db_session,
     )
