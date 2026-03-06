@@ -98,21 +98,36 @@ class SqlAlchemySessionRepository(SessionRepository):
     async def get_by_access_token(self, access_token: str) -> UserSession | None:
         """Get session by access token."""
         async with self._session() as session:
-            stmt = select(SessionModel).where(
-                SessionModel.session_token == self._hash_token(access_token),
+            now = datetime.now(UTC)
+            stmt = (
+                select(SessionModel)
+                .where(
+                    and_(
+                        SessionModel.session_token == self._hash_token(access_token),
+                        SessionModel.status == SessionStatus.ACTIVE,
+                        SessionModel.expires_at > now,
+                    ),
+                )
+                .order_by(SessionModel.created_at.desc(), SessionModel.id.desc())
+                .limit(1)
             )
             result = await session.execute(stmt)
-            model = result.scalar_one_or_none()
+            model = result.scalars().first()
             return self._to_domain(model)
 
     async def get_by_refresh_token(self, refresh_token: str) -> UserSession | None:
         """Get session by refresh token."""
         async with self._session() as session:
-            stmt = select(SessionModel).where(
-                SessionModel.refresh_token == self._hash_token(refresh_token),
+            stmt = (
+                select(SessionModel)
+                .where(
+                    SessionModel.refresh_token == self._hash_token(refresh_token),
+                )
+                .order_by(SessionModel.created_at.desc(), SessionModel.id.desc())
+                .limit(1)
             )
             result = await session.execute(stmt)
-            model = result.scalar_one_or_none()
+            model = result.scalars().first()
             return self._to_domain(model)
 
     async def get_active_by_refresh_token(
@@ -122,15 +137,20 @@ class SqlAlchemySessionRepository(SessionRepository):
         """Get active session by refresh token."""
         async with self._session() as session:
             now = datetime.now(UTC)
-            stmt = select(SessionModel).where(
-                and_(
-                    SessionModel.refresh_token == self._hash_token(refresh_token),
-                    SessionModel.status == SessionStatus.ACTIVE,
-                    SessionModel.refresh_expires_at > now,
-                ),
+            stmt = (
+                select(SessionModel)
+                .where(
+                    and_(
+                        SessionModel.refresh_token == self._hash_token(refresh_token),
+                        SessionModel.status == SessionStatus.ACTIVE,
+                        SessionModel.refresh_expires_at > now,
+                    ),
+                )
+                .order_by(SessionModel.created_at.desc(), SessionModel.id.desc())
+                .limit(1)
             )
             result = await session.execute(stmt)
-            model = result.scalar_one_or_none()
+            model = result.scalars().first()
             return self._to_domain(model)
 
     async def update(self, session_entity: UserSession) -> UserSession:
