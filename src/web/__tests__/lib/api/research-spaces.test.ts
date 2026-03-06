@@ -1,6 +1,6 @@
 import type { AxiosError } from 'axios'
 import { apiClient, authHeaders } from '@/lib/api/client'
-import { fetchResearchSpace } from '@/lib/api/research-spaces'
+import { createResearchSpace, fetchResearchSpace } from '@/lib/api/research-spaces'
 import { SpaceStatus, type ResearchSpace } from '@/types/research-space'
 
 jest.mock('@/lib/api/client', () => ({
@@ -14,6 +14,7 @@ jest.mock('@/lib/api/client', () => ({
 }))
 
 const mockApiClientGet = apiClient.get as jest.MockedFunction<typeof apiClient.get>
+const mockApiClientPost = apiClient.post as jest.MockedFunction<typeof apiClient.post>
 const mockAuthHeaders = authHeaders as jest.MockedFunction<typeof authHeaders>
 
 function httpError(status: number): AxiosError {
@@ -99,5 +100,41 @@ describe('research spaces api', () => {
 
     await expect(fetchResearchSpace(uuid, 'test-token')).rejects.toBe(expectedError)
     expect(mockApiClientGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns the created space when the payload shape is valid', async () => {
+    const expected = buildSpace()
+    mockApiClientPost.mockResolvedValueOnce({ data: expected } as never)
+
+    const result = await createResearchSpace(
+      {
+        name: expected.name,
+        slug: expected.slug,
+      },
+      'test-token',
+    )
+
+    expect(result).toEqual(expected)
+    expect(mockApiClientPost).toHaveBeenCalledWith(
+      '/research-spaces',
+      { name: expected.name, slug: expected.slug },
+      { headers: { Authorization: 'Bearer test-token' } },
+    )
+  })
+
+  it('rejects create responses that do not contain a usable research space payload', async () => {
+    mockApiClientPost.mockResolvedValueOnce({
+      data: { ok: true, detail: 'not a research space' },
+    } as never)
+
+    await expect(
+      createResearchSpace(
+        {
+          name: 'Broken Space',
+          slug: 'broken-space',
+        },
+        'test-token',
+      ),
+    ).rejects.toThrow('Invalid research space response payload')
   })
 })
