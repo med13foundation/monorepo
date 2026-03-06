@@ -28,6 +28,20 @@ function isUuidLike(value: string): boolean {
   return UUID_PATTERN.test(value)
 }
 
+function isResearchSpacePayload(value: unknown): value is ResearchSpace {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.slug === 'string' &&
+    typeof candidate.name === 'string' &&
+    typeof candidate.owner_id === 'string'
+  )
+}
+
 /**
  * Research Spaces API client functions
  * All functions require authentication token
@@ -166,11 +180,14 @@ export async function createResearchSpace(
   if (!token) {
     throw new Error('Authentication token is required')
   }
-  const resp = await apiClient.post<ResearchSpace>(
+  const resp = await apiClient.post<unknown>(
     '/research-spaces',
     data,
     authHeaders(token),
   )
+  if (!isResearchSpacePayload(resp.data)) {
+    throw new Error('Invalid research space response payload')
+  }
   return resp.data
 }
 
