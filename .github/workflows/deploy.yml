@@ -40,6 +40,9 @@ jobs:
   test:
     name: Test & Container Gate
     runs-on: ubuntu-latest
+    env:
+      COVERAGE_XML_PATH: ${{ github.workspace }}/coverage.xml
+      PIP_AUDIT_RESULTS_PATH: ${{ github.workspace }}/pip-audit-results.json
     steps:
       - uses: actions/checkout@v4
 
@@ -162,14 +165,15 @@ jobs:
       - name: Dependency Audit (pip-audit)
         run: |
           pip install pip-audit
-          pip-audit --format json | tee pip-audit-results.json
+          pip-audit --format json --output "${PIP_AUDIT_RESULTS_PATH}"
+          test -s "${PIP_AUDIT_RESULTS_PATH}"
 
       - name: Upload Audit Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pip-audit-results
-          path: pip-audit-results.json
+          path: ${{ env.PIP_AUDIT_RESULTS_PATH }}
 
       - name: Validate Architecture & Dependencies
         run: |
@@ -178,13 +182,15 @@ jobs:
           pytest -m architecture -v
 
       - name: Backend Tests with Coverage
-        run: pytest --cov=src --cov-report=xml
+        run: |
+          pytest --cov=src --cov-report=xml:"${COVERAGE_XML_PATH}"
+          test -s "${COVERAGE_XML_PATH}"
 
       - name: Upload coverage
         if: always()
         uses: codecov/codecov-action@v5
         with:
-          files: ./coverage.xml
+          files: ${{ env.COVERAGE_XML_PATH }}
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
