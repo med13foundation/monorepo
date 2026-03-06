@@ -16,10 +16,11 @@ This directory is organized to reflect the current implementation path.
 10. `docs/security/HIPAA_COMPLIANCE_ASSESSMENT.md` - Compliance status and gaps.
 11. `docs/security/SECURITY_CHECKLIST.md` - Security requirements checklist.
 12. `docs/system_map.md` - UI and API navigation map.
-13. `docs/type_examples.md` - Type safety patterns and examples.
-14. `docs/onboarding/architecture-overview.md` - Onboarding and contribution guide.
-15. `docs/extraction_agents/pubmed.md` - Paper extraction template (Postgres-first; TypeDB conversion optional).
-16. `docs/latest_plan_path/pubmed_to_graph_memory_orchestration.md` - PubMed→Dictionary→Graph "memory" flow with clear separation of concerns.
+13. `docs/onboarding/user-roles-and-access.md` - User-friendly guide to system roles and research space roles.
+14. `docs/type_examples.md` - Type safety patterns and examples.
+15. `docs/onboarding/architecture-overview.md` - Onboarding and contribution guide.
+16. `docs/extraction_agents/pubmed.md` - Paper extraction template (Postgres-first; TypeDB conversion optional).
+17. `docs/latest_plan_path/pubmed_to_graph_memory_orchestration.md` - PubMed→Dictionary→Graph "memory" flow with clear separation of concerns.
 
 ## Future/optional plans
 

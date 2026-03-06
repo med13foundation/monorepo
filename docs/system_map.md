@@ -131,24 +131,16 @@
 🔄 USER ROLES & ACCESS CONTROL
 ==============================
 
-**Integrated User Flow:**
-1. **Access Data Sources**: Users navigate to "Data Sources" in their research space
-2. **Manage Existing**: View, configure, and monitor existing data sources
-3. **Add from Library**: Click "Add from Library" to browse & test pre-configured sources (PubMed, etc.)
-4. **Create Custom**: Click "Create Custom Source" for manual integrations (APIs, databases, files, scraping)
-5. **Space-Scoped**: All activities remain within the specific research space context
+MED13 has **two layers of access**:
 
-👤 Standard User
-├── Access to dashboard and comprehensive data sources hub
-├── Can manage existing sources, discover new ones, and create custom sources
-├── Can join/create research spaces
-└── Limited to assigned space permissions
+1. **System roles** control platform-wide features.
+   Admins can open admin-only pages such as System Settings, Audit Logs, Dictionary, and PHI Access.
+2. **Research space roles** control what a person can do inside a specific space.
+   Owner/Admin manage the space, Curator reviews work, Researcher creates work, and Viewer has read-only access.
 
-👑 Admin User
-├── All standard user permissions plus administrative capabilities
-├── Access to system settings and admin routes
-├── Can manage global data sources, templates, and system configuration
-└── Can configure system-wide settings and monitor system health
+For the full user-friendly role matrix, see:
+
+- `docs/onboarding/user-roles-and-access.md`
 
 🔒 Protected Routes
 ├── Automatic redirects to login for unauthenticated users
