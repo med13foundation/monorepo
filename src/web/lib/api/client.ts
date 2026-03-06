@@ -1,10 +1,12 @@
 import axios, {
+  AxiosHeaders,
   type AxiosError,
   type AxiosRequestConfig,
   type AxiosResponse,
 } from 'axios'
 import { handleAuthError } from '@/lib/auth-error-handler'
 import { resolveApiBaseUrl } from '@/lib/api/base-url'
+import { getCloudRunServiceAuthorization } from '@/lib/api/cloud-run-service-auth'
 const MAX_RETRY_ATTEMPTS = 3
 const BASE_RETRY_DELAY_MS = 250
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
@@ -40,15 +42,28 @@ export const apiClient = axios.create({
   proxy: false,
 })
 
-apiClient.interceptors.request.use((config) => {
-  const headers = config.headers ?? {}
+apiClient.interceptors.request.use(async (config) => {
+  const headers = AxiosHeaders.from(config.headers ?? {})
 
-  headers.Accept = headers.Accept ?? 'application/json'
-  headers['Content-Type'] = headers['Content-Type'] ?? 'application/json'
-  headers['X-Request-ID'] = headers['X-Request-ID'] ?? generateRequestId()
+  if (!headers.has('Accept')) {
+    headers.set('Accept', 'application/json')
+  }
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+  if (!headers.has('X-Request-ID')) {
+    headers.set('X-Request-ID', generateRequestId())
+  }
+
+  const requestUrl = new URL(config.url ?? '', config.baseURL ?? API_BASE_URL)
+  const serviceAuthorization = await getCloudRunServiceAuthorization(requestUrl)
+  if (serviceAuthorization && !headers.has('X-Serverless-Authorization')) {
+    // Preserve application-level Authorization headers for the API while
+    // satisfying Cloud Run's service invoker check with a separate header.
+    headers.set('X-Serverless-Authorization', serviceAuthorization)
+  }
 
   config.headers = headers
-
   return config
 })
 

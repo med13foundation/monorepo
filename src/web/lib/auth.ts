@@ -1,7 +1,8 @@
 import { NextAuthOptions, DefaultSession } from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
 import { JWT } from "next-auth/jwt"
-import axios from "axios"
+import axios, { AxiosHeaders } from "axios"
+import { getCloudRunServiceAuthorization } from "@/lib/api/cloud-run-service-auth"
 
 // Extend the built-in session types
 declare module "next-auth" {
@@ -113,6 +114,26 @@ const authApiClient = axios.create({
   timeout: 15000,
   // Avoid Node.js proxy-from-env URL parsing path (DEP0169 on Node 24+)
   proxy: false,
+})
+
+authApiClient.interceptors.request.use(async (config) => {
+  const headers = AxiosHeaders.from(config.headers ?? {})
+
+  if (!headers.has("Accept")) {
+    headers.set("Accept", "application/json")
+  }
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json")
+  }
+
+  const requestUrl = new URL(config.url ?? "", config.baseURL ?? API_BASE_URL)
+  const serviceAuthorization = await getCloudRunServiceAuthorization(requestUrl)
+  if (serviceAuthorization && !headers.has("X-Serverless-Authorization")) {
+    headers.set("X-Serverless-Authorization", serviceAuthorization)
+  }
+
+  config.headers = headers
+  return config
 })
 
 let hasLoggedRecoverableJwtWarning = false

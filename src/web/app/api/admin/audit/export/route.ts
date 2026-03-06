@@ -4,6 +4,7 @@ import { getServerSession } from 'next-auth'
 
 import { authOptions } from '@/lib/auth'
 import { resolveApiBaseUrl } from '@/lib/api/base-url'
+import { getCloudRunServiceAuthorization } from '@/lib/api/cloud-run-service-auth'
 
 const API_BASE_URL = resolveApiBaseUrl()
 
@@ -22,14 +23,20 @@ export async function GET(request: NextRequest): Promise<Response> {
   request.nextUrl.searchParams.forEach((value, key) => {
     upstreamUrl.searchParams.append(key, value)
   })
+  const serviceAuthorization = await getCloudRunServiceAuthorization(upstreamUrl)
+
+  const upstreamHeaders: HeadersInit = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/json, text/csv',
+    'X-Request-ID': randomUUID(),
+  }
+  if (serviceAuthorization) {
+    upstreamHeaders['X-Serverless-Authorization'] = serviceAuthorization
+  }
 
   const upstream = await fetch(upstreamUrl, {
     method: 'GET',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json, text/csv',
-      'X-Request-ID': randomUUID(),
-    },
+    headers: upstreamHeaders,
     cache: 'no-store',
   })
 

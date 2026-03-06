@@ -82,6 +82,28 @@ get_service_primary_url() {
   get_service_status_url "${service_name}"
 }
 
+get_service_account_email() {
+  local service_name="$1"
+  local service_account=""
+
+  service_account="$(gcloud run services describe "${service_name}" \
+    --project "${PROJECT_ID}" \
+    --region "${REGION}" \
+    --format='value(spec.template.spec.serviceAccountName)' 2>/dev/null || true)"
+
+  if [[ -n "${service_account}" ]]; then
+    echo "${service_account}"
+    return 0
+  fi
+
+  service_account="$(gcloud run services describe "${service_name}" \
+    --project "${PROJECT_ID}" \
+    --region "${REGION}" \
+    --format='value(template.serviceAccount)' 2>/dev/null || true)"
+
+  echo "${service_account}"
+}
+
 to_websocket_url() {
   local http_url="$1"
   case "${http_url}" in
@@ -123,6 +145,24 @@ set_public_access() {
     --member="allUsers" \
     --role="roles/run.invoker" \
     --quiet >/dev/null || true
+}
+
+grant_service_invoker_access() {
+  local service_name="$1"
+  local invoker_service_account="$2"
+
+  if [[ -z "${invoker_service_account}" ]]; then
+    log "No invoker service account resolved for ${service_name}; skipping service-to-service IAM binding"
+    return
+  fi
+
+  log "Granting ${invoker_service_account} Cloud Run invoker access on ${service_name}"
+  gcloud run services add-iam-policy-binding "${service_name}" \
+    --project "${PROJECT_ID}" \
+    --region "${REGION}" \
+    --member="serviceAccount:${invoker_service_account}" \
+    --role="roles/run.invoker" \
+    --quiet >/dev/null
 }
 
 require_var "PROJECT_ID"
@@ -220,6 +260,9 @@ if [[ -n "${NEXTAUTH_SECRET_SECRET_NAME:-}" ]]; then
 fi
 
 update_service_if_needed "${ADMIN_SERVICE}" "${admin_update_args[@]}"
+
+API_INVOKER_SERVICE_ACCOUNT="${API_INVOKER_SERVICE_ACCOUNT:-$(get_service_account_email "${ADMIN_SERVICE}")}"
+grant_service_invoker_access "${API_SERVICE}" "${API_INVOKER_SERVICE_ACCOUNT}"
 
 set_public_access "${API_SERVICE}" "${API_PUBLIC:-}"
 set_public_access "${ADMIN_SERVICE}" "${ADMIN_PUBLIC:-}"
