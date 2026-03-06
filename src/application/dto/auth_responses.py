@@ -50,9 +50,9 @@ class LoginResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",  # nosec B105
-                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",  # nosec B105
-                "token_type": "bearer",  # nosec B105
+                "access_token": "<access-token>",
+                "refresh_token": "<refresh-token>",
+                "token_type": "bearer",
                 "expires_in": 900,
                 "user": {
                     "id": "123e4567-e89b-12d3-a456-426614174000",
@@ -81,9 +81,9 @@ class TokenRefreshResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",  # nosec B105
-                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",  # nosec B105
-                "token_type": "bearer",  # nosec B105
+                "access_token": "<access-token>",
+                "refresh_token": "<refresh-token>",
+                "token_type": "bearer",
                 "expires_in": 900,
             },
         },

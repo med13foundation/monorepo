@@ -1,8 +1,4 @@
-"""
-User management routes for MED13 Resource Library.
-
-Provides REST API endpoints for administrative user management operations.
-"""
+"""User management routes."""
 
 from uuid import UUID
 
@@ -36,7 +32,6 @@ from src.domain.value_objects.permission import Permission
 from src.infrastructure.dependency_injection.container import container
 from src.routes.auth import get_current_active_user
 
-# HTTP status codes
 HTTP_201_CREATED = 201
 HTTP_400_BAD_REQUEST = 400
 HTTP_403_FORBIDDEN = 403
@@ -44,8 +39,6 @@ HTTP_404_NOT_FOUND = 404
 HTTP_409_CONFLICT = 409
 HTTP_500_INTERNAL_SERVER_ERROR = 500
 
-
-# Create router
 users_router = APIRouter(
     prefix="/users",
     tags=["user-management"],

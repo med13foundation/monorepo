@@ -243,7 +243,7 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         health_status: dict[str, bool] = {
             "database": False,
             "jwt_provider": False,
-            "password_hasher": False,  # nosec B105
+            "password_hasher": False,
             "services": False,
         }
 

@@ -22,8 +22,10 @@ export default function DataDiscoveryClient({
   const [state, setState] = useState<OrchestratedSessionState | null>(orchestratedState)
   const [isPending, startTransition] = useTransition()
 
-  const selectedSourceIds = state?.session?.selected_sources ?? []
-  const selectedIds = useMemo(() => new Set(selectedSourceIds), [selectedSourceIds])
+  const selectedIds = useMemo(
+    () => new Set(state?.session?.selected_sources ?? []),
+    [state?.session?.selected_sources],
+  )
 
   const groupedCatalog = useMemo(() => {
     const catalogEntries = Array.isArray(catalog) ? catalog : []
