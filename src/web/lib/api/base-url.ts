@@ -2,6 +2,18 @@ const LOCAL_API_BASE_URL = 'http://localhost:8080'
 const ADMIN_HOST_PREFIX = 'med13-admin'
 const API_HOST_PREFIX = 'med13-resource-library'
 
+function isLocalHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+}
+
+function isLocalApiUrl(url: string): boolean {
+  try {
+    return isLocalHostname(new URL(url).hostname)
+  } catch {
+    return false
+  }
+}
+
 function inferApiBaseUrlFromHostname(hostname: string): string | null {
   if (!hostname.startsWith(ADMIN_HOST_PREFIX)) {
     return null
@@ -20,6 +32,27 @@ function inferApiBaseUrlFromNextAuthUrl(nextAuthUrl: string): string | null {
   }
 }
 
+export function resolveBrowserApiBaseUrl(
+  browserHostname: string,
+  configuredApiUrl?: string,
+): string | null {
+  const normalizedConfiguredApiUrl =
+    typeof configuredApiUrl === 'string' ? configuredApiUrl.trim() : ''
+  const shouldUseConfiguredApiUrl =
+    normalizedConfiguredApiUrl.length > 0 &&
+    (!isLocalApiUrl(normalizedConfiguredApiUrl) || isLocalHostname(browserHostname))
+  if (shouldUseConfiguredApiUrl) {
+    return normalizedConfiguredApiUrl
+  }
+
+  const inferredFromBrowserHost = inferApiBaseUrlFromHostname(browserHostname)
+  if (inferredFromBrowserHost) {
+    return inferredFromBrowserHost
+  }
+
+  return normalizedConfiguredApiUrl.length > 0 ? normalizedConfiguredApiUrl : null
+}
+
 export function resolveApiBaseUrl(): string {
   const runtimeApiUrl = process.env.API_BASE_URL || process.env.INTERNAL_API_URL
   if (typeof runtimeApiUrl === 'string' && runtimeApiUrl.trim().length > 0) {
@@ -27,8 +60,21 @@ export function resolveApiBaseUrl(): string {
   }
 
   const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL
-  if (typeof configuredApiUrl === 'string' && configuredApiUrl.trim().length > 0) {
-    return configuredApiUrl
+  const normalizedConfiguredApiUrl =
+    typeof configuredApiUrl === 'string' ? configuredApiUrl.trim() : ''
+
+  if (typeof window !== 'undefined') {
+    const browserApiUrl = resolveBrowserApiBaseUrl(
+      window.location.hostname,
+      normalizedConfiguredApiUrl,
+    )
+    if (browserApiUrl) {
+      return browserApiUrl
+    }
+  }
+
+  if (normalizedConfiguredApiUrl.length > 0) {
+    return normalizedConfiguredApiUrl
   }
 
   const nextAuthUrl = process.env.NEXTAUTH_URL
@@ -36,13 +82,6 @@ export function resolveApiBaseUrl(): string {
     const inferredFromNextAuth = inferApiBaseUrlFromNextAuthUrl(nextAuthUrl)
     if (inferredFromNextAuth) {
       return inferredFromNextAuth
-    }
-  }
-
-  if (typeof window !== 'undefined') {
-    const inferredFromBrowserHost = inferApiBaseUrlFromHostname(window.location.hostname)
-    if (inferredFromBrowserHost) {
-      return inferredFromBrowserHost
     }
   }
 

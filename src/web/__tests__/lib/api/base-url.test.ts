@@ -36,6 +36,19 @@ describe('resolveApiBaseUrl', () => {
     expect(resolveApiBaseUrl()).toBe('https://public-api.example.com')
   })
 
+  it('ignores a localhost public API URL in the browser when running on a remote admin host', async () => {
+    const { resolveBrowserApiBaseUrl } = await import('@/lib/api/base-url')
+
+    expect(
+      resolveBrowserApiBaseUrl(
+        'med13-admin-staging-722972042617.us-central1.run.app',
+        'http://localhost:8080',
+      ),
+    ).toBe(
+      'https://med13-resource-library-staging-722972042617.us-central1.run.app',
+    )
+  })
+
   it('infers the API hostname from NEXTAUTH_URL when no explicit API URL is set', async () => {
     process.env.NEXTAUTH_URL =
       'https://med13-admin-staging-722972042617.us-central1.run.app'
