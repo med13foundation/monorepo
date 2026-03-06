@@ -34,7 +34,12 @@ export function AiManagedConfigFields({ form, isPubMedSource }: AiManagedConfigF
           <FormItem>
             <FormLabel>AI Model</FormLabel>
             <FormControl>
-              <AiModelSelector value={field.value} onChange={field.onChange} />
+              <AiModelSelector
+                value={field.value}
+                onChange={field.onChange}
+                name={field.name}
+                aria-label="AI model"
+              />
             </FormControl>
             <FormDescription>
               Choose which AI model powers query generation for this source.
@@ -55,7 +60,12 @@ export function AiManagedConfigFields({ form, isPubMedSource }: AiManagedConfigF
               </FormDescription>
             </div>
             <FormControl>
-              <Switch checked={field.value} onCheckedChange={field.onChange} />
+              <Switch
+                checked={field.value}
+                onCheckedChange={field.onChange}
+                name={field.name}
+                aria-label="Use research space context"
+              />
             </FormControl>
           </FormItem>
         )}
@@ -110,6 +120,9 @@ export function PubMedConfigFields({ form }: PubMedConfigFieldsProps) {
                 type="number"
                 min={1}
                 max={10000}
+                name={field.name}
+                onBlur={field.onBlur}
+                ref={field.ref}
                 value={field.value}
                 onChange={(event) =>
                   field.onChange(
@@ -127,21 +140,15 @@ export function PubMedConfigFields({ form }: PubMedConfigFieldsProps) {
           </FormItem>
         )}
       />
-      <FormField
-        control={form.control}
-        name="open_access_only"
-        render={() => (
-          <FormItem className="flex items-center justify-between rounded-md border p-3">
-            <div className="space-y-0.5">
-              <FormLabel>Open access only</FormLabel>
-              <FormDescription>
-                Locked on for PubMed sources so full text can be fetched legally.
-              </FormDescription>
-            </div>
-            <div className="text-xs font-medium text-muted-foreground">ENFORCED</div>
-          </FormItem>
-        )}
-      />
+      <div className="flex items-center justify-between rounded-md border p-3">
+        <div className="space-y-0.5">
+          <div className="text-sm font-medium">Open access only</div>
+          <p className="text-sm text-muted-foreground">
+            Locked on for PubMed sources so full text can be fetched legally.
+          </p>
+        </div>
+        <div className="text-xs font-medium text-muted-foreground">ENFORCED</div>
+      </div>
     </>
   )
 }

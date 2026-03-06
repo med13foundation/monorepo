@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useWatch, type Control, type UseFormSetValue } from 'react-hook-form'
 
 import type { ScheduleFrequency } from '@/types/data-source'
@@ -190,6 +190,8 @@ export function DataSourceScheduleFields({
   control,
   setValue,
 }: DataSourceScheduleFieldsProps) {
+  const scheduleTimeInputId = useId()
+  const intervalHoursInputId = useId()
   const frequency = (useWatch({ control, name: 'frequency' }) ?? 'manual') as ScheduleFrequency
   const cronExpression = useWatch({ control, name: 'cronExpression' }) ?? ''
   const startTime = useWatch({ control, name: 'startTime' }) ?? ''
@@ -289,7 +291,7 @@ export function DataSourceScheduleFields({
     <>
       <div className="space-y-3 rounded-lg border p-3">
         <div className="flex items-center justify-between">
-          <FormLabel className="mb-0">Schedule</FormLabel>
+          <div className="text-sm font-medium">Schedule</div>
           <div className="inline-flex rounded-full border bg-muted/50 p-1">
             <Button
               type="button"
@@ -321,7 +323,10 @@ export function DataSourceScheduleFields({
         <div className="grid gap-2 md:grid-cols-[minmax(180px,220px)_1fr] md:items-center">
           <div className="flex items-center gap-2">
             <Input
+              id={scheduleTimeInputId}
+              name="schedule_time"
               type="time"
+              aria-label="Schedule time"
               value={timeValue}
               onChange={(event) => setTimeValue(event.target.value)}
             />
@@ -354,9 +359,12 @@ export function DataSourceScheduleFields({
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <span>Run every</span>
             <Input
+              id={intervalHoursInputId}
+              name="interval_hours"
               type="number"
               min={1}
               max={24}
+              aria-label="Interval hours"
               value={intervalHours}
               onChange={(event) => {
                 const parsed = Number.parseInt(event.target.value, 10)
