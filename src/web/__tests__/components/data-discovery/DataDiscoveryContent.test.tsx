@@ -71,6 +71,18 @@ describe('DataDiscoveryContent', () => {
     jest.clearAllMocks()
   })
 
+  it('renders an empty catalog state when the catalog payload is malformed', () => {
+    render(
+      <DataDiscoveryContent
+        spaceId="space-123"
+        orchestratedState={baseState}
+        catalog={{ unexpected: true } as unknown as SourceCatalogEntry[]}
+      />,
+    )
+
+    expect(screen.getByText(/No sources available/i)).toBeInTheDocument()
+  })
+
   it('calls updateSpaceDiscoverySelection when toggling a source', async () => {
     const user = userEvent.setup()
     const nextState: OrchestratedSessionState = {

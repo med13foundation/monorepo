@@ -26,8 +26,9 @@ export default function DataDiscoveryClient({
   const selectedIds = useMemo(() => new Set(selectedSourceIds), [selectedSourceIds])
 
   const groupedCatalog = useMemo(() => {
+    const catalogEntries = Array.isArray(catalog) ? catalog : []
     const groups: Record<string, SourceCatalogEntry[]> = {}
-    catalog.forEach((entry) => {
+    catalogEntries.forEach((entry) => {
       const key = entry.category || 'Uncategorized'
       if (!groups[key]) {
         groups[key] = []

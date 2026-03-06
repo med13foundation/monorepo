@@ -7,6 +7,7 @@ import type { DataSourceListResponse } from '@/lib/api/data-sources'
 import { fetchSpaceDiscoveryState } from '@/app/actions/space-discovery'
 import { fetchSourceWorkflowMonitor } from '@/lib/api/kernel'
 import type { SourceWorkflowCardStatus } from '@/components/data-sources/DataSourcesList'
+import type { SourceCatalogEntry } from '@/types/generated'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +23,15 @@ function firstParam(value: string | string[] | undefined): string | undefined {
     return value
   }
   return Array.isArray(value) ? value[0] : undefined
+}
+
+function isValidSpaceId(value: string): boolean {
+  const normalized = value.trim()
+  return normalized.length > 0 && normalized !== 'undefined' && normalized !== 'null'
+}
+
+function normalizeDiscoveryCatalog(value: unknown): SourceCatalogEntry[] {
+  return Array.isArray(value) ? value : []
 }
 
 function toNumber(value: unknown): number {
@@ -109,6 +119,9 @@ export default async function SpaceDataSourcesPage({
   searchParams,
 }: SpaceDataSourcesPageProps) {
   const { spaceId } = await params
+  if (!isValidSpaceId(spaceId)) {
+    redirect('/spaces/new')
+  }
   const resolvedSearchParams = searchParams ? await searchParams : undefined
   const onboardingParam = firstParam(resolvedSearchParams?.onboarding)
   if (onboardingParam === '0') {
@@ -167,7 +180,7 @@ export default async function SpaceDataSourcesPage({
     ? resolvedDiscoveryResult.data.orchestratedState
     : null
   const discoveryCatalog = resolvedDiscoveryResult.success
-    ? resolvedDiscoveryResult.data.catalog
+    ? normalizeDiscoveryCatalog(resolvedDiscoveryResult.data.catalog)
     : []
   const discoveryError = resolvedDiscoveryResult.success ? null : resolvedDiscoveryResult.error
   const workflowMonitorEnabled = process.env.SPACE_WORKFLOW_MONITOR_ENABLED !== 'false'
