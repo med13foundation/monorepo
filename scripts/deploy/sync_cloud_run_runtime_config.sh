@@ -160,8 +160,33 @@ if ((${#backend_secret_pairs[@]} > 0)); then
   api_update_args+=(--update-secrets "${backend_update_secrets}")
 fi
 
+declare -a backend_env_pairs=()
 if [[ -n "${MED13_ALLOWED_ORIGINS:-}" ]]; then
-  api_update_args+=(--update-env-vars "^@^MED13_ALLOWED_ORIGINS=${MED13_ALLOWED_ORIGINS}")
+  backend_env_pairs+=("MED13_ALLOWED_ORIGINS=${MED13_ALLOWED_ORIGINS}")
+fi
+if [[ -n "${MED13_DB_POOL_SIZE:-}" ]]; then
+  backend_env_pairs+=("MED13_DB_POOL_SIZE=${MED13_DB_POOL_SIZE}")
+fi
+if [[ -n "${MED13_DB_MAX_OVERFLOW:-}" ]]; then
+  backend_env_pairs+=("MED13_DB_MAX_OVERFLOW=${MED13_DB_MAX_OVERFLOW}")
+fi
+if [[ -n "${MED13_DB_POOL_TIMEOUT_SECONDS:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_DB_POOL_TIMEOUT_SECONDS=${MED13_DB_POOL_TIMEOUT_SECONDS}"
+  )
+fi
+if [[ -n "${MED13_DB_POOL_RECYCLE_SECONDS:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_DB_POOL_RECYCLE_SECONDS=${MED13_DB_POOL_RECYCLE_SECONDS}"
+  )
+fi
+if [[ -n "${MED13_DB_POOL_USE_LIFO:-}" ]]; then
+  backend_env_pairs+=("MED13_DB_POOL_USE_LIFO=${MED13_DB_POOL_USE_LIFO}")
+fi
+
+if ((${#backend_env_pairs[@]} > 0)); then
+  backend_update_envs="$(IFS=@; echo "${backend_env_pairs[*]}")"
+  api_update_args+=(--update-env-vars "^@^${backend_update_envs}")
 fi
 
 update_service_if_needed "${API_SERVICE}" "${api_update_args[@]}"
