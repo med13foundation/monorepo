@@ -4,14 +4,12 @@ from uuid import UUID
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from src.database.engine_config import build_engine_kwargs
 from src.database.url_resolver import resolve_sync_database_url
 
 DATABASE_URL = resolve_sync_database_url()
 
-ENGINE_KWARGS: dict[str, object] = {
-    "future": True,
-    "pool_pre_ping": True,
-}
+ENGINE_KWARGS: dict[str, object] = {"future": True, **build_engine_kwargs(DATABASE_URL)}
 
 engine = create_engine(DATABASE_URL, **ENGINE_KWARGS)
 

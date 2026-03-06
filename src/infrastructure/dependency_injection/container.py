@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from src.application import services as app_services
+from src.database.engine_config import build_engine_kwargs
 from src.infrastructure import observability, storage
 from src.infrastructure.dependency_injection.db_utils import (
     SessionLocal,
@@ -91,7 +92,7 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         # Initialize ASYNC database engine (for Clean Architecture - auth)
         engine_kwargs: dict[str, object] = {
             "echo": False,  # Set to True for debugging
-            "pool_pre_ping": True,
+            **build_engine_kwargs(resolved_db_url),
         }
 
         self.engine = create_async_engine(

@@ -9,7 +9,7 @@ import string
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import jwt
 
@@ -78,6 +78,7 @@ class JWTProvider(JWTProviderService):
             "sub": str(user_id),
             "role": role,
             "type": "access",
+            "jti": str(uuid4()),
             "exp": expire,
             "iat": datetime.now(UTC),
             "iss": "med13-resource-library",
@@ -108,6 +109,7 @@ class JWTProvider(JWTProviderService):
         to_encode: TokenPayload = {
             "sub": str(user_id),
             "type": "refresh",
+            "jti": str(uuid4()),
             "exp": expire,
             "iat": datetime.now(UTC),
             "iss": "med13-resource-library",
@@ -340,6 +342,9 @@ class JWTProvider(JWTProviderService):
         literal_type = type_map.get(token_type) if isinstance(token_type, str) else None
         if literal_type is not None:
             result["type"] = literal_type
+        token_id = payload.get("jti")
+        if isinstance(token_id, str) and token_id:
+            result["jti"] = token_id
         role = payload.get("role")
         if isinstance(role, str):
             result["role"] = role

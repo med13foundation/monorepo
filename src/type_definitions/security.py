@@ -14,6 +14,7 @@ class TokenPayload(TypedDict, total=False):
     sub: str
     role: str
     type: Literal["access", "refresh"]
+    jti: str
     exp: datetime
     iat: datetime
     iss: str
@@ -23,6 +24,7 @@ class DecodedTokenPayload(TypedDict, total=False):
     sub: str
     role: str
     type: Literal["access", "refresh"]
+    jti: str
     exp: int
     iat: int
     iss: str

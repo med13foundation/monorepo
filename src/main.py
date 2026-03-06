@@ -14,7 +14,7 @@ from src.database.seed import (
     ensure_source_catalog_seeded,
     ensure_system_status_initialized,
 )
-from src.database.session import get_session
+from src.database.session import SessionLocal, set_session_rls_context
 from src.infrastructure.api.exception_handlers import register_exception_handlers
 from src.infrastructure.dependency_injection.container import container
 from src.infrastructure.dependency_injection.dependencies import (
@@ -111,12 +111,20 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     session_cleanup_task: asyncio.Task[None] | None = None
     try:
         if not _skip_startup_tasks():
-            legacy_session = next(get_session())
-            initialize_legacy_session(legacy_session)
-            ensure_source_catalog_seeded(legacy_session)
-            ensure_default_research_space_seeded(legacy_session)
-            ensure_system_status_initialized(legacy_session)
-            legacy_session.commit()
+            legacy_session = SessionLocal()
+            try:
+                set_session_rls_context(legacy_session, bypass_rls=False)
+                initialize_legacy_session(legacy_session)
+                ensure_source_catalog_seeded(legacy_session)
+                ensure_default_research_space_seeded(legacy_session)
+                ensure_system_status_initialized(legacy_session)
+                legacy_session.commit()
+            except Exception:
+                legacy_session.rollback()
+                raise
+            finally:
+                legacy_session.close()
+                legacy_session = None
             if not _scheduler_disabled():
                 scheduler_task = asyncio.create_task(
                     run_ingestion_scheduler_loop(INGESTION_SCHEDULER_INTERVAL_SECONDS),
