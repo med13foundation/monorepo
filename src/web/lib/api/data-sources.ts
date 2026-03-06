@@ -173,7 +173,22 @@ export async function createDataSourceInSpace(
   data: Omit<Parameters<typeof createDataSource>[0], 'research_space_id'>,
   token?: string,
 ): Promise<DataSource> {
-  return createDataSource({ ...data, research_space_id: spaceId }, token)
+  if (!token) {
+    throw new Error('Authentication token is required for createDataSourceInSpace')
+  }
+
+  const response = await apiClient.post<DataSource>(
+    `/research-spaces/${spaceId}/data-sources`,
+    data,
+    authHeaders(token),
+  )
+
+  const source = response.data
+  if (!source.id || source.research_space_id !== spaceId) {
+    throw new Error('Invalid space-scoped data source response payload')
+  }
+
+  return source
 }
 
 export async function configureDataSourceSchedule(
