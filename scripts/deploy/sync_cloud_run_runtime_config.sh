@@ -177,6 +177,9 @@ declare -a api_update_args=()
 if [[ -n "${CLOUDSQL_CONNECTION_NAME:-}" ]]; then
   api_update_args+=(--set-cloudsql-instances "${CLOUDSQL_CONNECTION_NAME}")
 fi
+if [[ -n "${API_MIN_INSTANCES:-}" ]]; then
+  api_update_args+=(--min-instances "${API_MIN_INSTANCES}")
+fi
 
 declare -a backend_secret_pairs=()
 if [[ -n "${DATABASE_URL_SECRET_NAME:-}" ]]; then
@@ -248,6 +251,9 @@ if [[ -z "${API_PUBLIC_WS_URL:-}" ]]; then
 fi
 
 declare -a admin_update_args=()
+if [[ -n "${ADMIN_MIN_INSTANCES:-}" ]]; then
+  admin_update_args+=(--min-instances "${ADMIN_MIN_INSTANCES}")
+fi
 if is_true "${SYNC_ADMIN_URLS:-}"; then
   admin_update_args+=(
     --update-env-vars
