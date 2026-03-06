@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import {
+  activateUser,
   createUser,
   deleteUser,
   lockUser,
@@ -117,6 +118,25 @@ export async function unlockUserAction(
     return {
       success: false,
       error: getActionErrorMessage(error, 'Failed to reactivate user'),
+    }
+  }
+}
+
+export async function activateUserAction(
+  userId: string,
+): Promise<ActionResult<GenericSuccessResponse>> {
+  try {
+    const token = await requireAccessToken()
+    const response = await activateUser(userId, token)
+    revalidateUsers()
+    return { success: true, data: response }
+  } catch (error: unknown) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('[ServerAction] activateUser failed:', error)
+    }
+    return {
+      success: false,
+      error: getActionErrorMessage(error, 'Failed to activate user'),
     }
   }
 }

@@ -296,6 +296,36 @@ async def delete_user(
 
 
 @users_router.post(
+    "/{user_id}/activate",
+    response_model=GenericSuccessResponse,
+    summary="Activate user account",
+    description="Activate a user account and bypass email verification (admin only)",
+)
+async def activate_user_account(
+    user_id: str,
+    current_user: User = Depends(get_current_active_user),
+    user_service: UserManagementService = Depends(
+        container.get_user_management_service,
+    ),
+    authz_service: AuthorizationService = Depends(container.get_authorization_service),
+) -> GenericSuccessResponse:
+    """
+    Activate a user account (administrative operation).
+    """
+    try:
+        await _ensure_permission(current_user, "user:update", authz_service)
+        await user_service.activate_user_account(UUID(user_id))
+        return GenericSuccessResponse(message="User account activated successfully")
+    except UserNotFoundError:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="User not found")
+    except UserManagementError as e:
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Account activation failed: {e!s}",
+        )
+
+
+@users_router.post(
     "/{user_id}/lock",
     response_model=GenericSuccessResponse,
     summary="Lock user account",

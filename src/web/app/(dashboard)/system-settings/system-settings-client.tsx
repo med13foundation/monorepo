@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
@@ -38,10 +38,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
+  activateUserAction,
   createUserAction,
   deleteUserAction,
   lockUserAction,
-  unlockUserAction,
 } from '@/app/actions/users'
 import type {
   CreateUserRequest,
@@ -121,6 +121,62 @@ const initialCreateForm: CreateUserRequest = {
   role: 'researcher',
 }
 
+const emptyUserListResponse: UserListResponse = {
+  users: [],
+  total: 0,
+  skip: 0,
+  limit: 0,
+}
+
+function updateUserStatusInList(
+  listData: UserListResponse,
+  userId: string,
+  nextStatus: UserPublic['status'],
+): UserListResponse {
+  return {
+    ...listData,
+    users: listData.users.map((user) =>
+      user.id === userId
+        ? {
+            ...user,
+            status: nextStatus,
+            email_verified: nextStatus === 'active' ? true : user.email_verified,
+          }
+        : user,
+    ),
+  }
+}
+
+function updateStatusCount(
+  stats: UserStatisticsResponse,
+  status: UserPublic['status'],
+  delta: number,
+): UserStatisticsResponse {
+  switch (status) {
+    case 'active':
+      return { ...stats, active_users: stats.active_users + delta }
+    case 'inactive':
+      return { ...stats, inactive_users: stats.inactive_users + delta }
+    case 'suspended':
+      return { ...stats, suspended_users: stats.suspended_users + delta }
+    case 'pending_verification':
+      return { ...stats, pending_verification: stats.pending_verification + delta }
+  }
+}
+
+function updateUserStatsForStatusChange(
+  stats: UserStatisticsResponse | null,
+  previousStatus: UserPublic['status'],
+  nextStatus: UserPublic['status'],
+): UserStatisticsResponse | null {
+  if (stats === null || previousStatus === nextStatus) {
+    return stats
+  }
+
+  const decremented = updateStatusCount(stats, previousStatus, -1)
+  return updateStatusCount(decremented, nextStatus, 1)
+}
+
 export default function SystemSettingsClient({
   initialParams,
   users,
@@ -143,14 +199,18 @@ export default function SystemSettingsClient({
   const [isRefreshing, startRefresh] = useTransition()
   const [isCreatingUser, setIsCreatingUser] = useState(false)
   const [isDeletingUser, setIsDeletingUser] = useState(false)
+  const [listData, setListData] = useState<UserListResponse>(users ?? emptyUserListResponse)
+  const [statsData, setStatsData] = useState<UserStatisticsResponse | null>(userStats)
 
-  const listData: UserListResponse = users ?? {
-    users: [],
-    total: 0,
-    skip: 0,
-    limit: 0,
-  }
-  const statsLoading = userStats === null
+  useEffect(() => {
+    setListData(users ?? emptyUserListResponse)
+  }, [users])
+
+  useEffect(() => {
+    setStatsData(userStats)
+  }, [userStats])
+
+  const statsLoading = statsData === null
   const userListError = users === null ? 'Unable to load user inventory. Please retry.' : null
 
   const filteredUsers = useMemo(() => {
@@ -224,25 +284,29 @@ export default function SystemSettingsClient({
     }
   }
 
-  const handleToggleSuspension = async (user: UserPublic) => {
+  const handleStatusAction = async (user: UserPublic) => {
     setPendingUserId(user.id)
     try {
-      if (user.status === 'suspended') {
-        const result = await unlockUserAction(user.id)
-        if (!result.success) {
-          toast.error(result.error)
-          return
-        }
-        toast.success(`Reactivated ${user.full_name}`)
-      } else {
+      if (user.status === 'active') {
         const result = await lockUserAction(user.id)
         if (!result.success) {
           toast.error(result.error)
           return
         }
+        setListData((prev) => updateUserStatusInList(prev, user.id, 'suspended'))
+        setStatsData((prev) => updateUserStatsForStatusChange(prev, user.status, 'suspended'))
         toast.success(`Suspended ${user.full_name}`)
+      } else {
+        const result = await activateUserAction(user.id)
+        if (!result.success) {
+          toast.error(result.error)
+          return
+        }
+        setListData((prev) => updateUserStatusInList(prev, user.id, 'active'))
+        setStatsData((prev) => updateUserStatsForStatusChange(prev, user.status, 'active'))
+        toast.success(`Activated ${user.full_name}`)
       }
-      router.refresh()
+      startRefresh(() => router.refresh())
     } catch (error) {
       console.error('Failed to update user status', error)
       toast.error('Unable to update user status')
@@ -300,28 +364,28 @@ export default function SystemSettingsClient({
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <StatCard
               title="Total Users"
-              value={userStats?.total_users?.toLocaleString() ?? 0}
+              value={statsData?.total_users?.toLocaleString() ?? 0}
               description="Across all roles"
               icon={<Shield className="size-4 text-muted-foreground" />}
               isLoading={statsLoading}
             />
             <StatCard
               title="Active"
-              value={userStats?.active_users ?? 0}
+              value={statsData?.active_users ?? 0}
               description="Currently enabled accounts"
               icon={<CheckCircle className="size-4 text-emerald-500" />}
               isLoading={statsLoading}
             />
             <StatCard
               title="Suspended"
-              value={userStats?.suspended_users ?? 0}
+              value={statsData?.suspended_users ?? 0}
               description="Locked for review"
               icon={<Ban className="size-4 text-amber-500" />}
               isLoading={statsLoading}
             />
             <StatCard
               title="Pending Verification"
-              value={userStats?.pending_verification ?? 0}
+              value={statsData?.pending_verification ?? 0}
               description="Awaiting onboarding"
               icon={<AlertTriangle className="size-4 text-blue-500" />}
               isLoading={statsLoading}
@@ -334,7 +398,7 @@ export default function SystemSettingsClient({
             <div>
               <CardTitle className="font-heading text-xl">User Directory</CardTitle>
               <CardDescription>
-                Provision, suspend, or retire MED13 accounts globally.
+                Provision, activate, suspend, or retire MED13 accounts globally.
               </CardDescription>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
@@ -461,7 +525,7 @@ export default function SystemSettingsClient({
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleToggleSuspension(user)}
+                            onClick={() => handleStatusAction(user)}
                             disabled={
                               user.id === currentUserId ||
                               pendingUserId === user.id
@@ -469,12 +533,12 @@ export default function SystemSettingsClient({
                           >
                             {pendingUserId === user.id ? (
                               <Loader2 className="mr-2 size-4 animate-spin" />
-                            ) : user.status === 'suspended' ? (
-                              <CheckCircle className="mr-2 size-4 text-emerald-500" />
-                            ) : (
+                            ) : user.status === 'active' ? (
                               <Ban className="mr-2 size-4 text-amber-500" />
+                            ) : (
+                              <CheckCircle className="mr-2 size-4 text-emerald-500" />
                             )}
-                            {user.status === 'suspended' ? 'Activate' : 'Suspend'}
+                            {user.status === 'active' ? 'Suspend' : 'Activate'}
                           </Button>
                           <Button
                             variant="ghost"
@@ -503,7 +567,7 @@ export default function SystemSettingsClient({
           )}
         </CardContent>
       </Card>
-      <RoleDistributionCard isLoading={statsLoading} roles={userStats?.by_role ?? {}} />
+      <RoleDistributionCard isLoading={statsLoading} roles={statsData?.by_role ?? {}} />
 
       <CreateUserDialog
         open={isCreateOpen}

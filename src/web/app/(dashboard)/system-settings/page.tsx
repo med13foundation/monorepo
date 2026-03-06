@@ -72,47 +72,90 @@ export default async function SystemSettingsPage() {
   let catalogEntries: SourceCatalogEntry[] = []
   let availabilitySummaries: DataSourceAvailability[] = []
   let spaces: ResearchSpace[] = []
-
-  try {
-    users = await fetchUsers(INITIAL_USER_PARAMS, token)
-  } catch (error) {
-    console.error('[SystemSettingsPage] Failed to fetch users:', error)
-  }
-
-  try {
-    userStats = await fetchUserStatistics(token)
-  } catch (error) {
-    console.error('[SystemSettingsPage] Failed to fetch user stats:', error)
-  }
-
-  try {
-    storageConfigurations = await fetchStorageConfigurations(
+  const [
+    usersResult,
+    userStatsResult,
+    storageConfigurationsResult,
+    storageOverviewResult,
+    maintenanceStateResult,
+    catalogEntriesResult,
+    availabilitySummariesResult,
+    researchSpacesResult,
+  ] = await Promise.allSettled([
+    fetchUsers(INITIAL_USER_PARAMS, token),
+    fetchUserStatistics(token),
+    fetchStorageConfigurations(
       { page: 1, per_page: 100, include_disabled: true },
       token,
+    ),
+    fetchStorageOverview(token),
+    fetchMaintenanceState(token),
+    fetchAdminCatalogEntries(token),
+    fetchCatalogAvailabilitySummaries(token),
+    fetchResearchSpaces({ limit: 100 }, token),
+  ])
+
+  if (usersResult.status === 'fulfilled') {
+    users = usersResult.value
+  } else {
+    console.error('[SystemSettingsPage] Failed to fetch users:', usersResult.reason)
+  }
+
+  if (userStatsResult.status === 'fulfilled') {
+    userStats = userStatsResult.value
+  } else {
+    console.error('[SystemSettingsPage] Failed to fetch user stats:', userStatsResult.reason)
+  }
+
+  if (storageConfigurationsResult.status === 'fulfilled') {
+    storageConfigurations = storageConfigurationsResult.value
+  } else {
+    console.error(
+      '[SystemSettingsPage] Failed to fetch storage configurations:',
+      storageConfigurationsResult.reason,
     )
-    storageOverview = await fetchStorageOverview(token)
-  } catch (error) {
-    console.error('[SystemSettingsPage] Failed to fetch storage data:', error)
   }
 
-  try {
-    maintenanceState = await fetchMaintenanceState(token)
-  } catch (error) {
-    console.error('[SystemSettingsPage] Failed to fetch maintenance state:', error)
+  if (storageOverviewResult.status === 'fulfilled') {
+    storageOverview = storageOverviewResult.value
+  } else {
+    console.error('[SystemSettingsPage] Failed to fetch storage overview:', storageOverviewResult.reason)
   }
 
-  try {
-    catalogEntries = await fetchAdminCatalogEntries(token)
-    availabilitySummaries = await fetchCatalogAvailabilitySummaries(token)
-  } catch (error) {
-    console.error('[SystemSettingsPage] Failed to fetch catalog availability:', error)
+  if (maintenanceStateResult.status === 'fulfilled') {
+    maintenanceState = maintenanceStateResult.value
+  } else {
+    console.error(
+      '[SystemSettingsPage] Failed to fetch maintenance state:',
+      maintenanceStateResult.reason,
+    )
   }
 
-  try {
-    const spaceResponse = await fetchResearchSpaces({ limit: 100 }, token)
-    spaces = spaceResponse.spaces
-  } catch (error) {
-    console.error('[SystemSettingsPage] Failed to fetch research spaces:', error)
+  if (catalogEntriesResult.status === 'fulfilled') {
+    catalogEntries = catalogEntriesResult.value
+  } else {
+    console.error(
+      '[SystemSettingsPage] Failed to fetch catalog entries:',
+      catalogEntriesResult.reason,
+    )
+  }
+
+  if (availabilitySummariesResult.status === 'fulfilled') {
+    availabilitySummaries = availabilitySummariesResult.value
+  } else {
+    console.error(
+      '[SystemSettingsPage] Failed to fetch catalog availability:',
+      availabilitySummariesResult.reason,
+    )
+  }
+
+  if (researchSpacesResult.status === 'fulfilled') {
+    spaces = researchSpacesResult.value.spaces
+  } else {
+    console.error(
+      '[SystemSettingsPage] Failed to fetch research spaces:',
+      researchSpacesResult.reason,
+    )
   }
 
   return (

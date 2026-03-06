@@ -413,6 +413,15 @@ class UserManagementService:
         # TODO: Log security event
         # TODO: Send notification email
 
+    async def activate_user_account(self, user_id: UUID) -> User:
+        user = await self.user_repository.get_by_id(user_id)
+        if not user:
+            msg = "User not found"
+            raise UserNotFoundError(msg)
+
+        user.activate_account()
+        return await self.user_repository.update(user)
+
     def _mask_email(self, email: str) -> str:
         try:
             local, domain = email.split("@", 1)
