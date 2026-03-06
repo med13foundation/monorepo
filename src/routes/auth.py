@@ -6,7 +6,6 @@ and user registration.
 """
 
 import os
-import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -43,8 +42,6 @@ from src.infrastructure.dependency_injection.container import container
 from src.infrastructure.dependency_injection.dependencies import (
     get_authentication_service_dependency,
 )
-from src.infrastructure.security.password_hasher import PasswordHasher
-from src.models.database.user import UserModel
 
 # Create router
 auth_router = APIRouter(
@@ -295,28 +292,12 @@ async def logout(
 )
 async def register_user(
     request: RegisterUserRequest,
+    user_service: user_management_service.UserManagementService = Depends(
+        container.get_user_management_service,
+    ),
 ) -> GenericSuccessResponse:
     try:
-        # Create user directly using SQLAlchemy model
-        password_hasher = PasswordHasher()
-
-        # Create user model
-        user = UserModel(
-            email=request.email,
-            username=request.username,
-            full_name=request.full_name,
-            hashed_password=password_hasher.hash_password(request.password),
-            role=UserRole.VIEWER,
-            status=UserStatus.PENDING_VERIFICATION,
-            email_verification_token=secrets.token_urlsafe(32),
-        )
-
-        # Save to database
-        session = container.async_session_factory()
-        async with session:
-            session.add(user)
-            await session.commit()
-            await session.refresh(user)
+        await user_service.register_user(request)
 
         # TODO: Send verification email in background
 
