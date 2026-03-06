@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_HEAD_REVISION = "024_claim_first_orchestration"
-CURRENT_HEAD_REVISION = "034_claim_participant_fk"
+CURRENT_HEAD_REVISION = "035_session_token_uniqueness"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"

@@ -1,7 +1,7 @@
 """Enforce unique active session tokens.
 
 Revision ID: 035_session_token_uniqueness
-Revises: 034_claim_participants_entity_fk_restrict
+Revises: 034_claim_participant_fk
 Create Date: 2026-03-05
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "035_session_token_uniqueness"
-down_revision = "034_claim_participants_entity_fk_restrict"
+down_revision = "034_claim_participant_fk"
 branch_labels = None
 depends_on = None
 
