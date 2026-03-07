@@ -3,6 +3,7 @@ import { Header } from '@/components/navigation/Header'
 import { useSignOut } from '@/hooks/use-sign-out'
 import { useSpaceContext } from '@/components/space-context-provider'
 import { SpaceSelector } from '@/components/research-spaces/SpaceSelector'
+import { ADMIN_BRAND_NAME } from '@/lib/branding'
 
 // Mock dependencies
 jest.mock('next-auth/react', () => ({
@@ -92,7 +93,7 @@ describe('Header Component', () => {
     it('renders all navigation elements', () => {
       render(<Header />)
 
-      expect(screen.getByText('MED13 Admin')).toBeInTheDocument()
+      expect(screen.getByText(ADMIN_BRAND_NAME)).toBeInTheDocument()
       expect(screen.getByTestId('space-selector')).toBeInTheDocument()
       expect(screen.getByTestId('user-menu')).toBeInTheDocument()
     })
@@ -121,7 +122,7 @@ describe('Header Component', () => {
     it('renders dashboard logo link', () => {
       render(<Header />)
 
-      const logoLink = screen.getByRole('link', { name: /med13 admin/i })
+      const logoLink = screen.getByRole('link', { name: /artana\.bio admin/i })
       expect(logoLink).toBeInTheDocument()
       expect(logoLink).toHaveAttribute('href', '/dashboard')
     })
@@ -178,7 +179,7 @@ describe('Header Component', () => {
       render(<Header />)
 
       // Should still render, but role might not be visible
-      expect(screen.getByText('MED13 Admin')).toBeInTheDocument()
+      expect(screen.getByText(ADMIN_BRAND_NAME)).toBeInTheDocument()
     })
 
     it('handles different user roles', () => {

@@ -5,6 +5,12 @@ import { QueryProvider } from '@/components/query-provider'
 import { ThemeProvider } from '@/components/theme-provider'
 import { SessionProvider } from '@/components/session-provider'
 import { Toaster } from '@/components/ui/toaster'
+import {
+  ADMIN_APP_DESCRIPTION,
+  ADMIN_BRAND_NAME,
+  BRAND_LOGO_DARK_SRC,
+  BRAND_LOGO_LIGHT_SRC,
+} from '@/lib/branding'
 import { getServerSession } from 'next-auth'
 import { authOptions, isRecoverableSessionDecryptionError } from '@/lib/auth'
 
@@ -37,10 +43,13 @@ const playfairDisplay = Playfair_Display({
 })
 
 export const metadata: Metadata = {
-  title: 'MED13 Admin',
-  description: 'Administrative interface for MED13 Resource Library',
+  title: ADMIN_BRAND_NAME,
+  description: ADMIN_APP_DESCRIPTION,
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: BRAND_LOGO_LIGHT_SRC, media: '(prefers-color-scheme: light)' },
+      { url: BRAND_LOGO_DARK_SRC, media: '(prefers-color-scheme: dark)' },
+    ],
   },
 }
 

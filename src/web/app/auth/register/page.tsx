@@ -7,6 +7,7 @@ import { RegisterForm } from '@/components/auth/RegisterForm'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { AlertCircle, CheckCircle } from 'lucide-react'
 import { AuthShell } from '@/components/auth/AuthShell'
+import { CREATE_ACCOUNT_TITLE } from '@/lib/branding'
 import type { RegisterRequest } from '@/types/auth'
 import { registerUser } from '@/app/actions/auth'
 
@@ -42,7 +43,7 @@ export default function RegisterPage() {
 
   return (
     <AuthShell
-      title="Create MED13 Account"
+      title={CREATE_ACCOUNT_TITLE}
       description="Request access to the administrative interface."
       footer={
         <div className="text-center text-sm text-muted-foreground">

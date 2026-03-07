@@ -31,6 +31,7 @@ import type {
 import { UserRole } from "@/types/auth"
 import type { ResearchSpace } from "@/types/research-space"
 import { MembershipRole } from "@/types/research-space"
+import { BRAND_LOGO_ALT } from "@/lib/branding"
 
 // ============================================================================
 // Navigation Item Builders
@@ -235,7 +236,7 @@ export function buildDashboardSidebarConfig(
     header: {
       logo: {
         src: "/logo.svg",
-        alt: "MED13 Resource Library",
+        alt: BRAND_LOGO_ALT,
         width: 32,
         height: 32,
       },
@@ -266,7 +267,7 @@ export function buildSpaceSidebarConfig(
     header: {
       logo: {
         src: "/logo.svg",
-        alt: "MED13 Resource Library",
+        alt: BRAND_LOGO_ALT,
         width: 32,
         height: 32,
       },
