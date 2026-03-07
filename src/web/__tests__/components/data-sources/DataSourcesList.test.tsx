@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { DataSourcesList } from '@/components/data-sources/DataSourcesList'
 import { DiscoverSourcesDialog } from '@/components/data-sources/DiscoverSourcesDialog'
 import {
+  cancelSpaceSourcePipelineRunAction,
   fetchSourceWorkflowCardStatusAction,
   fetchSourceWorkflowEventsAction,
 } from '@/app/actions/kernel-ingest'
@@ -149,6 +150,15 @@ beforeEach(() => {
       graph_edges_delta_last_run: 0,
       graph_edges_total: 0,
       last_failed_stage: null,
+    },
+  })
+  ;(cancelSpaceSourcePipelineRunAction as jest.Mock).mockResolvedValue({
+    success: true,
+    data: {
+      run_id: 'run-123',
+      source_id: 'source-1',
+      status: 'cancelled',
+      cancelled: true,
     },
   })
   ;(fetchSourceWorkflowEventsAction as jest.Mock).mockResolvedValue({
@@ -502,6 +512,44 @@ describe('DataSourcesList - Artana progress display', () => {
 })
 
 describe('DataSourcesList - Workflow streaming and fallback', () => {
+  it('cancels a pre-existing active run after page load using backend-provided run id', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={dataSourcesResponse}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+        workflowStatusBySource={{
+          'source-1': {
+            active_pipeline_run_id: 'run-123',
+            last_pipeline_status: 'running',
+            pending_paper_count: 0,
+            pending_relation_review_count: 0,
+            extraction_extracted_count: 0,
+            extraction_failed_count: 0,
+            extraction_skipped_count: 0,
+            extraction_timeout_failed_count: 0,
+            graph_edges_delta_last_run: 0,
+            graph_edges_total: 0,
+            last_failed_stage: null,
+          },
+        }}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /stop run for test source 1/i }))
+
+    await waitFor(() => {
+      expect(cancelSpaceSourcePipelineRunAction).toHaveBeenCalledWith(
+        'space-123',
+        'source-1',
+        'run-123',
+      )
+    })
+  })
+
   it('applies stream bootstrap updates to live workflow UI', async () => {
     mockStreamBootstrapPayloadState.current = {
       generated_at: '2026-03-02T20:00:00+00:00',
@@ -510,6 +558,7 @@ describe('DataSourcesList - Workflow streaming and fallback', () => {
           source_id: 'source-1',
           generated_at: '2026-03-02T20:00:00+00:00',
           workflow_status: {
+            active_pipeline_run_id: 'run-stream-1',
             last_pipeline_status: 'running',
             last_failed_stage: null,
             pending_paper_count: 2,

@@ -23,6 +23,7 @@ type ActionResult<T> =
   | { success: false; error: string }
 
 export interface WorkflowCardStatusPayload {
+  active_pipeline_run_id?: string | null
   last_pipeline_status: string | null
   last_failed_stage: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
   pending_paper_count: number
@@ -147,6 +148,18 @@ function extractLastFailedStage(monitor: SourceWorkflowMonitorResponse): Pipelin
     }
   }
   return 'ingestion'
+}
+
+function resolveActivePipelineRunId(
+  monitor: SourceWorkflowMonitorResponse,
+): string | null {
+  const lastRun = asObject(monitor.last_run)
+  const runStatus = typeof lastRun.status === 'string' ? lastRun.status : null
+  if (runStatus !== 'queued' && runStatus !== 'retrying' && runStatus !== 'running') {
+    return null
+  }
+  const runId = typeof lastRun.run_id === 'string' ? lastRun.run_id.trim() : ''
+  return runId.length > 0 ? runId : null
 }
 
 export async function runAllActiveSpaceSourcesIngestionAction(
@@ -291,6 +304,7 @@ export async function fetchSourceWorkflowCardStatusAction(
     return {
       success: true,
       data: {
+        active_pipeline_run_id: resolveActivePipelineRunId(monitor),
         last_pipeline_status:
           typeof counters.last_pipeline_status === 'string'
             ? counters.last_pipeline_status

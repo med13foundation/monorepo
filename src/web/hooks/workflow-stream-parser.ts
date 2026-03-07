@@ -86,6 +86,7 @@ function asWorkflowCardStatus(value: unknown): SourceWorkflowCardStatusPayload |
     ? (value.artana_progress as SourceWorkflowCardStatusPayload['artana_progress'])
     : undefined
   return {
+    active_pipeline_run_id: asNullableString(value.active_pipeline_run_id),
     last_pipeline_status: asNullableString(value.last_pipeline_status),
     last_failed_stage:
       asNullableString(value.last_failed_stage) as SourceWorkflowCardStatusPayload['last_failed_stage'],
