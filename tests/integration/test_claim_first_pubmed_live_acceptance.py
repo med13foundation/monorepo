@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -59,6 +60,9 @@ if TYPE_CHECKING:
     from src.domain.agents.contexts.extraction_context import ExtractionContext
     from src.domain.entities.kernel.dictionary import DictionarySearchResult
 
+_NON_ALNUM_PATTERN = re.compile(r"[^A-Za-z0-9]+")
+_MAX_EVIDENCE_EXCERPT_CHARS = 480
+
 
 def _resolve_record_pmid(record: dict[str, object]) -> str | None:
     for key in ("pmid", "pubmed_id"):
@@ -71,6 +75,69 @@ def _resolve_record_pmid(record: dict[str, object]) -> str | None:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return None
+
+
+def _normalize_record_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split())
+    if not normalized:
+        return None
+    return normalized
+
+
+def _resolve_evidence_excerpt(
+    *,
+    record: dict[str, object],
+    source_label: str,
+    target_label: str,
+) -> str:
+    normalized_title = _normalize_record_text(record.get("title"))
+    normalized_abstract = _normalize_record_text(record.get("abstract"))
+    candidate_texts = (
+        normalized_abstract,
+        (
+            f"{normalized_title} {normalized_abstract}"
+            if normalized_title is not None and normalized_abstract is not None
+            else None
+        ),
+        normalized_title,
+    )
+    lowered_source = source_label.casefold()
+    lowered_target = target_label.casefold()
+    for candidate_text in candidate_texts:
+        if candidate_text is None:
+            continue
+        lowered_candidate = candidate_text.casefold()
+        source_index = lowered_candidate.find(lowered_source)
+        target_index = lowered_candidate.find(lowered_target)
+        if source_index < 0 or target_index < 0:
+            continue
+        first_index = min(source_index, target_index)
+        last_index = max(
+            source_index + len(source_label),
+            target_index + len(target_label),
+        )
+        excerpt_start = max(0, first_index - 80)
+        excerpt_end = min(len(candidate_text), last_index + 120)
+        normalized_excerpt = _normalize_record_text(
+            _NON_ALNUM_PATTERN.sub(
+                " ",
+                candidate_text[excerpt_start:excerpt_end],
+            ),
+        )
+        if normalized_excerpt is None:
+            continue
+        bounded_excerpt = normalized_excerpt[:_MAX_EVIDENCE_EXCERPT_CHARS]
+        lowered_excerpt = bounded_excerpt.casefold()
+        if lowered_source in lowered_excerpt and lowered_target in lowered_excerpt:
+            return bounded_excerpt
+    raise AssertionError(
+        (
+            "Live PubMed record does not contain a usable evidence excerpt for "
+            f"{source_label} and {target_label}: {_resolve_record_pmid(record)}"
+        ),
+    )
 
 
 def _live_pubmed_enabled() -> bool:
@@ -157,7 +224,11 @@ async def test_claim_first_live_pubmed_three_pmids_end_to_end(  # noqa: PLR0915
 
     from src.database.session import SessionLocal
 
-    pmids = ("30769017", "22541436", "17379774")
+    live_cases = (
+        ("41130977", "Cardiomyopathy"),
+        ("22541436", "Obesity"),
+        ("30769017", "Hypothyroidism"),
+    )
 
     session = SessionLocal()
     try:
@@ -226,17 +297,18 @@ async def test_claim_first_live_pubmed_three_pmids_end_to_end(  # noqa: PLR0915
             display_label="MED13",
             metadata={"source": "live_acceptance"},
         )
-        entity_repo.create(
-            research_space_id=str(space.id),
-            entity_type="PHENOTYPE",
-            display_label="Cardiomyopathy",
-            metadata={"source": "live_acceptance"},
-        )
+        for phenotype_label in {label for _, label in live_cases}:
+            entity_repo.create(
+                research_space_id=str(space.id),
+                entity_type="PHENOTYPE",
+                display_label=phenotype_label,
+                metadata={"source": "live_acceptance"},
+            )
 
         gateway = PubMedSourceGateway()
         source_document_ids_by_pmid: dict[str, str] = {}
 
-        for pmid in pmids:
+        for pmid, target_label in live_cases:
             config = PubMedQueryConfig(
                 query=f"{pmid}[PMID]",
                 domain_context="clinical",
@@ -258,6 +330,11 @@ async def test_claim_first_live_pubmed_three_pmids_end_to_end(  # noqa: PLR0915
             )
             resolved_pmid = _resolve_record_pmid(record)
             assert resolved_pmid == pmid
+            evidence_excerpt = _resolve_evidence_excerpt(
+                record=record,
+                source_label="MED13",
+                target_label=target_label,
+            )
 
             document = SourceDocument(
                 id=uuid4(),
@@ -318,7 +395,9 @@ async def test_claim_first_live_pubmed_three_pmids_end_to_end(  # noqa: PLR0915
                         relation_type="ASSOCIATED_WITH",
                         target_type="PHENOTYPE",
                         source_label="MED13",
-                        target_label="Cardiomyopathy",
+                        target_label=target_label,
+                        evidence_excerpt=evidence_excerpt,
+                        evidence_locator=f"pubmed:{pmid}:abstract",
                         confidence=0.88,
                     ),
                 ],
@@ -358,7 +437,7 @@ async def test_claim_first_live_pubmed_three_pmids_end_to_end(  # noqa: PLR0915
 
         claims = claim_repo.find_by_research_space(str(space.id), limit=200, offset=0)
         assert claims, "No relation claims were created for live PubMed acceptance run."
-        for pmid in pmids:
+        for pmid, _ in live_cases:
             source_document_id = source_document_ids_by_pmid[pmid]
             claims_for_pmid = [
                 claim

@@ -26,8 +26,15 @@ if TYPE_CHECKING:
 class _StubRunProgressPort:
     def __init__(self, snapshots: dict[str, RunProgressSnapshot]) -> None:
         self._snapshots = snapshots
+        self.calls: list[tuple[str, str]] = []
 
-    def get_run_progress(self, *, run_id: str) -> RunProgressSnapshot | None:
+    def get_run_progress(
+        self,
+        *,
+        run_id: str,
+        tenant_id: str,
+    ) -> RunProgressSnapshot | None:
+        self.calls.append((run_id, tenant_id))
         return self._snapshots.get(run_id)
 
 
@@ -353,12 +360,14 @@ class _RunScopedFilterCaptureService(SourceWorkflowMonitorService):
     def _build_artana_progress(
         self,
         *,
+        tenant_id: str,
         selected_run_id: str | None,
         selected_run_payload: JSONObject | None,
         documents: list[JSONObject],
         extraction_rows: list[JSONObject],
         relation_rows: list[JSONObject],
     ) -> JSONObject:
+        del tenant_id
         del selected_run_id
         del selected_run_payload
         del documents
@@ -372,19 +381,21 @@ class _RunScopedFilterCaptureService(SourceWorkflowMonitorService):
 
 
 def test_build_artana_progress_resolves_stage_snapshots_from_candidates() -> None:
+    run_progress = _StubRunProgressPort(
+        {
+            "pipeline:run:1": _snapshot("pipeline:run:1", "running", 10),
+            "enrich:run:1": _snapshot("enrich:run:1", "completed", 100),
+            "extract:run:1": _snapshot("extract:run:1", "running", 56),
+            "graph:run:1": _snapshot("graph:run:1", "completed", 100),
+        },
+    )
     service = SourceWorkflowMonitorService(
         session=Mock(),
-        run_progress=_StubRunProgressPort(
-            {
-                "pipeline:run:1": _snapshot("pipeline:run:1", "running", 10),
-                "enrich:run:1": _snapshot("enrich:run:1", "completed", 100),
-                "extract:run:1": _snapshot("extract:run:1", "running", 56),
-                "graph:run:1": _snapshot("graph:run:1", "completed", 100),
-            },
-        ),
+        run_progress=run_progress,
     )
 
     payload = service._build_artana_progress(
+        tenant_id="space-1",
         selected_run_id="pipeline:run:1",
         selected_run_payload=None,
         documents=[
@@ -407,12 +418,19 @@ def test_build_artana_progress_resolves_stage_snapshots_from_candidates() -> Non
     assert payload["enrichment"]["run_id"] == "enrich:run:1"
     assert payload["extraction"]["run_id"] == "extract:run:1"
     assert payload["graph"]["run_id"] == "graph:run:1"
+    assert run_progress.calls == [
+        ("pipeline:run:1", "space-1"),
+        ("enrich:run:1", "space-1"),
+        ("extract:run:1", "space-1"),
+        ("graph:run:1", "space-1"),
+    ]
 
 
 def test_build_artana_progress_returns_empty_stage_payload_when_unavailable() -> None:
     service = SourceWorkflowMonitorService(session=Mock(), run_progress=None)
 
     payload = service._build_artana_progress(
+        tenant_id="space-1",
         selected_run_id="pipeline:missing",
         selected_run_payload=None,
         documents=[
@@ -441,6 +459,7 @@ def test_build_artana_progress_falls_back_to_selected_pipeline_run_status() -> N
     )
 
     payload = service._build_artana_progress(
+        tenant_id="space-1",
         selected_run_id="5caf33eb-1908-4c8c-b5c3-947a14708587",
         selected_run_payload={
             "run_id": "5caf33eb-1908-4c8c-b5c3-947a14708587",
@@ -476,6 +495,7 @@ def test_build_artana_progress_ignores_non_graph_run_ids_for_graph_stage() -> No
     )
 
     payload = service._build_artana_progress(
+        tenant_id="space-1",
         selected_run_id="pipeline:run:1",
         selected_run_payload=None,
         documents=[
@@ -494,6 +514,49 @@ def test_build_artana_progress_ignores_non_graph_run_ids_for_graph_stage() -> No
     assert payload["extraction"]["run_id"] == "extract:run:1"
     assert payload["graph"]["run_id"] is None
     assert payload["graph"]["candidate_run_ids"] == []
+
+
+def test_get_source_workflow_monitor_passes_space_id_as_artana_tenant() -> None:
+    class _TenantAwareProgressService(_RunScopedFilterCaptureService):
+        def _build_artana_progress(
+            self,
+            *,
+            tenant_id: str,
+            selected_run_id: str | None,
+            selected_run_payload: JSONObject | None,
+            documents: list[JSONObject],
+            extraction_rows: list[JSONObject],
+            relation_rows: list[JSONObject],
+        ) -> JSONObject:
+            return SourceWorkflowMonitorService._build_artana_progress(
+                self,
+                tenant_id=tenant_id,
+                selected_run_id=selected_run_id,
+                selected_run_payload=selected_run_payload,
+                documents=documents,
+                extraction_rows=extraction_rows,
+                relation_rows=relation_rows,
+            )
+
+    run_progress = _StubRunProgressPort(
+        {
+            "run-match": _snapshot("run-match", "running", 25),
+        },
+    )
+    service = _TenantAwareProgressService()
+    service._run_progress = run_progress
+    space_id = uuid4()
+
+    payload = service.get_source_workflow_monitor(
+        space_id=space_id,
+        source_id=uuid4(),
+        run_id="run-match",
+        limit=5,
+        include_graph=False,
+    )
+
+    assert payload["artana_progress"]["pipeline"]["run_id"] == "run-match"
+    assert run_progress.calls[0] == ("run-match", str(space_id))
 
 
 def test_load_extraction_queue_filters_rows_to_selected_ingestion_job() -> None:

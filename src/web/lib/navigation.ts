@@ -23,3 +23,15 @@ export function navigateToLogin(): void {
   const loginUrl = `${window.location.origin}/auth/login`
   window.location.href = loginUrl
 }
+
+/**
+ * Navigates to an in-app path with a full page reload.
+ */
+export function navigateToPathWithReload(path: string): void {
+  if (typeof window === 'undefined') {
+    console.warn('navigateToPathWithReload called in SSR environment')
+    return
+  }
+
+  window.location.assign(path)
+}

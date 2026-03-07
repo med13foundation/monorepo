@@ -72,6 +72,7 @@ class SourceWorkflowMonitorProgressMixin:
     def _build_artana_progress(  # noqa: PLR0913 - explicit monitor payload shaping
         self,
         *,
+        tenant_id: str,
         selected_run_id: str | None,
         selected_run_payload: JSONObject | None = None,
         documents: list[JSONObject],
@@ -87,7 +88,10 @@ class SourceWorkflowMonitorProgressMixin:
 
         payload: JSONObject = {}
         for stage_name, candidates in stage_candidates.items():
-            snapshot = self._find_first_progress_snapshot(candidates)
+            snapshot = self._find_first_progress_snapshot(
+                candidates,
+                tenant_id=tenant_id,
+            )
             if snapshot is not None:
                 payload[stage_name] = self._snapshot_to_payload(
                     stage=stage_name,
@@ -200,11 +204,16 @@ class SourceWorkflowMonitorProgressMixin:
     def _find_first_progress_snapshot(
         self,
         candidates: list[str],
+        *,
+        tenant_id: str,
     ) -> RunProgressSnapshot | None:
         if self._run_progress is None:
             return None
         for run_id in candidates:
-            snapshot = self._run_progress.get_run_progress(run_id=run_id)
+            snapshot = self._run_progress.get_run_progress(
+                run_id=run_id,
+                tenant_id=tenant_id,
+            )
             if snapshot is not None:
                 return snapshot
         return None

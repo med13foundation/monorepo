@@ -1,27 +1,73 @@
-import { render } from '@testing-library/react'
 import HomePage from '@/app/page'
-import { redirect } from 'next/navigation'
+import { getServerSession } from 'next-auth'
 
-// Mock the redirect function
+const redirectMock = jest.fn()
+
 jest.mock('next/navigation', () => ({
-  redirect: jest.fn(),
+  redirect: (...args: unknown[]) => redirectMock(...args),
 }))
 
+jest.mock('next-auth', () => ({
+  getServerSession: jest.fn(),
+}))
+
+const getServerSessionMock = jest.mocked(getServerSession)
+
 describe('HomePage', () => {
-  it('is a valid React component', () => {
-    expect(typeof HomePage).toBe('function')
-    expect(HomePage.name).toBe('HomePage')
+  beforeEach(() => {
+    jest.clearAllMocks()
+    redirectMock.mockImplementation(() => {
+      throw new Error('redirect')
+    })
   })
 
-  it('has the correct component structure', () => {
-    // Verify the component is properly exported as default
-    expect(HomePage).toBeDefined()
-    expect(HomePage).toBeInstanceOf(Function)
+  it('redirects to login when no session is found', async () => {
+    getServerSessionMock.mockResolvedValue(null)
+
+    await expect(HomePage()).rejects.toThrow('redirect')
+
+    expect(redirectMock).toHaveBeenCalledWith('/auth/login')
   })
 
-  it('is properly configured for Next.js routing', () => {
-    // The component exists and is ready for Next.js to handle redirects
-    // The actual redirect behavior is tested through integration/e2e tests
-    expect(HomePage).toBeTruthy()
+  it('redirects to login when the session is expired', async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: {
+        role: 'admin',
+        access_token: 'token-part1.token-part2.token-part3',
+        expires_at: Date.now() - 1_000,
+      },
+    })
+
+    await expect(HomePage()).rejects.toThrow('redirect')
+
+    expect(redirectMock).toHaveBeenCalledWith('/auth/login')
+  })
+
+  it('redirects admins to the dashboard', async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: {
+        role: 'admin',
+        access_token: 'token-part1.token-part2.token-part3',
+        expires_at: Date.now() + 3_600_000,
+      },
+    })
+
+    await expect(HomePage()).rejects.toThrow('redirect')
+
+    expect(redirectMock).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it('redirects non-admin users to spaces', async () => {
+    getServerSessionMock.mockResolvedValue({
+      user: {
+        role: 'researcher',
+        access_token: 'token-part1.token-part2.token-part3',
+        expires_at: Date.now() + 3_600_000,
+      },
+    })
+
+    await expect(HomePage()).rejects.toThrow('redirect')
+
+    expect(redirectMock).toHaveBeenCalledWith('/spaces')
   })
 })

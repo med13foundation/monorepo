@@ -27,6 +27,7 @@ _ARTANA_IMPORT_ERROR: Exception | None = None
 
 try:
     from artana.kernel import ArtanaKernel
+    from artana.models import TenantContext
 except ImportError as exc:  # pragma: no cover - environment dependent
     _ARTANA_IMPORT_ERROR = exc
 
@@ -59,6 +60,7 @@ _MODEL_TERMINAL_FAILURE_OUTCOMES: frozenset[str] = frozenset(
 )
 _MODEL_TERMINAL_COMPLETION_OUTCOMES: frozenset[str] = frozenset({"completed"})
 _FULL_PROGRESS_PERCENT = 100
+_READ_ONLY_TENANT_BUDGET_USD = 0.01
 
 
 class _NoopModelPort:
@@ -140,14 +142,23 @@ class ArtanaKernelRunProgressRepository(RunProgressPort):
             self._runner.close()
             raise
 
-    def get_run_progress(self, *, run_id: str) -> RunProgressSnapshot | None:
+    def get_run_progress(
+        self,
+        *,
+        run_id: str,
+        tenant_id: str,
+    ) -> RunProgressSnapshot | None:
         normalized_run_id = run_id.strip()
-        if not normalized_run_id:
+        tenant = self._create_tenant(tenant_id)
+        if not normalized_run_id or tenant is None:
             return None
 
         try:
             progress = self._runner.run(
-                self._kernel.get_run_progress(run_id=normalized_run_id),
+                self._kernel.get_run_progress(
+                    run_id=normalized_run_id,
+                    tenant=tenant,
+                ),
             )
         except ValueError:
             logger.debug(
@@ -171,7 +182,10 @@ class ArtanaKernelRunProgressRepository(RunProgressPort):
 
         percent_value = _coerce_percent(getattr(progress, "percent", None))
         run_status = (
-            self._load_run_status(normalized_run_id)
+            self._load_run_status(
+                normalized_run_id,
+                tenant=tenant,
+            )
             if _should_load_run_status(status_value=status_value, percent=percent_value)
             else None
         )
@@ -205,9 +219,30 @@ class ArtanaKernelRunProgressRepository(RunProgressPort):
             eta_seconds=_coerce_int_or_none(getattr(progress, "eta_seconds", None)),
         )
 
-    def _load_run_status(self, run_id: str) -> object | None:
+    @staticmethod
+    def _create_tenant(tenant_id: str) -> TenantContext | None:
+        normalized_tenant_id = tenant_id.strip()
+        if not normalized_tenant_id:
+            return None
+        return TenantContext(
+            tenant_id=normalized_tenant_id,
+            capabilities=frozenset(),
+            budget_usd_limit=_READ_ONLY_TENANT_BUDGET_USD,
+        )
+
+    def _load_run_status(
+        self,
+        run_id: str,
+        *,
+        tenant: TenantContext,
+    ) -> object | None:
         try:
-            return self._runner.run(self._kernel.get_run_status(run_id=run_id))
+            return self._runner.run(
+                self._kernel.get_run_status(
+                    run_id=run_id,
+                    tenant=tenant,
+                ),
+            )
         except ValueError:
             return None
         except Exception as exc:  # noqa: BLE001 - optional monitor enrichment

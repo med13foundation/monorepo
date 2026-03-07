@@ -181,6 +181,7 @@ class SourceWorkflowMonitorService(
             selected_ingestion_job_id=run_scoped_ingestion_job_id,
         )
         artana_progress = self._build_artana_progress(
+            tenant_id=str(space_id),
             selected_run_id=selected_run_id,
             selected_run_payload=(
                 selected_run.payload if selected_run is not None else None
