@@ -2,10 +2,9 @@
 
 import { forwardRef, useEffect, useState } from 'react'
 import type { ComponentPropsWithoutRef, ElementRef } from 'react'
-import { useSession } from 'next-auth/react'
 
+import { fetchAvailableModelsAction } from '@/app/actions/data-sources'
 import type { ModelSpec } from '@/types/ai-models'
-import { getAvailableModels } from '@/lib/api/ai-models'
 import {
   Select,
   SelectContent,
@@ -33,21 +32,18 @@ export const AiModelSelector = forwardRef<
   { value, onChange, disabled, ...triggerProps },
   ref,
 ) {
-  const { data: session } = useSession()
   const [availableModels, setAvailableModels] = useState<ModelSpec[]>([])
   const [defaultModelId, setDefaultModelId] = useState<string>('')
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    const token = session?.user?.access_token
-    if (!token) {
-      setIsLoading(false)
-      return
-    }
-
     setIsLoading(true)
-    getAvailableModels(token)
-      .then((response) => {
+    fetchAvailableModelsAction()
+      .then((result) => {
+        if (!result.success) {
+          throw new Error(result.error)
+        }
+        const response = result.data
         // Filter to only models that support query_generation
         const queryModels = response.models.filter((m) =>
           m.capabilities.includes('query_generation'),
@@ -62,7 +58,7 @@ export const AiModelSelector = forwardRef<
       .finally(() => {
         setIsLoading(false)
       })
-  }, [session?.user?.access_token])
+  }, [])
 
   const getCostTierBadgeVariant = (tier: string) => {
     switch (tier) {

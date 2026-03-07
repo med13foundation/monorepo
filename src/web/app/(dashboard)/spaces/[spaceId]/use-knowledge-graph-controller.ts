@@ -3,15 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
-  fetchClaimParticipants,
-  fetchRelationClaimEvidence,
-  fetchRelationClaims,
-  fetchRelationConflicts,
-  fetchKernelGraphExport,
-  fetchKernelNeighborhood,
-  fetchKernelSubgraph,
-  searchKernelGraph,
-} from '@/lib/api/kernel'
+  fetchClaimParticipantsAction,
+  fetchKernelGraphExportAction,
+  fetchKernelNeighborhoodAction,
+  fetchKernelSubgraphAction,
+  fetchRelationClaimEvidenceAction,
+  fetchRelationClaimsAction,
+  fetchRelationConflictsAction,
+  searchKernelGraphAction,
+  type QueryActionResult,
+} from '@/app/actions/kernel-graph'
 import {
   augmentGraphModelWithClaimEvidence,
   annotateGraphModelWithConflicts,
@@ -84,7 +85,6 @@ interface QueryRouter {
 
 interface UseKnowledgeGraphControllerArgs {
   spaceId: string
-  token?: string
   router: QueryRouter
   initialQuestion: string
   initialTopK: number
@@ -116,6 +116,9 @@ function toErrorMessage(error: unknown, fallback: string): string {
 function errorStatusCode(error: unknown): number | null {
   if (typeof error !== 'object' || error === null) {
     return null
+  }
+  if ('status' in error && typeof (error as { status?: unknown }).status === 'number') {
+    return (error as { status: number }).status
   }
   if (!('response' in error)) {
     return null
@@ -197,12 +200,28 @@ function pickTopEvidenceRow(
   return sorted[0] ?? null
 }
 
+function unwrapQueryAction<T>(
+  result: QueryActionResult<T>,
+  fallback: string,
+): T {
+  if (result.success) {
+    return result.data
+  }
+  const error = new Error(result.error || fallback) as Error & { status?: number }
+  if (typeof result.status === 'number') {
+    error.status = result.status
+  }
+  throw error
+}
+
 async function fetchRelationConflictsSafe(
   spaceId: string,
-  token: string,
 ): Promise<RelationConflictListResponse> {
   try {
-    return await fetchRelationConflicts(spaceId, { offset: 0, limit: 200 }, token)
+    return unwrapQueryAction(
+      await fetchRelationConflictsAction(spaceId, { offset: 0, limit: 200 }),
+      'Failed to load relation conflicts',
+    )
   } catch (error) {
     const statusCode = errorStatusCode(error)
     if (statusCode === 404 || statusCode === 405 || statusCode === 500) {
@@ -225,7 +244,6 @@ async function fetchRelationConflictsSafe(
 
 async function fetchRelationClaimsOverlaySafe(
   spaceId: string,
-  token: string,
 ): Promise<RelationClaimResponse[]> {
   const claims: RelationClaimResponse[] = []
   let offset = 0
@@ -233,13 +251,12 @@ async function fetchRelationClaimsOverlaySafe(
 
   try {
     do {
-      const page = await fetchRelationClaims(
-        spaceId,
-        {
+      const page = unwrapQueryAction(
+        await fetchRelationClaimsAction(spaceId, {
           offset,
           limit: CLAIM_OVERLAY_PAGE_LIMIT,
-        },
-        token,
+        }),
+        'Failed to load relation claims',
       )
       claims.push(...page.claims)
       total = page.total
@@ -259,7 +276,6 @@ async function fetchRelationClaimsOverlaySafe(
 async function fetchClaimParticipantsOverlaySafe(
   spaceId: string,
   claimIds: readonly string[],
-  token: string,
 ): Promise<Record<string, ClaimParticipantResponse[]>> {
   if (claimIds.length === 0) {
     return {}
@@ -274,7 +290,10 @@ async function fetchClaimParticipantsOverlaySafe(
     const responses = await Promise.all(
       batch.map(async (claimId) => {
         try {
-          return await fetchClaimParticipants(spaceId, claimId, token)
+          return unwrapQueryAction(
+            await fetchClaimParticipantsAction(spaceId, claimId),
+            'Failed to load claim participants',
+          )
         } catch (error) {
           logControllerWarning(
             `[KnowledgeGraphController] Claim participants overlay unavailable for claim ${claimId}`,
@@ -383,7 +402,6 @@ export interface KnowledgeGraphController {
 
 export function useKnowledgeGraphController({
   spaceId,
-  token,
   router,
   initialQuestion,
   initialTopK,
@@ -457,25 +475,23 @@ export function useKnowledgeGraphController({
 
   const fetchSubgraph = useCallback(
     async (payload: KernelGraphSubgraphRequest): Promise<void> => {
-      if (!token) {
-        setGraphError('Authentication token is unavailable.')
-        return
-      }
-
       setIsLoadingGraph(true)
       setGraphError(null)
       setGraphNotice(null)
 
       try {
-        const [response, claimOverlay, conflictResponse] = await Promise.all([
-          fetchKernelSubgraph(spaceId, payload, token),
-          fetchRelationClaimsOverlaySafe(spaceId, token),
-          fetchRelationConflictsSafe(spaceId, token),
+        const [subgraphResult, claimOverlay, conflictResponse] = await Promise.all([
+          fetchKernelSubgraphAction(spaceId, payload),
+          fetchRelationClaimsOverlaySafe(spaceId),
+          fetchRelationConflictsSafe(spaceId),
         ])
+        const response = unwrapQueryAction(
+          subgraphResult,
+          'Unable to load bounded subgraph for this research space.',
+        )
         const participantsByClaimId = await fetchClaimParticipantsOverlaySafe(
           spaceId,
           claimOverlay.map((claim) => claim.id),
-          token,
         )
         const persistedGraph = buildGraphModel(response)
         const mergedGraph = mergeGraphModelWithRelationClaims(
@@ -493,15 +509,18 @@ export function useKnowledgeGraphController({
       } catch (error) {
         if (errorStatusCode(error) === 404) {
           try {
-            const [legacyGraph, claimOverlay, conflictResponse] = await Promise.all([
-              fetchKernelGraphExport(spaceId, token),
-              fetchRelationClaimsOverlaySafe(spaceId, token),
-              fetchRelationConflictsSafe(spaceId, token),
+            const [legacyGraphResult, claimOverlay, conflictResponse] = await Promise.all([
+              fetchKernelGraphExportAction(spaceId),
+              fetchRelationClaimsOverlaySafe(spaceId),
+              fetchRelationConflictsSafe(spaceId),
             ])
+            const legacyGraph = unwrapQueryAction(
+              legacyGraphResult,
+              'Unable to load legacy knowledge graph export for this research space.',
+            )
             const participantsByClaimId = await fetchClaimParticipantsOverlaySafe(
               spaceId,
               claimOverlay.map((claim) => claim.id),
-              token,
             )
             const persistedGraph = buildGraphModel(legacyGraph)
             const mergedGraph = mergeGraphModelWithRelationClaims(
@@ -540,7 +559,7 @@ export function useKnowledgeGraphController({
         setIsLoadingGraph(false)
       }
     },
-    [spaceId, token],
+    [spaceId],
   )
 
   const loadStarterSubgraph = useCallback(async (): Promise<void> => {
@@ -573,11 +592,6 @@ export function useKnowledgeGraphController({
       syncUrl: boolean
     }): Promise<void> => {
       const normalizedQuestion = question.trim()
-      if (!token) {
-        setGraphSearchError('Authentication token is unavailable.')
-        return
-      }
-
       if (normalizedQuestion.length === 0) {
         setGraphSearch(null)
         setGraphSearchError(null)
@@ -605,17 +619,16 @@ export function useKnowledgeGraphController({
       setHoveredNodeId(null)
 
       try {
-        const searchResponse = await searchKernelGraph(
-          spaceId,
-          {
+        const searchResponse = unwrapQueryAction(
+          await searchKernelGraphAction(spaceId, {
             question: normalizedQuestion,
             top_k: topK,
             max_depth: maxDepth,
             curation_statuses: activeCurationStatuses,
             include_evidence_chains: true,
             force_agent: forceAgent,
-          },
-          token,
+          }),
+          'Unable to execute graph search for this space.',
         )
         setGraphSearch(searchResponse)
 
@@ -657,11 +670,11 @@ export function useKnowledgeGraphController({
         setIsSearching(false)
       }
     },
-    [activeCurationStatuses, fetchSubgraph, loadStarterSubgraph, router, spaceId, token, trustPreset],
+    [activeCurationStatuses, fetchSubgraph, loadStarterSubgraph, router, spaceId, trustPreset],
   )
 
   useEffect(() => {
-    if (bootstrapRef.current || !token) {
+    if (bootstrapRef.current) {
       return
     }
     bootstrapRef.current = true
@@ -685,11 +698,10 @@ export function useKnowledgeGraphController({
     initialTopK,
     loadStarterSubgraph,
     runQuery,
-    token,
   ])
 
   useEffect(() => {
-    if (!bootstrapRef.current || !token) {
+    if (!bootstrapRef.current) {
       return
     }
     if (trustPresetSyncRef.current === trustPreset) {
@@ -726,25 +738,18 @@ export function useKnowledgeGraphController({
     router,
     runQuery,
     spaceId,
-    token,
     topK,
     trustPreset,
   ])
 
   const expandFromNode = useCallback(
     async (nodeId: string): Promise<void> => {
-      if (!token) {
-        setGraphError('Authentication token is unavailable.')
-        return
-      }
-
       setIsExpandingNodeId(nodeId)
       setGraphError(null)
       setGraphNotice(null)
       try {
-        const expansionResponse = await fetchKernelSubgraph(
-          spaceId,
-          {
+        const expansionResponse = unwrapQueryAction(
+          await fetchKernelSubgraphAction(spaceId, {
             mode: 'seeded',
             seed_entity_ids: [nodeId],
             depth: 1,
@@ -752,19 +757,17 @@ export function useKnowledgeGraphController({
             curation_statuses: activeCurationStatuses,
             max_nodes: MAX_RENDER_NODES,
             max_edges: MAX_RENDER_EDGES,
-          },
-          token,
+          }),
+          'Unable to expand neighborhood for selected node.',
         )
         const incoming = buildGraphModel(expansionResponse)
         setRawGraph((current) => mergeGraphModels(current, incoming))
       } catch (error) {
         if (errorStatusCode(error) === 404) {
           try {
-            const legacyNeighborhood = await fetchKernelNeighborhood(
-              spaceId,
-              nodeId,
-              1,
-              token,
+            const legacyNeighborhood = unwrapQueryAction(
+              await fetchKernelNeighborhoodAction(spaceId, nodeId, 1),
+              'Unable to expand neighborhood from legacy API.',
             )
             const incoming = buildGraphModel(legacyNeighborhood)
             setRawGraph((current) => mergeGraphModels(current, incoming))
@@ -792,7 +795,7 @@ export function useKnowledgeGraphController({
         setIsExpandingNodeId(null)
       }
     },
-    [activeCurationStatuses, spaceId, token, topK],
+    [activeCurationStatuses, spaceId, topK],
   )
 
   const onNodeClick = useCallback(
@@ -919,7 +922,7 @@ export function useKnowledgeGraphController({
   }, [graphDisplayMode, rawGraph.edges])
 
   useEffect(() => {
-    if (graphDisplayMode !== 'EVIDENCE' || !token || evidenceModeClaimIds.length === 0) {
+    if (graphDisplayMode !== 'EVIDENCE' || evidenceModeClaimIds.length === 0) {
       return
     }
 
@@ -947,7 +950,10 @@ export function useKnowledgeGraphController({
         const rowsByClaim = await Promise.all(
           batch.map(async (claimId) => {
             try {
-              const response = await fetchRelationClaimEvidence(spaceId, claimId, token)
+              const response = unwrapQueryAction(
+                await fetchRelationClaimEvidenceAction(spaceId, claimId),
+                'Failed to load claim evidence',
+              )
               return {
                 claimId,
                 rows: response.evidence.slice(0, EVIDENCE_MODE_MAX_ROWS_PER_CLAIM),
@@ -983,10 +989,10 @@ export function useKnowledgeGraphController({
     return () => {
       cancelled = true
     }
-  }, [evidenceModeClaimIds, graphDisplayMode, spaceId, token])
+  }, [evidenceModeClaimIds, graphDisplayMode, spaceId])
 
   useEffect(() => {
-    if (!token || !hoveredEdgeId) {
+    if (!hoveredEdgeId) {
       return
     }
     const edge = renderGraph.edgeById[hoveredEdgeId]
@@ -1020,7 +1026,10 @@ export function useKnowledgeGraphController({
 
     void (async () => {
       try {
-        const response = await fetchRelationClaimEvidence(spaceId, claimId, token)
+        const response = unwrapQueryAction(
+          await fetchRelationClaimEvidenceAction(spaceId, claimId),
+          'Failed to load claim evidence',
+        )
         if (!isMountedRef.current) {
           return
         }
@@ -1074,7 +1083,6 @@ export function useKnowledgeGraphController({
     hoveredEdgeId,
     renderGraph.edgeById,
     spaceId,
-    token,
   ])
 
   const runSearch = useCallback(

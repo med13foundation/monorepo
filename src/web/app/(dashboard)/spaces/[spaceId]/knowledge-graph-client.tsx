@@ -1,7 +1,6 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useSession } from 'next-auth/react'
 import { useCallback, useState } from 'react'
 import { Filter, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react'
 
@@ -35,11 +34,8 @@ export default function KnowledgeGraphClient({
   initialTrustPreset = 'ALL',
 }: KnowledgeGraphClientProps) {
   const router = useRouter()
-  const { data: session } = useSession()
-  const token = session?.user?.access_token
   const controller = useKnowledgeGraphController({
     spaceId,
-    token,
     router,
     initialQuestion,
     initialTopK,

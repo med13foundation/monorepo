@@ -1,18 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import KnowledgeGraphClient from '@/app/(dashboard)/spaces/[spaceId]/knowledge-graph-client'
 import {
-  fetchClaimParticipants,
-  fetchKernelSubgraph,
-  fetchRelationClaims,
-  fetchRelationConflicts,
-  searchKernelGraph,
-} from '@/lib/api/kernel'
-import { useSession } from 'next-auth/react'
+  fetchClaimParticipantsAction,
+  fetchKernelSubgraphAction,
+  fetchRelationClaimsAction,
+  fetchRelationConflictsAction,
+  searchKernelGraphAction,
+} from '@/app/actions/kernel-graph'
 import type { GraphSearchResponse, KernelGraphSubgraphResponse } from '@/types/kernel'
-
-jest.mock('next-auth/react', () => ({
-  useSession: jest.fn(),
-}))
 
 const routerReplaceMock = jest.fn()
 
@@ -24,12 +19,15 @@ jest.mock('next/navigation', () => ({
   }),
 }))
 
-jest.mock('@/lib/api/kernel', () => ({
-  fetchKernelSubgraph: jest.fn(),
-  fetchRelationClaims: jest.fn(),
-  fetchRelationConflicts: jest.fn(),
-  fetchClaimParticipants: jest.fn(),
-  searchKernelGraph: jest.fn(),
+jest.mock('@/app/actions/kernel-graph', () => ({
+  fetchKernelSubgraphAction: jest.fn(),
+  fetchRelationClaimsAction: jest.fn(),
+  fetchRelationConflictsAction: jest.fn(),
+  fetchClaimParticipantsAction: jest.fn(),
+  searchKernelGraphAction: jest.fn(),
+  fetchKernelGraphExportAction: jest.fn(),
+  fetchKernelNeighborhoodAction: jest.fn(),
+  fetchRelationClaimEvidenceAction: jest.fn(),
 }))
 
 jest.mock('@/components/knowledge-graph/KnowledgeGraphCanvas', () => ({
@@ -174,59 +172,57 @@ function buildSearchResponse(): GraphSearchResponse {
 }
 
 describe('KnowledgeGraphClient', () => {
-  const mockUseSession = useSession as jest.MockedFunction<typeof useSession>
-  const mockFetchKernelSubgraph = fetchKernelSubgraph as jest.MockedFunction<typeof fetchKernelSubgraph>
-  const mockFetchRelationClaims = fetchRelationClaims as jest.MockedFunction<
-    typeof fetchRelationClaims
+  const mockFetchKernelSubgraph = fetchKernelSubgraphAction as jest.MockedFunction<
+    typeof fetchKernelSubgraphAction
   >
-  const mockFetchClaimParticipants = fetchClaimParticipants as jest.MockedFunction<
-    typeof fetchClaimParticipants
+  const mockFetchRelationClaims = fetchRelationClaimsAction as jest.MockedFunction<
+    typeof fetchRelationClaimsAction
   >
-  const mockFetchRelationConflicts = fetchRelationConflicts as jest.MockedFunction<
-    typeof fetchRelationConflicts
+  const mockFetchClaimParticipants = fetchClaimParticipantsAction as jest.MockedFunction<
+    typeof fetchClaimParticipantsAction
   >
-  const mockSearchKernelGraph = searchKernelGraph as jest.MockedFunction<typeof searchKernelGraph>
+  const mockFetchRelationConflicts = fetchRelationConflictsAction as jest.MockedFunction<
+    typeof fetchRelationConflictsAction
+  >
+  const mockSearchKernelGraph = searchKernelGraphAction as jest.MockedFunction<
+    typeof searchKernelGraphAction
+  >
 
   beforeEach(() => {
     jest.clearAllMocks()
     mockFetchRelationClaims.mockResolvedValue({
-      claims: [],
-      total: 0,
-      offset: 0,
-      limit: 200,
+      success: true,
+      data: {
+        claims: [],
+        total: 0,
+        offset: 0,
+        limit: 200,
+      },
     })
     mockFetchClaimParticipants.mockResolvedValue({
-      claim_id: 'claim-1',
-      participants: [],
-      total: 0,
+      success: true,
+      data: {
+        claim_id: 'claim-1',
+        participants: [],
+        total: 0,
+      },
     })
     mockFetchRelationConflicts.mockResolvedValue({
-      conflicts: [],
-      total: 0,
-      offset: 0,
-      limit: 200,
-    })
-    mockUseSession.mockReturnValue({
+      success: true,
       data: {
-        expires: new Date(Date.now() + 60_000).toISOString(),
-        user: {
-          id: 'user-1',
-          email: 'user@example.com',
-          username: 'user',
-          full_name: 'Test User',
-          role: 'researcher',
-          email_verified: true,
-          access_token: 'token-123',
-          expires_at: Date.now() + 60_000,
-        },
+        conflicts: [],
+        total: 0,
+        offset: 0,
+        limit: 200,
       },
-      status: 'authenticated',
-      update: jest.fn(),
     })
   })
 
   it('auto-loads starter subgraph on first render when no query exists', async () => {
-    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
+    mockFetchKernelSubgraph.mockResolvedValue({
+      success: true,
+      data: buildSubgraphResponse(),
+    })
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
@@ -237,15 +233,18 @@ describe('KnowledgeGraphClient', () => {
           mode: 'starter',
           seed_entity_ids: [],
         }),
-        'token-123',
       )
     })
   })
 
   it('uses top 5 search results as seeds for seeded subgraph retrieval', async () => {
-    mockSearchKernelGraph.mockResolvedValue(buildSearchResponse())
-    mockFetchKernelSubgraph.mockResolvedValue(
-      buildSubgraphResponse({
+    mockSearchKernelGraph.mockResolvedValue({
+      success: true,
+      data: buildSearchResponse(),
+    })
+    mockFetchKernelSubgraph.mockResolvedValue({
+      success: true,
+      data: buildSubgraphResponse({
         meta: {
           mode: 'seeded',
           seed_entity_ids: ['n1', 'n2', 'n3', 'n4', 'n5'],
@@ -257,7 +256,7 @@ describe('KnowledgeGraphClient', () => {
           truncated_edges: false,
         },
       }),
-    )
+    })
 
     render(
       <KnowledgeGraphClient
@@ -285,24 +284,30 @@ describe('KnowledgeGraphClient', () => {
   it('expands from node click and merges without duplicating edges', async () => {
     mockFetchKernelSubgraph
       .mockResolvedValueOnce(
-        buildSubgraphResponse({
-          nodes: buildSubgraphResponse().nodes.slice(0, 2),
-          edges: buildSubgraphResponse().edges.slice(0, 1),
-        }),
+        {
+          success: true,
+          data: buildSubgraphResponse({
+            nodes: buildSubgraphResponse().nodes.slice(0, 2),
+            edges: buildSubgraphResponse().edges.slice(0, 1),
+          }),
+        },
       )
       .mockResolvedValueOnce(
-        buildSubgraphResponse({
-          nodes: buildSubgraphResponse().nodes,
-          edges: [
-            buildSubgraphResponse().edges[0],
-            {
-              ...buildSubgraphResponse().edges[0],
-              id: 'e3',
-              target_id: 'n3',
-              relation_type: 'ASSOCIATED_WITH',
-            },
-          ],
-        }),
+        {
+          success: true,
+          data: buildSubgraphResponse({
+            nodes: buildSubgraphResponse().nodes,
+            edges: [
+              buildSubgraphResponse().edges[0],
+              {
+                ...buildSubgraphResponse().edges[0],
+                id: 'e3',
+                target_id: 'n3',
+                relation_type: 'ASSOCIATED_WITH',
+              },
+            ],
+          }),
+        },
       )
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
@@ -321,7 +326,10 @@ describe('KnowledgeGraphClient', () => {
   })
 
   it('applies relation filter and updates visible graph edges', async () => {
-    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
+    mockFetchKernelSubgraph.mockResolvedValue({
+      success: true,
+      data: buildSubgraphResponse(),
+    })
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
@@ -350,8 +358,14 @@ describe('KnowledgeGraphClient', () => {
 
   it('uses trust preset as backend curation_statuses filter', async () => {
     mockFetchKernelSubgraph
-      .mockResolvedValueOnce(buildSubgraphResponse())
-      .mockResolvedValueOnce(buildSubgraphResponse())
+      .mockResolvedValueOnce({
+        success: true,
+        data: buildSubgraphResponse(),
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: buildSubgraphResponse(),
+      })
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
@@ -378,8 +392,15 @@ describe('KnowledgeGraphClient', () => {
   })
 
   it('renders graph when relation conflict endpoint returns 405', async () => {
-    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
-    mockFetchRelationConflicts.mockRejectedValueOnce({ response: { status: 405 } })
+    mockFetchKernelSubgraph.mockResolvedValue({
+      success: true,
+      data: buildSubgraphResponse(),
+    })
+    mockFetchRelationConflicts.mockResolvedValueOnce({
+      success: false,
+      error: 'Method not allowed',
+      status: 405,
+    })
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
@@ -391,8 +412,15 @@ describe('KnowledgeGraphClient', () => {
   })
 
   it('renders graph when relation conflict endpoint returns 500', async () => {
-    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
-    mockFetchRelationConflicts.mockRejectedValueOnce({ response: { status: 500 } })
+    mockFetchKernelSubgraph.mockResolvedValue({
+      success: true,
+      data: buildSubgraphResponse(),
+    })
+    mockFetchRelationConflicts.mockResolvedValueOnce({
+      success: false,
+      error: 'Internal server error',
+      status: 500,
+    })
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
@@ -404,8 +432,15 @@ describe('KnowledgeGraphClient', () => {
   })
 
   it('renders graph when relation claims overlay endpoint returns 500', async () => {
-    mockFetchKernelSubgraph.mockResolvedValue(buildSubgraphResponse())
-    mockFetchRelationClaims.mockRejectedValueOnce({ response: { status: 500 } })
+    mockFetchKernelSubgraph.mockResolvedValue({
+      success: true,
+      data: buildSubgraphResponse(),
+    })
+    mockFetchRelationClaims.mockResolvedValueOnce({
+      success: false,
+      error: 'Internal server error',
+      status: 500,
+    })
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
