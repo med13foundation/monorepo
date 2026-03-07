@@ -60,6 +60,7 @@ from src.infrastructure.repositories.kernel import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from artana.store import PostgresStore
     from sqlalchemy.orm import Session
 
     from src.application.services import SystemStatusService
@@ -96,6 +97,8 @@ class ApplicationServiceFactoryMixin(
     if TYPE_CHECKING:
 
         def get_system_status_service(self) -> SystemStatusService: ...
+
+        def get_artana_store(self) -> PostgresStore: ...
 
     _logger = logging.getLogger(__name__)
 

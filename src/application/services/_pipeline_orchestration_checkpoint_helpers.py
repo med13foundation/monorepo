@@ -34,6 +34,16 @@ if TYPE_CHECKING:
 class _PipelineCheckpointSelf(Protocol):
     _pipeline_runs: IngestionJobRepository | None
 
+    def _resolve_persistable_run_job(
+        self,
+        *,
+        run_job: IngestionJob | None,
+        source_id: UUID,
+        research_space_id: UUID,
+        run_id: str,
+        resume_from_stage: PipelineStageName | None,
+    ) -> IngestionJob | None: ...
+
     def _start_or_resume_pipeline_run(
         self,
         *,
@@ -124,6 +134,37 @@ class _PipelineCheckpointSelf(Protocol):
 
 class _PipelineOrchestrationCheckpointHelpers:
     """Checkpoint persistence helpers for unified pipeline runs."""
+
+    def _resolve_persistable_run_job(
+        self: _PipelineCheckpointSelf,
+        *,
+        run_job: IngestionJob | None,
+        source_id: UUID,
+        research_space_id: UUID,
+        run_id: str,
+        resume_from_stage: PipelineStageName | None,
+    ) -> IngestionJob | None:
+        resolved_run_job = self._refresh_pipeline_run_job(
+            source_id=source_id,
+            run_id=run_id,
+            run_job=run_job,
+        )
+        if resolved_run_job is not None:
+            return resolved_run_job
+        started_run_job = self._start_or_resume_pipeline_run(
+            source_id=source_id,
+            research_space_id=research_space_id,
+            run_id=run_id,
+            resume_from_stage=resume_from_stage,
+        )
+        if started_run_job is None:
+            return None
+        refreshed_run_job = self._refresh_pipeline_run_job(
+            source_id=source_id,
+            run_id=run_id,
+            run_job=started_run_job,
+        )
+        return refreshed_run_job if refreshed_run_job is not None else started_run_job
 
     def _refresh_pipeline_run_job(
         self: _PipelineCheckpointSelf,
@@ -260,39 +301,29 @@ class _PipelineOrchestrationCheckpointHelpers:
         repository = self._pipeline_runs
         if repository is None:
             return run_job
-        run_job = self._refresh_pipeline_run_job(
-            source_id=source_id,
-            run_id=run_id,
+        resolved_run_job = self._resolve_persistable_run_job(
             run_job=run_job,
+            source_id=source_id,
+            research_space_id=research_space_id,
+            run_id=run_id,
+            resume_from_stage=resume_from_stage,
         )
-        if run_job is None:
-            run_job = self._start_or_resume_pipeline_run(
-                source_id=source_id,
-                research_space_id=research_space_id,
-                run_id=run_id,
-                resume_from_stage=resume_from_stage,
-            )
-            if run_job is None:
-                return None
-            run_job = self._refresh_pipeline_run_job(
-                source_id=source_id,
-                run_id=run_id,
-                run_job=run_job,
-            )
+        if resolved_run_job is None:
+            return None
 
         updated_metadata = self._build_pipeline_metadata(
-            existing_metadata=run_job.metadata,
+            existing_metadata=resolved_run_job.metadata,
             run_id=run_id,
             research_space_id=research_space_id,
             resume_from_stage=resume_from_stage,
             overall_status=self._resolve_persisted_overall_status(
-                run_job=run_job,
+                run_job=resolved_run_job,
                 requested_status=overall_status,
             ),
             stage_updates={stage: (stage_status, stage_error)},
         )
         return repository.save(
-            run_job.model_copy(update={"metadata": updated_metadata}),
+            resolved_run_job.model_copy(update={"metadata": updated_metadata}),
         )
 
     def _persist_pipeline_run_progress(  # noqa: PLR0913
@@ -317,33 +348,23 @@ class _PipelineOrchestrationCheckpointHelpers:
         repository = self._pipeline_runs
         if repository is None:
             return run_job
-        run_job = self._refresh_pipeline_run_job(
-            source_id=source_id,
-            run_id=run_id,
+        resolved_run_job = self._resolve_persistable_run_job(
             run_job=run_job,
+            source_id=source_id,
+            research_space_id=research_space_id,
+            run_id=run_id,
+            resume_from_stage=resume_from_stage,
         )
-        if run_job is None:
-            run_job = self._start_or_resume_pipeline_run(
-                source_id=source_id,
-                research_space_id=research_space_id,
-                run_id=run_id,
-                resume_from_stage=resume_from_stage,
-            )
-            if run_job is None:
-                return None
-            run_job = self._refresh_pipeline_run_job(
-                source_id=source_id,
-                run_id=run_id,
-                run_job=run_job,
-            )
+        if resolved_run_job is None:
+            return None
 
         updated_metadata = self._build_pipeline_metadata(
-            existing_metadata=run_job.metadata,
+            existing_metadata=resolved_run_job.metadata,
             run_id=run_id,
             research_space_id=research_space_id,
             resume_from_stage=resume_from_stage,
             overall_status=self._resolve_persisted_overall_status(
-                run_job=run_job,
+                run_job=resolved_run_job,
                 requested_status=overall_status,
             ),
             stage_updates={},
@@ -360,7 +381,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         )
         updated_metadata["pipeline_run"] = pipeline_payload
         return repository.save(
-            run_job.model_copy(update={"metadata": updated_metadata}),
+            resolved_run_job.model_copy(update={"metadata": updated_metadata}),
         )
 
     def _finalize_pipeline_run_checkpoint(  # noqa: PLR0913
@@ -381,33 +402,23 @@ class _PipelineOrchestrationCheckpointHelpers:
         repository = self._pipeline_runs
         if repository is None:
             return run_job
-        run_job = self._refresh_pipeline_run_job(
-            source_id=source_id,
-            run_id=run_id,
+        resolved_run_job = self._resolve_persistable_run_job(
             run_job=run_job,
+            source_id=source_id,
+            research_space_id=research_space_id,
+            run_id=run_id,
+            resume_from_stage=resume_from_stage,
         )
-        if run_job is None:
-            run_job = self._start_or_resume_pipeline_run(
-                source_id=source_id,
-                research_space_id=research_space_id,
-                run_id=run_id,
-                resume_from_stage=resume_from_stage,
-            )
-            if run_job is None:
-                return None
-            run_job = self._refresh_pipeline_run_job(
-                source_id=source_id,
-                run_id=run_id,
-                run_job=run_job,
-            )
+        if resolved_run_job is None:
+            return None
 
         updated_metadata = self._build_pipeline_metadata(
-            existing_metadata=run_job.metadata,
+            existing_metadata=resolved_run_job.metadata,
             run_id=run_id,
             research_space_id=research_space_id,
             resume_from_stage=resume_from_stage,
             overall_status=self._resolve_persisted_overall_status(
-                run_job=run_job,
+                run_job=resolved_run_job,
                 requested_status=run_status,
             ),
             stage_updates={},
@@ -428,7 +439,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         else:
             pipeline_payload["error_category"] = None
         updated_metadata["pipeline_run"] = pipeline_payload
-        working = run_job.model_copy(update={"metadata": updated_metadata})
+        working = resolved_run_job.model_copy(update={"metadata": updated_metadata})
         metrics = JobMetrics(
             records_processed=max(
                 created_publications
@@ -598,11 +609,12 @@ class _PipelineOrchestrationCheckpointHelpers:
             else timestamp
         )
         started_at_raw = pipeline_payload.get("started_at")
-        existing_started_at = (
+        existing_started_at: str | None = (
             started_at_raw
             if isinstance(started_at_raw, str) and started_at_raw.strip()
             else None
         )
+        started_at: str | None
         if overall_status == "running":
             started_at = existing_started_at or timestamp
         elif overall_status in {"completed", "failed", "cancelled"}:

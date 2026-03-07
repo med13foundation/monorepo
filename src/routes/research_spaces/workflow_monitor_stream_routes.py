@@ -6,16 +6,14 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from importlib import import_module
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-
-try:
-    from fastapi.sse import EventSourceResponse
-except ImportError:  # pragma: no cover - depends on installed FastAPI extras
-    from sse_starlette import EventSourceResponse
+from starlette.responses import Response
 
 from src.application.services.source_workflow_monitor_service import (
     SourceWorkflowMonitorService,
@@ -29,6 +27,27 @@ from . import workflow_monitor_stream_utils as stream_utils
 from .router import HTTP_404_NOT_FOUND, research_spaces_router
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class _EventSourceResponseFactory(Protocol):
+    def __call__(self, content: AsyncIterator[str]) -> Response: ...
+
+
+def _resolve_event_source_response_factory() -> _EventSourceResponseFactory:
+    try:
+        module = import_module("fastapi.sse")
+    except ImportError:  # pragma: no cover - depends on installed FastAPI extras
+        module = import_module("sse_starlette")
+    response_factory = getattr(module, "EventSourceResponse", None)
+    if not isinstance(response_factory, _EventSourceResponseFactory):
+        msg = "EventSourceResponse factory is unavailable"
+        raise TypeError(msg)
+    return response_factory
+
+
+def _build_event_source_response(content: AsyncIterator[str]) -> Response:
+    return _resolve_event_source_response_factory()(content)
 
 
 @dataclass
@@ -83,7 +102,7 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
     monitor_service: SourceWorkflowMonitorService = Depends(
         monitor_routes.get_source_workflow_monitor_service,
     ),
-) -> EventSourceResponse:
+) -> Response:
     if not stream_utils.is_workflow_sse_enabled():
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,
@@ -227,7 +246,7 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
 
             await asyncio.sleep(stream_utils.STREAM_TICK_SECONDS)
 
-    return EventSourceResponse(_event_generator())
+    return _build_event_source_response(_event_generator())
 
 
 @research_spaces_router.get(
@@ -245,7 +264,7 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
     monitor_service: SourceWorkflowMonitorService = Depends(
         monitor_routes.get_source_workflow_monitor_service,
     ),
-) -> EventSourceResponse:
+) -> Response:
     if not stream_utils.is_workflow_sse_enabled():
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,
@@ -426,7 +445,7 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
 
             await asyncio.sleep(stream_utils.STREAM_TICK_SECONDS)
 
-    return EventSourceResponse(_event_generator())
+    return _build_event_source_response(_event_generator())
 
 
 __all__ = [

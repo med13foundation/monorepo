@@ -511,6 +511,7 @@ class PipelineOrchestrationService(
         requested_args = self._coerce_json_object(
             pipeline_payload.get("requested_args"),
         )
+        raw_shadow_mode = requested_args.get("shadow_mode")
         return QueuedPipelineRunRequest(
             run_id=self._resolve_pipeline_run_id_from_job(job),
             research_space_id=research_space_id,
@@ -529,11 +530,7 @@ class PipelineOrchestrationService(
                 requested_args.get("source_type"),
             ),
             model_id=self._normalize_optional_string(requested_args.get("model_id")),
-            shadow_mode=(
-                requested_args.get("shadow_mode")
-                if isinstance(requested_args.get("shadow_mode"), bool)
-                else None
-            ),
+            shadow_mode=raw_shadow_mode if isinstance(raw_shadow_mode, bool) else None,
             force_recover_lock=requested_args.get("force_recover_lock") is True,
             graph_seed_entity_ids=self._coerce_string_list(
                 requested_args.get("graph_seed_entity_ids"),
@@ -629,8 +626,14 @@ class PipelineOrchestrationService(
         if not isinstance(raw_value, str):
             return None
         normalized = raw_value.strip()
-        if normalized in {"ingestion", "enrichment", "extraction", "graph"}:
-            return normalized
+        if normalized == "ingestion":
+            return "ingestion"
+        if normalized == "enrichment":
+            return "enrichment"
+        if normalized == "extraction":
+            return "extraction"
+        if normalized == "graph":
+            return "graph"
         return None
 
     @staticmethod
