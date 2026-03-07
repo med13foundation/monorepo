@@ -8,6 +8,7 @@ import { LoginForm } from "@/components/auth/LoginForm"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 import { AuthShell } from "@/components/auth/AuthShell"
+import { resolvePostLoginDestination } from "@/lib/post-login-destination"
 
 function LoginContent() {
   const [error, setError] = useState<string | null>(null)
@@ -34,15 +35,15 @@ function LoginContent() {
     setError(null)
 
     try {
-      // Get callbackUrl from query params, default to dashboard
-      const callbackUrl = searchParams.get("callbackUrl") || "/dashboard"
+      const requestedCallbackUrl = searchParams.get("callbackUrl")
+      const signInCallbackUrl = requestedCallbackUrl || "/spaces"
 
       // Attempt sign in
       const result = await signIn("credentials", {
         email,
         password,
         redirect: false,
-        callbackUrl,
+        callbackUrl: signInCallbackUrl,
       })
 
       if (result?.error) {
@@ -64,7 +65,12 @@ function LoginContent() {
           const session = await getSession()
 
           if (session?.user?.access_token && typeof session.user.access_token === 'string' && session.user.access_token.length > 0) {
+            const destination = resolvePostLoginDestination(
+              requestedCallbackUrl,
+              session.user.role,
+            )
             sessionReady = true
+            router.push(destination)
             break
           }
 
@@ -72,15 +78,11 @@ function LoginContent() {
           await new Promise((resolve) => setTimeout(resolve, 100))
         }
 
-        if (sessionReady) {
-          // Navigate using Next.js router (client-side, preserves React state)
-          // The destination component's ProtectedRoute will verify session
-          router.push(callbackUrl)
-        } else {
+        if (!sessionReady) {
           // Fallback: session not ready after retries
           // Use full page reload as last resort to ensure session is established
           console.warn('Session not ready after retries, using full page reload')
-          window.location.href = callbackUrl
+          window.location.href = signInCallbackUrl
         }
 
         // Note: setIsLoading(false) is intentionally omitted here
