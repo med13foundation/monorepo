@@ -30,10 +30,14 @@ from src.infrastructure.llm.config import (
     GovernanceConfig,
     get_model_registry,
     load_runtime_policy,
-    resolve_artana_state_uri,
+)
+from src.infrastructure.llm.state.shared_postgres_store import (
+    get_shared_artana_postgres_store,
 )
 
 if TYPE_CHECKING:
+    from artana.store import PostgresStore
+
     from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
     from src.domain.ports.text_embedding_port import TextEmbeddingPort
     from src.domain.repositories.kernel.dictionary_repository import (
@@ -48,7 +52,6 @@ try:
     from artana.agent import SingleStepModelClient
     from artana.kernel import ArtanaKernel, WorkflowContext
     from artana.models import TenantContext
-    from artana.store import PostgresStore
 except ImportError as exc:  # pragma: no cover - environment-dependent import
     _ARTANA_IMPORT_ERROR = exc
 
@@ -108,6 +111,7 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
         embedding_provider: TextEmbeddingPort | None,
         mapping_judge_agent: MappingJudgePort | None = None,
         model: str | None = None,
+        artana_store: PostgresStore | None = None,
     ) -> None:
         if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import-time guard
             msg = (
@@ -123,6 +127,7 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
         self._governance = GovernanceConfig.from_environment()
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
+        self._artana_store = artana_store or self._create_store()
 
     def search(
         self,
@@ -252,7 +257,6 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
                 )
             finally:
                 await model_port.aclose()
-                await kernel.close()
 
         outcome = self._run_coroutine(execute_workflow())
         status = getattr(outcome, "status", None)
@@ -288,7 +292,7 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
             schema_name_fallback="dictionary_search_plan",
         )
         kernel = ArtanaKernel(
-            store=self._create_store(),
+            store=self._artana_store,
             model_port=model_port,
         )
         client = SingleStepModelClient(kernel=kernel)
@@ -600,11 +604,7 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        state_uri = resolve_artana_state_uri()
-        if state_uri.startswith("postgresql://"):
-            return PostgresStore(state_uri)
-        msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"
-        raise ValueError(msg)
+        return get_shared_artana_postgres_store()
 
     def _create_tenant(self) -> TenantContext:
         budget = self._governance.usage_limits.total_cost_usd or 1.0

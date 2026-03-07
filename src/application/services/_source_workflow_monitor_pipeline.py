@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import desc, select
 
 from src.models.database.extraction_queue import ExtractionQueueItemModel
-from src.models.database.ingestion_job import IngestionJobModel
+from src.models.database.ingestion_job import IngestionJobKindEnum, IngestionJobModel
 from src.models.database.publication_extraction import PublicationExtractionModel
 from src.models.database.source_document import SourceDocumentModel
 from src.models.database.user_data_source import UserDataSourceModel
@@ -86,6 +86,10 @@ class SourceWorkflowMonitorPipelineMixin:
         statement = (
             select(IngestionJobModel)
             .where(IngestionJobModel.source_id == str(source_id))
+            .where(
+                IngestionJobModel.job_kind
+                == IngestionJobKindEnum.PIPELINE_ORCHESTRATION,
+            )
             .order_by(desc(IngestionJobModel.triggered_at))
             .limit(fetch_limit)
         )
@@ -225,12 +229,27 @@ class SourceWorkflowMonitorPipelineMixin:
             "ingestion_job_id": run_ingestion_job_id,
             "status": normalize_optional_string(pipeline_payload.get("status"))
             or str(row.status.value),
+            "queue_status": normalize_optional_string(
+                pipeline_payload.get("queue_status"),
+            ),
             "triggered_at": row.triggered_at,
+            "accepted_at": normalize_optional_string(
+                pipeline_payload.get("accepted_at"),
+            ),
             "started_at": row.started_at,
             "completed_at": row.completed_at,
             "resume_from_stage": normalize_optional_string(
                 pipeline_payload.get("resume_from_stage"),
             ),
+            "attempt_count": safe_int(pipeline_payload.get("attempt_count")),
+            "next_attempt_at": normalize_optional_string(
+                pipeline_payload.get("next_attempt_at"),
+            ),
+            "last_error": normalize_optional_string(pipeline_payload.get("last_error")),
+            "error_category": normalize_optional_string(
+                pipeline_payload.get("error_category"),
+            ),
+            "worker_id": normalize_optional_string(pipeline_payload.get("worker_id")),
             "executed_query": executed_query,
             "stage_statuses": stage_statuses,
             "stage_errors": stage_errors,

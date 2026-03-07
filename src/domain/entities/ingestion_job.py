@@ -37,6 +37,13 @@ class IngestionTrigger(str, Enum):
     RETRY = "retry"  # Retry of failed job
 
 
+class IngestionJobKind(str, Enum):
+    """Logical workload class stored in the ingestion-jobs table."""
+
+    INGESTION = "ingestion"
+    PIPELINE_ORCHESTRATION = "pipeline_orchestration"
+
+
 class JobMetrics(BaseModel):
     """Performance and result metrics for an ingestion job."""
 
@@ -122,6 +129,10 @@ class IngestionJob(BaseModel):
     # Identity
     id: UUID = Field(..., description="Unique identifier for the ingestion job")
     source_id: UUID = Field(..., description="ID of the source being ingested")
+    job_kind: IngestionJobKind = Field(
+        default=IngestionJobKind.INGESTION,
+        description="Logical job type stored in the shared ingestion-jobs table",
+    )
 
     # Execution details
     trigger: IngestionTrigger = Field(..., description="What triggered this job")
@@ -292,5 +303,6 @@ class IngestionJob(BaseModel):
         """String representation of the ingestion job."""
         return (
             f"IngestionJob(id={self.id}, source={self.source_id}, "
-            f"status={self.status.value}, records={self.metrics.total_records})"
+            f"kind={self.job_kind.value}, status={self.status.value}, "
+            f"records={self.metrics.total_records})"
         )

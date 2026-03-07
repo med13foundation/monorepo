@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from src.domain.agents.contracts.query_generation import QueryGenerationContract
 from src.domain.agents.models import ModelCapability
@@ -25,12 +26,17 @@ from src.infrastructure.llm.config import (
     get_model_registry,
     load_query_source_policies,
     load_runtime_policy,
-    resolve_artana_state_uri,
 )
 from src.infrastructure.llm.prompts.query import (
     CLINVAR_QUERY_SYSTEM_PROMPT,
     PUBMED_QUERY_SYSTEM_PROMPT,
 )
+from src.infrastructure.llm.state.shared_postgres_store import (
+    get_shared_artana_postgres_store,
+)
+
+if TYPE_CHECKING:
+    from artana.store import PostgresStore
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +50,6 @@ try:
     from artana.agent import SingleStepModelClient
     from artana.kernel import ArtanaKernel
     from artana.models import TenantContext
-    from artana.store import PostgresStore
 except ImportError as exc:  # pragma: no cover - environment-dependent import
     _ARTANA_IMPORT_ERROR = exc
 
@@ -74,6 +79,7 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
         *,
         use_governance: bool = True,
         use_granular: bool = False,
+        artana_store: PostgresStore | None = None,
     ) -> None:
         if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import-time guard
             msg = (
@@ -95,8 +101,9 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
             timeout_seconds=timeout_seconds,
             schema_name_fallback="query_generation_contract",
         )
+        resolved_artana_store = artana_store or self._create_store()
         self._kernel = ArtanaKernel(
-            store=self._create_store(),
+            store=resolved_artana_store,
             model_port=self._model_port,
         )
         self._client = SingleStepModelClient(kernel=self._kernel)
@@ -118,11 +125,7 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        state_uri = resolve_artana_state_uri()
-        if state_uri.startswith("postgresql://"):
-            return PostgresStore(state_uri)
-        msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"
-        raise ValueError(msg)
+        return get_shared_artana_postgres_store()
 
     @staticmethod
     def _has_openai_key() -> bool:
@@ -370,7 +373,6 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
 
     async def close(self) -> None:
         await self._model_port.aclose()
-        await self._kernel.close()
 
     def get_last_run_id(self) -> str | None:
         return self._last_run_id

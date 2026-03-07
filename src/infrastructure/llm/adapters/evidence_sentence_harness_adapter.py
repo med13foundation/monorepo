@@ -27,13 +27,17 @@ from src.infrastructure.llm.config import (
     GovernanceConfig,
     get_model_registry,
     load_runtime_policy,
-    resolve_artana_state_uri,
+)
+from src.infrastructure.llm.state.shared_postgres_store import (
+    get_shared_artana_postgres_store,
 )
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
+
+    from artana.store import PostgresStore
 
 _ARTANA_IMPORT_ERROR: Exception | None = None
 _THREAD_BRIDGE_TIMEOUT_SECONDS = 90.0
@@ -50,7 +54,6 @@ try:
     from artana.agent import SingleStepModelClient
     from artana.kernel import ArtanaKernel
     from artana.models import TenantContext
-    from artana.store import PostgresStore
 except ImportError as exc:  # pragma: no cover - environment-dependent import
     _ARTANA_IMPORT_ERROR = exc
 
@@ -64,7 +67,12 @@ class _EvidenceSentenceContract(BaseModel):
 class ArtanaEvidenceSentenceHarnessAdapter(EvidenceSentenceHarnessPort):
     """Generate non-verbatim review aid sentences for optional relations."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        *,
+        artana_store: PostgresStore | None = None,
+    ) -> None:
         if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import-time guard
             msg = (
                 "artana-kernel is required for evidence sentence generation. Install "
@@ -75,6 +83,7 @@ class ArtanaEvidenceSentenceHarnessAdapter(EvidenceSentenceHarnessPort):
         self._governance = GovernanceConfig.from_environment()
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
+        self._artana_store = artana_store or self._create_store()
 
     def generate(
         self,
@@ -112,7 +121,6 @@ class ArtanaEvidenceSentenceHarnessAdapter(EvidenceSentenceHarnessPort):
                 )
             finally:
                 await model_port.aclose()
-                await kernel.close()
 
         try:
             contract = self._run_contract_coroutine(execute())
@@ -169,7 +177,7 @@ class ArtanaEvidenceSentenceHarnessAdapter(EvidenceSentenceHarnessPort):
             schema_name_fallback="evidence_sentence_contract",
         )
         kernel = ArtanaKernel(
-            store=self._create_store(),
+            store=self._artana_store,
             model_port=model_port,
         )
         client = SingleStepModelClient(kernel=kernel)
@@ -200,11 +208,7 @@ class ArtanaEvidenceSentenceHarnessAdapter(EvidenceSentenceHarnessPort):
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        state_uri = resolve_artana_state_uri()
-        if state_uri.startswith("postgresql://"):
-            return PostgresStore(state_uri)
-        msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"
-        raise ValueError(msg)
+        return get_shared_artana_postgres_store()
 
     @staticmethod
     def _create_tenant(

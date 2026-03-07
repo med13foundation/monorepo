@@ -207,6 +207,9 @@ if ((${#backend_secret_pairs[@]} > 0)); then
 fi
 
 declare -a backend_env_pairs=()
+if [[ -n "${MED13_ENV:-}" ]]; then
+  backend_env_pairs+=("MED13_ENV=${MED13_ENV}")
+fi
 if [[ -n "${MED13_ALLOWED_ORIGINS:-}" ]]; then
   backend_env_pairs+=("MED13_ALLOWED_ORIGINS=${MED13_ALLOWED_ORIGINS}")
 fi
@@ -228,6 +231,74 @@ if [[ -n "${MED13_DB_POOL_RECYCLE_SECONDS:-}" ]]; then
 fi
 if [[ -n "${MED13_DB_POOL_USE_LIFO:-}" ]]; then
   backend_env_pairs+=("MED13_DB_POOL_USE_LIFO=${MED13_DB_POOL_USE_LIFO}")
+fi
+if [[ -n "${MED13_RUNTIME_ROLE:-}" ]]; then
+  backend_env_pairs+=("MED13_RUNTIME_ROLE=${MED13_RUNTIME_ROLE}")
+fi
+if [[ -n "${MED13_DISABLE_INGESTION_SCHEDULER:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_DISABLE_INGESTION_SCHEDULER=${MED13_DISABLE_INGESTION_SCHEDULER}"
+  )
+fi
+if [[ -n "${MED13_DISABLE_PIPELINE_WORKER:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_DISABLE_PIPELINE_WORKER=${MED13_DISABLE_PIPELINE_WORKER}"
+  )
+fi
+if [[ -n "${MED13_ARTANA_POOL_MIN_SIZE:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_ARTANA_POOL_MIN_SIZE=${MED13_ARTANA_POOL_MIN_SIZE}"
+  )
+fi
+if [[ -n "${MED13_ARTANA_POOL_MAX_SIZE:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_ARTANA_POOL_MAX_SIZE=${MED13_ARTANA_POOL_MAX_SIZE}"
+  )
+fi
+if [[ -n "${MED13_ARTANA_COMMAND_TIMEOUT_SECONDS:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_ARTANA_COMMAND_TIMEOUT_SECONDS=${MED13_ARTANA_COMMAND_TIMEOUT_SECONDS}"
+  )
+fi
+if [[ -n "${MED13_ENABLE_WORKFLOW_SSE:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_ENABLE_WORKFLOW_SSE=${MED13_ENABLE_WORKFLOW_SSE}"
+  )
+fi
+if [[ -n "${MED13_PIPELINE_QUEUE_MAX_SIZE:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_PIPELINE_QUEUE_MAX_SIZE=${MED13_PIPELINE_QUEUE_MAX_SIZE}"
+  )
+fi
+if [[ -n "${MED13_PIPELINE_QUEUE_RETRY_AFTER_SECONDS:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_PIPELINE_QUEUE_RETRY_AFTER_SECONDS=${MED13_PIPELINE_QUEUE_RETRY_AFTER_SECONDS}"
+  )
+fi
+if [[ -n "${MED13_PIPELINE_RETRY_MAX_ATTEMPTS:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_PIPELINE_RETRY_MAX_ATTEMPTS=${MED13_PIPELINE_RETRY_MAX_ATTEMPTS}"
+  )
+fi
+if [[ -n "${MED13_PIPELINE_RETRY_BASE_DELAY_SECONDS:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_PIPELINE_RETRY_BASE_DELAY_SECONDS=${MED13_PIPELINE_RETRY_BASE_DELAY_SECONDS}"
+  )
+fi
+if [[ -n "${MED13_PIPELINE_WORKER_MAX_CONCURRENCY:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_PIPELINE_WORKER_MAX_CONCURRENCY=${MED13_PIPELINE_WORKER_MAX_CONCURRENCY}"
+  )
+fi
+if [[ -n "${MED13_PIPELINE_WORKER_POLL_INTERVAL_SECONDS:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_PIPELINE_WORKER_POLL_INTERVAL_SECONDS=${MED13_PIPELINE_WORKER_POLL_INTERVAL_SECONDS}"
+  )
+fi
+if [[ -n "${MED13_PIPELINE_WORKER_HEARTBEAT_INTERVAL_SECONDS:-}" ]]; then
+  backend_env_pairs+=(
+    "MED13_PIPELINE_WORKER_HEARTBEAT_INTERVAL_SECONDS=${MED13_PIPELINE_WORKER_HEARTBEAT_INTERVAL_SECONDS}"
+  )
 fi
 
 if ((${#backend_env_pairs[@]} > 0)); then
@@ -258,6 +329,12 @@ if is_true "${SYNC_ADMIN_URLS:-}"; then
   admin_update_args+=(
     --update-env-vars
     "^@^NEXT_PUBLIC_API_URL=${API_PUBLIC_URL}@NEXT_PUBLIC_WS_URL=${API_PUBLIC_WS_URL}@NEXTAUTH_URL=${ADMIN_PUBLIC_URL}@API_BASE_URL=${API_PUBLIC_URL}"
+  )
+fi
+if [[ -n "${NEXT_PUBLIC_WORKFLOW_SSE_ENABLED:-}" ]]; then
+  admin_update_args+=(
+    --update-env-vars
+    "^@^NEXT_PUBLIC_WORKFLOW_SSE_ENABLED=${NEXT_PUBLIC_WORKFLOW_SSE_ENABLED}"
   )
 fi
 

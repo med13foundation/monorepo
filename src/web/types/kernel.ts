@@ -511,30 +511,8 @@ export interface PipelineRunResponse {
   run_id: string
   source_id: string
   research_space_id: string
-  started_at: string
-  completed_at: string
+  accepted_at: string
   status: string
-  resume_from_stage: string | null
-  ingestion_status: string
-  enrichment_status: string
-  extraction_status: string
-  graph_status: string
-  fetched_records: number
-  parsed_publications: number
-  created_publications: number
-  updated_publications: number
-  enrichment_processed: number
-  enrichment_enriched: number
-  enrichment_failed: number
-  extraction_processed: number
-  extraction_extracted: number
-  extraction_failed: number
-  graph_requested: number
-  graph_processed: number
-  graph_persisted_relations: number
-  executed_query: string | null
-  errors: string[]
-  metadata: JSONObject | null
 }
 
 export interface PipelineRunCancelResponse {

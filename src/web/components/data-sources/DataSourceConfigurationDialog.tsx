@@ -331,7 +331,7 @@ export function DataSourceConfigurationDialog({
         toast.error(result.error)
         return
       }
-      toast.success(`Retry started from ${retryStage} stage.`)
+      toast.success(`Retry queued from ${retryStage} stage.`)
       onOpenChange(false)
       router.refresh()
     } catch {

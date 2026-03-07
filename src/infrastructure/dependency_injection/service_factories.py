@@ -103,7 +103,10 @@ class ApplicationServiceFactoryMixin(
         if self._query_agent is None:
             registry = get_model_registry()
             model_spec = registry.get_default_model(ModelCapability.QUERY_GENERATION)
-            self._query_agent = ArtanaQueryAgentAdapter(model=model_spec.model_id)
+            self._query_agent = ArtanaQueryAgentAdapter(
+                model=model_spec.model_id,
+                artana_store=self.get_artana_store(),
+            )
         return self._query_agent
 
     @staticmethod
@@ -164,6 +167,7 @@ class ApplicationServiceFactoryMixin(
             )
             self._entity_recognition_agent = ArtanaEntityRecognitionAdapter(
                 model=model_spec.model_id,
+                artana_store=self.get_artana_store(),
             )
         return self._entity_recognition_agent
 
@@ -175,6 +179,7 @@ class ApplicationServiceFactoryMixin(
             )
             self._extraction_agent = ArtanaExtractionAdapter(
                 model=model_spec.model_id,
+                artana_store=self.get_artana_store(),
             )
         return self._extraction_agent
 
@@ -190,6 +195,7 @@ class ApplicationServiceFactoryMixin(
         try:
             self._mapping_judge_agent = ArtanaMappingJudgeAdapter(
                 model=model_spec.model_id,
+                artana_store=self.get_artana_store(),
             )
         except Exception as exc:  # noqa: BLE001 - fail-closed to deterministic guard
             self._logger.warning(
@@ -214,13 +220,16 @@ class ApplicationServiceFactoryMixin(
         entity_recognition_agent = ArtanaEntityRecognitionAdapter(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
+            artana_store=self.get_artana_store(),
         )
         extraction_agent = ArtanaExtractionAdapter(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
+            artana_store=self.get_artana_store(),
         )
         extraction_policy_agent = ArtanaExtractionPolicyAdapter(
             model=model_spec.model_id,
+            artana_store=self.get_artana_store(),
         )
         evidence_sentence_harness = self._create_evidence_sentence_harness(
             model_id=model_spec.model_id,
@@ -274,9 +283,11 @@ class ApplicationServiceFactoryMixin(
         extraction_agent = ArtanaExtractionAdapter(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
+            artana_store=self.get_artana_store(),
         )
         extraction_policy_agent = ArtanaExtractionPolicyAdapter(
             model=model_spec.model_id,
+            artana_store=self.get_artana_store(),
         )
         evidence_sentence_harness = self._create_evidence_sentence_harness(
             model_id=model_spec.model_id,
@@ -313,7 +324,10 @@ class ApplicationServiceFactoryMixin(
         model_id: str | None,
     ) -> EvidenceSentenceHarnessPort | None:
         try:
-            return ArtanaEvidenceSentenceHarnessAdapter(model=model_id)
+            return ArtanaEvidenceSentenceHarnessAdapter(
+                model=model_id,
+                artana_store=self.get_artana_store(),
+            )
         except Exception as exc:  # noqa: BLE001 - fail-open for optional path
             self._logger.warning(
                 "Evidence sentence harness unavailable; optional relation sentence fallback disabled: %s",
@@ -337,6 +351,7 @@ class ApplicationServiceFactoryMixin(
             dictionary_service=dictionary_service,
             graph_query_service=graph_query_service,
             relation_repository=relation_repository,
+            artana_store=self.get_artana_store(),
         )
         return GraphConnectionService(
             dependencies=GraphConnectionServiceDependencies(
@@ -363,6 +378,7 @@ class ApplicationServiceFactoryMixin(
             graph_search_agent = ArtanaGraphSearchAdapter(
                 model=model_spec.model_id,
                 graph_query_service=graph_query_service,
+                artana_store=self.get_artana_store(),
             )
 
         return GraphSearchService(
@@ -386,6 +402,7 @@ class ApplicationServiceFactoryMixin(
             )
             content_enrichment_agent = ArtanaContentEnrichmentAdapter(
                 model=model_spec.model_id,
+                artana_store=self.get_artana_store(),
             )
         return ContentEnrichmentService(
             dependencies=ContentEnrichmentServiceDependencies(

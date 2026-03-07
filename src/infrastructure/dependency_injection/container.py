@@ -8,8 +8,8 @@ Combines Clean Architecture (auth system) with legacy patterns during transition
 import asyncio
 import logging
 import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator  # noqa: UP035
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -25,6 +25,9 @@ from src.infrastructure import observability, storage
 from src.infrastructure.dependency_injection.db_utils import (
     SessionLocal,
     resolve_async_database_url,
+)
+from src.infrastructure.llm.state.shared_postgres_store import (
+    get_shared_artana_postgres_store,
 )
 from src.infrastructure.repositories import (
     SqlAlchemySessionRepository,
@@ -137,6 +140,10 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         self._mapping_judge_agent = None
         self._graph_connection_agent = None
         self._query_agent = None
+
+    def get_artana_store(self) -> object:
+        """Return the shared process-local Artana PostgresStore."""
+        return get_shared_artana_postgres_store()
 
     def get_user_repository(self) -> SqlAlchemyUserRepository:
         if self._user_repository is None:

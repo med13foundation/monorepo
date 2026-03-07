@@ -14,7 +14,7 @@ import type {
 import { SourceWorkflowMonitorView } from './source-workflow-monitor-view'
 import type { WorkflowTabKey } from './source-workflow-monitor-tab-sections'
 
-const WORKFLOW_SSE_ENABLED = process.env.NEXT_PUBLIC_WORKFLOW_SSE_ENABLED === 'true'
+const WORKFLOW_SSE_ENABLED = process.env.NEXT_PUBLIC_WORKFLOW_SSE_ENABLED !== 'false'
 
 interface SourceWorkflowMonitorLiveClientProps {
   spaceId: string

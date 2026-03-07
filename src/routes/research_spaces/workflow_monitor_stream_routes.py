@@ -9,9 +9,13 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query, Request
-from fastapi.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+
+try:
+    from fastapi.sse import EventSourceResponse
+except ImportError:  # pragma: no cover - depends on installed FastAPI extras
+    from sse_starlette import EventSourceResponse
 
 from src.application.services.source_workflow_monitor_service import (
     SourceWorkflowMonitorService,
