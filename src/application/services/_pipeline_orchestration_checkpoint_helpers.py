@@ -5,11 +5,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
 
 from src.application.services._pipeline_failure_classification import (
     resolve_pipeline_error_category,
+)
+from src.application.services._pipeline_orchestration_checkpoint_metadata import (
+    build_pipeline_metadata,
+    coerce_json_object,
 )
 from src.domain.entities.ingestion_job import (
     IngestionError,
@@ -20,123 +24,23 @@ from src.domain.entities.ingestion_job import (
     JobMetrics,
 )
 from src.domain.value_objects.provenance import DataSource, Provenance
-from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
+    from src.application.services._pipeline_orchestration_checkpoint_protocols import (
+        PipelineCheckpointSelf,
+    )
     from src.application.services._pipeline_orchestration_contracts import (
         PipelineStageName,
         PipelineStageStatus,
     )
-    from src.domain.repositories.ingestion_job_repository import IngestionJobRepository
     from src.type_definitions.common import JSONObject
-
-
-class _PipelineCheckpointSelf(Protocol):
-    _pipeline_runs: IngestionJobRepository | None
-
-    def _resolve_persistable_run_job(
-        self,
-        *,
-        run_job: IngestionJob | None,
-        source_id: UUID,
-        research_space_id: UUID,
-        run_id: str,
-        resume_from_stage: PipelineStageName | None,
-    ) -> IngestionJob | None: ...
-
-    def _start_or_resume_pipeline_run(
-        self,
-        *,
-        source_id: UUID,
-        research_space_id: UUID,
-        run_id: str,
-        resume_from_stage: PipelineStageName | None,
-    ) -> IngestionJob | None: ...
-
-    def _find_pipeline_run_job(
-        self,
-        *,
-        source_id: UUID,
-        run_id: str,
-    ) -> IngestionJob | None: ...
-
-    def _find_active_pipeline_run_job(
-        self,
-        *,
-        source_id: UUID,
-        exclude_run_id: str | None = None,
-    ) -> IngestionJob | None: ...
-
-    def _cancel_pipeline_run(
-        self,
-        *,
-        source_id: UUID,
-        run_id: str,
-    ) -> IngestionJob | None: ...
-
-    def _is_pipeline_run_cancelled(
-        self,
-        *,
-        source_id: UUID,
-        run_id: str,
-    ) -> bool: ...
-
-    def _build_pipeline_metadata(  # noqa: PLR0913
-        self,
-        *,
-        existing_metadata: object,
-        run_id: str,
-        research_space_id: UUID,
-        resume_from_stage: PipelineStageName | None,
-        overall_status: Literal[
-            "queued",
-            "retrying",
-            "running",
-            "completed",
-            "failed",
-            "cancelled",
-        ],
-        stage_updates: dict[PipelineStageName, tuple[PipelineStageStatus, str | None]],
-    ) -> JSONObject: ...
-
-    @staticmethod
-    def _coerce_json_object(raw_value: object) -> JSONObject: ...
-
-    def _refresh_pipeline_run_job(
-        self,
-        *,
-        source_id: UUID,
-        run_id: str,
-        run_job: IngestionJob | None,
-    ) -> IngestionJob | None: ...
-
-    def _resolve_persisted_overall_status(
-        self,
-        *,
-        run_job: IngestionJob | None,
-        requested_status: Literal[
-            "queued",
-            "retrying",
-            "running",
-            "completed",
-            "failed",
-            "cancelled",
-        ],
-    ) -> Literal[
-        "queued",
-        "retrying",
-        "running",
-        "completed",
-        "failed",
-        "cancelled",
-    ]: ...
 
 
 class _PipelineOrchestrationCheckpointHelpers:
     """Checkpoint persistence helpers for unified pipeline runs."""
 
     def _resolve_persistable_run_job(
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         run_job: IngestionJob | None,
         source_id: UUID,
@@ -167,7 +71,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         return refreshed_run_job if refreshed_run_job is not None else started_run_job
 
     def _refresh_pipeline_run_job(
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         source_id: UUID,
         run_id: str,
@@ -179,7 +83,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         return run_job
 
     def _resolve_persisted_overall_status(
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         run_job: IngestionJob | None,
         requested_status: Literal[
@@ -203,7 +107,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         return requested_status
 
     def _start_or_resume_pipeline_run(
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         source_id: UUID,
         research_space_id: UUID,
@@ -286,7 +190,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         )
 
     def _persist_pipeline_stage_checkpoint(  # noqa: PLR0913
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         run_job: IngestionJob | None,
         source_id: UUID,
@@ -327,7 +231,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         )
 
     def _persist_pipeline_run_progress(  # noqa: PLR0913
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         run_job: IngestionJob | None,
         source_id: UUID,
@@ -385,7 +289,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         )
 
     def _finalize_pipeline_run_checkpoint(  # noqa: PLR0913
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         run_job: IngestionJob | None,
         source_id: UUID,
@@ -473,7 +377,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         return repository.save(failed.model_copy(update={"metrics": metrics}))
 
     def _cancel_pipeline_run(
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         source_id: UUID,
         run_id: str,
@@ -513,7 +417,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         )
 
     def _is_pipeline_run_cancelled(
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         source_id: UUID,
         run_id: str,
@@ -524,7 +428,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         return existing.status == IngestionStatus.CANCELLED
 
     def _find_pipeline_run_job(
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         source_id: UUID,
         run_id: str,
@@ -547,7 +451,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         return None
 
     def _find_active_pipeline_run_job(
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         source_id: UUID,
         exclude_run_id: str | None = None,
@@ -561,7 +465,7 @@ class _PipelineOrchestrationCheckpointHelpers:
         )
 
     def _build_pipeline_metadata(  # noqa: PLR0913
-        self: _PipelineCheckpointSelf,
+        self: PipelineCheckpointSelf,
         *,
         existing_metadata: object,
         run_id: str,
@@ -577,75 +481,15 @@ class _PipelineOrchestrationCheckpointHelpers:
         ],
         stage_updates: dict[PipelineStageName, tuple[PipelineStageStatus, str | None]],
     ) -> JSONObject:
-        metadata = self._coerce_json_object(existing_metadata)
-        pipeline_raw = metadata.get("pipeline_run")
-        pipeline_payload = (
-            self._coerce_json_object(pipeline_raw)
-            if isinstance(pipeline_raw, dict)
-            else {}
+        return build_pipeline_metadata(
+            existing_metadata=existing_metadata,
+            run_id=run_id,
+            research_space_id=research_space_id,
+            resume_from_stage=resume_from_stage,
+            overall_status=overall_status,
+            stage_updates=stage_updates,
         )
-        checkpoints_raw = pipeline_payload.get("checkpoints")
-        checkpoints = (
-            self._coerce_json_object(checkpoints_raw)
-            if isinstance(checkpoints_raw, dict)
-            else {}
-        )
-        timestamp = datetime.now(UTC).isoformat(timespec="seconds")
-
-        for stage_name, (stage_status, stage_error) in stage_updates.items():
-            checkpoint = {
-                "stage": stage_name,
-                "status": stage_status,
-                "updated_at": timestamp,
-            }
-            if stage_error is not None and stage_error.strip():
-                checkpoint["error"] = stage_error.strip()
-            checkpoints[stage_name] = checkpoint
-
-        accepted_at_raw = pipeline_payload.get("accepted_at")
-        accepted_at = (
-            accepted_at_raw
-            if isinstance(accepted_at_raw, str) and accepted_at_raw.strip()
-            else timestamp
-        )
-        started_at_raw = pipeline_payload.get("started_at")
-        existing_started_at: str | None = (
-            started_at_raw
-            if isinstance(started_at_raw, str) and started_at_raw.strip()
-            else None
-        )
-        started_at: str | None
-        if overall_status == "running":
-            started_at = existing_started_at or timestamp
-        elif overall_status in {"completed", "failed", "cancelled"}:
-            started_at = existing_started_at or accepted_at
-        else:
-            started_at = existing_started_at
-        completed_at = (
-            timestamp
-            if overall_status in {"completed", "failed", "cancelled"}
-            else None
-        )
-
-        pipeline_payload.update(
-            {
-                "run_id": run_id,
-                "research_space_id": str(research_space_id),
-                "resume_from_stage": resume_from_stage,
-                "status": overall_status,
-                "queue_status": overall_status,
-                "accepted_at": accepted_at,
-                "started_at": started_at,
-                "completed_at": completed_at,
-                "updated_at": timestamp,
-                "checkpoints": checkpoints,
-            },
-        )
-        metadata["pipeline_run"] = pipeline_payload
-        return metadata
 
     @staticmethod
     def _coerce_json_object(raw_value: object) -> JSONObject:
-        if not isinstance(raw_value, dict):
-            return {}
-        return {str(key): to_json_value(value) for key, value in raw_value.items()}
+        return coerce_json_object(raw_value)

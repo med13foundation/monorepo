@@ -6,14 +6,11 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from importlib import import_module
-from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from starlette.responses import Response
 
 from src.application.services.source_workflow_monitor_service import (
     SourceWorkflowMonitorService,
@@ -25,29 +22,9 @@ from . import dependencies as space_dependencies
 from . import workflow_monitor_routes as monitor_routes
 from . import workflow_monitor_stream_utils as stream_utils
 from .router import HTTP_404_NOT_FOUND, research_spaces_router
+from .workflow_monitor_stream_sse import build_event_source_response
 
 logger = logging.getLogger(__name__)
-
-
-@runtime_checkable
-class _EventSourceResponseFactory(Protocol):
-    def __call__(self, content: AsyncIterator[str]) -> Response: ...
-
-
-def _resolve_event_source_response_factory() -> _EventSourceResponseFactory:
-    try:
-        module = import_module("fastapi.sse")
-    except ImportError:  # pragma: no cover - depends on installed FastAPI extras
-        module = import_module("sse_starlette")
-    response_factory = getattr(module, "EventSourceResponse", None)
-    if not isinstance(response_factory, _EventSourceResponseFactory):
-        msg = "EventSourceResponse factory is unavailable"
-        raise TypeError(msg)
-    return response_factory
-
-
-def _build_event_source_response(content: AsyncIterator[str]) -> Response:
-    return _resolve_event_source_response_factory()(content)
 
 
 @dataclass
@@ -246,7 +223,7 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
 
             await asyncio.sleep(stream_utils.STREAM_TICK_SECONDS)
 
-    return _build_event_source_response(_event_generator())
+    return build_event_source_response(_event_generator())
 
 
 @research_spaces_router.get(
@@ -445,7 +422,7 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
 
             await asyncio.sleep(stream_utils.STREAM_TICK_SECONDS)
 
-    return _build_event_source_response(_event_generator())
+    return build_event_source_response(_event_generator())
 
 
 __all__ = [

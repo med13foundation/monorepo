@@ -20,8 +20,8 @@ from src.database.seed import (
 )
 from src.database.session import SessionLocal, set_session_rls_context
 from src.infrastructure.api.exception_handlers import register_exception_handlers
-from src.infrastructure.dependency_injection.container import container
-from src.infrastructure.dependency_injection.dependencies import (
+from src.infrastructure.dependency_injection.runtime_bootstrap import (
+    container,
     initialize_legacy_session,
 )
 from src.infrastructure.llm.state.shared_postgres_store import (
