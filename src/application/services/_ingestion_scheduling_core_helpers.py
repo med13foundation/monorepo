@@ -312,12 +312,28 @@ class _IngestionSchedulingCoreHelpers(
             error_details=failure_payload,
             record_id=None,
         )
+        failure_metadata = with_failure_metadata(
+            running.metadata,
+            failure_payload=failure_payload,
+        )
+        if running.job_kind == ingestion_job.IngestionJobKind.PIPELINE_ORCHESTRATION:
+            pipeline_raw = failure_metadata.get("pipeline_run")
+            pipeline_payload = (
+                {str(key): value for key, value in pipeline_raw.items()}
+                if isinstance(pipeline_raw, dict)
+                else {}
+            )
+            failure_timestamp = failure_time.isoformat(timespec="seconds")
+            pipeline_payload["status"] = "failed"
+            pipeline_payload["queue_status"] = "failed"
+            pipeline_payload["updated_at"] = failure_timestamp
+            pipeline_payload["completed_at"] = failure_timestamp
+            pipeline_payload["last_error"] = error.error_message
+            pipeline_payload["error_category"] = "timeout"
+            failure_metadata["pipeline_run"] = pipeline_payload
         failed = running.model_copy(
             update={
-                "metadata": with_failure_metadata(
-                    running.metadata,
-                    failure_payload=failure_payload,
-                ),
+                "metadata": failure_metadata,
             },
         ).fail(error)
         self._job_repository.save(failed)

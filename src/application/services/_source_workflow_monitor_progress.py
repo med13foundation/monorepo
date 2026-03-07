@@ -62,6 +62,12 @@ _PIPELINE_STATUS_ALIASES: dict[str, str] = {
     "skipped": "skipped",
     "cancelled": "cancelled",
 }
+_ACTIVE_PIPELINE_PROGRESS_STATUSES: frozenset[str] = frozenset(
+    {"queued", "retrying", "running"},
+)
+_TERMINAL_PIPELINE_PROGRESS_STATUSES: frozenset[str] = frozenset(
+    {"completed", "failed", "cancelled", "partial"},
+)
 
 
 class SourceWorkflowMonitorProgressMixin:
@@ -92,7 +98,18 @@ class SourceWorkflowMonitorProgressMixin:
                 candidates,
                 tenant_id=tenant_id,
             )
-            if snapshot is not None:
+            if stage_name == "pipeline":
+                resolved_pipeline_payload = (
+                    self._resolve_pipeline_stage_progress_payload(
+                        selected_run_payload=selected_run_payload,
+                        snapshot=snapshot,
+                        candidate_run_ids=candidates,
+                    )
+                )
+                if resolved_pipeline_payload is not None:
+                    payload[stage_name] = resolved_pipeline_payload
+                    continue
+            elif snapshot is not None:
                 payload[stage_name] = self._snapshot_to_payload(
                     stage=stage_name,
                     snapshot=snapshot,
@@ -100,20 +117,42 @@ class SourceWorkflowMonitorProgressMixin:
                 )
                 continue
 
-            if stage_name == "pipeline":
-                fallback = self._pipeline_stage_fallback_payload(
-                    selected_run_payload=selected_run_payload,
-                    candidate_run_ids=candidates,
-                )
-                if fallback is not None:
-                    payload[stage_name] = fallback
-                    continue
-
             payload[stage_name] = self._empty_stage_progress_payload(
                 stage=stage_name,
                 candidate_run_ids=candidates,
             )
         return payload
+
+    def _resolve_pipeline_stage_progress_payload(
+        self,
+        *,
+        selected_run_payload: JSONObject | None,
+        snapshot: RunProgressSnapshot | None,
+        candidate_run_ids: list[str],
+    ) -> JSONObject | None:
+        fallback_payload = self._pipeline_stage_fallback_payload(
+            selected_run_payload=selected_run_payload,
+            candidate_run_ids=candidate_run_ids,
+        )
+        if snapshot is None:
+            return fallback_payload
+
+        snapshot_payload = self._snapshot_to_payload(
+            stage="pipeline",
+            snapshot=snapshot,
+            candidate_run_ids=candidate_run_ids,
+        )
+        if fallback_payload is None:
+            return snapshot_payload
+
+        fallback_status = _normalize_pipeline_status(fallback_payload.get("status"))
+        snapshot_status = _normalize_pipeline_status(snapshot.status)
+        if (
+            fallback_status in _TERMINAL_PIPELINE_PROGRESS_STATUSES
+            and snapshot_status in _ACTIVE_PIPELINE_PROGRESS_STATUSES
+        ):
+            return fallback_payload
+        return snapshot_payload
 
     def _resolve_stage_run_candidates(  # noqa: PLR0913 - explicit stage mapping
         self,

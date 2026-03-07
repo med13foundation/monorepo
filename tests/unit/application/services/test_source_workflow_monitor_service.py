@@ -484,6 +484,48 @@ def test_build_artana_progress_falls_back_to_selected_pipeline_run_status() -> N
     assert payload["pipeline"]["completed_stages"] == ["ingestion"]
 
 
+def test_build_artana_progress_prefers_terminal_pipeline_payload_over_running_snapshot() -> (
+    None
+):
+    service = SourceWorkflowMonitorService(
+        session=Mock(),
+        run_progress=_StubRunProgressPort(
+            {
+                "5caf33eb-1908-4c8c-b5c3-947a14708587": _snapshot(
+                    "5caf33eb-1908-4c8c-b5c3-947a14708587",
+                    "running",
+                    50,
+                ),
+            },
+        ),
+    )
+
+    payload = service._build_artana_progress(
+        tenant_id="space-1",
+        selected_run_id="5caf33eb-1908-4c8c-b5c3-947a14708587",
+        selected_run_payload={
+            "run_id": "5caf33eb-1908-4c8c-b5c3-947a14708587",
+            "status": "failed",
+            "started_at": "2026-03-07T02:52:06+00:00",
+            "completed_at": "2026-03-07T04:55:22+00:00",
+            "stage_statuses": {
+                "ingestion": "completed",
+                "enrichment": "completed",
+                "extraction": "pending",
+                "graph": "pending",
+            },
+        },
+        documents=[],
+        extraction_rows=[],
+        relation_rows=[],
+    )
+
+    assert payload["pipeline"]["run_id"] == "5caf33eb-1908-4c8c-b5c3-947a14708587"
+    assert payload["pipeline"]["status"] == "failed"
+    assert payload["pipeline"]["percent"] == 50
+    assert payload["pipeline"]["current_stage"] == "enrichment"
+
+
 def test_build_artana_progress_ignores_non_graph_run_ids_for_graph_stage() -> None:
     service = SourceWorkflowMonitorService(
         session=Mock(),
@@ -711,6 +753,68 @@ def test_build_pipeline_run_payload_falls_back_to_graph_extraction_counters() ->
     assert stage_counters.get("extraction_processed") == 12
     assert stage_counters.get("extraction_completed") == 9
     assert stage_counters.get("extraction_failed") == 3
+
+
+def test_build_pipeline_run_payload_prefers_terminal_row_status_over_stale_metadata() -> (
+    None
+):
+    now = datetime.now(UTC)
+    service = SourceWorkflowMonitorService(
+        session=cast("Session", Mock()),
+        run_progress=None,
+    )
+    row = _PipelineRunRow(
+        id="pipeline-job-id",
+        metrics={},
+        job_metadata={},
+        source_config_snapshot={},
+        status=_PipelineJobStatus(value="failed"),
+        triggered_at=now,
+        started_at=now,
+        completed_at=now,
+    )
+
+    payload = service._build_pipeline_run_payload(
+        row=row,
+        pipeline_payload={
+            "run_id": "run-1",
+            "status": "running",
+            "queue_status": "running",
+        },
+    )
+
+    assert payload.get("status") == "failed"
+    assert payload.get("queue_status") == "failed"
+
+
+def test_build_pipeline_run_payload_preserves_retrying_status_for_active_rows() -> None:
+    now = datetime.now(UTC)
+    service = SourceWorkflowMonitorService(
+        session=cast("Session", Mock()),
+        run_progress=None,
+    )
+    row = _PipelineRunRow(
+        id="pipeline-job-id",
+        metrics={},
+        job_metadata={},
+        source_config_snapshot={},
+        status=_PipelineJobStatus(value="running"),
+        triggered_at=now,
+        started_at=now,
+        completed_at=None,
+    )
+
+    payload = service._build_pipeline_run_payload(
+        row=row,
+        pipeline_payload={
+            "run_id": "run-1",
+            "status": "retrying",
+            "queue_status": "retrying",
+        },
+    )
+
+    assert payload.get("status") == "retrying"
+    assert payload.get("queue_status") == "retrying"
 
 
 def test_count_document_extraction_outcomes_reports_timeout_failures() -> None:
