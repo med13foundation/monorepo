@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import type { ArtanaRunTraceResponse } from '@/types/artana'
 import type { SourcePipelineRunsResponse, SourceWorkflowMonitorResponse } from '@/types/kernel'
 
 import {
@@ -13,6 +14,7 @@ import {
   ReviewTabSection,
   RunMonitorTabSection,
   SetupTabSection,
+  TraceTabSection,
   type WorkflowTabKey,
 } from './source-workflow-monitor-tab-sections'
 import { asList, asRecord, displayValue } from './source-workflow-monitor-utils'
@@ -23,6 +25,8 @@ interface SourceWorkflowMonitorViewProps {
   monitor: SourceWorkflowMonitorResponse | null
   monitorError: string | null
   pipelineRuns: SourcePipelineRunsResponse | null
+  trace: ArtanaRunTraceResponse | null
+  traceError: string | null
   initialTab?: WorkflowTabKey
 }
 
@@ -43,6 +47,8 @@ export function SourceWorkflowMonitorView({
   monitor,
   monitorError,
   pipelineRuns,
+  trace,
+  traceError,
   initialTab = 'setup',
 }: SourceWorkflowMonitorViewProps) {
   const sourceSnapshot = asRecord(monitor?.source_snapshot)
@@ -139,11 +145,12 @@ export function SourceWorkflowMonitorView({
         </Card>
       ) : (
         <Tabs defaultValue={initialTab} className="space-y-4">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="setup">Setup</TabsTrigger>
             <TabsTrigger value="run">Run Monitor</TabsTrigger>
             <TabsTrigger value="review">Review</TabsTrigger>
             <TabsTrigger value="graph">Graph</TabsTrigger>
+            <TabsTrigger value="trace">Trace</TabsTrigger>
           </TabsList>
 
           <TabsContent value="setup">
@@ -175,6 +182,14 @@ export function SourceWorkflowMonitorView({
 
           <TabsContent value="graph">
             <GraphTabSection spaceId={spaceId} graphSummary={graphSummary} />
+          </TabsContent>
+
+          <TabsContent value="trace">
+            <TraceTabSection
+              selectedRunId={selectedRunId}
+              trace={trace}
+              traceError={traceError}
+            />
           </TabsContent>
         </Tabs>
       )}

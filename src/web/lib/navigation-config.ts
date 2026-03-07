@@ -82,6 +82,14 @@ export function buildDashboardNavItems(
           allowedRoles: [UserRole.ADMIN],
         },
         {
+          id: "admin-artana-runs",
+          title: "Artana Runs",
+          url: "/admin/artana/runs",
+          icon: BarChart3,
+          isActive: pathname.startsWith("/admin/artana/runs"),
+          allowedRoles: [UserRole.ADMIN],
+        },
+        {
           id: "admin-phi-access",
           title: "PHI Access",
           url: "/admin/phi-access",
