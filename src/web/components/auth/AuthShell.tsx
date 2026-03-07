@@ -19,7 +19,7 @@ export function AuthShell({ title, description, children, footer, isLoading = fa
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="flex aspect-square size-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/50 bg-white/90 dark:border-white/10 dark:bg-[#0F1C22] shadow-sm">
+            <div className="flex aspect-square size-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/50 bg-white/90 shadow-sm dark:border-white/10 dark:bg-[#0F1C22]">
               <BrandLogo
                 alt={BRAND_LOGO_ALT}
                 width={48}
