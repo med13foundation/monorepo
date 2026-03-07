@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useMemo, useState } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { useSourceWorkflowStream } from '@/hooks/use-source-workflow-stream'
+import type { ArtanaRunTraceResponse } from '@/types/artana'
 import type {
   SourcePipelineRunsResponse,
   SourceWorkflowMonitorResponse,
@@ -24,6 +25,8 @@ interface SourceWorkflowMonitorLiveClientProps {
   initialMonitor: SourceWorkflowMonitorResponse | null
   initialMonitorError: string | null
   initialPipelineRuns: SourcePipelineRunsResponse | null
+  initialTrace: ArtanaRunTraceResponse | null
+  initialTraceError: string | null
 }
 
 function resolveSourceIdFromMonitor(
@@ -78,6 +81,8 @@ export function SourceWorkflowMonitorLiveClient({
   initialMonitor,
   initialMonitorError,
   initialPipelineRuns,
+  initialTrace,
+  initialTraceError,
 }: SourceWorkflowMonitorLiveClientProps) {
   const router = useRouter()
   const [monitor, setMonitor] = useState<SourceWorkflowMonitorResponse | null>(
@@ -87,7 +92,38 @@ export function SourceWorkflowMonitorLiveClient({
   const [pipelineRuns, setPipelineRuns] = useState<SourcePipelineRunsResponse | null>(
     initialPipelineRuns,
   )
+  const [trace, setTrace] = useState<ArtanaRunTraceResponse | null>(initialTrace)
+  const [traceError, setTraceError] = useState<string | null>(initialTraceError)
   const streamEnabled = useMemo(() => WORKFLOW_SSE_ENABLED, [])
+
+  const refreshTrace = useCallback(async (runId: string) => {
+    const response = await fetch(
+      `/api/research-spaces/${spaceId}/artana-runs/${encodeURIComponent(runId)}`,
+      {
+        cache: 'no-store',
+      },
+    )
+    const responseText = await response.text()
+    if (!response.ok) {
+      let detail = 'Unable to load Artana trace.'
+      if (responseText) {
+        try {
+          const parsed = JSON.parse(responseText) as { detail?: string }
+          if (typeof parsed.detail === 'string' && parsed.detail.trim().length > 0) {
+            detail = parsed.detail
+          }
+        } catch {
+          detail = responseText
+        }
+      }
+      throw new Error(detail)
+    }
+    const parsed = JSON.parse(responseText) as ArtanaRunTraceResponse
+    startTransition(() => {
+      setTrace(parsed)
+      setTraceError(null)
+    })
+  }, [spaceId])
 
   const {
     isFallbackActive: isSseFallbackActive,
@@ -102,12 +138,22 @@ export function SourceWorkflowMonitorLiveClient({
       setMonitor(nextState.monitor)
       setPipelineRuns(nextState.pipelineRuns)
       setMonitorError(null)
+      if (selectedRunId) {
+        void refreshTrace(selectedRunId).catch((error: unknown) => {
+          setTraceError(error instanceof Error ? error.message : 'Unable to load Artana trace.')
+        })
+      }
     },
     onSnapshot: (payload) => {
       const nextState = applyMonitorSnapshot(sourceId, payload)
       setMonitor(nextState.monitor)
       setPipelineRuns(nextState.pipelineRuns)
       setMonitorError(null)
+      if (selectedRunId) {
+        void refreshTrace(selectedRunId).catch((error: unknown) => {
+          setTraceError(error instanceof Error ? error.message : 'Unable to load Artana trace.')
+        })
+      }
     },
   })
 
@@ -129,6 +175,18 @@ export function SourceWorkflowMonitorLiveClient({
     }
   }, [isSseFallbackActive, router, streamEnabled])
 
+  useEffect(() => {
+    if (!selectedRunId) {
+      setTrace(null)
+      setTraceError(null)
+      return
+    }
+    void refreshTrace(selectedRunId).catch((error: unknown) => {
+      setTrace(null)
+      setTraceError(error instanceof Error ? error.message : 'Unable to load Artana trace.')
+    })
+  }, [refreshTrace, selectedRunId])
+
   return (
     <SourceWorkflowMonitorView
       spaceId={spaceId}
@@ -136,6 +194,8 @@ export function SourceWorkflowMonitorLiveClient({
       monitor={monitor}
       monitorError={monitorError}
       pipelineRuns={pipelineRuns}
+      trace={trace}
+      traceError={traceError}
       initialTab={initialTab}
     />
   )

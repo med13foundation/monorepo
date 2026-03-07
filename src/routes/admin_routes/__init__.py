@@ -7,6 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .ai_models import router as ai_models_router
+from .artana_runs import router as artana_runs_router
 from .audit import router as audit_router
 from .catalog import router as catalog_router
 from .concepts import router as concepts_router
@@ -29,6 +30,7 @@ router = APIRouter(
 )
 
 router.include_router(ai_models_router)
+router.include_router(artana_runs_router)
 router.include_router(audit_router)
 router.include_router(templates_router)
 router.include_router(data_sources_router)

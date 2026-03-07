@@ -1,8 +1,10 @@
 import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 
+import { fetchSpaceArtanaRunTrace } from '@/lib/api/artana'
 import { fetchSourcePipelineRuns, fetchSourceWorkflowMonitor } from '@/lib/api/kernel'
 import { authOptions } from '@/lib/auth'
+import type { ArtanaRunTraceResponse } from '@/types/artana'
 import type { SourcePipelineRunsResponse, SourceWorkflowMonitorResponse } from '@/types/kernel'
 
 import { SourceWorkflowMonitorLiveClient } from './source-workflow-monitor-live-client'
@@ -24,7 +26,7 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 }
 
 function parseTab(value: string | undefined): WorkflowTabKey {
-  if (value === 'run' || value === 'review' || value === 'graph') {
+  if (value === 'run' || value === 'review' || value === 'graph' || value === 'trace') {
     return value
   }
   return 'setup'
@@ -48,6 +50,8 @@ export default async function SourceWorkflowMonitorPage({
   let monitor: SourceWorkflowMonitorResponse | null = null
   let monitorError: string | null = null
   let pipelineRuns: SourcePipelineRunsResponse | null = null
+  let trace: ArtanaRunTraceResponse | null = null
+  let traceError: string | null = null
 
   try {
     monitor = await fetchSourceWorkflowMonitor(
@@ -70,6 +74,14 @@ export default async function SourceWorkflowMonitorPage({
     pipelineRuns = null
   }
 
+  if (selectedRunId) {
+    try {
+      trace = await fetchSpaceArtanaRunTrace(spaceId, selectedRunId, token)
+    } catch (error) {
+      traceError = error instanceof Error ? error.message : 'Unable to load Artana trace.'
+    }
+  }
+
   return (
     <SourceWorkflowMonitorLiveClient
       spaceId={spaceId}
@@ -78,6 +90,8 @@ export default async function SourceWorkflowMonitorPage({
       initialMonitor={monitor}
       initialMonitorError={monitorError}
       initialPipelineRuns={pipelineRuns}
+      initialTrace={trace}
+      initialTraceError={traceError}
       initialTab={initialTab}
     />
   )
