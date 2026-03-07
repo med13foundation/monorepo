@@ -114,7 +114,11 @@ interface WorkflowEventSignal {
   message: string
 }
 
-const WORKFLOW_SSE_ENABLED = process.env.NEXT_PUBLIC_WORKFLOW_SSE_ENABLED === 'true'
+const WORKFLOW_SSE_ENABLED = process.env.NEXT_PUBLIC_WORKFLOW_SSE_ENABLED !== 'false'
+
+function isActivePipelineStatus(status: string | null | undefined): boolean {
+  return status === 'queued' || status === 'retrying' || status === 'running'
+}
 
 function buildWorkflowSignal(status: SourceWorkflowCardStatus): WorkflowSignal {
   return {
@@ -128,6 +132,12 @@ function buildWorkflowSignal(status: SourceWorkflowCardStatus): WorkflowSignal {
 
 function describePipelineStage(status: SourceWorkflowCardStatus | undefined): string {
   if (!status) return 'Connecting to monitor'
+  if (status.last_pipeline_status === 'queued') {
+    return 'Queued for worker execution'
+  }
+  if (status.last_pipeline_status === 'retrying') {
+    return 'Retrying after system capacity pressure'
+  }
   if (status.last_pipeline_status === 'failed') {
     return 'Pipeline failed'
   }
@@ -171,7 +181,11 @@ function describeArtanaStage(status: SourceWorkflowCardStatus | undefined): stri
     if (!stage) {
       continue
     }
-    if (stage.status === 'running' || stage.status === 'queued') {
+    if (
+      stage.status === 'running' ||
+      stage.status === 'queued' ||
+      stage.status === 'retrying'
+    ) {
       const percentLabel = typeof stage.percent === 'number' ? `${stage.percent}%` : '...'
       return `${stageName} ${percentLabel}`
     }
@@ -237,6 +251,9 @@ function shouldPollWorkflowCard(
   }
   if (!status) {
     return false
+  }
+  if (isActivePipelineStatus(status.last_pipeline_status)) {
+    return true
   }
 
   // The list page should only live-poll while ingestion/extraction work is still moving.
@@ -350,7 +367,8 @@ export function DataSourcesList({
       ...previous,
       [sourceId]: events,
     }))
-    if (status.last_pipeline_status !== 'running') {
+    if (!isActivePipelineStatus(status.last_pipeline_status)) {
+      delete activeRunIdBySourceRef.current[sourceId]
       setRunningPipelineSourceId((current) => (current === sourceId ? null : current))
     }
   }, [])
@@ -395,7 +413,7 @@ export function DataSourcesList({
       const status = liveWorkflowStatusBySource[source.id]
       const isRunActive =
         runningPipelineSourceId === source.id ||
-        status?.last_pipeline_status === 'running'
+        isActivePipelineStatus(status?.last_pipeline_status)
       if (shouldPollWorkflowCard(status, isRunActive)) {
         ids.push(source.id)
       }
@@ -478,7 +496,7 @@ export function DataSourcesList({
         const hasBackendRunning = results.some(
           (item) =>
             item.statusResult.success &&
-            item.statusResult.data.last_pipeline_status === 'running',
+            isActivePipelineStatus(item.statusResult.data.last_pipeline_status),
         )
         if (!hasBackendRunning) {
           setRunningPipelineSourceId((current) => (current === null ? current : null))
@@ -710,6 +728,7 @@ export function DataSourcesList({
     const nextGeneration = (runGenerationBySourceRef.current[source.id] ?? 0) + 1
     runGenerationBySourceRef.current[source.id] = nextGeneration
     delete detachedRunGenerationBySourceRef.current[source.id]
+    let queuedAccepted = false
     const runId =
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
@@ -747,8 +766,8 @@ export function DataSourcesList({
             occurred_at: new Date(runStartMs).toISOString(),
             category: 'run',
             stage: 'ingestion',
-            status: 'running',
-            message: 'Run started. Waiting for backend events.',
+            status: 'queued',
+            message: 'Run queued. Waiting for worker claim.',
           },
         ],
       }))
@@ -756,7 +775,7 @@ export function DataSourcesList({
       setLiveWorkflowStatusBySource((previous) => {
         const current = previous[source.id]
         const nextStatus: SourceWorkflowCardStatus = {
-          last_pipeline_status: 'running',
+          last_pipeline_status: 'queued',
           last_failed_stage: null,
           pending_paper_count: current?.pending_paper_count ?? 0,
           pending_relation_review_count:
@@ -793,22 +812,12 @@ export function DataSourcesList({
         toast.error(result.error)
         return
       }
-      const summary = result.data
-      const stageLine = `Stages — ingestion: ${summary.ingestion_status}, enrichment: ${summary.enrichment_status}, extraction: ${summary.extraction_status}, graph: ${summary.graph_status}.`
-      const skippedCoreStages =
-        summary.enrichment_status === 'skipped' ||
-        summary.extraction_status === 'skipped'
-      if (summary.status === 'cancelled') {
-        toast.message(`Pipeline cancelled for ${source.name}. ${stageLine}`)
-      } else if (summary.status === 'failed' || skippedCoreStages) {
-        toast.warning(
-          `${smokeMode ? 'Smoke' : 'Full'} pipeline finished with partial progression for ${source.name}. ${stageLine} Run id: ${summary.run_id}.`,
-        )
-      } else {
-        toast.success(
-          `${smokeMode ? 'Smoke' : 'Full'} pipeline completed for ${source.name}. ${stageLine} Run id: ${summary.run_id}.`,
-        )
-      }
+      const acceptedRun = result.data
+      queuedAccepted = true
+      activeRunIdBySourceRef.current[source.id] = acceptedRun.run_id
+      toast.success(
+        `${smokeMode ? 'Smoke' : 'Full'} pipeline queued for ${source.name}. Run id: ${acceptedRun.run_id}.`,
+      )
       router.refresh()
     } catch (error) {
       if (detachedRunGenerationBySourceRef.current[source.id] === nextGeneration) {
@@ -817,8 +826,10 @@ export function DataSourcesList({
       toast.error('Failed to run full pipeline')
     } finally {
       if (runGenerationBySourceRef.current[source.id] === nextGeneration) {
-        setRunningPipelineSourceId((current) => (current === source.id ? null : current))
-        delete activeRunIdBySourceRef.current[source.id]
+        if (!queuedAccepted) {
+          setRunningPipelineSourceId((current) => (current === source.id ? null : current))
+          delete activeRunIdBySourceRef.current[source.id]
+        }
         router.refresh()
       }
     }
@@ -929,7 +940,9 @@ export function DataSourcesList({
             const lastRunMetric = formatRelativeTime(lastExecutionAt, liveStatusNowMs)
             const isActive = source.status === 'active'
             const isArchived = source.status === 'archived'
-            const backendRunning = workflowStatus?.last_pipeline_status === 'running'
+            const backendRunning = isActivePipelineStatus(
+              workflowStatus?.last_pipeline_status,
+            )
             const isRunning = runningPipelineSourceId === source.id || backendRunning
             const showNextRunBadge = isActive && Boolean(nextRunRelative)
             const isExpanded = expandedSourceIds.has(source.id)

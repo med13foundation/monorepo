@@ -24,7 +24,7 @@ _WORKFLOW_SSE_TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 def is_workflow_sse_enabled() -> bool:
-    raw_value = os.getenv(_WORKFLOW_SSE_ENABLED_ENV, "false")
+    raw_value = os.getenv(_WORKFLOW_SSE_ENABLED_ENV, "true")
     return raw_value.strip().lower() in _WORKFLOW_SSE_TRUE_VALUES
 
 

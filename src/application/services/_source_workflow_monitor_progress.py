@@ -56,9 +56,11 @@ _PIPELINE_STATUS_ALIASES: dict[str, str] = {
     "failed": "failed",
     "failure": "failed",
     "error": "failed",
-    "queued": "pending",
-    "pending": "pending",
+    "queued": "queued",
+    "pending": "queued",
+    "retrying": "retrying",
     "skipped": "skipped",
+    "cancelled": "cancelled",
 }
 
 
@@ -306,7 +308,7 @@ def _resolve_completed_pipeline_stages(stage_statuses: JSONObject) -> list[str]:
     return completed
 
 
-def _resolve_pipeline_current_stage(
+def _resolve_pipeline_current_stage(  # noqa: PLR0911
     *,
     status: str,
     stage_statuses: JSONObject,
@@ -319,9 +321,11 @@ def _resolve_pipeline_current_stage(
             if _normalize_pipeline_status(stage_statuses.get(stage_name)) == "failed":
                 return stage_name
         return completed_stages[-1] if completed_stages else None
+    if status in {"queued", "retrying"}:
+        return _PIPELINE_STAGE_ORDER[0] if _PIPELINE_STAGE_ORDER else None
     for stage_name in _PIPELINE_STAGE_ORDER:
         stage_status = _normalize_pipeline_status(stage_statuses.get(stage_name))
-        if stage_status in {"running", "pending"}:
+        if stage_status in {"running", "queued", "retrying"}:
             return stage_name
     for stage_name in _PIPELINE_STAGE_ORDER:
         stage_status = _normalize_pipeline_status(stage_statuses.get(stage_name))
@@ -333,7 +337,7 @@ def _resolve_pipeline_current_stage(
 def _resolve_pipeline_percent(*, status: str, stage_statuses: JSONObject) -> int:
     if status == "completed":
         return _FULL_PROGRESS_PERCENT
-    if status == "pending":
+    if status in {"queued", "retrying"}:
         return 0
     total = len(_PIPELINE_STAGE_ORDER)
     if total == 0:
@@ -342,7 +346,10 @@ def _resolve_pipeline_percent(*, status: str, stage_statuses: JSONObject) -> int
     if completed_count <= 0:
         return 0
     percent = int((completed_count * _FULL_PROGRESS_PERCENT) / total)
-    if status in {"running", "failed"} and percent >= _FULL_PROGRESS_PERCENT:
+    if (
+        status in {"running", "failed", "cancelled"}
+        and percent >= _FULL_PROGRESS_PERCENT
+    ):
         return _NEAR_COMPLETE_PROGRESS_PERCENT
     return percent
 

@@ -24,13 +24,17 @@ from src.infrastructure.llm.config import (
     GovernanceConfig,
     get_model_registry,
     load_runtime_policy,
-    resolve_artana_state_uri,
 )
 from src.infrastructure.llm.prompts.extraction.policy import (
     EXTRACTION_POLICY_SYSTEM_PROMPT,
 )
+from src.infrastructure.llm.state.shared_postgres_store import (
+    get_shared_artana_postgres_store,
+)
 
 if TYPE_CHECKING:
+    from artana.store import PostgresStore
+
     from src.domain.agents.contexts.extraction_policy_context import (
         ExtractionPolicyContext,
     )
@@ -43,7 +47,6 @@ try:
     from artana.agent import SingleStepModelClient
     from artana.kernel import ArtanaKernel
     from artana.models import TenantContext
-    from artana.store import PostgresStore
 except ImportError as exc:  # pragma: no cover - environment-dependent import
     _ARTANA_IMPORT_ERROR = exc
 
@@ -51,7 +54,12 @@ except ImportError as exc:  # pragma: no cover - environment-dependent import
 class ArtanaExtractionPolicyAdapter(ExtractionPolicyAgentPort):
     """Adapter that executes extraction policy workflows through Artana."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        *,
+        artana_store: PostgresStore | None = None,
+    ) -> None:
         if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import-time guard
             msg = (
                 "artana-kernel is required for extraction policy execution. Install dependency "
@@ -69,8 +77,9 @@ class ArtanaExtractionPolicyAdapter(ExtractionPolicyAgentPort):
             timeout_seconds=timeout_seconds,
             schema_name_fallback="extraction_policy_contract",
         )
+        resolved_artana_store = artana_store or self._create_store()
         self._kernel = ArtanaKernel(
-            store=self._create_store(),
+            store=resolved_artana_store,
             model_port=self._model_port,
         )
         self._client = SingleStepModelClient(kernel=self._kernel)
@@ -141,7 +150,6 @@ class ArtanaExtractionPolicyAdapter(ExtractionPolicyAgentPort):
 
     async def close(self) -> None:
         await self._model_port.aclose()
-        await self._kernel.close()
 
     @staticmethod
     def _has_openai_key() -> bool:
@@ -164,11 +172,7 @@ class ArtanaExtractionPolicyAdapter(ExtractionPolicyAgentPort):
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        state_uri = resolve_artana_state_uri()
-        if state_uri.startswith("postgresql://"):
-            return PostgresStore(state_uri)
-        msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"
-        raise ValueError(msg)
+        return get_shared_artana_postgres_store()
 
     def _resolve_model_id(self, model_id: str | None) -> str:
         if (

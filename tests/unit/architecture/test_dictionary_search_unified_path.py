@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SRC_ROOT = PROJECT_ROOT / "src"
 ALLOWED_DIRECT_CALLERS: frozenset[str] = frozenset(
     {
+        "src/infrastructure/llm/adapters/deterministic_dictionary_search_harness_adapter.py",
         "src/infrastructure/llm/adapters/dictionary_search_harness_adapter.py",
     },
 )

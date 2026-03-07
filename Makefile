@@ -128,7 +128,7 @@ define ensure_frontdoor_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit
+.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit
 
 PY_CHECK_PATHS := src tests scripts alembic
 PY_STRICT_CHECK_PATHS := src
@@ -143,12 +143,7 @@ help: ## Show this help message
 venv: $(VENV) ## Create virtual environment if it doesn't exist
 $(VENV):
 	@echo "Creating virtual environment..."
-		@python3 - <<'PY'
-	import platform
-	import sys
-		if sys.version_info < (3, 13):
-		    raise SystemExit(f"Python 3.13+ required to create virtualenv (found {platform.python_version()})")
-	PY
+	@python3 -c "import platform, sys; assert sys.version_info >= (3, 13), f'Python 3.13+ required to create virtualenv (found {platform.python_version()})'"
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	@echo "Virtual environment created at $(VENV)"
@@ -741,6 +736,10 @@ deploy-staging: ## Deploy to staging environment
 		--no-allow-unauthenticated \
 		--service-account med13-staging@YOUR_PROJECT_ID.iam.gserviceaccount.com
 
+deploy-staging-queued-workers: ## Roll out the queued pipeline worker architecture to staging
+	@echo "Rolling out queued pipeline workers to staging..."
+	@/bin/bash scripts/deploy/rollout_staging_queued_workers.sh
+
 deploy-prod: ## Deploy to production environment
 	@echo "Deploying to production..."
 	gcloud run deploy med13-resource-library \
@@ -784,32 +783,39 @@ clean-all: clean ## Clean everything including build artifacts
 
 # Next.js Admin Interface
 web-install: ## Install Next.js dependencies
-	cd src/web && npm install
+	$(call ensure_web_deps)
 
 web-build: ## Build Next.js admin interface
+	$(call ensure_web_deps)
 	cd src/web && $(NEXT_BUILD_ENV) npm run build
 
 web-clean: ## Remove Next.js build artifacts
 	rm -rf src/web/.next
 
 web-lint: ## Lint Next.js code
+	$(call ensure_web_deps)
 	cd src/web && npm run lint
 
 web-type-check: ## Type check Next.js code
+	$(call ensure_web_deps)
 	cd src/web && npm run type-check
 
 web-test: ## Run Next.js tests
+	$(call ensure_web_deps)
 	cd src/web && npm run test
 
 web-test-architecture: ## Run Next.js architecture validation tests (Server-Side Orchestration)
+	$(call ensure_web_deps)
 	cd src/web && npm test -- __tests__/architecture
 
 web-test-integration: ## Run Next.js integration tests (frontend-backend)
+	$(call ensure_web_deps)
 	cd src/web && npm test -- __tests__/integration
 
 web-test-all: web-test-architecture web-test-integration web-test ## Run all Next.js tests (architecture, integration, and unit tests)
 
 web-test-coverage: ## Run Next.js tests with coverage report
+	$(call ensure_web_deps)
 	cd src/web && npm run test:coverage
 
 web-visual-test: ## Run Percy-powered visual regression snapshots (requires PERCY_TOKEN)

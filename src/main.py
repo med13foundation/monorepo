@@ -8,7 +8,11 @@ from typing import Literal
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.background import run_ingestion_scheduler_loop, run_session_cleanup_loop
+from src.background import (
+    run_ingestion_scheduler_loop,
+    run_pipeline_worker_loop,
+    run_session_cleanup_loop,
+)
 from src.database.seed import (
     ensure_default_research_space_seeded,
     ensure_source_catalog_seeded,
@@ -16,9 +20,12 @@ from src.database.seed import (
 )
 from src.database.session import SessionLocal, set_session_rls_context
 from src.infrastructure.api.exception_handlers import register_exception_handlers
-from src.infrastructure.dependency_injection.container import container
-from src.infrastructure.dependency_injection.dependencies import (
+from src.infrastructure.dependency_injection.runtime_bootstrap import (
+    container,
     initialize_legacy_session,
+)
+from src.infrastructure.llm.state.shared_postgres_store import (
+    close_shared_artana_postgres_store,
 )
 from src.infrastructure.security.cors import get_allowed_origins
 from src.middleware import (
@@ -94,6 +101,12 @@ def _scheduler_disabled() -> bool:
     return _runtime_role() == "api"
 
 
+def _pipeline_worker_disabled() -> bool:
+    if os.getenv("MED13_DISABLE_PIPELINE_WORKER") == "1":
+        return True
+    return _runtime_role() == "api"
+
+
 INGESTION_SCHEDULER_INTERVAL_SECONDS = int(
     os.getenv("MED13_INGESTION_SCHEDULER_INTERVAL_SECONDS", "300"),
 )
@@ -104,10 +117,11 @@ SESSION_CLEANUP_INTERVAL_SECONDS = int(
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:  # noqa: C901
     """Application lifespan context manager."""
     legacy_session = None
     scheduler_task: asyncio.Task[None] | None = None
+    pipeline_worker_task: asyncio.Task[None] | None = None
     session_cleanup_task: asyncio.Task[None] | None = None
     try:
         if not _skip_startup_tasks():
@@ -130,6 +144,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
                     run_ingestion_scheduler_loop(INGESTION_SCHEDULER_INTERVAL_SECONDS),
                     name="ingestion-scheduler-loop",
                 )
+            if not _pipeline_worker_disabled():
+                pipeline_worker_task = asyncio.create_task(
+                    run_pipeline_worker_loop(),
+                    name="pipeline-worker-loop",
+                )
             # Start session cleanup task
             session_cleanup_task = asyncio.create_task(
                 run_session_cleanup_loop(SESSION_CLEANUP_INTERVAL_SECONDS),
@@ -145,12 +164,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             scheduler_task.cancel()
             with suppress(asyncio.CancelledError):
                 await scheduler_task
+        if pipeline_worker_task is not None:
+            pipeline_worker_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await pipeline_worker_task
         if session_cleanup_task is not None:
             session_cleanup_task.cancel()
             with suppress(asyncio.CancelledError):
                 await session_cleanup_task
         if legacy_session is not None:
             legacy_session.close()
+        await close_shared_artana_postgres_store()
         await container.engine.dispose()
 
 

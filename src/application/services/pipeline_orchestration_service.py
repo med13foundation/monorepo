@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
 
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+from src.application.services._pipeline_failure_classification import (
+    resolve_pipeline_error_category,
+)
 from src.application.services._pipeline_orchestration_checkpoint_helpers import (
     _PipelineOrchestrationCheckpointHelpers,
 )
@@ -18,57 +20,40 @@ from src.application.services._pipeline_orchestration_contracts import (
 from src.application.services._pipeline_orchestration_execution_helpers import (
     _PipelineOrchestrationExecutionHelpers,
 )
+from src.application.services._pipeline_orchestration_queue_metadata import (
+    build_requested_args_payload,
+    resolve_pipeline_attempt_count,
+    resolve_pipeline_run_id_from_job,
+    resolve_queued_request,
+    update_pipeline_metadata_fields,
+)
+from src.application.services._pipeline_orchestration_queue_types import (
+    DEFAULT_PIPELINE_QUEUE_MAX_SIZE,
+    DEFAULT_PIPELINE_QUEUE_RETRY_AFTER_SECONDS,
+    DEFAULT_PIPELINE_RETRY_BASE_DELAY_SECONDS,
+    DEFAULT_PIPELINE_RETRY_MAX_ATTEMPTS,
+    ENV_PIPELINE_QUEUE_MAX_SIZE,
+    ENV_PIPELINE_QUEUE_RETRY_AFTER_SECONDS,
+    ENV_PIPELINE_RETRY_BASE_DELAY_SECONDS,
+    ENV_PIPELINE_RETRY_MAX_ATTEMPTS,
+    ActivePipelineRunExistsError,
+    PipelineOrchestrationDependencies,
+    PipelineQueueFullError,
+    PipelineRunEnqueueResult,
+    QueuedPipelineRunRequest,
+    read_positive_int_env,
+)
+from src.domain.entities.ingestion_job import (
+    IngestionError,
+    IngestionJob,
+    IngestionJobKind,
+    IngestionStatus,
+    IngestionTrigger,
+)
+from src.domain.value_objects.provenance import DataSource, Provenance
 
 if TYPE_CHECKING:
-    from uuid import UUID
-
-    from src.application.agents.services._content_enrichment_types import (
-        ContentEnrichmentRunSummary,
-    )
-    from src.application.agents.services.content_enrichment_service import (
-        ContentEnrichmentService,
-    )
-    from src.application.agents.services.entity_recognition_service import (
-        EntityRecognitionRunSummary,
-        EntityRecognitionService,
-    )
-    from src.application.agents.services.graph_connection_service import (
-        GraphConnectionOutcome,
-        GraphConnectionService,
-    )
-    from src.application.agents.services.graph_search_service import (
-        GraphSearchService,
-    )
-    from src.application.services.ingestion_scheduling_service import (
-        IngestionSchedulingService,
-    )
-    from src.domain.entities.ingestion_job import IngestionJob
     from src.domain.repositories.ingestion_job_repository import IngestionJobRepository
-    from src.domain.repositories.research_space_repository import (
-        ResearchSpaceRepository,
-    )
-
-
-@dataclass(frozen=True)
-class PipelineOrchestrationDependencies:
-    """Dependencies required for end-to-end pipeline orchestration."""
-
-    ingestion_scheduling_service: IngestionSchedulingService
-    content_enrichment_service: ContentEnrichmentService
-    entity_recognition_service: EntityRecognitionService
-    content_enrichment_stage_runner: (
-        Callable[..., Awaitable[ContentEnrichmentRunSummary]] | None
-    ) = None
-    entity_recognition_stage_runner: (
-        Callable[..., Awaitable[EntityRecognitionRunSummary]] | None
-    ) = None
-    graph_connection_service: GraphConnectionService | None = None
-    graph_connection_seed_runner: (
-        Callable[..., Awaitable[GraphConnectionOutcome]] | None
-    ) = None
-    graph_search_service: GraphSearchService | None = None
-    research_space_repository: ResearchSpaceRepository | None = None
-    pipeline_run_repository: IngestionJobRepository | None = None
 
 
 class PipelineOrchestrationService(
@@ -89,6 +74,206 @@ class PipelineOrchestrationService(
         self._research_spaces = dependencies.research_space_repository
         self._pipeline_runs = dependencies.pipeline_run_repository
 
+    def enqueue_run(  # noqa: PLR0913
+        self,
+        *,
+        source_id: UUID,
+        research_space_id: UUID,
+        run_id: str | None = None,
+        resume_from_stage: PipelineStageName | None = None,
+        enrichment_limit: int = 25,
+        extraction_limit: int = 25,
+        source_type: str | None = None,
+        model_id: str | None = None,
+        shadow_mode: bool | None = None,
+        force_recover_lock: bool = False,
+        graph_seed_entity_ids: list[str] | None = None,
+        graph_max_depth: int = 2,
+        graph_relation_types: list[str] | None = None,
+    ) -> PipelineRunEnqueueResult:
+        repository = self._require_pipeline_repository()
+        normalized_run_id = self._resolve_run_id(run_id)
+        active_job = repository.find_active_pipeline_job_for_source(
+            source_id=source_id,
+        )
+        if active_job is not None:
+            active_run_id = resolve_pipeline_run_id_from_job(active_job)
+            raise ActivePipelineRunExistsError(run_id=active_run_id)
+
+        queue_max_size = read_positive_int_env(
+            ENV_PIPELINE_QUEUE_MAX_SIZE,
+            default_value=DEFAULT_PIPELINE_QUEUE_MAX_SIZE,
+        )
+        if repository.count_active_pipeline_queue_jobs() >= queue_max_size:
+            raise PipelineQueueFullError(
+                retry_after_seconds=read_positive_int_env(
+                    ENV_PIPELINE_QUEUE_RETRY_AFTER_SECONDS,
+                    default_value=DEFAULT_PIPELINE_QUEUE_RETRY_AFTER_SECONDS,
+                ),
+            )
+
+        normalized_resume_stage = self._resolve_resume_stage(resume_from_stage)
+        accepted_at = datetime.now(UTC)
+        requested_args = build_requested_args_payload(
+            resume_from_stage=normalized_resume_stage,
+            enrichment_limit=enrichment_limit,
+            extraction_limit=extraction_limit,
+            source_type=source_type,
+            model_id=model_id,
+            shadow_mode=shadow_mode,
+            force_recover_lock=force_recover_lock,
+            graph_seed_entity_ids=graph_seed_entity_ids,
+            graph_max_depth=graph_max_depth,
+            graph_relation_types=graph_relation_types,
+        )
+        metadata = self._build_pipeline_metadata(
+            existing_metadata={},
+            run_id=normalized_run_id,
+            research_space_id=research_space_id,
+            resume_from_stage=normalized_resume_stage,
+            overall_status="queued",
+            stage_updates={},
+        )
+        metadata = update_pipeline_metadata_fields(
+            existing_metadata=metadata,
+            requested_args=requested_args,
+            accepted_at=accepted_at.isoformat(timespec="seconds"),
+            attempt_count=0,
+            next_attempt_at=None,
+            worker_id=None,
+            last_error=None,
+            error_category=None,
+        )
+        job = IngestionJob(
+            id=uuid4(),
+            source_id=source_id,
+            job_kind=IngestionJobKind.PIPELINE_ORCHESTRATION,
+            trigger=IngestionTrigger.API,
+            triggered_by=None,
+            triggered_at=accepted_at,
+            status=IngestionStatus.PENDING,
+            started_at=None,
+            completed_at=None,
+            provenance=Provenance(
+                source=DataSource.COMPUTED,
+                source_version=None,
+                source_url=None,
+                acquired_by="pipeline_orchestration_service",
+                processing_steps=("pipeline_orchestration", "queued_execution"),
+                quality_score=None,
+                metadata={"run_id": normalized_run_id},
+            ),
+            metadata=metadata,
+            source_config_snapshot={},
+        )
+        saved_job = repository.save(job)
+        return PipelineRunEnqueueResult(
+            run_id=normalized_run_id,
+            source_id=saved_job.source_id,
+            research_space_id=research_space_id,
+            status="queued",
+            accepted_at=accepted_at,
+        )
+
+    def claim_next_queued_run(
+        self,
+        *,
+        worker_id: str,
+        as_of: datetime | None = None,
+    ) -> IngestionJob | None:
+        repository = self._require_pipeline_repository()
+        return repository.claim_next_pipeline_job(
+            worker_id=worker_id,
+            as_of=as_of or datetime.now(UTC),
+        )
+
+    def heartbeat_claimed_run(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        heartbeat_at: datetime | None = None,
+    ) -> IngestionJob | None:
+        repository = self._require_pipeline_repository()
+        return repository.heartbeat_pipeline_job(
+            job_id=job_id,
+            worker_id=worker_id,
+            heartbeat_at=heartbeat_at or datetime.now(UTC),
+        )
+
+    async def run_next_queued_job(
+        self,
+        *,
+        worker_id: str,
+    ) -> bool:
+        repository = self._require_pipeline_repository()
+        claimed_job = repository.claim_next_pipeline_job(
+            worker_id=worker_id,
+            as_of=datetime.now(UTC),
+        )
+        if claimed_job is None:
+            return False
+        await self.execute_claimed_run(claimed_job=claimed_job, worker_id=worker_id)
+        return True
+
+    async def execute_claimed_run(
+        self,
+        *,
+        claimed_job: IngestionJob,
+        worker_id: str,
+    ) -> None:
+        repository = self._require_pipeline_repository()
+
+        queued_request = self._resolve_queued_request(claimed_job)
+        try:
+            summary = await self.run_for_source(
+                source_id=claimed_job.source_id,
+                research_space_id=queued_request.research_space_id,
+                run_id=queued_request.run_id,
+                resume_from_stage=queued_request.resume_from_stage,
+                enrichment_limit=queued_request.enrichment_limit,
+                extraction_limit=queued_request.extraction_limit,
+                source_type=queued_request.source_type,
+                model_id=queued_request.model_id,
+                shadow_mode=queued_request.shadow_mode,
+                force_recover_lock=queued_request.force_recover_lock,
+                graph_seed_entity_ids=queued_request.graph_seed_entity_ids,
+                graph_max_depth=queued_request.graph_max_depth,
+                graph_relation_types=queued_request.graph_relation_types,
+            )
+        except Exception as exc:  # noqa: BLE001 - worker must settle queue state
+            error_message = str(exc).strip() or exc.__class__.__name__
+            error_category = resolve_pipeline_error_category((error_message,))
+            if error_category == "capacity" and self._should_retry_job(claimed_job):
+                self._mark_job_retryable(
+                    job_id=claimed_job.id,
+                    worker_id=worker_id,
+                    attempt_count=resolve_pipeline_attempt_count(claimed_job),
+                    last_error=error_message,
+                    error_category=error_category,
+                )
+            else:
+                self._mark_claimed_job_failed(
+                    claimed_job=claimed_job,
+                    worker_id=worker_id,
+                    error_message=error_message,
+                    error_category=error_category,
+                )
+            return
+
+        error_category = resolve_pipeline_error_category(summary.errors)
+        if summary.status == "failed" and error_category == "capacity":
+            current_job = repository.find_by_id(claimed_job.id) or claimed_job
+            if self._should_retry_job(current_job):
+                self._mark_job_retryable(
+                    job_id=claimed_job.id,
+                    worker_id=worker_id,
+                    attempt_count=resolve_pipeline_attempt_count(current_job),
+                    last_error=summary.errors[-1] if summary.errors else "capacity",
+                    error_category=error_category,
+                )
+        return
+
     def cancel_run(
         self,
         *,
@@ -103,9 +288,87 @@ class PipelineOrchestrationService(
             run_id=normalized_run_id,
         )
 
+    def _require_pipeline_repository(self) -> IngestionJobRepository:
+        if self._pipeline_runs is None:
+            msg = "Pipeline run repository is not configured"
+            raise RuntimeError(msg)
+        return self._pipeline_runs
+
+    def _mark_job_retryable(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        attempt_count: int,
+        last_error: str,
+        error_category: str | None,
+    ) -> IngestionJob | None:
+        retry_delay_seconds = read_positive_int_env(
+            ENV_PIPELINE_RETRY_BASE_DELAY_SECONDS,
+            default_value=DEFAULT_PIPELINE_RETRY_BASE_DELAY_SECONDS,
+        ) * (2 ** max(attempt_count, 0))
+        return self._require_pipeline_repository().mark_pipeline_job_retryable(
+            job_id=job_id,
+            worker_id=worker_id,
+            next_attempt_at=datetime.now(UTC) + timedelta(seconds=retry_delay_seconds),
+            last_error=last_error,
+            error_category=error_category,
+        )
+
+    def _mark_claimed_job_failed(
+        self,
+        *,
+        claimed_job: IngestionJob,
+        worker_id: str,
+        error_message: str,
+        error_category: str | None,
+    ) -> IngestionJob:
+        repository = self._require_pipeline_repository()
+        current_job = repository.find_by_id(claimed_job.id) or claimed_job
+        failed_job = current_job.fail(
+            IngestionError(
+                error_type="pipeline_worker_failed",
+                error_message=error_message,
+                error_details={
+                    "worker_id": worker_id,
+                    "error_category": error_category,
+                },
+                record_id=None,
+            ),
+        )
+        updated_metadata = update_pipeline_metadata_fields(
+            existing_metadata=failed_job.metadata,
+            status="failed",
+            queue_status="failed",
+            worker_id=worker_id,
+            last_error=error_message,
+            error_category=error_category,
+            completed_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+        return repository.save(
+            failed_job.model_copy(update={"metadata": updated_metadata}),
+        )
+
+    def _should_retry_job(self, job: IngestionJob) -> bool:
+        max_attempts = read_positive_int_env(
+            ENV_PIPELINE_RETRY_MAX_ATTEMPTS,
+            default_value=DEFAULT_PIPELINE_RETRY_MAX_ATTEMPTS,
+        )
+        return resolve_pipeline_attempt_count(job) < max_attempts
+
+    def _resolve_queued_request(self, job: IngestionJob) -> QueuedPipelineRunRequest:
+        return resolve_queued_request(
+            job=job,
+            resolve_resume_stage=self._resolve_resume_stage,
+            request_type=QueuedPipelineRunRequest,
+        )
+
 
 __all__ = [
+    "ActivePipelineRunExistsError",
     "PipelineOrchestrationDependencies",
+    "PipelineQueueFullError",
+    "PipelineRunEnqueueResult",
     "PipelineOrchestrationService",
     "PipelineRunSummary",
     "PipelineStageName",

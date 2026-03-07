@@ -20,6 +20,7 @@ _POSTGRES_PREFIXES = (
     "postgresql+psycopg://",
     "postgresql+asyncpg://",
 )
+_ASYNC_POSTGRES_PREFIX = "postgresql+asyncpg://"
 
 
 def _validate_url_security(url: str) -> None:
@@ -108,7 +109,7 @@ def to_async_database_url(sync_url: str) -> str:
     """
     passthrough_prefixes = ("postgresql+asyncpg",)
     if sync_url.startswith(passthrough_prefixes):
-        return sync_url
+        return _normalize_async_query_params(sync_url)
 
     replacements = (
         ("postgresql+psycopg2://", "postgresql+asyncpg://"),
@@ -118,9 +119,44 @@ def to_async_database_url(sync_url: str) -> str:
 
     for prefix, replacement in replacements:
         if sync_url.startswith(prefix):
-            return sync_url.replace(prefix, replacement, 1)
+            return _normalize_async_query_params(
+                sync_url.replace(prefix, replacement, 1),
+            )
 
     return sync_url
+
+
+def _normalize_async_query_params(async_url: str) -> str:
+    """Rewrite asyncpg query params to the names expected by asyncpg.connect."""
+    if not async_url.startswith(_ASYNC_POSTGRES_PREFIX):
+        return async_url
+
+    split = urlsplit(async_url)
+    query_items = parse_qsl(split.query, keep_blank_values=True)
+    lowercase_keys = {key.lower() for key, _ in query_items}
+    if "sslmode" not in lowercase_keys:
+        return async_url
+
+    normalized_query_items: list[tuple[str, str]] = []
+    has_explicit_ssl = "ssl" in lowercase_keys
+    for key, value in query_items:
+        if key.lower() != "sslmode":
+            normalized_query_items.append((key, value))
+            continue
+        if has_explicit_ssl:
+            continue
+        normalized_query_items.append(("ssl", value))
+
+    rebuilt_query = urlencode(normalized_query_items, doseq=True)
+    return urlunsplit(
+        (
+            split.scheme,
+            split.netloc,
+            split.path,
+            rebuilt_query,
+            split.fragment,
+        ),
+    )
 
 
 def resolve_async_database_url() -> str:
@@ -129,6 +165,6 @@ def resolve_async_database_url() -> str:
     if async_override:
         _validate_url_security(async_override)
         _enforce_runtime_postgres(async_override)
-        return _enforce_tls_requirements(async_override)
+        return _normalize_async_query_params(_enforce_tls_requirements(async_override))
     sync_url = resolve_sync_database_url()
     return to_async_database_url(sync_url)

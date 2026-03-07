@@ -24,7 +24,6 @@ from src.infrastructure.llm.config import (
     UsageLimits,
     get_model_registry,
     load_runtime_policy,
-    resolve_artana_state_uri,
 )
 from src.infrastructure.llm.prompts.entity_recognition import (
     CLINVAR_ENTITY_RECOGNITION_DISCOVERY_SYSTEM_PROMPT,
@@ -32,9 +31,14 @@ from src.infrastructure.llm.prompts.entity_recognition import (
     PUBMED_ENTITY_RECOGNITION_DISCOVERY_SYSTEM_PROMPT,
     PUBMED_ENTITY_RECOGNITION_POLICY_SYSTEM_PROMPT,
 )
+from src.infrastructure.llm.state.shared_postgres_store import (
+    get_shared_artana_postgres_store,
+)
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
+    from artana.store import PostgresStore
+
     from src.domain.agents.contexts.entity_recognition_context import (
         EntityRecognitionContext,
     )
@@ -52,7 +56,6 @@ try:
     from artana.agent import SingleStepModelClient
     from artana.kernel import ArtanaKernel
     from artana.models import TenantContext
-    from artana.store import PostgresStore
 except ImportError as exc:  # pragma: no cover - environment-dependent import
     _ARTANA_IMPORT_ERROR = exc
 
@@ -70,6 +73,7 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
         use_governance: bool = True,
         dictionary_service: object | None = None,
         agent_created_by: str = "agent:entity_recognition",
+        artana_store: PostgresStore | None = None,
     ) -> None:
         if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import-time guard
             msg = (
@@ -95,8 +99,9 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
             timeout_seconds=timeout_seconds,
             schema_name_fallback="entity_recognition_contract",
         )
+        resolved_artana_store = artana_store or self._create_store()
         self._kernel = ArtanaKernel(
-            store=self._create_store(),
+            store=resolved_artana_store,
             model_port=self._model_port,
         )
         self._client = SingleStepModelClient(kernel=self._kernel)
@@ -177,8 +182,10 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
             )
 
     async def close(self) -> None:
-        await self._model_port.aclose()
-        await self._kernel.close()
+        try:
+            await self._kernel.close()
+        finally:
+            await self._model_port.aclose()
 
     def get_last_run_id(self) -> str | None:
         """Return the last Artana run id if available."""
@@ -205,11 +212,7 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        state_uri = resolve_artana_state_uri()
-        if state_uri.startswith("postgresql://"):
-            return PostgresStore(state_uri)
-        msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"
-        raise ValueError(msg)
+        return get_shared_artana_postgres_store()
 
     def _resolve_model_id(self, model_id: str | None) -> str:
         if (

@@ -10,6 +10,9 @@ import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
+from src.application.services._pipeline_failure_classification import (
+    resolve_pipeline_error_category,
+)
 from src.application.services._pipeline_orchestration_contracts import (
     PipelineRunSummary,
     PipelineStageName,
@@ -17,8 +20,11 @@ from src.application.services._pipeline_orchestration_contracts import (
 )
 from src.application.services._pipeline_orchestration_graph_fallback_helpers import (
     extract_graph_fallback_relations_from_extraction_summary,
-    resolve_graph_seed_limit,
     resolve_latest_ingestion_job_id,
+)
+from src.application.services._pipeline_orchestration_graph_stage_helpers import (
+    _GraphStageInput,
+    _PipelineOrchestrationGraphStageHelpers,
 )
 from src.application.services._pipeline_orchestration_seed_helpers import (
     _PipelineOrchestrationContextSeedHelpers,
@@ -32,9 +38,6 @@ if TYPE_CHECKING:
     )
     from src.application.agents.services.entity_recognition_service import (
         EntityRecognitionRunSummary,
-    )
-    from src.application.agents.services.graph_connection_service import (
-        GraphConnectionOutcome,
     )
     from src.application.services._pipeline_orchestration_execution_protocols import (
         _PipelineExecutionSelf,
@@ -64,12 +67,6 @@ _ENV_GRAPH_SEED_INFERENCE_TIMEOUT_SECONDS = (
     "MED13_PIPELINE_GRAPH_SEED_INFERENCE_TIMEOUT_SECONDS"
 )
 _DEFAULT_GRAPH_SEED_INFERENCE_TIMEOUT_SECONDS = 120.0
-_ENV_GRAPH_STAGE_MAX_CONCURRENCY = "MED13_PIPELINE_GRAPH_STAGE_MAX_CONCURRENCY"
-_DEFAULT_GRAPH_STAGE_MAX_CONCURRENCY = 2
-_ENV_GRAPH_STAGE_SEED_TIMEOUT_SECONDS = (
-    "MED13_PIPELINE_GRAPH_STAGE_SEED_TIMEOUT_SECONDS"
-)
-_DEFAULT_GRAPH_STAGE_SEED_TIMEOUT_SECONDS = 180.0
 _ENV_EXTRACTION_FAILURE_RATIO_THRESHOLD = (
     "MED13_PIPELINE_EXTRACTION_FAILURE_RATIO_THRESHOLD"
 )
@@ -204,13 +201,24 @@ def _coerce_optional_uuid(raw_value: object) -> UUID | None:
     return None
 
 
+def _first_matching_error(
+    messages: tuple[str, ...] | list[str],
+    *,
+    category: str | None,
+) -> str | None:
+    if category is None:
+        return None
+    for message in messages:
+        if resolve_pipeline_error_category((message,)) == category:
+            return message
+    return None
+
+
 class _PipelineOrchestrationExecutionHelpers(
     _PipelineOrchestrationContextSeedHelpers,
+    _PipelineOrchestrationGraphStageHelpers,
 ):
     """Execution-stage helpers for unified pipeline runs."""
-
-    _ENV_GRAPH_MAX_SEEDS_PER_RUN = "MED13_GRAPH_MAX_SEEDS_PER_RUN"
-    _DEFAULT_GRAPH_MAX_SEEDS_PER_RUN = 5
 
     async def run_for_source(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self: _PipelineExecutionSelf,
@@ -233,6 +241,7 @@ class _PipelineOrchestrationExecutionHelpers(
         normalized_run_id = self._resolve_run_id(run_id)
         normalized_resume_stage = self._resolve_resume_stage(resume_from_stage)
         errors: list[str] = []
+        pipeline_error_category: str | None = None
         logger.info(
             "Pipeline run started",
             extra={
@@ -419,6 +428,7 @@ class _PipelineOrchestrationExecutionHelpers(
                 ingestion_status = "failed"
                 error_message = str(exc).strip() or exc.__class__.__name__
                 errors.append(f"ingestion:{error_message}")
+                pipeline_error_category = resolve_pipeline_error_category(errors)
             ingestion_duration_ms = int(
                 (datetime.now(UTC) - ingestion_started_at).total_seconds() * 1000,
             )
@@ -537,9 +547,25 @@ class _PipelineOrchestrationExecutionHelpers(
                     else 0
                 )
                 errors.extend(enrichment_summary.errors)
+                enrichment_error_category = resolve_pipeline_error_category(
+                    enrichment_summary.errors,
+                )
+                if enrichment_error_category is not None:
+                    pipeline_error_category = enrichment_error_category
+                if (
+                    enrichment_error_category == "capacity"
+                    and enrichment_summary.failed > 0
+                ):
+                    enrichment_status = "failed"
             except Exception as exc:  # noqa: BLE001 - surfaced in run summary
                 enrichment_status = "failed"
-                errors.append(f"enrichment:{exc!s}")
+                enrichment_error = f"enrichment:{exc!s}"
+                errors.append(enrichment_error)
+                stage_error_category = resolve_pipeline_error_category(
+                    (enrichment_error,),
+                )
+                if stage_error_category is not None:
+                    pipeline_error_category = stage_error_category
             enrichment_duration_ms = int(
                 (datetime.now(UTC) - enrichment_started_at).total_seconds() * 1000,
             )
@@ -704,6 +730,7 @@ class _PipelineOrchestrationExecutionHelpers(
                     )
 
             extraction_stage_error: str | None = None
+            extraction_error_category: str | None = None
             try:
                 extraction_summary = await asyncio.wait_for(
                     _run_extraction_stage_with_compat(),
@@ -773,14 +800,31 @@ class _PipelineOrchestrationExecutionHelpers(
                     )
                 )
                 errors.extend(extraction_summary.errors)
+                extraction_error_category = resolve_pipeline_error_category(
+                    extraction_summary.errors,
+                )
+                if extraction_error_category is not None:
+                    pipeline_error_category = extraction_error_category
+                if extraction_error_category == "capacity" and extraction_failed > 0:
+                    extraction_status = "failed"
+                    extraction_stage_error = _first_matching_error(
+                        extraction_summary.errors,
+                        category=extraction_error_category,
+                    )
                 if extraction_processed > 0:
                     extraction_failure_ratio = extraction_failed / extraction_processed
-                    extraction_failure_ratio_threshold = (
-                        _resolve_extraction_failure_ratio_threshold(
-                            normalized_source_type,
+                    if extraction_error_category != "capacity":
+                        extraction_failure_ratio_threshold = (
+                            _resolve_extraction_failure_ratio_threshold(
+                                normalized_source_type,
+                            )
                         )
-                    )
-                    if extraction_failure_ratio > extraction_failure_ratio_threshold:
+                    if (
+                        extraction_error_category != "capacity"
+                        and extraction_failure_ratio_threshold is not None
+                        and extraction_failure_ratio
+                        > extraction_failure_ratio_threshold
+                    ):
                         extraction_quality_gate_failed = True
                         extraction_stage_error = (
                             "extraction:quality_gate_failed:"
@@ -821,6 +865,11 @@ class _PipelineOrchestrationExecutionHelpers(
                 extraction_status = "failed"
                 extraction_stage_error = f"extraction:{exc!s}"
                 errors.append(extraction_stage_error)
+                extraction_error_category = resolve_pipeline_error_category(
+                    (extraction_stage_error,),
+                )
+                if extraction_error_category is not None:
+                    pipeline_error_category = extraction_error_category
             extraction_duration_ms = int(
                 (datetime.now(UTC) - extraction_started_at).total_seconds() * 1000,
             )
@@ -878,6 +927,7 @@ class _PipelineOrchestrationExecutionHelpers(
                     "failure_ratio": extraction_failure_ratio,
                     "failure_ratio_threshold": extraction_failure_ratio_threshold,
                     "last_error": extraction_stage_error,
+                    "error_category": extraction_error_category,
                 },
                 overall_status="running",
             )
@@ -897,421 +947,65 @@ class _PipelineOrchestrationExecutionHelpers(
                 run_id=normalized_run_id,
             )
 
-        if (
-            not run_cancelled
-            and not explicit_graph_seed_entity_ids
-            and not derived_graph_seed_entity_ids
-        ):
-            seed_inference_timeout_seconds = _read_positive_timeout_seconds(
-                _ENV_GRAPH_SEED_INFERENCE_TIMEOUT_SECONDS,
-                default_seconds=_DEFAULT_GRAPH_SEED_INFERENCE_TIMEOUT_SECONDS,
-            )
-            try:
-                inferred_graph_seed_entity_ids = await asyncio.wait_for(
-                    self._infer_seed_entity_ids_with_context(
-                        source_id=source_id,
-                        research_space_id=research_space_id,
-                        source_type=normalized_source_type,
-                        model_id=model_id,
-                    ),
-                    timeout=seed_inference_timeout_seconds,
-                )
-            except TimeoutError:
-                errors.append(
-                    (
-                        "graph_seed_inference:stage_timeout:"
-                        f"{seed_inference_timeout_seconds:.1f}s"
-                    ),
-                )
-                logger.warning(
-                    "Graph seed inference timed out",
-                    extra={
-                        "run_id": normalized_run_id,
-                        "source_id": str(source_id),
-                        "timeout_seconds": seed_inference_timeout_seconds,
-                    },
-                )
-            except Exception as exc:  # noqa: BLE001 - surfaced in run summary
-                errors.append(f"graph_seed_inference:{exc!s}")
-                logger.warning(
-                    "Graph seed inference failed",
-                    extra={
-                        "run_id": normalized_run_id,
-                        "source_id": str(source_id),
-                        "error": str(exc),
-                    },
-                )
-        if not explicit_graph_seed_entity_ids and derived_graph_seed_entity_ids:
-            active_graph_seed_entity_ids = list(derived_graph_seed_entity_ids)
-            graph_seed_mode = "derived_from_extraction"
-        elif not explicit_graph_seed_entity_ids and inferred_graph_seed_entity_ids:
-            active_graph_seed_entity_ids = list(inferred_graph_seed_entity_ids)
-            graph_seed_mode = "ai_inferred_from_context"
-        else:
-            active_graph_seed_entity_ids = list(explicit_graph_seed_entity_ids)
-        graph_seed_limit = resolve_graph_seed_limit(
-            env_name=_PipelineOrchestrationExecutionHelpers._ENV_GRAPH_MAX_SEEDS_PER_RUN,
-            default=(
-                _PipelineOrchestrationExecutionHelpers._DEFAULT_GRAPH_MAX_SEEDS_PER_RUN
+        graph_stage_output = await self._run_graph_stage(
+            graph_stage_input=_GraphStageInput(
+                source_id=source_id,
+                research_space_id=research_space_id,
+                run_id=normalized_run_id,
+                resume_from_stage=normalized_resume_stage,
+                should_run_graph=should_run_graph,
+                extraction_status=extraction_status,
+                normalized_source_type=normalized_source_type,
+                model_id=model_id,
+                shadow_mode=shadow_mode,
+                explicit_graph_seed_entity_ids=explicit_graph_seed_entity_ids,
+                derived_graph_seed_entity_ids=derived_graph_seed_entity_ids,
+                extraction_graph_fallback_relations=(
+                    extraction_graph_fallback_relations
+                ),
+                extraction_processed=extraction_processed,
+                extraction_extracted=extraction_extracted,
+                extraction_failed=extraction_failed,
+                extraction_persisted_relations=extraction_persisted_relations,
+                extraction_concept_members_created=(extraction_concept_members_created),
+                extraction_concept_aliases_created=(extraction_concept_aliases_created),
+                extraction_concept_decisions_proposed=(
+                    extraction_concept_decisions_proposed
+                ),
+                total_persisted_relations=total_persisted_relations,
+                graph_status=graph_status,
+                errors=errors,
+                pipeline_error_category=pipeline_error_category,
+                run_cancelled=run_cancelled,
+                pipeline_run_job=pipeline_run_job,
+                graph_relation_types=graph_relation_types,
+                graph_max_depth=graph_max_depth,
             ),
         )
-        if len(active_graph_seed_entity_ids) > graph_seed_limit:
-            active_graph_seed_entity_ids = active_graph_seed_entity_ids[
-                :graph_seed_limit
-            ]
-        graph_requested = len(active_graph_seed_entity_ids)
-
-        can_run_graph = extraction_status == "completed" or (
-            normalized_resume_stage == "graph"
+        inferred_graph_seed_entity_ids = (
+            graph_stage_output.inferred_graph_seed_entity_ids
         )
-        if (
-            should_run_graph
-            and can_run_graph
-            and graph_requested > 0
-            and self._graph is not None
-            and not run_cancelled
-        ):
-            graph_started_at = datetime.now(UTC)
-            graph_max_concurrency = _read_positive_int(
-                _ENV_GRAPH_STAGE_MAX_CONCURRENCY,
-                default_value=_DEFAULT_GRAPH_STAGE_MAX_CONCURRENCY,
-            )
-            graph_seed_timeout_seconds = _read_positive_timeout_seconds(
-                _ENV_GRAPH_STAGE_SEED_TIMEOUT_SECONDS,
-                default_seconds=_DEFAULT_GRAPH_STAGE_SEED_TIMEOUT_SECONDS,
-            )
-            logger.info(
-                "Pipeline stage started",
-                extra={
-                    "run_id": normalized_run_id,
-                    "source_id": str(source_id),
-                    "stage": "graph",
-                    "requested_seed_count": graph_requested,
-                    "max_concurrency": graph_max_concurrency,
-                    "seed_timeout_seconds": graph_seed_timeout_seconds,
-                },
-            )
-            normalized_source = (
-                normalized_source_type if normalized_source_type else "clinvar"
-            )
-            graph_status = "completed"
-            graph_completed_count = 0
-            graph_semaphore = asyncio.Semaphore(graph_max_concurrency)
-            pipeline_run_job = self._persist_pipeline_run_progress(
-                run_job=pipeline_run_job,
-                source_id=source_id,
-                research_space_id=research_space_id,
-                run_id=normalized_run_id,
-                resume_from_stage=normalized_resume_stage,
-                progress_key="graph_progress",
-                progress_payload={
-                    "status": "running",
-                    "requested": graph_requested,
-                    "completed": graph_completed_count,
-                    "processed": graph_processed,
-                    "extraction_processed": extraction_processed,
-                    "extraction_completed": extraction_extracted,
-                    "extraction_failed": extraction_failed,
-                    "persisted_relations": total_persisted_relations,
-                    "extraction_persisted_relations": extraction_persisted_relations,
-                    "extraction_concept_members_created": (
-                        extraction_concept_members_created
-                    ),
-                    "extraction_concept_aliases_created": (
-                        extraction_concept_aliases_created
-                    ),
-                    "extraction_concept_decisions_proposed": (
-                        extraction_concept_decisions_proposed
-                    ),
-                    "graph_stage_persisted_relations": (
-                        graph_stage_persisted_relations
-                    ),
-                    "max_concurrency": graph_max_concurrency,
-                    "last_seed_entity_id": None,
-                    "last_error": None,
-                },
-                overall_status="running",
-            )
-
-            async def _discover_seed(  # noqa: C901
-                seed_entity_id: str,
-            ) -> tuple[str, int, tuple[str, ...], str | None, bool]:
-                async with graph_semaphore:
-                    if self._is_pipeline_run_cancelled(
-                        source_id=source_id,
-                        run_id=normalized_run_id,
-                    ):
-                        return seed_entity_id, 0, (), None, True
-                    fallback_relations = extraction_graph_fallback_relations.get(
-                        seed_entity_id,
-                        (),
-                    )
-
-                    try:
-
-                        async def _run_graph_discovery() -> (  # noqa: C901
-                            GraphConnectionOutcome
-                        ):
-                            if self._graph_seed_runner is not None:
-                                return await self._graph_seed_runner(
-                                    source_id=str(source_id),
-                                    research_space_id=str(research_space_id),
-                                    seed_entity_id=seed_entity_id,
-                                    source_type=normalized_source,
-                                    model_id=model_id,
-                                    relation_types=graph_relation_types,
-                                    max_depth=graph_max_depth,
-                                    shadow_mode=shadow_mode,
-                                    pipeline_run_id=normalized_run_id,
-                                    fallback_relations=fallback_relations,
-                                )
-                            graph_service = self._graph
-                            if graph_service is None:
-                                msg = "graph service unavailable"
-                                raise RuntimeError(msg)  # noqa: TRY301
-
-                            async def _call_graph_discovery(  # noqa: PLR0913
-                                *,
-                                include_source_id: bool,
-                                include_fallback_relations: bool,
-                            ) -> GraphConnectionOutcome:
-                                if include_source_id and include_fallback_relations:
-                                    return await graph_service.discover_connections_for_seed(
-                                        research_space_id=str(research_space_id),
-                                        seed_entity_id=seed_entity_id,
-                                        source_id=str(source_id),
-                                        source_type=normalized_source,
-                                        model_id=model_id,
-                                        relation_types=graph_relation_types,
-                                        max_depth=graph_max_depth,
-                                        shadow_mode=shadow_mode,
-                                        pipeline_run_id=normalized_run_id,
-                                        fallback_relations=fallback_relations,
-                                    )
-                                if include_source_id and not include_fallback_relations:
-                                    return await graph_service.discover_connections_for_seed(
-                                        research_space_id=str(research_space_id),
-                                        seed_entity_id=seed_entity_id,
-                                        source_id=str(source_id),
-                                        source_type=normalized_source,
-                                        model_id=model_id,
-                                        relation_types=graph_relation_types,
-                                        max_depth=graph_max_depth,
-                                        shadow_mode=shadow_mode,
-                                        pipeline_run_id=normalized_run_id,
-                                    )
-                                if not include_source_id and include_fallback_relations:
-                                    return await graph_service.discover_connections_for_seed(
-                                        research_space_id=str(research_space_id),
-                                        seed_entity_id=seed_entity_id,
-                                        source_type=normalized_source,
-                                        model_id=model_id,
-                                        relation_types=graph_relation_types,
-                                        max_depth=graph_max_depth,
-                                        shadow_mode=shadow_mode,
-                                        pipeline_run_id=normalized_run_id,
-                                        fallback_relations=fallback_relations,
-                                    )
-                                return (
-                                    await graph_service.discover_connections_for_seed(
-                                        research_space_id=str(research_space_id),
-                                        seed_entity_id=seed_entity_id,
-                                        source_type=normalized_source,
-                                        model_id=model_id,
-                                        relation_types=graph_relation_types,
-                                        max_depth=graph_max_depth,
-                                        shadow_mode=shadow_mode,
-                                        pipeline_run_id=normalized_run_id,
-                                    )
-                                )
-
-                            include_source_id = True
-                            include_fallback_relations = True
-                            while True:
-                                try:
-                                    return await _call_graph_discovery(
-                                        include_source_id=include_source_id,
-                                        include_fallback_relations=(
-                                            include_fallback_relations
-                                        ),
-                                    )
-                                except TypeError as exc:
-                                    fallback_message = str(exc)
-                                    removed_unsupported_key = False
-                                    if (
-                                        "fallback_relations" in fallback_message
-                                        and include_fallback_relations
-                                    ):
-                                        include_fallback_relations = False
-                                        removed_unsupported_key = True
-                                    if (
-                                        "source_id" in fallback_message
-                                        and include_source_id
-                                    ):
-                                        include_source_id = False
-                                        removed_unsupported_key = True
-                                    if not removed_unsupported_key:
-                                        raise
-
-                        graph_outcome = await asyncio.wait_for(
-                            _run_graph_discovery(),
-                            timeout=graph_seed_timeout_seconds,
-                        )
-                        return (  # noqa: TRY300
-                            seed_entity_id,
-                            graph_outcome.persisted_relations_count,
-                            graph_outcome.errors,
-                            None,
-                            False,
-                        )
-                    except TimeoutError:
-                        return (
-                            seed_entity_id,
-                            0,
-                            (),
-                            f"seed_timeout:{graph_seed_timeout_seconds:.1f}s",
-                            False,
-                        )
-                    except Exception as exc:  # noqa: BLE001 - surfaced in run summary
-                        return seed_entity_id, 0, (), str(exc), False
-
-            graph_tasks = [
-                asyncio.create_task(_discover_seed(seed_entity_id))
-                for seed_entity_id in active_graph_seed_entity_ids
-            ]
-            for completed_task in asyncio.as_completed(graph_tasks):
-                (
-                    completed_seed_id,
-                    persisted_relations_count,
-                    outcome_errors,
-                    stage_error,
-                    was_cancelled,
-                ) = await completed_task
-                graph_completed_count += 1
-                if was_cancelled:
-                    run_cancelled = True
-                    graph_status = "skipped"
-                elif stage_error is not None:
-                    graph_status = "failed"
-                    errors.append(f"graph:{completed_seed_id}:{stage_error}")
-                else:
-                    graph_processed += 1
-                    graph_stage_persisted_relations += persisted_relations_count
-                    total_persisted_relations += persisted_relations_count
-                    errors.extend(outcome_errors)
-                pipeline_run_job = self._persist_pipeline_run_progress(
-                    run_job=pipeline_run_job,
-                    source_id=source_id,
-                    research_space_id=research_space_id,
-                    run_id=normalized_run_id,
-                    resume_from_stage=normalized_resume_stage,
-                    progress_key="graph_progress",
-                    progress_payload={
-                        "status": "running",
-                        "requested": graph_requested,
-                        "completed": graph_completed_count,
-                        "processed": graph_processed,
-                        "extraction_processed": extraction_processed,
-                        "extraction_completed": extraction_extracted,
-                        "extraction_failed": extraction_failed,
-                        "persisted_relations": total_persisted_relations,
-                        "extraction_persisted_relations": (
-                            extraction_persisted_relations
-                        ),
-                        "extraction_concept_members_created": (
-                            extraction_concept_members_created
-                        ),
-                        "extraction_concept_aliases_created": (
-                            extraction_concept_aliases_created
-                        ),
-                        "extraction_concept_decisions_proposed": (
-                            extraction_concept_decisions_proposed
-                        ),
-                        "graph_stage_persisted_relations": (
-                            graph_stage_persisted_relations
-                        ),
-                        "max_concurrency": graph_max_concurrency,
-                        "last_seed_entity_id": completed_seed_id,
-                        "last_error": stage_error,
-                    },
-                    overall_status="running",
-                )
-                if run_cancelled:
-                    for graph_task in graph_tasks:
-                        if not graph_task.done():
-                            graph_task.cancel()
-                    await asyncio.gather(*graph_tasks, return_exceptions=True)
-                    break
-            graph_duration_ms = int(
-                (datetime.now(UTC) - graph_started_at).total_seconds() * 1000,
-            )
-            pipeline_run_job = self._persist_pipeline_run_progress(
-                run_job=pipeline_run_job,
-                source_id=source_id,
-                research_space_id=research_space_id,
-                run_id=normalized_run_id,
-                resume_from_stage=normalized_resume_stage,
-                progress_key="graph_progress",
-                progress_payload={
-                    "status": graph_status,
-                    "requested": graph_requested,
-                    "completed": graph_completed_count,
-                    "processed": graph_processed,
-                    "extraction_processed": extraction_processed,
-                    "extraction_completed": extraction_extracted,
-                    "extraction_failed": extraction_failed,
-                    "persisted_relations": total_persisted_relations,
-                    "extraction_persisted_relations": extraction_persisted_relations,
-                    "extraction_concept_members_created": (
-                        extraction_concept_members_created
-                    ),
-                    "extraction_concept_aliases_created": (
-                        extraction_concept_aliases_created
-                    ),
-                    "extraction_concept_decisions_proposed": (
-                        extraction_concept_decisions_proposed
-                    ),
-                    "graph_stage_persisted_relations": (
-                        graph_stage_persisted_relations
-                    ),
-                    "max_concurrency": graph_max_concurrency,
-                },
-                overall_status="running",
-            )
-            logger.info(
-                "Pipeline stage finished",
-                extra={
-                    "run_id": normalized_run_id,
-                    "source_id": str(source_id),
-                    "stage": "graph",
-                    "stage_status": graph_status,
-                    "duration_ms": graph_duration_ms,
-                    "graph_requested": graph_requested,
-                    "graph_processed": graph_processed,
-                    "graph_stage_persisted_relations": graph_stage_persisted_relations,
-                    "total_persisted_relations": total_persisted_relations,
-                },
-            )
-        elif should_run_graph and can_run_graph and graph_requested > 0:
-            graph_status = "failed"
-            errors.append("graph:service_unavailable")
-        if should_run_graph and can_run_graph and graph_requested > 0:
-            pipeline_run_job = self._persist_pipeline_stage_checkpoint(
-                run_job=pipeline_run_job,
-                source_id=source_id,
-                research_space_id=research_space_id,
-                run_id=normalized_run_id,
-                resume_from_stage=normalized_resume_stage,
-                stage="graph",
-                stage_status=graph_status,
-                overall_status="running",
-                stage_error=errors[-1] if graph_status == "failed" and errors else None,
-            )
+        active_graph_seed_entity_ids = graph_stage_output.active_graph_seed_entity_ids
+        graph_seed_mode = graph_stage_output.graph_seed_mode
+        graph_seed_limit = graph_stage_output.graph_seed_limit
+        graph_requested = graph_stage_output.graph_requested
+        graph_processed = graph_stage_output.graph_processed
+        graph_stage_persisted_relations = (
+            graph_stage_output.graph_stage_persisted_relations
+        )
+        total_persisted_relations = graph_stage_output.total_persisted_relations
+        graph_status = graph_stage_output.graph_status
+        pipeline_error_category = graph_stage_output.pipeline_error_category
+        run_cancelled = graph_stage_output.run_cancelled
+        pipeline_run_job = graph_stage_output.pipeline_run_job
 
         if run_cancelled and "pipeline:cancelled" not in errors:
             errors.append("pipeline:cancelled")
 
         completed_at = datetime.now(UTC)
+        pipeline_error_category = (
+            resolve_pipeline_error_category(errors) or pipeline_error_category
+        )
         run_status: Literal["completed", "failed", "cancelled"] = "completed"
         if run_cancelled:
             run_status = "cancelled"
@@ -1427,6 +1121,7 @@ class _PipelineOrchestrationExecutionHelpers(
                 "extraction_failure_ratio_threshold": (
                     extraction_failure_ratio_threshold
                 ),
+                "error_category": pipeline_error_category,
                 "graph_seed_mode": graph_seed_mode,
                 "graph_explicit_seed_count": len(explicit_graph_seed_entity_ids),
                 "graph_derived_seed_count": len(derived_graph_seed_entity_ids),

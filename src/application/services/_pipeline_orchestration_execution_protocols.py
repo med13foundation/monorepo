@@ -29,6 +29,10 @@ if TYPE_CHECKING:
         PipelineStageName,
         PipelineStageStatus,
     )
+    from src.application.services._pipeline_orchestration_graph_stage_helpers import (
+        _GraphStageInput,
+        _GraphStageOutput,
+    )
     from src.application.services.ingestion_scheduling_service import (
         IngestionSchedulingService,
     )
@@ -94,6 +98,12 @@ class _PipelineExecutionSelf(Protocol):
             "cancelled",
         ] = "running",
     ) -> IngestionJob | None: ...
+
+    async def _run_graph_stage(
+        self,
+        *,
+        graph_stage_input: _GraphStageInput,
+    ) -> _GraphStageOutput: ...
 
     def _finalize_pipeline_run_checkpoint(  # noqa: PLR0913
         self,

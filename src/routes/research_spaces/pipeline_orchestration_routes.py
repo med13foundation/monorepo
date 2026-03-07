@@ -7,13 +7,15 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from src.application.services.pipeline_orchestration_service import (
+    ActivePipelineRunExistsError,
     PipelineOrchestrationDependencies,
     PipelineOrchestrationService,
+    PipelineQueueFullError,
 )
 from src.database.session import get_session
 from src.domain.entities.ingestion_job import IngestionStatus
@@ -120,6 +122,18 @@ class PipelineRunResponse(BaseModel):
     executed_query: str | None = None
     errors: list[str]
     metadata: dict[str, object] | None = None
+
+
+class PipelineRunAcceptedResponse(BaseModel):
+    """Serialized queue-acceptance payload for one pipeline run."""
+
+    model_config = ConfigDict(strict=True)
+
+    run_id: str
+    source_id: UUID
+    research_space_id: UUID
+    status: str
+    accepted_at: datetime
 
 
 class PipelineRunCancelResponse(BaseModel):
@@ -293,20 +307,22 @@ def get_pipeline_orchestration_service(
 
 @research_spaces_router.post(
     "/{space_id}/pipeline/run",
-    response_model=PipelineRunResponse,
-    summary="Run ingestion, enrichment, extraction, and optional graph discovery",
+    response_model=PipelineRunAcceptedResponse,
+    status_code=202,
+    summary="Queue ingestion, enrichment, extraction, and optional graph discovery",
 )
 async def run_unified_pipeline(
     space_id: UUID,
     request: PipelineRunRequest,
+    response: Response,
     current_user: User = Depends(get_current_active_user),
     membership_service: MembershipManagementService = Depends(get_membership_service),
     orchestration_service: PipelineOrchestrationService = Depends(
         get_pipeline_orchestration_service,
     ),
     session: Session = Depends(get_session),
-) -> PipelineRunResponse:
-    """Execute an end-to-end pipeline run for one source in one research space."""
+) -> PipelineRunAcceptedResponse:
+    """Queue an end-to-end pipeline run for one source in one research space."""
     require_researcher_role(
         space_id,
         current_user.id,
@@ -341,7 +357,7 @@ async def run_unified_pipeline(
     )
 
     try:
-        summary = await orchestration_service.run_for_source(
+        queued_run = orchestration_service.enqueue_run(
             source_id=source_id,
             research_space_id=space_id,
             run_id=request.run_id,
@@ -356,6 +372,20 @@ async def run_unified_pipeline(
             graph_max_depth=request.graph_max_depth,
             graph_relation_types=request.graph_relation_types,
         )
+    except ActivePipelineRunExistsError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "run_id": exc.run_id,
+            },
+        ) from exc
+    except PipelineQueueFullError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Pipeline queue is full; retry later",
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=HTTP_400_BAD_REQUEST,
@@ -367,34 +397,16 @@ async def run_unified_pipeline(
             detail=f"Unified pipeline run failed: {exc!s}",
         ) from exc
 
-    return PipelineRunResponse(
-        run_id=summary.run_id,
-        source_id=summary.source_id,
-        research_space_id=summary.research_space_id,
-        started_at=summary.started_at,
-        completed_at=summary.completed_at,
-        status=summary.status,
-        resume_from_stage=summary.resume_from_stage,
-        ingestion_status=summary.ingestion_status,
-        enrichment_status=summary.enrichment_status,
-        extraction_status=summary.extraction_status,
-        graph_status=summary.graph_status,
-        fetched_records=summary.fetched_records,
-        parsed_publications=summary.parsed_publications,
-        created_publications=summary.created_publications,
-        updated_publications=summary.updated_publications,
-        enrichment_processed=summary.enrichment_processed,
-        enrichment_enriched=summary.enrichment_enriched,
-        enrichment_failed=summary.enrichment_failed,
-        extraction_processed=summary.extraction_processed,
-        extraction_extracted=summary.extraction_extracted,
-        extraction_failed=summary.extraction_failed,
-        graph_requested=summary.graph_requested,
-        graph_processed=summary.graph_processed,
-        graph_persisted_relations=summary.graph_persisted_relations,
-        executed_query=summary.executed_query,
-        errors=list(summary.errors),
-        metadata=dict(summary.metadata) if summary.metadata is not None else None,
+    response.headers["Location"] = (
+        f"/research-spaces/{space_id}/sources/{source_id}/workflow-monitor"
+        f"?run_id={queued_run.run_id}"
+    )
+    return PipelineRunAcceptedResponse(
+        run_id=queued_run.run_id,
+        source_id=queued_run.source_id,
+        research_space_id=queued_run.research_space_id,
+        status=queued_run.status,
+        accepted_at=queued_run.accepted_at,
     )
 
 

@@ -6,6 +6,9 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import desc, select
 
+from src.application.services._pipeline_failure_classification import (
+    resolve_pipeline_error_category,
+)
 from src.models.database.source_document import SourceDocumentModel
 
 from ._source_workflow_monitor_shared import (
@@ -113,12 +116,29 @@ class SourceWorkflowMonitorQualityMixin:
             if normalized_status == "extracted":
                 extracted += 1
             elif normalized_status == "failed":
+                if self._is_capacity_failure(metadata=metadata):
+                    continue
                 failed += 1
                 if self._is_timeout_failure(metadata=metadata):
                     timeout_failed += 1
             elif normalized_status == "skipped":
                 skipped += 1
         return extracted, failed, skipped, timeout_failed
+
+    def _is_capacity_failure(self, *, metadata: JSONObject) -> bool:
+        candidate_messages: list[str] = []
+        for key in (
+            "entity_recognition_error",
+            "extraction_stage_error",
+            "entity_recognition_error_code",
+            "extraction_stage_error_code",
+            "entity_recognition_error_class",
+            "extraction_stage_error_class",
+        ):
+            value = normalize_optional_string(metadata.get(key))
+            if value is not None:
+                candidate_messages.append(value)
+        return resolve_pipeline_error_category(candidate_messages) == "capacity"
 
     def _is_timeout_failure(self, *, metadata: JSONObject) -> bool:
         for reason_key in (

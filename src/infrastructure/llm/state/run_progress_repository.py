@@ -13,18 +13,20 @@ from src.application.services.ports.run_progress_port import (
     RunProgressPort,
     RunProgressSnapshot,
 )
-from src.infrastructure.llm.config import resolve_artana_state_uri
+from src.infrastructure.llm.state.shared_postgres_store import (
+    get_shared_artana_postgres_store,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from artana.ports.model import ModelRequest, ModelResult
+    from artana.store import PostgresStore
 
 _ARTANA_IMPORT_ERROR: Exception | None = None
 
 try:
     from artana.kernel import ArtanaKernel
-    from artana.store import PostgresStore
 except ImportError as exc:  # pragma: no cover - environment dependent
     _ARTANA_IMPORT_ERROR = exc
 
@@ -119,7 +121,7 @@ class _AsyncLoopRunner:
 class ArtanaKernelRunProgressRepository(RunProgressPort):
     """Load run progress through the public Artana kernel lifecycle API."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, artana_store: PostgresStore | None = None) -> None:
         if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import guard
             msg = (
                 "artana-kernel is required for run-progress monitoring. Install dependency "
@@ -129,8 +131,9 @@ class ArtanaKernelRunProgressRepository(RunProgressPort):
 
         self._runner = _AsyncLoopRunner()
         try:
+            resolved_artana_store = artana_store or get_shared_artana_postgres_store()
             self._kernel = ArtanaKernel(
-                store=PostgresStore(dsn=resolve_artana_state_uri()),
+                store=resolved_artana_store,
                 model_port=_NoopModelPort(),
             )
         except Exception:
@@ -217,12 +220,7 @@ class ArtanaKernelRunProgressRepository(RunProgressPort):
 
     def close(self) -> None:
         """Best-effort cleanup for kernel/store resources."""
-        try:
-            self._runner.run(self._kernel.close())
-        except (RuntimeError, TypeError, ValueError):  # pragma: no cover
-            logger.debug("Ignored run-progress kernel close failure.", exc_info=True)
-        finally:
-            self._runner.close()
+        self._runner.close()
 
 
 def _normalize_optional_string(value: object) -> str | None:

@@ -29,15 +29,15 @@ from src.infrastructure.dependency_injection.dependencies import (
     get_legacy_dependency_container,
 )
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
+from src.infrastructure.factories.dictionary_search_harness_factory import (
+    create_dictionary_search_harness,
+)
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
 from src.infrastructure.ingestion.pipeline import IngestionPipeline
 from src.infrastructure.llm.adapters.concept_decision_harness_adapter import (
     DeterministicConceptDecisionHarnessAdapter,
-)
-from src.infrastructure.llm.adapters.dictionary_search_harness_adapter import (
-    ArtanaDictionarySearchHarnessAdapter,
 )
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyConceptRepository,
@@ -76,7 +76,7 @@ def get_dictionary_service(
     """Kernel dictionary service (read/write)."""
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
     embedding_provider = HybridTextEmbeddingProvider()
-    search_harness = ArtanaDictionarySearchHarnessAdapter(
+    search_harness = create_dictionary_search_harness(
         dictionary_repo=dictionary_repo,
         embedding_provider=embedding_provider,
     )
@@ -133,7 +133,7 @@ def get_kernel_observation_service(
     entity_repo = _build_entity_repository(session)
     dictionary_repo = SqlAlchemyDictionaryRepository(session)
     embedding_provider = HybridTextEmbeddingProvider()
-    search_harness = ArtanaDictionarySearchHarnessAdapter(
+    search_harness = create_dictionary_search_harness(
         dictionary_repo=dictionary_repo,
         embedding_provider=embedding_provider,
     )

@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NoReturn
 from uuid import UUID, uuid4
 
 import pytest
 
 from src.application.services.pipeline_orchestration_service import (
+    ActivePipelineRunExistsError,
     PipelineOrchestrationDependencies,
     PipelineOrchestrationService,
+    PipelineQueueFullError,
 )
 from src.domain.entities.ingestion_job import (
     IngestionError,
     IngestionJob,
+    IngestionJobKind,
     IngestionStatus,
     IngestionTrigger,
     JobMetrics,
@@ -24,8 +28,6 @@ from src.domain.repositories.ingestion_job_repository import IngestionJobReposit
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from src.type_definitions.common import JSONObject
 
 
@@ -296,6 +298,36 @@ class StubPipelineRunRepository(IngestionJobRepository):
     def __init__(self) -> None:
         self.saved: list[IngestionJob] = []
 
+    @staticmethod
+    def _pipeline_payload(job: IngestionJob) -> JSONObject:
+        return _coerce_json_object(job.metadata.get("pipeline_run"))
+
+    @classmethod
+    def _queue_status(cls, job: IngestionJob) -> str | None:
+        raw_value = cls._pipeline_payload(job).get("queue_status")
+        if isinstance(raw_value, str) and raw_value.strip():
+            return raw_value.strip()
+        return None
+
+    @classmethod
+    def _run_id(cls, job: IngestionJob) -> str | None:
+        raw_value = cls._pipeline_payload(job).get("run_id")
+        if isinstance(raw_value, str) and raw_value.strip():
+            return raw_value.strip()
+        return None
+
+    @staticmethod
+    def _update_pipeline_metadata(
+        job: IngestionJob,
+        **fields: object,
+    ) -> JSONObject:
+        metadata = _coerce_json_object(job.metadata)
+        pipeline_payload = _coerce_json_object(metadata.get("pipeline_run"))
+        for key, value in fields.items():
+            pipeline_payload[str(key)] = to_json_value(value)
+        metadata["pipeline_run"] = pipeline_payload
+        return metadata
+
     def _latest_jobs(self) -> list[IngestionJob]:
         latest_by_id: dict[UUID, IngestionJob] = {}
         for job in self.saved:
@@ -394,9 +426,6 @@ class StubPipelineRunRepository(IngestionJobRepository):
     def fail_job(self, job_id: UUID, error: IngestionError) -> IngestionJob | None:
         _unsupported("fail_job")
 
-    def cancel_job(self, job_id: UUID) -> IngestionJob | None:
-        _unsupported("cancel_job")
-
     def delete_old_jobs(self, days: int = 90) -> int:
         _unsupported("delete_old_jobs")
 
@@ -422,12 +451,293 @@ class StubPipelineRunRepository(IngestionJobRepository):
     ) -> list[tuple[IngestionJob, IngestionError]]:
         _unsupported("get_recent_failures")
 
+    def find_latest_by_source_and_kind(
+        self,
+        *,
+        source_id: UUID,
+        job_kind: IngestionJobKind,
+        limit: int = 50,
+    ) -> list[IngestionJob]:
+        matching = [
+            job
+            for job in self._latest_jobs()
+            if job.source_id == source_id and job.job_kind == job_kind
+        ]
+        matching.sort(key=lambda job: job.triggered_at, reverse=True)
+        return matching[:limit]
+
+    def find_active_pipeline_job_for_source(
+        self,
+        *,
+        source_id: UUID,
+        exclude_run_id: str | None = None,
+    ) -> IngestionJob | None:
+        for job in self.find_latest_by_source_and_kind(
+            source_id=source_id,
+            job_kind=IngestionJobKind.PIPELINE_ORCHESTRATION,
+            limit=200,
+        ):
+            if job.status not in {IngestionStatus.PENDING, IngestionStatus.RUNNING}:
+                continue
+            queue_status = self._queue_status(job)
+            if queue_status not in {"queued", "retrying", "running"}:
+                continue
+            if exclude_run_id is not None and self._run_id(job) == exclude_run_id:
+                continue
+            return job
+        return None
+
+    def count_active_pipeline_queue_jobs(self) -> int:
+        return sum(
+            1
+            for job in self._latest_jobs()
+            if job.job_kind == IngestionJobKind.PIPELINE_ORCHESTRATION
+            and job.status == IngestionStatus.PENDING
+            and self._queue_status(job) in {"queued", "retrying"}
+        )
+
+    def claim_next_pipeline_job(
+        self,
+        *,
+        worker_id: str,
+        as_of: datetime,
+    ) -> IngestionJob | None:
+        candidates = sorted(
+            (
+                job
+                for job in self._latest_jobs()
+                if job.job_kind == IngestionJobKind.PIPELINE_ORCHESTRATION
+                and job.status == IngestionStatus.PENDING
+                and self._queue_status(job) in {"queued", "retrying"}
+            ),
+            key=lambda job: job.triggered_at,
+        )
+        for job in candidates:
+            next_attempt_raw = self._pipeline_payload(job).get("next_attempt_at")
+            if isinstance(next_attempt_raw, str) and next_attempt_raw.strip():
+                next_attempt_at = datetime.fromisoformat(next_attempt_raw.strip())
+                normalized_next_attempt_at = (
+                    next_attempt_at
+                    if next_attempt_at.tzinfo is not None
+                    else next_attempt_at.replace(tzinfo=UTC)
+                )
+                if normalized_next_attempt_at > as_of:
+                    continue
+            updated = job.model_copy(
+                update={
+                    "status": IngestionStatus.RUNNING,
+                    "started_at": as_of,
+                    "completed_at": None,
+                    "metadata": self._update_pipeline_metadata(
+                        job,
+                        status="running",
+                        queue_status="running",
+                        worker_id=worker_id,
+                        heartbeat_at=as_of.isoformat(timespec="seconds"),
+                        updated_at=as_of.isoformat(timespec="seconds"),
+                        next_attempt_at=None,
+                    ),
+                },
+            )
+            return self.save(updated)
+        return None
+
+    def heartbeat_pipeline_job(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        heartbeat_at: datetime,
+    ) -> IngestionJob | None:
+        job = self.find_by_id(job_id)
+        if job is None or job.status != IngestionStatus.RUNNING:
+            return None
+        current_worker_id = self._pipeline_payload(job).get("worker_id")
+        if isinstance(current_worker_id, str) and current_worker_id != worker_id:
+            return None
+        updated = job.model_copy(
+            update={
+                "metadata": self._update_pipeline_metadata(
+                    job,
+                    worker_id=worker_id,
+                    heartbeat_at=heartbeat_at.isoformat(timespec="seconds"),
+                    updated_at=heartbeat_at.isoformat(timespec="seconds"),
+                ),
+            },
+        )
+        return self.save(updated)
+
+    def mark_pipeline_job_retryable(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        next_attempt_at: datetime,
+        last_error: str,
+        error_category: str | None,
+    ) -> IngestionJob | None:
+        job = self.find_by_id(job_id)
+        if job is None:
+            return None
+        attempt_count_raw = self._pipeline_payload(job).get("attempt_count")
+        attempt_count = attempt_count_raw if isinstance(attempt_count_raw, int) else 0
+        updated = job.model_copy(
+            update={
+                "status": IngestionStatus.PENDING,
+                "started_at": None,
+                "completed_at": None,
+                "metrics": JobMetrics(),
+                "errors": [],
+                "metadata": self._update_pipeline_metadata(
+                    job,
+                    status="retrying",
+                    queue_status="retrying",
+                    worker_id=worker_id,
+                    next_attempt_at=next_attempt_at.isoformat(timespec="seconds"),
+                    last_error=last_error,
+                    error_category=error_category,
+                    attempt_count=attempt_count + 1,
+                    updated_at=datetime.now(UTC).isoformat(timespec="seconds"),
+                ),
+            },
+        )
+        return self.save(updated)
+
+    def cancel_job(self, job_id: UUID) -> IngestionJob | None:
+        job = self.find_by_id(job_id)
+        if job is None:
+            return None
+        cancelled = job.cancel()
+        updated = cancelled.model_copy(
+            update={
+                "metadata": self._update_pipeline_metadata(
+                    cancelled,
+                    status="cancelled",
+                    queue_status="cancelled",
+                    updated_at=datetime.now(UTC).isoformat(timespec="seconds"),
+                ),
+            },
+        )
+        return self.save(updated)
+
 
 def _coerce_json_object(raw_value: object) -> JSONObject:
     if not isinstance(raw_value, dict):
         msg = "Expected JSON object metadata payload"
         raise TypeError(msg)
     return {str(key): to_json_value(value) for key, value in raw_value.items()}
+
+
+def test_enqueue_run_persists_queue_metadata() -> None:
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=StubIngestionSchedulingService(
+                StubIngestionSummary(source_id=source_id),
+            ),
+            content_enrichment_service=StubContentEnrichmentService(
+                StubEnrichmentSummary(),
+            ),
+            entity_recognition_service=StubEntityRecognitionService(
+                StubExtractionSummary(),
+            ),
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    accepted = service.enqueue_run(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="queued-run-001",
+        resume_from_stage="enrichment",
+        source_type="pubmed",
+        graph_seed_entity_ids=["seed-1"],
+    )
+
+    assert accepted.status == "queued"
+    job = repository.find_by_source(source_id)[0]
+    assert job.job_kind == IngestionJobKind.PIPELINE_ORCHESTRATION
+    assert job.status == IngestionStatus.PENDING
+    pipeline_run = _coerce_json_object(job.metadata.get("pipeline_run"))
+    requested_args = _coerce_json_object(pipeline_run.get("requested_args"))
+    assert pipeline_run.get("status") == "queued"
+    assert pipeline_run.get("queue_status") == "queued"
+    assert pipeline_run.get("attempt_count") == 0
+    assert requested_args.get("resume_from_stage") == "enrichment"
+    assert requested_args.get("source_type") == "pubmed"
+    assert requested_args.get("graph_seed_entity_ids") == ["seed-1"]
+
+
+def test_enqueue_run_rejects_when_active_pipeline_exists() -> None:
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=StubIngestionSchedulingService(
+                StubIngestionSummary(source_id=source_id),
+            ),
+            content_enrichment_service=StubContentEnrichmentService(
+                StubEnrichmentSummary(),
+            ),
+            entity_recognition_service=StubEntityRecognitionService(
+                StubExtractionSummary(),
+            ),
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    service.enqueue_run(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="queued-run-001",
+    )
+
+    with pytest.raises(ActivePipelineRunExistsError):
+        service.enqueue_run(
+            source_id=source_id,
+            research_space_id=research_space_id,
+            run_id="queued-run-002",
+        )
+
+
+def test_enqueue_run_rejects_when_queue_is_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MED13_PIPELINE_QUEUE_MAX_SIZE", "1")
+    repository = StubPipelineRunRepository()
+    first_source_id = uuid4()
+    second_source_id = uuid4()
+    research_space_id = uuid4()
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=StubIngestionSchedulingService(
+                StubIngestionSummary(source_id=first_source_id),
+            ),
+            content_enrichment_service=StubContentEnrichmentService(
+                StubEnrichmentSummary(),
+            ),
+            entity_recognition_service=StubEntityRecognitionService(
+                StubExtractionSummary(),
+            ),
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    service.enqueue_run(
+        source_id=first_source_id,
+        research_space_id=research_space_id,
+        run_id="queued-run-001",
+    )
+
+    with pytest.raises(PipelineQueueFullError):
+        service.enqueue_run(
+            source_id=second_source_id,
+            research_space_id=research_space_id,
+            run_id="queued-run-002",
+        )
 
 
 @pytest.mark.asyncio
@@ -796,6 +1106,100 @@ async def test_run_for_source_fails_pubmed_quality_gate_on_partial_extraction() 
     extraction_checkpoint = _coerce_json_object(checkpoints.get("extraction"))
     assert extraction_checkpoint.get("status") == "completed"
     assert isinstance(extraction_checkpoint.get("error"), str)
+
+
+@pytest.mark.asyncio
+async def test_run_for_source_classifies_capacity_failures_without_quality_gate() -> (
+    None
+):
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    ingestion_service = StubIngestionSchedulingService(
+        StubIngestionSummary(source_id=source_id),
+    )
+    enrichment_service = StubContentEnrichmentService(StubEnrichmentSummary())
+    extraction_service = StubEntityRecognitionService(
+        StubExtractionSummary(
+            processed=4,
+            extracted=1,
+            failed=3,
+            errors=(
+                "TooManyConnectionsError: remaining connection slots are reserved",
+            ),
+        ),
+    )
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=ingestion_service,
+            content_enrichment_service=enrichment_service,
+            entity_recognition_service=extraction_service,
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-capacity-failure",
+        source_type="pubmed",
+    )
+
+    assert summary.status == "failed"
+    assert summary.extraction_status == "failed"
+    assert summary.metadata is not None
+    assert summary.metadata.get("extraction_quality_gate_failed") is False
+    assert summary.metadata.get("error_category") == "capacity"
+    assert not any(
+        error.startswith("extraction:quality_gate_failed:") for error in summary.errors
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_next_queued_job_marks_capacity_failures_retryable() -> None:
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=StubIngestionSchedulingService(
+                StubIngestionSummary(source_id=source_id),
+            ),
+            content_enrichment_service=StubContentEnrichmentService(
+                StubEnrichmentSummary(),
+            ),
+            entity_recognition_service=StubEntityRecognitionService(
+                StubExtractionSummary(
+                    processed=3,
+                    extracted=0,
+                    failed=3,
+                    errors=(
+                        "TooManyConnectionsError: remaining connection slots are reserved",
+                    ),
+                ),
+            ),
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    service.enqueue_run(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-capacity-retry",
+        source_type="pubmed",
+    )
+
+    ran_job = await service.run_next_queued_job(worker_id="worker-1")
+
+    assert ran_job is True
+    job = repository.find_by_source(source_id)[0]
+    assert job.status == IngestionStatus.PENDING
+    pipeline_run = _coerce_json_object(job.metadata.get("pipeline_run"))
+    assert pipeline_run.get("status") == "retrying"
+    assert pipeline_run.get("queue_status") == "retrying"
+    assert pipeline_run.get("error_category") == "capacity"
+    assert pipeline_run.get("attempt_count") == 1
 
 
 @pytest.mark.asyncio

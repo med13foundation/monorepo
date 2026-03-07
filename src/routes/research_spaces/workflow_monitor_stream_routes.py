@@ -8,8 +8,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Query, Request
-from fastapi.sse import EventSourceResponse
+from fastapi import Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -23,6 +22,7 @@ from . import dependencies as space_dependencies
 from . import workflow_monitor_routes as monitor_routes
 from . import workflow_monitor_stream_utils as stream_utils
 from .router import HTTP_404_NOT_FOUND, research_spaces_router
+from .workflow_monitor_stream_sse import build_event_source_response
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
     monitor_service: SourceWorkflowMonitorService = Depends(
         monitor_routes.get_source_workflow_monitor_service,
     ),
-) -> EventSourceResponse:
+) -> Response:
     if not stream_utils.is_workflow_sse_enabled():
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,
@@ -223,7 +223,7 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
 
             await asyncio.sleep(stream_utils.STREAM_TICK_SECONDS)
 
-    return EventSourceResponse(_event_generator())
+    return build_event_source_response(_event_generator())
 
 
 @research_spaces_router.get(
@@ -241,7 +241,7 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
     monitor_service: SourceWorkflowMonitorService = Depends(
         monitor_routes.get_source_workflow_monitor_service,
     ),
-) -> EventSourceResponse:
+) -> Response:
     if not stream_utils.is_workflow_sse_enabled():
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,
@@ -422,7 +422,7 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
 
             await asyncio.sleep(stream_utils.STREAM_TICK_SECONDS)
 
-    return EventSourceResponse(_event_generator())
+    return build_event_source_response(_event_generator())
 
 
 __all__ = [

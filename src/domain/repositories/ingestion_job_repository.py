@@ -12,6 +12,7 @@ from uuid import UUID
 from src.domain.entities.ingestion_job import (
     IngestionError,
     IngestionJob,
+    IngestionJobKind,
     IngestionStatus,
     IngestionTrigger,
     JobMetrics,
@@ -361,3 +362,57 @@ class IngestionJobRepository(ABC):
         Returns:
             List of tuples containing (job, primary_error)
         """
+
+    @abstractmethod
+    def find_latest_by_source_and_kind(
+        self,
+        *,
+        source_id: UUID,
+        job_kind: IngestionJobKind,
+        limit: int = 50,
+    ) -> list[IngestionJob]:
+        """Return recent jobs for one source filtered by logical job kind."""
+
+    @abstractmethod
+    def find_active_pipeline_job_for_source(
+        self,
+        *,
+        source_id: UUID,
+        exclude_run_id: str | None = None,
+    ) -> IngestionJob | None:
+        """Return the queued, retrying, or running pipeline job for a source."""
+
+    @abstractmethod
+    def count_active_pipeline_queue_jobs(self) -> int:
+        """Return the number of queued or retrying pipeline jobs."""
+
+    @abstractmethod
+    def claim_next_pipeline_job(
+        self,
+        *,
+        worker_id: str,
+        as_of: datetime,
+    ) -> IngestionJob | None:
+        """Atomically claim the next queued pipeline job for worker execution."""
+
+    @abstractmethod
+    def heartbeat_pipeline_job(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        heartbeat_at: datetime,
+    ) -> IngestionJob | None:
+        """Refresh pipeline-run worker heartbeat metadata for an active job."""
+
+    @abstractmethod
+    def mark_pipeline_job_retryable(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        next_attempt_at: datetime,
+        last_error: str,
+        error_category: str | None,
+    ) -> IngestionJob | None:
+        """Return a running pipeline job to the queue for retry."""

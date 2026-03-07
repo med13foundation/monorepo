@@ -24,11 +24,15 @@ from src.infrastructure.llm.config import (
     GovernanceConfig,
     get_model_registry,
     load_runtime_policy,
-    resolve_artana_state_uri,
 )
 from src.infrastructure.llm.prompts.mapping_judge import MAPPING_JUDGE_SYSTEM_PROMPT
+from src.infrastructure.llm.state.shared_postgres_store import (
+    get_shared_artana_postgres_store,
+)
 
 if TYPE_CHECKING:
+    from artana.store import PostgresStore
+
     from src.domain.agents.contexts.mapping_judge_context import MappingJudgeContext
 
 logger = logging.getLogger(__name__)
@@ -40,7 +44,6 @@ try:
     from artana.agent import SingleStepModelClient
     from artana.kernel import ArtanaKernel
     from artana.models import TenantContext
-    from artana.store import PostgresStore
 except ImportError as exc:  # pragma: no cover - environment-dependent import
     _ARTANA_IMPORT_ERROR = exc
 
@@ -51,7 +54,12 @@ _OpenAIChatModelPort = OpenAIJSONSchemaModelPort
 class ArtanaMappingJudgeAdapter(MappingJudgePort):
     """Adapter that executes mapping-judge workflows through Artana."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        *,
+        artana_store: PostgresStore | None = None,
+    ) -> None:
         if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import-time guard
             msg = (
                 "artana-kernel is required for mapping judge execution. Install "
@@ -63,6 +71,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         self._governance = GovernanceConfig.from_environment()
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
+        self._artana_store = artana_store or self._create_store()
 
     def judge(
         self,
@@ -107,8 +116,10 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
                     client=client,
                 )
             finally:
-                await model_port.aclose()
-                await kernel.close()
+                try:
+                    await kernel.close()
+                finally:
+                    await model_port.aclose()
 
         contract = self._run_contract_coroutine(execute())
         logger.info(
@@ -146,11 +157,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        state_uri = resolve_artana_state_uri()
-        if state_uri.startswith("postgresql://"):
-            return PostgresStore(state_uri)
-        msg = f"Unsupported ARTANA_STATE_URI scheme: {state_uri}"
-        raise ValueError(msg)
+        return get_shared_artana_postgres_store()
 
     def _create_runtime(
         self,
@@ -161,7 +168,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
             schema_name_fallback="mapping_judge_contract",
         )
         kernel = ArtanaKernel(
-            store=self._create_store(),
+            store=self._artana_store,
             model_port=model_port,
         )
         client = SingleStepModelClient(kernel=kernel)

@@ -9,12 +9,14 @@ from uuid import UUID
 from src.domain.entities.ingestion_job import (
     IngestionError,
     IngestionJob,
+    IngestionJobKind,
     IngestionStatus,
     IngestionTrigger,
     JobMetrics,
 )
 from src.domain.value_objects import Provenance
 from src.models.database.ingestion_job import (
+    IngestionJobKindEnum,
     IngestionJobModel,
     IngestionStatusEnum,
     IngestionTriggerEnum,
@@ -77,6 +79,7 @@ class IngestionJobMapper:
         return IngestionJob(
             id=UUID(model.id),
             source_id=UUID(model.source_id),
+            job_kind=IngestionJobKind(model.job_kind.value),
             trigger=IngestionTrigger(model.trigger.value),
             triggered_by=(UUID(model.triggered_by) if model.triggered_by else None),
             triggered_at=_from_iso_required(model.triggered_at),
@@ -101,6 +104,7 @@ class IngestionJobMapper:
         return {
             "id": str(job.id),
             "source_id": str(job.source_id),
+            "job_kind": IngestionJobKindEnum(job.job_kind.value),
             "trigger": IngestionTriggerEnum(job.trigger.value),
             "triggered_by": str(job.triggered_by) if job.triggered_by else None,
             "triggered_at": _to_iso_seconds(job.triggered_at),

@@ -5,11 +5,13 @@ Provides centralized dependency management for all application services.
 Combines Clean Architecture (auth system) with legacy patterns during transition.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator  # noqa: UP035
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -26,6 +28,9 @@ from src.infrastructure.dependency_injection.db_utils import (
     SessionLocal,
     resolve_async_database_url,
 )
+from src.infrastructure.llm.state.shared_postgres_store import (
+    get_shared_artana_postgres_store,
+)
 from src.infrastructure.repositories import (
     SqlAlchemySessionRepository,
     SqlAlchemySystemStatusRepository,
@@ -34,6 +39,11 @@ from src.infrastructure.repositories import (
 from src.infrastructure.security import JWTProvider, PasswordHasher
 
 from .service_factories import ApplicationServiceFactoryMixin
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from artana.store import PostgresStore
 
 # AsyncSession, async_sessionmaker, and create_async_engine are imported above
 
@@ -137,6 +147,10 @@ class DependencyContainer(ApplicationServiceFactoryMixin):
         self._mapping_judge_agent = None
         self._graph_connection_agent = None
         self._query_agent = None
+
+    def get_artana_store(self) -> PostgresStore:
+        """Return the shared process-local Artana PostgresStore."""
+        return get_shared_artana_postgres_store()
 
     def get_user_repository(self) -> SqlAlchemyUserRepository:
         if self._user_repository is None:

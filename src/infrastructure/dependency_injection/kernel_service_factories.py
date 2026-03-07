@@ -27,8 +27,10 @@ from src.application.services.kernel import (
 )
 from src.domain.agents.models import ModelCapability
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
+from src.infrastructure.factories.dictionary_search_harness_factory import (
+    create_dictionary_search_harness,
+)
 from src.infrastructure.llm.adapters import (
-    ArtanaDictionarySearchHarnessAdapter,
     ArtanaGraphConnectionAdapter,
     DeterministicConceptDecisionHarnessAdapter,
 )
@@ -115,7 +117,7 @@ class KernelServiceFactoryMixin:
         entity_repo = self._build_entity_repository(session)
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
         embedding_provider = HybridTextEmbeddingProvider()
-        search_harness = ArtanaDictionarySearchHarnessAdapter(
+        search_harness = create_dictionary_search_harness(
             dictionary_repo=dictionary_repo,
             embedding_provider=embedding_provider,
         )
@@ -194,7 +196,7 @@ class KernelServiceFactoryMixin:
     ) -> DictionaryPort:
         dictionary_repo = SqlAlchemyDictionaryRepository(session)
         embedding_provider = HybridTextEmbeddingProvider()
-        search_harness = ArtanaDictionarySearchHarnessAdapter(
+        search_harness = create_dictionary_search_harness(
             dictionary_repo=dictionary_repo,
             embedding_provider=embedding_provider,
         )

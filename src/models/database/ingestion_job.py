@@ -39,6 +39,13 @@ class IngestionTriggerEnum(str, Enum):
     RETRY = "retry"
 
 
+class IngestionJobKindEnum(str, Enum):
+    """SQLAlchemy enum for logical ingestion-job workload kinds."""
+
+    INGESTION = "ingestion"
+    PIPELINE_ORCHESTRATION = "pipeline_orchestration"
+
+
 class IngestionJobModel(Base):
     """
     SQLAlchemy model for data ingestion job executions.
@@ -57,6 +64,18 @@ class IngestionJobModel(Base):
         PGUUID(as_uuid=False),
         ForeignKey("user_data_sources.id"),
         nullable=False,
+        index=True,
+    )
+    job_kind: Mapped[IngestionJobKindEnum] = mapped_column(
+        SQLEnum(
+            IngestionJobKindEnum,
+            name="ingestionjobkindenum",
+            create_constraint=False,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+        default=IngestionJobKindEnum.INGESTION,
+        server_default=IngestionJobKindEnum.INGESTION.value,
         index=True,
     )
 
@@ -142,4 +161,7 @@ class IngestionJobModel(Base):
 
     def __repr__(self) -> str:
         """String representation of the ingestion job."""
-        return f"<IngestionJob(id={self.id}, source={self.source_id}, status={self.status})>"
+        return (
+            f"<IngestionJob(id={self.id}, source={self.source_id}, "
+            f"kind={self.job_kind}, status={self.status})>"
+        )
