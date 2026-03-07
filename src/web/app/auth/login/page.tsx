@@ -9,7 +9,11 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 import { AuthShell } from "@/components/auth/AuthShell"
 import { ADMIN_BRAND_NAME } from "@/lib/branding"
-import { resolvePostLoginDestination } from "@/lib/post-login-destination"
+import { navigateToPathWithReload } from "@/lib/navigation"
+import {
+  normalizePostLoginCallbackPath,
+  resolvePostLoginDestination,
+} from "@/lib/post-login-destination"
 
 function LoginContent() {
   const [error, setError] = useState<string | null>(null)
@@ -17,6 +21,13 @@ function LoginContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { update: updateSession } = useSession()
+  const requestedCallbackUrl = searchParams.get("callbackUrl")
+  const currentOrigin =
+    typeof window === "undefined" ? "" : window.location.origin
+  const sanitizedCallbackPath = currentOrigin
+    ? normalizePostLoginCallbackPath(requestedCallbackUrl, currentOrigin)
+    : null
+  const signInCallbackUrl = sanitizedCallbackPath ?? "/"
 
   useEffect(() => {
     // Check if redirected due to session expiration
@@ -36,9 +47,6 @@ function LoginContent() {
     setError(null)
 
     try {
-      const requestedCallbackUrl = searchParams.get("callbackUrl")
-      const signInCallbackUrl = requestedCallbackUrl || "/spaces"
-
       // Attempt sign in
       const result = await signIn("credentials", {
         email,
@@ -67,8 +75,9 @@ function LoginContent() {
 
           if (session?.user?.access_token && typeof session.user.access_token === 'string' && session.user.access_token.length > 0) {
             const destination = resolvePostLoginDestination(
-              requestedCallbackUrl,
+              sanitizedCallbackPath,
               session.user.role,
+              currentOrigin,
             )
             sessionReady = true
             router.push(destination)
@@ -83,7 +92,7 @@ function LoginContent() {
           // Fallback: session not ready after retries
           // Use full page reload as last resort to ensure session is established
           console.warn('Session not ready after retries, using full page reload')
-          window.location.href = signInCallbackUrl
+          navigateToPathWithReload(signInCallbackUrl)
         }
 
         // Note: setIsLoading(false) is intentionally omitted here
