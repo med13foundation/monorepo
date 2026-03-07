@@ -26,8 +26,13 @@ class RunProgressSnapshot:
 class RunProgressPort(Protocol):
     """Abstraction for reading live run progress."""
 
-    def get_run_progress(self, *, run_id: str) -> RunProgressSnapshot | None:
-        """Return progress for `run_id`, or `None` when unavailable."""
+    def get_run_progress(
+        self,
+        *,
+        run_id: str,
+        tenant_id: str,
+    ) -> RunProgressSnapshot | None:
+        """Return progress for `run_id` in `tenant_id`, or `None` when unavailable."""
 
 
 __all__ = ["RunProgressPort", "RunProgressSnapshot"]
