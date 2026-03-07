@@ -143,12 +143,7 @@ help: ## Show this help message
 venv: $(VENV) ## Create virtual environment if it doesn't exist
 $(VENV):
 	@echo "Creating virtual environment..."
-		@python3 - <<'PY'
-	import platform
-	import sys
-		if sys.version_info < (3, 13):
-		    raise SystemExit(f"Python 3.13+ required to create virtualenv (found {platform.python_version()})")
-	PY
+	@python3 -c "import platform, sys; assert sys.version_info >= (3, 13), f'Python 3.13+ required to create virtualenv (found {platform.python_version()})'"
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	@echo "Virtual environment created at $(VENV)"
@@ -788,32 +783,39 @@ clean-all: clean ## Clean everything including build artifacts
 
 # Next.js Admin Interface
 web-install: ## Install Next.js dependencies
-	cd src/web && npm install
+	$(call ensure_web_deps)
 
 web-build: ## Build Next.js admin interface
+	$(call ensure_web_deps)
 	cd src/web && $(NEXT_BUILD_ENV) npm run build
 
 web-clean: ## Remove Next.js build artifacts
 	rm -rf src/web/.next
 
 web-lint: ## Lint Next.js code
+	$(call ensure_web_deps)
 	cd src/web && npm run lint
 
 web-type-check: ## Type check Next.js code
+	$(call ensure_web_deps)
 	cd src/web && npm run type-check
 
 web-test: ## Run Next.js tests
+	$(call ensure_web_deps)
 	cd src/web && npm run test
 
 web-test-architecture: ## Run Next.js architecture validation tests (Server-Side Orchestration)
+	$(call ensure_web_deps)
 	cd src/web && npm test -- __tests__/architecture
 
 web-test-integration: ## Run Next.js integration tests (frontend-backend)
+	$(call ensure_web_deps)
 	cd src/web && npm test -- __tests__/integration
 
 web-test-all: web-test-architecture web-test-integration web-test ## Run all Next.js tests (architecture, integration, and unit tests)
 
 web-test-coverage: ## Run Next.js tests with coverage report
+	$(call ensure_web_deps)
 	cd src/web && npm run test:coverage
 
 web-visual-test: ## Run Percy-powered visual regression snapshots (requires PERCY_TOKEN)

@@ -23,16 +23,44 @@ LEGACY_REVISION_ALIAS = "004_relation_evidence_and_extraction_queue_contract"
 ROLLOUT_MARKER_REVISION = "005_rel_evidence_rollout_marker"
 RAW_STORAGE_KEY_VALUE = "raw/clinvar/variant-1001.json"
 PAYLOAD_REF_VALUE = "payload://clinvar/variant-1001"
+_ALEMBIC_SUBPROCESS_TEMPLATE = """
+import os
+import sys
+
+repo_root = os.environ["MED13_REPOSITORY_ROOT"]
+normalized_repo_root = os.path.normcase(os.path.abspath(repo_root))
+
+def _normalized(path: str) -> str:
+    resolved = path if path else os.getcwd()
+    return os.path.normcase(os.path.abspath(resolved))
+
+sys.path = [
+    path for path in sys.path
+    if _normalized(path) != normalized_repo_root
+]
+
+from alembic.config import main
+
+main(argv=[{command!r}, {revision!r}])
+""".strip()
+
+
+def _build_alembic_subprocess_command(*, command: str, revision: str) -> list[str]:
+    script = _ALEMBIC_SUBPROCESS_TEMPLATE.format(
+        command=command,
+        revision=revision,
+    )
+    return [sys.executable, "-c", script]
 
 
 def _run_alembic_upgrade(*, database_url: str, revision: str) -> None:
     env = dict(os.environ)
     env["ALEMBIC_DATABASE_URL"] = database_url
-    command = [
-        sys.executable,
-        "-c",
-        f"from alembic.config import main; main(argv=['upgrade', {revision!r}])",
-    ]
+    env["MED13_REPOSITORY_ROOT"] = str(REPOSITORY_ROOT)
+    command = _build_alembic_subprocess_command(
+        command="upgrade",
+        revision=revision,
+    )
     subprocess.run(
         command,
         check=True,
@@ -103,11 +131,11 @@ def test_022_run_id_columns_are_textual_after_upgrade(tmp_path: Path) -> None:
 def _run_alembic_downgrade(*, database_url: str, revision: str) -> None:
     env = dict(os.environ)
     env["ALEMBIC_DATABASE_URL"] = database_url
-    command = [
-        sys.executable,
-        "-c",
-        f"from alembic.config import main; main(argv=['downgrade', {revision!r}])",
-    ]
+    env["MED13_REPOSITORY_ROOT"] = str(REPOSITORY_ROOT)
+    command = _build_alembic_subprocess_command(
+        command="downgrade",
+        revision=revision,
+    )
     subprocess.run(
         command,
         check=True,

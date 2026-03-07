@@ -7,12 +7,8 @@ import logging
 import os
 from dataclasses import dataclass
 from threading import Lock
-from typing import TYPE_CHECKING
 
 from src.infrastructure.llm.config import resolve_artana_state_uri
-
-if TYPE_CHECKING:
-    from artana.store import PostgresStore
 
 _ARTANA_IMPORT_ERROR: Exception | None = None
 
