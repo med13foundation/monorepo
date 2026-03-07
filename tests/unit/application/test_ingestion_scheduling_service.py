@@ -851,11 +851,14 @@ def _build_running_job(
     source_id: UUID,
     *,
     started_at: datetime | None = None,
+    job_kind: IngestionJobKind = IngestionJobKind.INGESTION,
+    metadata: JSONObject | None = None,
 ) -> IngestionJob:
     now = started_at or datetime.now(UTC)
     return IngestionJob(
         id=uuid4(),
         source_id=source_id,
+        job_kind=job_kind,
         trigger=IngestionTrigger.SCHEDULED,
         triggered_by=None,
         status=IngestionStatus.RUNNING,
@@ -869,7 +872,7 @@ def _build_running_job(
             processing_steps=("scheduled_ingestion",),
             quality_score=None,
         ),
-        metadata={},
+        metadata=metadata or {},
         source_config_snapshot={},
     )
 
@@ -1315,6 +1318,59 @@ async def test_run_due_jobs_marks_stale_running_jobs_failed() -> None:
     failure_metadata = latest_stale_revision.metadata.get("failure")
     assert isinstance(failure_metadata, dict)
     assert failure_metadata.get("error_type") == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_run_due_jobs_syncs_pipeline_metadata_for_stale_pipeline_jobs() -> None:
+    source = _build_source(
+        IngestionSchedule(
+            enabled=False,
+            frequency=ScheduleFrequency.MANUAL,
+            start_time=datetime.now(UTC),
+        ),
+    )
+    stale_job = _build_running_job(
+        source.id,
+        started_at=datetime.now(UTC) - timedelta(minutes=15),
+        job_kind=IngestionJobKind.PIPELINE_ORCHESTRATION,
+        metadata={
+            "pipeline_run": {
+                "run_id": "run-stale",
+                "status": "running",
+                "queue_status": "running",
+                "accepted_at": "2026-03-07T02:52:02+00:00",
+                "started_at": "2026-03-07T02:52:06+00:00",
+                "completed_at": None,
+                "updated_at": "2026-03-07T02:56:22+00:00",
+            },
+        },
+    )
+    job_repo = StubJobRepository(initial_jobs=[stale_job])
+    service = IngestionSchedulingService(
+        scheduler=InMemoryScheduler(),
+        source_repository=StubSourceRepository(source),
+        job_repository=job_repo,
+        ingestion_services={},
+        options=_build_ingestion_options(
+            scheduler_stale_running_timeout_seconds=300,
+            ingestion_job_hard_timeout_seconds=300,
+        ),
+    )
+
+    await service.run_due_jobs(as_of=datetime.now(UTC))
+
+    stale_revisions = [job for job in job_repo.saved if job.id == stale_job.id]
+    assert stale_revisions
+    latest_stale_revision = stale_revisions[-1]
+    assert latest_stale_revision.status == IngestionStatus.FAILED
+    pipeline_metadata = latest_stale_revision.metadata.get("pipeline_run")
+    assert isinstance(pipeline_metadata, dict)
+    assert pipeline_metadata.get("status") == "failed"
+    assert pipeline_metadata.get("queue_status") == "failed"
+    assert pipeline_metadata.get("completed_at") is not None
+    assert pipeline_metadata.get("updated_at") is not None
+    assert pipeline_metadata.get("error_category") == "timeout"
+    assert isinstance(pipeline_metadata.get("last_error"), str)
 
 
 @pytest.mark.asyncio

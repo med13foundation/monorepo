@@ -29,6 +29,31 @@ if TYPE_CHECKING:
 else:
     JSONObject = dict[str, object]  # Runtime type stub
 
+_TERMINAL_PIPELINE_ROW_STATUSES: frozenset[str] = frozenset(
+    {"completed", "failed", "cancelled", "partial"},
+)
+
+
+def _resolve_monitor_pipeline_status(
+    *,
+    row_status: str | None,
+    pipeline_status: str | None,
+) -> str | None:
+    if row_status in _TERMINAL_PIPELINE_ROW_STATUSES:
+        return row_status
+    return pipeline_status or row_status
+
+
+def _resolve_monitor_pipeline_queue_status(
+    *,
+    row_status: str | None,
+    pipeline_status: str | None,
+    queue_status: str | None,
+) -> str | None:
+    if row_status in _TERMINAL_PIPELINE_ROW_STATUSES:
+        return row_status
+    return queue_status or pipeline_status or row_status
+
 
 class SourceWorkflowMonitorPipelineMixin:
     """Data loading and shaping helpers for source workflow monitoring."""
@@ -222,15 +247,22 @@ class SourceWorkflowMonitorPipelineMixin:
         executed_query = normalize_optional_string(metadata.get("executed_query"))
         if executed_query is None:
             executed_query = normalize_optional_string(source_metadata.get("query"))
+        row_status = normalize_optional_string(row.status.value)
+        pipeline_status = normalize_optional_string(pipeline_payload.get("status"))
+        queue_status = normalize_optional_string(pipeline_payload.get("queue_status"))
 
         return {
             "job_id": str(row.id),
             "run_id": str(pipeline_payload.get("run_id")),
             "ingestion_job_id": run_ingestion_job_id,
-            "status": normalize_optional_string(pipeline_payload.get("status"))
-            or str(row.status.value),
-            "queue_status": normalize_optional_string(
-                pipeline_payload.get("queue_status"),
+            "status": _resolve_monitor_pipeline_status(
+                row_status=row_status,
+                pipeline_status=pipeline_status,
+            ),
+            "queue_status": _resolve_monitor_pipeline_queue_status(
+                row_status=row_status,
+                pipeline_status=pipeline_status,
+                queue_status=queue_status,
             ),
             "triggered_at": row.triggered_at,
             "accepted_at": normalize_optional_string(
