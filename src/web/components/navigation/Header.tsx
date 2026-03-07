@@ -2,9 +2,10 @@
 
 import { SpaceSelector } from '@/components/research-spaces/SpaceSelector'
 import { useSpaceContext } from '@/components/space-context-provider'
+import { BrandLogo } from '@/components/branding/BrandLogo'
+import { ADMIN_BRAND_NAME, BRAND_LOGO_ALT } from '@/lib/branding'
 import { UserMenu } from './UserMenu'
 import Link from 'next/link'
-import Image from 'next/image'
 
 export function Header() {
   const { currentSpaceId } = useSpaceContext()
@@ -19,15 +20,14 @@ export function Header() {
               className="flex shrink-0 items-center gap-2"
               prefetch={true}
             >
-              <Image
-                src="/logo.svg"
-                alt="MED13 Logo"
+              <BrandLogo
+                alt={BRAND_LOGO_ALT}
                 width={32}
                 height={32}
                 className="size-8 sm:size-10"
                 priority
               />
-              <span className="text-lg font-bold sm:text-xl">MED13 Admin</span>
+              <span className="text-lg font-bold sm:text-xl">{ADMIN_BRAND_NAME}</span>
             </Link>
             <div className="min-w-0 max-w-xs flex-1">
               <SpaceSelector currentSpaceId={currentSpaceId || undefined} />

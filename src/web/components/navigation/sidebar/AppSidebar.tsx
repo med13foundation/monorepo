@@ -19,6 +19,7 @@ import { NavUser } from "./NavUser"
 import type { ResearchSpace } from "@/types/research-space"
 import type { SidebarUserInfo } from "@/types/navigation"
 import { MembershipRole } from "@/types/research-space"
+import { BRAND_LOGO_ALT } from "@/lib/branding"
 import {
   buildDashboardNavItems,
   buildSpaceNavItems,
@@ -79,7 +80,7 @@ export function AppSidebar({
 
   const logoConfig = {
     src: "/logo.svg",
-    alt: "MED13 Resource Library",
+    alt: BRAND_LOGO_ALT,
     width: 24,
     height: 24,
   }

@@ -8,6 +8,7 @@ import { LoginForm } from "@/components/auth/LoginForm"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 import { AuthShell } from "@/components/auth/AuthShell"
+import { ADMIN_BRAND_NAME } from "@/lib/branding"
 import { resolvePostLoginDestination } from "@/lib/post-login-destination"
 
 function LoginContent() {
@@ -97,7 +98,7 @@ function LoginContent() {
 
   return (
     <AuthShell
-      title="MED13 Admin"
+      title={ADMIN_BRAND_NAME}
       description="Sign in to access Research Spaces."
     >
       {error && (
@@ -124,7 +125,7 @@ export default function LoginPage() {
     <Suspense
       fallback={
         <AuthShell
-          title="MED13 Admin"
+          title={ADMIN_BRAND_NAME}
           description="Sign in to access Research Spaces."
           isLoading
         >
