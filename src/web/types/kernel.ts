@@ -589,6 +589,7 @@ export interface SourceWorkflowEventsResponse {
 }
 
 export interface SourceWorkflowCardStatusPayload {
+  active_pipeline_run_id?: string | null
   last_pipeline_status: string | null
   last_failed_stage: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
   pending_paper_count: number

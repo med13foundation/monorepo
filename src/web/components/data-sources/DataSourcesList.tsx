@@ -77,6 +77,7 @@ interface DataSourcesListProps {
 }
 
 export interface SourceWorkflowCardStatus {
+  active_pipeline_run_id?: string | null
   last_pipeline_status: string | null
   last_failed_stage?: 'ingestion' | 'enrichment' | 'extraction' | 'graph' | null
   pending_paper_count: number
@@ -404,6 +405,19 @@ export function DataSourcesList({
     setLiveWorkflowStatusBySource(workflowStatusBySource ?? {})
   }, [workflowStatusBySource])
 
+  useEffect(() => {
+    for (const [sourceId, status] of Object.entries(liveWorkflowStatusBySource)) {
+      if (!isActivePipelineStatus(status.last_pipeline_status)) {
+        delete activeRunIdBySourceRef.current[sourceId]
+        continue
+      }
+      const activeRunId = status.active_pipeline_run_id
+      if (typeof activeRunId === 'string' && activeRunId.trim().length > 0) {
+        activeRunIdBySourceRef.current[sourceId] = activeRunId
+      }
+    }
+  }, [liveWorkflowStatusBySource])
+
   const pollingSourceIds = useMemo(() => {
     const ids: string[] = []
     for (const source of resolvedDataSources) {
@@ -610,7 +624,10 @@ export function DataSourcesList({
   }
 
   const handleStopPipelineRun = async (source: DataSource) => {
-    const activeRunId = activeRunIdBySourceRef.current[source.id]
+    const activeRunId =
+      activeRunIdBySourceRef.current[source.id] ??
+      liveWorkflowStatusBySource[source.id]?.active_pipeline_run_id ??
+      null
     if (!activeRunId) {
       toast.error('No active run id available for cancellation.')
       return

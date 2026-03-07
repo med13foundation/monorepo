@@ -149,12 +149,35 @@ def _coerce_card_count(raw_value: object) -> int:
     return 0
 
 
+def _resolve_active_pipeline_run_id(
+    monitor_payload: Mapping[str, object],
+) -> str | None:
+    last_run_raw = monitor_payload.get("last_run")
+    if not isinstance(last_run_raw, dict):
+        return None
+
+    run_status = last_run_raw.get("status")
+    if not isinstance(run_status, str) or run_status not in {
+        "queued",
+        "retrying",
+        "running",
+    }:
+        return None
+
+    run_id = last_run_raw.get("run_id")
+    if not isinstance(run_id, str):
+        return None
+    normalized_run_id = run_id.strip()
+    return normalized_run_id or None
+
+
 def build_workflow_card_status(
     monitor_payload: Mapping[str, object],
 ) -> dict[str, object]:
     counters_raw = monitor_payload.get("operational_counters")
     counters = counters_raw if isinstance(counters_raw, dict) else {}
     return {
+        "active_pipeline_run_id": _resolve_active_pipeline_run_id(monitor_payload),
         "last_pipeline_status": (
             counters.get("last_pipeline_status")
             if isinstance(counters.get("last_pipeline_status"), str)

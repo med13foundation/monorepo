@@ -83,6 +83,7 @@ describe('workflow stream parser', () => {
         {
           source_id: 'source-1',
           workflow_status: {
+            active_pipeline_run_id: 'run-1',
             last_pipeline_status: 'running',
             last_failed_stage: null,
             pending_paper_count: 2,
@@ -128,6 +129,7 @@ describe('workflow stream parser', () => {
     }))
 
     expect(bootstrap?.sources).toHaveLength(1)
+    expect(bootstrap?.sources[0]?.workflow_status.active_pipeline_run_id).toBe('run-1')
     expect(card?.workflow_status.graph_edges_total).toBe(9)
   })
 

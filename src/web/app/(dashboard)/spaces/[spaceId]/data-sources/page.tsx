@@ -114,6 +114,16 @@ function extractLastFailedStage(monitor: { last_run: unknown }): PipelineStage |
   return 'ingestion'
 }
 
+function resolveActivePipelineRunId(monitor: { last_run: unknown }): string | null {
+  const lastRun = asObject(monitor.last_run)
+  const runStatus = typeof lastRun.status === 'string' ? lastRun.status : null
+  if (runStatus !== 'queued' && runStatus !== 'retrying' && runStatus !== 'running') {
+    return null
+  }
+  const runId = typeof lastRun.run_id === 'string' ? lastRun.run_id.trim() : ''
+  return runId.length > 0 ? runId : null
+}
+
 export default async function SpaceDataSourcesPage({
   params,
   searchParams,
@@ -202,6 +212,7 @@ export default async function SpaceDataSourcesPage({
           return [
             source.id,
             {
+              active_pipeline_run_id: resolveActivePipelineRunId(monitor),
               last_pipeline_status:
                 typeof counters.last_pipeline_status === 'string'
                   ? counters.last_pipeline_status
