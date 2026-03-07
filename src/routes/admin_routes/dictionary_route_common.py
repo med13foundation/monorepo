@@ -11,6 +11,9 @@ from src.application.services.kernel.dictionary_management_service import (
 from src.domain.entities.user import User, UserRole
 from src.domain.ports import DictionaryPort
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
+from src.infrastructure.factories.dictionary_search_harness_factory import (
+    create_dictionary_search_harness,
+)
 from src.infrastructure.repositories.kernel.kernel_dictionary_repository import (
     SqlAlchemyDictionaryRepository,
 )
@@ -34,13 +37,9 @@ def get_dictionary_service(
     session: Session = Depends(get_admin_db_session),
 ) -> DictionaryPort:
     """Build a DictionaryManagementService backed by a scoped admin DB session."""
-    from src.infrastructure.llm.adapters.dictionary_search_harness_adapter import (
-        ArtanaDictionarySearchHarnessAdapter,
-    )
-
     repo = SqlAlchemyDictionaryRepository(session)
     embedding_provider = HybridTextEmbeddingProvider()
-    search_harness = ArtanaDictionarySearchHarnessAdapter(
+    search_harness = create_dictionary_search_harness(
         dictionary_repo=repo,
         embedding_provider=embedding_provider,
     )

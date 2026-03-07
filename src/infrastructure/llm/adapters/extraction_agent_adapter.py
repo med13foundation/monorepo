@@ -190,7 +190,10 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
             )
 
     async def close(self) -> None:
-        await self._model_port.aclose()
+        try:
+            await self._kernel.close()
+        finally:
+            await self._model_port.aclose()
 
     @staticmethod
     def _has_openai_key() -> bool:

@@ -256,7 +256,10 @@ class ArtanaDictionarySearchHarnessAdapter(DictionarySearchHarnessPort):
                     workflow=workflow,
                 )
             finally:
-                await model_port.aclose()
+                try:
+                    await kernel.close()
+                finally:
+                    await model_port.aclose()
 
         outcome = self._run_coroutine(execute_workflow())
         status = getattr(outcome, "status", None)

@@ -182,7 +182,10 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
             )
 
     async def close(self) -> None:
-        await self._model_port.aclose()
+        try:
+            await self._kernel.close()
+        finally:
+            await self._model_port.aclose()
 
     def get_last_run_id(self) -> str | None:
         """Return the last Artana run id if available."""

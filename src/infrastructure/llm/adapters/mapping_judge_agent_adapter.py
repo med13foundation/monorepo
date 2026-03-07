@@ -116,7 +116,10 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
                     client=client,
                 )
             finally:
-                await model_port.aclose()
+                try:
+                    await kernel.close()
+                finally:
+                    await model_port.aclose()
 
         contract = self._run_contract_coroutine(execute())
         logger.info(

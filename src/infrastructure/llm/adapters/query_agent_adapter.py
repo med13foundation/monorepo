@@ -372,7 +372,10 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
             return self._create_error_contract(source_key, str(exc))
 
     async def close(self) -> None:
-        await self._model_port.aclose()
+        try:
+            await self._kernel.close()
+        finally:
+            await self._model_port.aclose()
 
     def get_last_run_id(self) -> str | None:
         return self._last_run_id

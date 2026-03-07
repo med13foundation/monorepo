@@ -257,6 +257,11 @@ def _build_adapter(
             "_create_store",
             return_value=object(),
         ),
+        patch.object(
+            ArtanaDictionarySearchHarnessAdapter,
+            "_create_tenant",
+            return_value=object(),
+        ),
     ):
         adapter = ArtanaDictionarySearchHarnessAdapter(
             dictionary_repo=repo,
@@ -439,6 +444,11 @@ def test_search_creates_runtime_per_call_to_avoid_loop_bound_reuse() -> None:
         patch.object(
             ArtanaDictionarySearchHarnessAdapter,
             "_create_store",
+            return_value=object(),
+        ),
+        patch.object(
+            ArtanaDictionarySearchHarnessAdapter,
+            "_create_tenant",
             return_value=object(),
         ),
     ):

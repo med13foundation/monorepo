@@ -39,6 +39,7 @@ from src.domain.entities.discovery_search_job import (
 )
 from src.domain.entities.ingestion_job import (
     IngestionJob,
+    IngestionJobKind,
     IngestionStatus,
     IngestionTrigger,
 )
@@ -355,6 +356,83 @@ class StubJobRepository(IngestionJobRepository):
         limit: int = 10,
     ) -> list[tuple[IngestionJob, IngestionError]]:
         _unsupported("get_recent_failures")
+
+    def find_latest_by_source_and_kind(
+        self,
+        *,
+        source_id: UUID,
+        job_kind: IngestionJobKind,
+        limit: int = 50,
+    ) -> list[IngestionJob]:
+        matching = [
+            job
+            for job in self._latest_jobs()
+            if job.source_id == source_id and job.job_kind == job_kind
+        ]
+        matching.sort(key=lambda job: job.triggered_at, reverse=True)
+        return matching[:limit]
+
+    def find_active_pipeline_job_for_source(
+        self,
+        *,
+        source_id: UUID,
+        exclude_run_id: str | None = None,
+    ) -> IngestionJob | None:
+        for job in self._latest_jobs():
+            if job.source_id != source_id:
+                continue
+            if job.job_kind != IngestionJobKind.PIPELINE_ORCHESTRATION:
+                continue
+            run_id = str(job.metadata.get("run_id", "")).strip()
+            if exclude_run_id is not None and run_id == exclude_run_id:
+                continue
+            if job.status == IngestionStatus.RUNNING:
+                return job
+            queue_status = str(job.metadata.get("queue_status", "")).strip().lower()
+            if queue_status in {"queued", "retrying"}:
+                return job
+        return None
+
+    def count_active_pipeline_queue_jobs(self) -> int:
+        count = 0
+        for job in self._latest_jobs():
+            if job.job_kind != IngestionJobKind.PIPELINE_ORCHESTRATION:
+                continue
+            queue_status = str(job.metadata.get("queue_status", "")).strip().lower()
+            if queue_status in {"queued", "retrying"}:
+                count += 1
+        return count
+
+    def claim_next_pipeline_job(
+        self,
+        *,
+        worker_id: str,
+        as_of: datetime,
+    ) -> IngestionJob | None:
+        _ = worker_id, as_of
+        return None
+
+    def heartbeat_pipeline_job(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        heartbeat_at: datetime,
+    ) -> IngestionJob | None:
+        _ = job_id, worker_id, heartbeat_at
+        return None
+
+    def mark_pipeline_job_retryable(
+        self,
+        *,
+        job_id: UUID,
+        worker_id: str,
+        next_attempt_at: datetime,
+        last_error: str,
+        error_category: str | None,
+    ) -> IngestionJob | None:
+        _ = job_id, worker_id, next_attempt_at, last_error, error_category
+        return None
 
 
 class StubPubMedIngestionService:

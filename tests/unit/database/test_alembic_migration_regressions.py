@@ -8,14 +8,13 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from shutil import which
 from uuid import uuid4
 
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_HEAD_REVISION = "024_claim_first_orchestration"
-CURRENT_HEAD_REVISION = "035_session_token_uniqueness"
+CURRENT_HEAD_REVISION = "036_pipeline_job_kind"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"
@@ -29,14 +28,11 @@ PAYLOAD_REF_VALUE = "payload://clinvar/variant-1001"
 def _run_alembic_upgrade(*, database_url: str, revision: str) -> None:
     env = dict(os.environ)
     env["ALEMBIC_DATABASE_URL"] = database_url
-    venv_alembic = Path(sys.executable).with_name("alembic")
-    command = [str(venv_alembic), "upgrade", revision]
-    if not venv_alembic.exists():
-        fallback_alembic = which("alembic")
-        if fallback_alembic is None:
-            msg = "alembic executable not found on PATH"
-            raise RuntimeError(msg)
-        command = [fallback_alembic, "upgrade", revision]
+    command = [
+        sys.executable,
+        "-c",
+        f"from alembic.config import main; main(argv=['upgrade', {revision!r}])",
+    ]
     subprocess.run(
         command,
         check=True,
@@ -107,14 +103,11 @@ def test_022_run_id_columns_are_textual_after_upgrade(tmp_path: Path) -> None:
 def _run_alembic_downgrade(*, database_url: str, revision: str) -> None:
     env = dict(os.environ)
     env["ALEMBIC_DATABASE_URL"] = database_url
-    venv_alembic = Path(sys.executable).with_name("alembic")
-    command = [str(venv_alembic), "downgrade", revision]
-    if not venv_alembic.exists():
-        fallback_alembic = which("alembic")
-        if fallback_alembic is None:
-            msg = "alembic executable not found on PATH"
-            raise RuntimeError(msg)
-        command = [fallback_alembic, "downgrade", revision]
+    command = [
+        sys.executable,
+        "-c",
+        f"from alembic.config import main; main(argv=['downgrade', {revision!r}])",
+    ]
     subprocess.run(
         command,
         check=True,

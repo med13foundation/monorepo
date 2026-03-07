@@ -49,6 +49,7 @@ os.environ.setdefault(
     "MED13_DEV_JWT_SECRET",
     "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz",
 )
+os.environ.setdefault("MED13_ENABLE_ARTANA_DICTIONARY_SEARCH_HARNESS", "0")
 
 
 @compiles(JSONB, "sqlite")
