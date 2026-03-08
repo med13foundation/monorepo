@@ -1,6 +1,7 @@
 "use server"
 
 import { revalidatePath } from 'next/cache'
+import { getAvailableModels, getModelsForCapability } from '@/lib/api/ai-models'
 import {
   configureDataSourceSchedule,
   createDataSourceInSpace,
@@ -19,6 +20,7 @@ import type {
   ScheduleConfigurationResponse,
   UpdateDataSourcePayload,
 } from '@/lib/api/data-sources'
+import type { AvailableModelsResponse, ModelSpec } from '@/types/ai-models'
 import { getActionErrorMessage, requireAccessToken } from '@/app/actions/action-utils'
 
 type ActionResult<T> =
@@ -157,6 +159,40 @@ export async function fetchIngestionJobHistoryAction(
     return {
       success: false,
       error: getActionErrorMessage(error, 'Failed to load ingestion history'),
+    }
+  }
+}
+
+export async function fetchAvailableModelsAction(): Promise<ActionResult<AvailableModelsResponse>> {
+  try {
+    const token = await requireAccessToken()
+    const response = await getAvailableModels(token)
+    return { success: true, data: response }
+  } catch (error: unknown) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('[ServerAction] fetchAvailableModelsAction failed:', error)
+    }
+    return {
+      success: false,
+      error: getActionErrorMessage(error, 'Failed to load available models'),
+    }
+  }
+}
+
+export async function fetchModelsForCapabilityAction(
+  capability: string,
+): Promise<ActionResult<ModelSpec[]>> {
+  try {
+    const token = await requireAccessToken()
+    const response = await getModelsForCapability(capability, token)
+    return { success: true, data: response }
+  } catch (error: unknown) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('[ServerAction] fetchModelsForCapabilityAction failed:', error)
+    }
+    return {
+      success: false,
+      error: getActionErrorMessage(error, 'Failed to load models for capability'),
     }
   }
 }

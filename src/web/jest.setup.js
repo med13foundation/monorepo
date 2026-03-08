@@ -5,6 +5,8 @@
 import '@testing-library/jest-dom'
 import { TextDecoder, TextEncoder } from 'util'
 
+jest.mock('server-only', () => ({}))
+
 if (!global.TextEncoder) {
   global.TextEncoder = TextEncoder
 }

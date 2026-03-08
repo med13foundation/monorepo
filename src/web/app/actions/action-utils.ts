@@ -69,6 +69,12 @@ export function getActionErrorMessage(error: unknown, fallback: string): string 
   return fallback
 }
 
+export function getActionErrorStatus(error: unknown): number | undefined {
+  const axiosError = error as AxiosError
+  const status = axiosError.response?.status
+  return typeof status === 'number' ? status : undefined
+}
+
 export async function requireAccessToken(): Promise<string> {
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
