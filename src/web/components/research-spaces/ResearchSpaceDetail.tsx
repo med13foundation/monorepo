@@ -1,7 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { deleteResearchSpaceAction, removeMemberAction, updateResearchSpaceAction } from '@/app/actions/research-spaces'
+import {
+  deleteResearchSpaceAction,
+  removeMemberAction,
+  updateMemberRoleAction,
+  updateResearchSpaceAction,
+} from '@/app/actions/research-spaces'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -9,7 +14,6 @@ import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SpaceMembersList } from './SpaceMembersList'
 import { InviteMemberDialog } from './InviteMemberDialog'
-import { UpdateRoleDialog } from './UpdateRoleDialog'
 import { Loader2, Settings, Trash2, Users, Database, BarChart3, FileText } from 'lucide-react'
 import { SpaceStatus, MembershipRole } from '@/types/research-space'
 import type { ResearchSpace, ResearchSpaceMembership } from '@/types/research-space'
@@ -116,22 +120,48 @@ export function ResearchSpaceDetail({
   ]
 
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false)
-  const [updateRoleDialogOpen, setUpdateRoleDialogOpen] = useState(false)
-  const [selectedMembershipId, setSelectedMembershipId] = useState<string | null>(null)
-  const [selectedCurrentRole, setSelectedCurrentRole] = useState<MembershipRole | null>(null)
   const [pendingMembershipId, setPendingMembershipId] = useState<string | null>(null)
   const [isDeletingSpace, setIsDeletingSpace] = useState(false)
 
-  const membershipList = memberships
+  const [membershipList, setMembershipList] = useState<ResearchSpaceMembership[]>(memberships)
   const canManage = access.canManageMembers
   const isOwner = access.isOwner
   const canEditSpace = access.canEditSpace
   const showMembershipNotice = access.showMembershipNotice
 
-  const handleUpdateRole = (membershipId: string, currentRole: MembershipRole) => {
-    setSelectedMembershipId(membershipId)
-    setSelectedCurrentRole(currentRole)
-    setUpdateRoleDialogOpen(true)
+  useEffect(() => {
+    setMembershipList(memberships)
+  }, [memberships])
+
+  const handleUpdateRole = async (membershipId: string, nextRole: MembershipRole) => {
+    const currentMembership = membershipList.find((membership) => membership.id === membershipId)
+    if (!currentMembership || currentMembership.role === nextRole) {
+      return
+    }
+
+    try {
+      setPendingMembershipId(membershipId)
+      const result = await updateMemberRoleAction(spaceId, membershipId, {
+        role: nextRole,
+      })
+      if (!result.success) {
+        toast.error(result.error)
+        return
+      }
+
+      setMembershipList((prev) =>
+        prev.map((membership) =>
+          membership.id === membershipId ? result.data : membership,
+        ),
+      )
+      toast.success('Member role updated')
+      router.refresh()
+    } catch (error) {
+      console.error('Failed to update role:', error)
+      toast.error('Failed to update role')
+    } finally {
+      setPendingMembershipId(null)
+    }
   }
 
   const handleRemoveMember = async (membershipId: string) => {
@@ -143,6 +173,7 @@ export function ResearchSpaceDetail({
           toast.error(result.error)
           return
         }
+        setMembershipList((prev) => prev.filter((membership) => membership.id !== membershipId))
         toast.success('Member removed')
         router.refresh()
       } catch (error) {
@@ -609,17 +640,6 @@ export function ResearchSpaceDetail({
         onOpenChange={setInviteDialogOpen}
         onSuccess={() => router.refresh()}
       />
-
-      {selectedMembershipId && selectedCurrentRole && (
-        <UpdateRoleDialog
-          spaceId={spaceId}
-          membershipId={selectedMembershipId}
-          currentRole={selectedCurrentRole}
-          open={updateRoleDialogOpen}
-          onOpenChange={setUpdateRoleDialogOpen}
-          onSuccess={() => router.refresh()}
-        />
-      )}
     </div>
   )
 }
