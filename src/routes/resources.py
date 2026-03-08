@@ -9,6 +9,6 @@ router = APIRouter(prefix="/resources", tags=["resources"])
 
 
 @router.get("/", summary="List curated resources")
-async def get_resources() -> Sequence[Resource]:
+def get_resources() -> Sequence[Resource]:
     """Return curated resources using the service layer."""
     return list_resources()

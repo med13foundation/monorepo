@@ -28,7 +28,7 @@ router = APIRouter()
     response_model=DictionaryRelationSynonymListResponse,
     summary="List dictionary relation synonyms",
 )
-async def list_dictionary_relation_synonyms(
+def list_dictionary_relation_synonyms(
     relation_type_id: str | None = Query(
         default=None,
         description="Filter by canonical relation type ID",
@@ -57,7 +57,7 @@ async def list_dictionary_relation_synonyms(
     response_model=DictionaryRelationTypeResponse,
     summary="Resolve relation synonym to canonical relation type",
 )
-async def resolve_dictionary_relation_synonym(
+def resolve_dictionary_relation_synonym(
     synonym: str = Query(..., description="Relation synonym to resolve"),
     include_inactive: bool = Query(
         default=False,
@@ -83,7 +83,7 @@ async def resolve_dictionary_relation_synonym(
     status_code=status.HTTP_201_CREATED,
     summary="Create dictionary relation synonym",
 )
-async def create_dictionary_relation_synonym(
+def create_dictionary_relation_synonym(
     request: DictionaryRelationSynonymCreateRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -121,7 +121,7 @@ async def create_dictionary_relation_synonym(
     response_model=DictionaryRelationSynonymResponse,
     summary="Set dictionary relation synonym review status",
 )
-async def set_dictionary_relation_synonym_review_status(
+def set_dictionary_relation_synonym_review_status(
     synonym_id: int,
     request: VariableDefinitionReviewStatusRequest,
     current_user: User = Depends(require_admin_user),
@@ -159,7 +159,7 @@ async def set_dictionary_relation_synonym_review_status(
     response_model=DictionaryRelationSynonymResponse,
     summary="Revoke dictionary relation synonym",
 )
-async def revoke_dictionary_relation_synonym(
+def revoke_dictionary_relation_synonym(
     synonym_id: int,
     request: VariableDefinitionRevokeRequest,
     current_user: User = Depends(require_admin_user),

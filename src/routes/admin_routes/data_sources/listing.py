@@ -28,7 +28,7 @@ router = APIRouter()
     summary="List data sources",
     description="Retrieve a paginated list of all data sources with optional filtering.",
 )
-async def list_data_sources(
+def list_data_sources(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     status: SourceStatus | None = Query(None, description="Filter by status"),

@@ -7,7 +7,7 @@ Provides cross-entity search capabilities with relevance scoring.
 from collections.abc import Mapping, Sequence
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -83,7 +83,7 @@ def get_search_service(db: Session = Depends(get_session)) -> "UnifiedSearchServ
     summary="Unified search across all entities",
     response_model=UnifiedSearchResponse,
 )
-async def unified_search(
+def unified_search(
     space_id: UUID = Query(..., description="Research space scope"),
     query: str = Query(..., min_length=1, max_length=200, description="Search query"),
     *,
@@ -102,48 +102,45 @@ async def unified_search(
 
     Returns results sorted by relevance score with metadata for each entity type.
     """
-    try:
-        verify_space_membership(
-            space_id,
-            current_user.id,
-            membership_service,
-            session,
-            current_user.role,
-        )
-        raw = service.search(
-            research_space_id=str(space_id),
-            query=query,
-            entity_types=entity_types,
-            limit=limit,
-        )
+    verify_space_membership(
+        space_id,
+        current_user.id,
+        membership_service,
+        session,
+        current_user.role,
+    )
+    raw = service.search(
+        research_space_id=str(space_id),
+        query=query,
+        entity_types=entity_types,
+        limit=limit,
+    )
 
-        payload = raw if isinstance(raw, Mapping) else {}
-        result_items = _build_search_results(payload.get("results"))
-        query_field = payload.get("query")
-        query_value = query_field if isinstance(query_field, str) else query
+    payload = raw if isinstance(raw, Mapping) else {}
+    result_items = _build_search_results(payload.get("results"))
+    query_field = payload.get("query")
+    query_value = query_field if isinstance(query_field, str) else query
 
-        total_results_value_obj = payload.get("total_results")
-        total_results_value = (
-            int(total_results_value_obj)
-            if isinstance(total_results_value_obj, int | float)
-            else len(result_items)
-        )
+    total_results_value_obj = payload.get("total_results")
+    total_results_value = (
+        int(total_results_value_obj)
+        if isinstance(total_results_value_obj, int | float)
+        else len(result_items)
+    )
 
-        breakdown_value_obj = payload.get("entity_breakdown")
-        breakdown_value = (
-            _ensure_breakdown(breakdown_value_obj)
-            if isinstance(breakdown_value_obj, Mapping)
-            else {}
-        )
+    breakdown_value_obj = payload.get("entity_breakdown")
+    breakdown_value = (
+        _ensure_breakdown(breakdown_value_obj)
+        if isinstance(breakdown_value_obj, Mapping)
+        else {}
+    )
 
-        return UnifiedSearchResponse(
-            query=query_value,
-            total_results=total_results_value,
-            entity_breakdown=breakdown_value,
-            results=result_items,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search failed: {e!s}")
+    return UnifiedSearchResponse(
+        query=query_value,
+        total_results=total_results_value,
+        entity_breakdown=breakdown_value,
+        results=result_items,
+    )
 
 
 @router.get(
@@ -151,7 +148,7 @@ async def unified_search(
     summary="Search suggestions",
     response_model=SearchSuggestionResponse,
 )
-async def search_suggestions(
+def search_suggestions(
     query: str = Query(
         ...,
         min_length=1,
@@ -166,25 +163,19 @@ async def search_suggestions(
 
     Useful for autocomplete functionality in search interfaces.
     """
-    try:
-        # For now, return basic suggestions from recent/popular searches
-        # In a full implementation, this would use search analytics
-        suggestions = [
-            f"{query} entities",
-            f"{query} observations",
-            f"{query} relations",
-        ][:limit]
+    # For now, return basic suggestions from recent/popular searches
+    # In a full implementation, this would use search analytics
+    suggestions = [
+        f"{query} entities",
+        f"{query} observations",
+        f"{query} relations",
+    ][:limit]
 
-        return SearchSuggestionResponse(
-            query=query,
-            suggestions=suggestions,
-            total_suggestions=len(suggestions),
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get suggestions: {e!s}",
-        )
+    return SearchSuggestionResponse(
+        query=query,
+        suggestions=suggestions,
+        total_suggestions=len(suggestions),
+    )
 
 
 @router.get(
@@ -192,7 +183,7 @@ async def search_suggestions(
     summary="Search statistics",
     response_model=SearchStatisticsResponse,
 )
-async def search_statistics(
+def search_statistics(
     space_id: UUID = Query(..., description="Research space scope"),
     current_user: User = Depends(get_current_active_user),
     membership_service: MembershipManagementService = Depends(get_membership_service),
@@ -204,22 +195,16 @@ async def search_statistics(
 
     Useful for understanding the scope of available data.
     """
-    try:
-        verify_space_membership(
-            space_id,
-            current_user.id,
-            membership_service,
-            session,
-            current_user.role,
-        )
+    verify_space_membership(
+        space_id,
+        current_user.id,
+        membership_service,
+        session,
+        current_user.role,
+    )
 
-        stats = service.get_statistics(str(space_id))
-        return _build_statistics_response(stats)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get search statistics: {e!s}",
-        )
+    stats = service.get_statistics(str(space_id))
+    return _build_statistics_response(stats)
 
 
 def _build_search_results(raw_results: object) -> list[SearchResultItem]:

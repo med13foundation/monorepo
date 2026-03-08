@@ -21,7 +21,7 @@ from src.routes.admin_routes.dependencies import get_admin_db_session
 from src.routes.auth import get_current_active_user
 
 
-async def require_admin_user(
+def require_admin_user(
     current_user: User = Depends(get_current_active_user),
 ) -> User:
     """Ensure the authenticated user is a platform admin."""

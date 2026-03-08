@@ -91,7 +91,7 @@ async def execute_query_test(
     summary="Get session test results",
     description="Retrieve all query test results for a workbench session.",
 )
-async def get_session_test_results(
+def get_session_test_results(
     session_id: UUID,
     service: DataDiscoveryService = Depends(get_data_discovery_service_dependency),
     current_user: User = Depends(get_current_active_user),

@@ -18,7 +18,7 @@ from src.type_definitions.system_status import (
 router = APIRouter(prefix="/system", tags=["system"])
 
 
-async def require_admin_user(
+def require_admin_user(
     current_user: User = Depends(get_current_active_user),
 ) -> User:
     if current_user.role != UserRole.ADMIN:

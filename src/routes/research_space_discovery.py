@@ -97,7 +97,7 @@ def require_space_access(
     response_model=list[schemas.SourceCatalogResponse],
     summary="List catalog entries scoped to a research space",
 )
-async def get_space_catalog(
+def get_space_catalog(
     context: SpaceDiscoveryContext = Depends(get_space_discovery_context),
     current_user: User = Depends(get_current_active_user),
     category: str | None = Query(None, description="Optional category filter"),
@@ -125,7 +125,7 @@ async def get_space_catalog(
     response_model=list[schemas.DataDiscoverySessionResponse],
     summary="List discovery sessions within the space",
 )
-async def list_space_sessions(
+def list_space_sessions(
     include_inactive: bool = Query(False, description="Include inactive sessions"),
     owner_id: UUID | None = Query(
         None,
@@ -156,7 +156,7 @@ async def list_space_sessions(
     status_code=status.HTTP_201_CREATED,
     summary="Create a discovery session within the space",
 )
-async def create_space_session(
+def create_space_session(
     payload: schemas.CreateSessionRequest,
     context: SpaceDiscoveryContext = Depends(get_space_discovery_context),
     current_user: User = Depends(get_current_active_user),
@@ -192,7 +192,7 @@ async def create_space_session(
     response_model=list[schemas.DiscoveryPresetResponse],
     summary="List PubMed presets available within the space",
 )
-async def list_space_presets(
+def list_space_presets(
     owner_id: UUID | None = Query(
         None,
         description="Filter presets by owner (admin only)",
@@ -225,7 +225,7 @@ async def list_space_presets(
     response_model=schemas.AdvancedQueryParametersModel,
     summary="Get default advanced parameters for the space",
 )
-async def get_space_default_parameters(
+def get_space_default_parameters(
     owner_id: UUID | None = Query(
         None,
         description="Override owner when requesting defaults (admin only)",
@@ -249,7 +249,7 @@ async def get_space_default_parameters(
     response_model=schemas.DataDiscoverySessionResponse,
     summary="Get discovery session details",
 )
-async def get_space_session(
+def get_space_session(
     session_id: UUID,
     context: SpaceDiscoveryContext = Depends(get_space_discovery_context),
     current_user: User = Depends(get_current_active_user),
@@ -281,7 +281,7 @@ async def get_space_session(
     response_model=schemas.DataDiscoverySessionResponse,
     summary="Update session parameters",
 )
-async def update_space_session_parameters(
+def update_space_session_parameters(
     session_id: UUID,
     payload: schemas.UpdateParametersRequest,
     context: SpaceDiscoveryContext = Depends(get_space_discovery_context),
@@ -321,7 +321,7 @@ async def update_space_session_parameters(
     response_model=schemas.DataDiscoverySessionResponse,
     summary="Toggle source selection",
 )
-async def toggle_space_session_source(
+def toggle_space_session_source(
     session_id: UUID,
     catalog_entry_id: str,
     context: SpaceDiscoveryContext = Depends(get_space_discovery_context),
@@ -364,7 +364,7 @@ async def toggle_space_session_source(
     response_model=schemas.DataDiscoverySessionResponse,
     summary="Set session source selections",
 )
-async def set_space_session_selections(
+def set_space_session_selections(
     session_id: UUID,
     payload: schemas.UpdateSelectionRequest,
     context: SpaceDiscoveryContext = Depends(get_space_discovery_context),
@@ -404,7 +404,7 @@ async def set_space_session_selections(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete discovery session",
 )
-async def delete_space_session(
+def delete_space_session(
     session_id: UUID,
     context: SpaceDiscoveryContext = Depends(get_space_discovery_context),
     current_user: User = Depends(get_current_active_user),

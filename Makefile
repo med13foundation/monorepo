@@ -301,8 +301,8 @@ type-check-full: ## Run strict mypy across src/tests/scripts/alembic (warnings o
 security-audit: ## Run comprehensive security audit (pip-audit, bandit) [blocking on MEDIUM/HIGH]
 	$(call check_venv)
 	@echo "Running pip-audit..."
-	@$(USE_PIP) install pip-audit --quiet || true
-	@/bin/bash -lc '$(USE_PYTHON) -m pip_audit $(PIP_AUDIT_IGNORE_FLAGS) --format json > pip-audit-results.json 2> >(grep -vF "Cache entry deserialization failed, entry ignored" >&2)' || true
+	@PIP_NO_CACHE_DIR=1 $(USE_PIP) install pip-audit --quiet || true
+	@PIP_NO_CACHE_DIR=1 /bin/bash -lc '$(USE_PYTHON) -m pip_audit $(PIP_AUDIT_IGNORE_FLAGS) --format json > pip-audit-results.json 2> >(grep -vF "Cache entry deserialization failed, entry ignored" >&2)' || true
 	@if [ -n "$$SAFETY_API_KEY" ]; then \
 		echo "Running safety..."; \
 		SAFETY_API_KEY="$$SAFETY_API_KEY" safety --stage development scan --save-as json safety-results.json --use-server-matching || true; \

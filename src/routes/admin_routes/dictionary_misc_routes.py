@@ -32,7 +32,7 @@ router = APIRouter()
     response_model=DictionarySearchListResponse,
     summary="Search dictionary entries",
 )
-async def search_dictionary_entries(
+def search_dictionary_entries(
     terms: list[str] = Query(
         ...,
         description="Search terms (repeat parameter for multiple terms)",
@@ -70,7 +70,7 @@ async def search_dictionary_entries(
     response_model=DictionarySearchListResponse,
     summary="List dictionary entries by domain",
 )
-async def search_dictionary_entries_by_domain(
+def search_dictionary_entries_by_domain(
     domain_context: str,
     limit: int = Query(default=200, ge=1, le=500),
     service: DictionaryPort = Depends(get_dictionary_service),
@@ -92,7 +92,7 @@ async def search_dictionary_entries_by_domain(
     response_model=DictionaryReembedResponse,
     summary="Recompute dictionary description embeddings",
 )
-async def reembed_dictionary_descriptions(
+def reembed_dictionary_descriptions(
     request: DictionaryReembedRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -123,7 +123,7 @@ async def reembed_dictionary_descriptions(
     response_model=EntityResolutionPolicyListResponse,
     summary="List entity resolution policies",
 )
-async def list_entity_resolution_policies(
+def list_entity_resolution_policies(
     service: DictionaryPort = Depends(get_dictionary_service),
 ) -> EntityResolutionPolicyListResponse:
     policies = service.list_resolution_policies()
@@ -138,7 +138,7 @@ async def list_entity_resolution_policies(
     response_model=RelationConstraintListResponse,
     summary="List relation constraints",
 )
-async def list_relation_constraints(
+def list_relation_constraints(
     source_type: str | None = Query(None, description="Filter by source entity type"),
     relation_type: str | None = Query(
         None,
@@ -161,7 +161,7 @@ async def list_relation_constraints(
     response_model=DictionaryChangelogListResponse,
     summary="List dictionary changelog entries",
 )
-async def list_dictionary_changelog_entries(
+def list_dictionary_changelog_entries(
     table_name: str | None = Query(
         default=None,
         description="Filter by dictionary table name",

@@ -29,7 +29,7 @@ router = APIRouter()
     response_model=ValueSetListResponse,
     summary="List dictionary value sets",
 )
-async def list_dictionary_value_sets(
+def list_dictionary_value_sets(
     variable_id: str | None = Query(
         default=None,
         description="Filter by variable ID",
@@ -49,7 +49,7 @@ async def list_dictionary_value_sets(
     status_code=status.HTTP_201_CREATED,
     summary="Create dictionary value set",
 )
-async def create_dictionary_value_set(
+def create_dictionary_value_set(
     request: ValueSetCreateRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -87,7 +87,7 @@ async def create_dictionary_value_set(
     response_model=ValueSetItemListResponse,
     summary="List dictionary value set items",
 )
-async def list_dictionary_value_set_items(
+def list_dictionary_value_set_items(
     value_set_id: str,
     include_inactive: bool = Query(
         default=False,
@@ -111,7 +111,7 @@ async def list_dictionary_value_set_items(
     status_code=status.HTTP_201_CREATED,
     summary="Create dictionary value set item",
 )
-async def create_dictionary_value_set_item(
+def create_dictionary_value_set_item(
     value_set_id: str,
     request: ValueSetItemCreateRequest,
     current_user: User = Depends(require_admin_user),
@@ -151,7 +151,7 @@ async def create_dictionary_value_set_item(
     response_model=ValueSetItemResponse,
     summary="Activate/deactivate a dictionary value set item",
 )
-async def set_dictionary_value_set_item_active(
+def set_dictionary_value_set_item_active(
     value_set_item_id: int,
     request: ValueSetItemActiveRequest,
     current_user: User = Depends(require_admin_user),

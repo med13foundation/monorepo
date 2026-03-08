@@ -107,6 +107,23 @@ WARNING_IMPORTS_PER_FILE = (
 )
 
 ARCHITECTURE_OVERRIDES_FILE = "architecture_overrides.json"
+FASTAPI_ROUTE_DECORATORS = frozenset(
+    {"get", "post", "put", "patch", "delete", "options", "head"},
+)
+ASYNC_ROUTE_NO_AWAIT_ALLOWLIST: frozenset[str] = frozenset()
+ASYNC_HOT_PATH_BANNED_CALLS: dict[str, frozenset[str]] = {
+    "src/middleware/audit_logging.py": frozenset(
+        {"SessionLocal", "set_session_rls_context", "record_action"},
+    ),
+    "src/routes/research_spaces/workflow_monitor_stream_routes.py": frozenset(
+        {
+            "verify_space_membership",
+            "resolve_space_source_ids",
+            "get_source_workflow_monitor",
+            "list_workflow_events",
+        },
+    ),
+}
 
 
 @dataclass
@@ -407,6 +424,7 @@ class ArchitectureValidator:
             # Check route files for API response types
             if "/routes/" in relative_path:
                 self._check_api_response_types(tree, relative_path, content)
+                self._check_route_async_usage(tree, relative_path)
 
             # Check for layer violations
             self._check_layer_violations(tree, relative_path)
@@ -417,6 +435,7 @@ class ArchitectureValidator:
             # Check for SRP violations (import count, parameter count)
             self._check_import_count(tree, relative_path)
             self._check_function_parameters(tree, relative_path)
+            self._check_async_hot_path_sync_calls(tree, relative_path)
 
         except SyntaxError as e:
             self.result.violations.append(
@@ -1020,6 +1039,96 @@ class ArchitectureValidator:
                             severity="warning",
                         ),
                     )
+
+    def _check_route_async_usage(self, tree: ast.AST, file_path: str) -> None:
+        """Flag FastAPI routes that are async but never await anything."""
+        for node in tree.body:
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+
+            if not self._is_fastapi_route(node):
+                continue
+
+            route_key = f"{file_path}:{node.name}"
+            if route_key in ASYNC_ROUTE_NO_AWAIT_ALLOWLIST:
+                continue
+
+            if self._function_contains_async_work(node):
+                continue
+
+            self.result.violations.append(
+                Violation(
+                    file_path=file_path,
+                    line_number=node.lineno,
+                    violation_type="async_route_no_await",
+                    message=(
+                        "FastAPI route is async but performs no awaited work. "
+                        "Use 'def' for sync DB/service handlers."
+                    ),
+                    severity="error",
+                ),
+            )
+
+    def _check_async_hot_path_sync_calls(
+        self,
+        tree: ast.AST,
+        file_path: str,
+    ) -> None:
+        """Flag direct sync calls inside async middleware and SSE hot paths."""
+        banned_calls = ASYNC_HOT_PATH_BANNED_CALLS.get(file_path)
+        if banned_calls is None:
+            return
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+
+            for child in ast.walk(node):
+                if not isinstance(child, ast.Call):
+                    continue
+
+                call_name = self._resolve_called_name(child.func)
+                if call_name not in banned_calls:
+                    continue
+
+                self.result.violations.append(
+                    Violation(
+                        file_path=file_path,
+                        line_number=child.lineno,
+                        violation_type="async_sync_hot_path_call",
+                        message=(
+                            "Async middleware/SSE path directly calls sync DB or "
+                            "service work. Offload it from the event loop."
+                        ),
+                        severity="error",
+                    ),
+                )
+
+    @staticmethod
+    def _function_contains_async_work(node: ast.AsyncFunctionDef) -> bool:
+        return any(
+            isinstance(child, ast.Await | ast.AsyncFor | ast.AsyncWith)
+            for child in ast.walk(node)
+        )
+
+    @staticmethod
+    def _is_fastapi_route(node: ast.AsyncFunctionDef) -> bool:
+        for decorator in node.decorator_list:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if (
+                isinstance(target, ast.Attribute)
+                and target.attr in FASTAPI_ROUTE_DECORATORS
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _resolve_called_name(func: ast.expr) -> str | None:
+        if isinstance(func, ast.Name):
+            return func.id
+        if isinstance(func, ast.Attribute):
+            return func.attr
+        return None
 
     def _allows_file_size_override(self, file_path: str, lines: int) -> bool:
         """Return True when file size is within the documented override."""

@@ -3,7 +3,7 @@ Dashboard API routes for the MED13 Resource Library.
 Provides statistics and activity feed endpoints for the admin dashboard.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -34,7 +34,7 @@ def _get_dashboard_service(db: Session) -> DashboardService:
     summary="Get dashboard statistics",
     response_model=DashboardSummary,
 )
-async def get_dashboard_stats(
+def get_dashboard_stats(
     db: Session = Depends(get_session),
 ) -> DashboardSummary:
     """
@@ -42,14 +42,8 @@ async def get_dashboard_stats(
 
     Returns counts for tracked entities without synthetic status heuristics.
     """
-    try:
-        service = _get_dashboard_service(db)
-        return service.get_summary()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve dashboard statistics: {exc!s}",
-        ) from exc
+    service = _get_dashboard_service(db)
+    return service.get_summary()
 
 
 @router.get(
@@ -57,19 +51,13 @@ async def get_dashboard_stats(
     summary="Get recent activity feed",
     response_model=RecentActivitiesResponse,
 )
-async def get_recent_activities(
+def get_recent_activities(
     db: Session = Depends(get_session),
     limit: int = 10,
 ) -> RecentActivitiesResponse:
     """
     Retrieve recent activities for the dashboard activity feed.
     """
-    try:
-        service = _get_dashboard_service(db)
-        activities = list(service.get_recent_activities(limit))
-        return RecentActivitiesResponse(activities=activities, total=len(activities))
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve recent activities: {exc!s}",
-        ) from exc
+    service = _get_dashboard_service(db)
+    activities = list(service.get_recent_activities(limit))
+    return RecentActivitiesResponse(activities=activities, total=len(activities))

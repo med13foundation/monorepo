@@ -50,7 +50,7 @@ router = APIRouter(prefix="/pubmed", tags=["data-discovery-pubmed"])
     response_model=list[DiscoveryPresetResponse],
     summary="List PubMed presets",
 )
-async def list_pubmed_presets(
+def list_pubmed_presets(
     *,
     research_space_id: UUID | None = Query(
         None,
@@ -83,7 +83,7 @@ async def list_pubmed_presets(
     status_code=status.HTTP_201_CREATED,
     summary="Create PubMed preset",
 )
-async def create_pubmed_preset(
+def create_pubmed_preset(
     request: CreatePubmedPresetRequestModel,
     service: DiscoveryConfigurationService = Depends(
         get_discovery_configuration_service_dependency,
@@ -136,7 +136,7 @@ async def create_pubmed_preset(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete PubMed preset",
 )
-async def delete_pubmed_preset(
+def delete_pubmed_preset(
     preset_id: UUID,
     service: DiscoveryConfigurationService = Depends(
         get_discovery_configuration_service_dependency,
@@ -209,7 +209,7 @@ async def run_pubmed_search(
     response_model=DiscoverySearchJobResponse,
     summary="Get PubMed search job details",
 )
-async def get_pubmed_search_job(
+def get_pubmed_search_job(
     job_id: UUID,
     service: PubMedDiscoveryService = Depends(
         get_pubmed_discovery_service_dependency,

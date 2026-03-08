@@ -35,7 +35,7 @@ router = APIRouter()
     summary="Create data source",
     description="Create a new data source configuration.",
 )
-async def create_data_source(
+def create_data_source(
     request: CreateDataSourceRequest,
     service: SourceManagementService = Depends(get_source_service),
     auth_service: DataSourceAuthorizationService = Depends(
@@ -59,13 +59,6 @@ async def create_data_source(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    except HTTPException:
-        raise
-    except Exception as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create data source: {exc!s}",
-        )
 
 
 @router.get(
@@ -74,26 +67,18 @@ async def create_data_source(
     summary="Get data source",
     description="Retrieve detailed information about a specific data source.",
 )
-async def get_data_source(
+def get_data_source(
     source_id: UUID,
     service: SourceManagementService = Depends(get_source_service),
 ) -> DataSourceResponse:
     """Get a specific data source by ID."""
-    try:
-        data_source = service.get_source(source_id)
-        if not data_source:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Data source not found",
-            )
-        return data_source_to_response(data_source)
-    except HTTPException:
-        raise
-    except Exception as exc:  # pragma: no cover - defensive guard
+    data_source = service.get_source(source_id)
+    if not data_source:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get data source: {exc!s}",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Data source not found",
         )
+    return data_source_to_response(data_source)
 
 
 @router.put(
@@ -102,7 +87,7 @@ async def get_data_source(
     summary="Update data source",
     description="Update an existing data source configuration.",
 )
-async def update_data_source(
+def update_data_source(
     source_id: UUID,
     request: UpdateDataSourceRequest,
     service: SourceManagementService = Depends(get_source_service),
@@ -139,13 +124,6 @@ async def update_data_source(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    except HTTPException:
-        raise
-    except Exception as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update data source: {exc!s}",
-        )
 
 
 @router.delete(
@@ -154,7 +132,7 @@ async def update_data_source(
     summary="Delete data source",
     description="Delete an existing data source.",
 )
-async def delete_data_source(
+def delete_data_source(
     source_id: UUID,
     service: SourceManagementService = Depends(get_source_service),
     auth_service: DataSourceAuthorizationService = Depends(
@@ -162,19 +140,11 @@ async def delete_data_source(
     ),  # noqa: ARG001
 ) -> None:
     """Delete a data source."""
-    try:
-        success = service.delete_source(source_id, owner_id=None)
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Data source not found",
-            )
-    except HTTPException:
-        raise
-    except Exception as exc:  # pragma: no cover - defensive guard
+    success = service.delete_source(source_id, owner_id=None)
+    if not success:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete data source: {exc!s}",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Data source not found",
         )
 
 

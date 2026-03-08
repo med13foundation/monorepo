@@ -24,6 +24,12 @@ Welcome to the MED13 Resource Library! This guide will help you understand the a
 - Functions should have low complexity (<50)
 - Classes should have reasonable method count (<30)
 
+### 4. FastAPI Concurrency Rule
+- **Sync SQLAlchemy path uses `def`**: If a route or dependency uses the synchronous SQLAlchemy `Session` or sync application services, declare it with normal `def`.
+- **`async def` means real awaited work**: Reserve `async def` for handlers that actually `await`, return streaming/SSE responses, or wrap sync work in a dedicated offload boundary.
+- **Do not do sync DB work in async hot paths**: Async middleware and SSE generators must not call sync DB/service methods directly on the event loop.
+- **Preserve boundaries**: Fix fake-async handlers by changing their signature to `def`, not by sprinkling threadpool helpers inside ordinary CRUD routes.
+
 ## Development Workflow
 
 ### Before You Start Coding

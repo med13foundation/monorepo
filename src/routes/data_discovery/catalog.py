@@ -24,7 +24,7 @@ router = APIRouter()
     summary="Get source catalog",
     description="Retrieve the source catalog, optionally filtered by category or search query.",
 )
-async def get_source_catalog(
+def get_source_catalog(
     category: str | None = Query(None, description="Filter by category"),
     search: str | None = Query(None, description="Search query"),
     research_space_id: UUID | None = Query(

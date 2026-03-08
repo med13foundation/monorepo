@@ -75,7 +75,7 @@ def _handle_not_found(exc: ValueError) -> None:
     response_model=StorageConfigurationListResponse,
     summary="List storage configurations",
 )
-async def list_storage_configurations(
+def list_storage_configurations(
     *,
     include_disabled: Annotated[
         bool,
@@ -108,7 +108,7 @@ async def list_storage_configurations(
     response_model=StorageConfigurationModel,
     summary="Get storage configuration",
 )
-async def get_storage_configuration(
+def get_storage_configuration(
     configuration_id: UUID,
     service: Annotated[
         StorageConfigurationService,
@@ -275,7 +275,7 @@ async def test_storage_configuration(
     response_model=StorageUsageMetrics | None,
     summary="Get storage usage metrics",
 )
-async def get_storage_metrics(
+def get_storage_metrics(
     configuration_id: UUID,
     service: Annotated[
         StorageConfigurationService,
@@ -294,7 +294,7 @@ async def get_storage_metrics(
     response_model=StorageHealthReport | None,
     summary="Get storage health report",
 )
-async def get_storage_health(
+def get_storage_health(
     configuration_id: UUID,
     service: Annotated[
         StorageConfigurationService,
@@ -313,7 +313,7 @@ async def get_storage_health(
     response_model=list[StorageOperationRecord],
     summary="List storage operations",
 )
-async def list_storage_operations(
+def list_storage_operations(
     configuration_id: UUID,
     *,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
@@ -334,7 +334,7 @@ async def list_storage_operations(
     response_model=StorageOverviewResponse,
     summary="Get storage platform overview",
 )
-async def get_storage_overview(
+def get_storage_overview(
     service: Annotated[
         StorageConfigurationService,
         Depends(get_storage_configuration_service),

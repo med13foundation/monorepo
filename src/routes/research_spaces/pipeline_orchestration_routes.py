@@ -311,7 +311,7 @@ def get_pipeline_orchestration_service(
     status_code=202,
     summary="Queue ingestion, enrichment, extraction, and optional graph discovery",
 )
-async def run_unified_pipeline(
+def run_unified_pipeline(
     space_id: UUID,
     request: PipelineRunRequest,
     response: Response,
