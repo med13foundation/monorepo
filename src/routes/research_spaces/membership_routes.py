@@ -58,6 +58,7 @@ def invite_member(
             user_id=request.user_id,
             role=role,
             invited_by=current_user.id,
+            invited_by_is_platform_admin=current_user.role == UserRole.ADMIN,
         )
         membership = service.invite_member(invite_request)
         return MembershipResponse.from_entity(membership)
@@ -119,6 +120,7 @@ def update_member_role(
             membership_id,
             update_request,
             current_user.id,
+            requester_is_platform_admin=current_user.role == UserRole.ADMIN,
         )
         if not membership:
             raise HTTPException(
@@ -147,7 +149,11 @@ def remove_member(
     service: MembershipManagementService = Depends(get_membership_service),
 ) -> None:
     """Remove a member from a research space."""
-    success = service.remove_member(membership_id, current_user.id)
+    success = service.remove_member(
+        membership_id,
+        current_user.id,
+        requester_is_platform_admin=current_user.role == UserRole.ADMIN,
+    )
     if not success:
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,

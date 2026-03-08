@@ -27,11 +27,14 @@ class InviteMemberRequest:
         user_id: UUID,
         role: MembershipRole,
         invited_by: UUID,
+        *,
+        invited_by_is_platform_admin: bool = False,
     ):
         self.space_id = space_id
         self.user_id = user_id
         self.role = role
         self.invited_by = invited_by
+        self.invited_by_is_platform_admin = invited_by_is_platform_admin
 
 
 class UpdateMemberRoleRequest:
@@ -64,6 +67,27 @@ class MembershipManagementService:
         self._membership_repository = membership_repository
         self._space_repository = research_space_repository
 
+    def _get_requester_membership(
+        self,
+        space_id: UUID,
+        requester_id: UUID,
+        *,
+        requester_is_platform_admin: bool = False,
+    ) -> ResearchSpaceMembership | None:
+        """Resolve the effective requester membership, including implicit roles."""
+        if requester_is_platform_admin:
+            return ResearchSpaceMembership(
+                space_id=space_id,
+                user_id=requester_id,
+                role=MembershipRole.ADMIN,
+                invited_by=None,
+                invited_at=None,
+                joined_at=datetime.now(UTC),
+                is_active=True,
+            )
+
+        return self.get_membership_for_user(space_id, requester_id)
+
     def invite_member(self, request: InviteMemberRequest) -> ResearchSpaceMembership:
         """
         Invite a user to join a research space.
@@ -93,9 +117,10 @@ class MembershipManagementService:
             raise ValueError(msg)
 
         # Check if inviter has permission (must be admin or owner)
-        inviter_membership = self._membership_repository.find_by_space_and_user(
+        inviter_membership = self._get_requester_membership(
             request.space_id,
             request.invited_by,
+            requester_is_platform_admin=request.invited_by_is_platform_admin,
         )
         if not inviter_membership or not inviter_membership.can_invite_members():
             msg = "Only admins and owners can invite members"
@@ -268,6 +293,8 @@ class MembershipManagementService:
         membership_id: UUID,
         request: UpdateMemberRoleRequest,
         requester_id: UUID,
+        *,
+        requester_is_platform_admin: bool = False,
     ) -> ResearchSpaceMembership | None:
         """
         Update a member's role in a research space.
@@ -285,9 +312,10 @@ class MembershipManagementService:
             return None
 
         # Check if requester has permission (must be admin or owner)
-        requester_membership = self._membership_repository.find_by_space_and_user(
+        requester_membership = self._get_requester_membership(
             membership.space_id,
             requester_id,
+            requester_is_platform_admin=requester_is_platform_admin,
         )
         if not requester_membership or not requester_membership.can_modify_members():
             return None
@@ -304,6 +332,8 @@ class MembershipManagementService:
         self,
         membership_id: UUID,
         requester_id: UUID,
+        *,
+        requester_is_platform_admin: bool = False,
     ) -> bool:
         """
         Remove a member from a research space.
@@ -320,9 +350,10 @@ class MembershipManagementService:
             return False
 
         # Check if requester has permission (must be admin or owner)
-        requester_membership = self._membership_repository.find_by_space_and_user(
+        requester_membership = self._get_requester_membership(
             membership.space_id,
             requester_id,
+            requester_is_platform_admin=requester_is_platform_admin,
         )
         if not requester_membership or not requester_membership.can_remove_members():
             return False

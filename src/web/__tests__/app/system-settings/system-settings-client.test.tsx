@@ -19,6 +19,7 @@ const mockActivateUserAction = jest.fn()
 const mockLockUserAction = jest.fn()
 const mockUnlockUserAction = jest.fn()
 const mockDeleteUserAction = jest.fn()
+const mockUpdateUserAction = jest.fn()
 
 jest.mock('@/app/actions/users', () => ({
   createUserAction: (...args: unknown[]) => mockCreateUserAction(...args),
@@ -26,6 +27,7 @@ jest.mock('@/app/actions/users', () => ({
   lockUserAction: (...args: unknown[]) => mockLockUserAction(...args),
   unlockUserAction: (...args: unknown[]) => mockUnlockUserAction(...args),
   deleteUserAction: (...args: unknown[]) => mockDeleteUserAction(...args),
+  updateUserAction: (...args: unknown[]) => mockUpdateUserAction(...args),
 }))
 
 jest.mock('@/components/system-settings/DataSourceAvailabilitySection', () => ({
@@ -108,6 +110,14 @@ const renderClient = (overrides: Partial<SystemSettingsProps> = {}) => {
 }
 
 describe('SystemSettingsClient', () => {
+  beforeAll(() => {
+    HTMLElement.prototype.hasPointerCapture = HTMLElement.prototype.hasPointerCapture ?? (() => false)
+    HTMLElement.prototype.setPointerCapture = HTMLElement.prototype.setPointerCapture ?? (() => undefined)
+    HTMLElement.prototype.releasePointerCapture =
+      HTMLElement.prototype.releasePointerCapture ?? (() => undefined)
+    Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => undefined)
+  })
+
   beforeEach(() => {
     jest.clearAllMocks()
     mockCreateUserAction.mockResolvedValue({
@@ -130,6 +140,22 @@ describe('SystemSettingsClient', () => {
     mockLockUserAction.mockResolvedValue({ success: true, data: { message: 'ok' } })
     mockUnlockUserAction.mockResolvedValue({ success: true, data: { message: 'ok' } })
     mockDeleteUserAction.mockResolvedValue({ success: true, data: { message: 'ok' } })
+    mockUpdateUserAction.mockResolvedValue({
+      success: true,
+      data: {
+        user: {
+          id: 'user-4',
+          email: 'viewer@med13.org',
+          username: 'viewer-user',
+          full_name: 'Viewer User',
+          role: 'admin',
+          status: 'active',
+          email_verified: true,
+          last_login: null,
+          created_at: '2026-03-01T00:00:00.000Z',
+        },
+      },
+    })
   })
 
   it('shows restricted message for non-admin users', () => {
@@ -274,5 +300,50 @@ describe('SystemSettingsClient', () => {
     })
 
     expect(screen.queryByText('Remove User')).not.toBeInTheDocument()
+  })
+
+  it('updates a user role from the table dropdown', async () => {
+    const user = userEvent.setup()
+    renderClient({
+      users: {
+        users: [
+          {
+            id: 'user-4',
+            email: 'viewer@med13.org',
+            username: 'viewer-user',
+            full_name: 'Viewer User',
+            role: 'viewer',
+            status: 'active',
+            email_verified: true,
+            last_login: null,
+            created_at: '2026-03-01T00:00:00.000Z',
+          },
+        ],
+        total: 1,
+        skip: 0,
+        limit: 25,
+      },
+      userStats: {
+        ...baseUserStats,
+        total_users: 1,
+        active_users: 1,
+        by_role: { viewer: 1 },
+      },
+    })
+
+    const row = screen.getByText('Viewer User').closest('tr')
+    expect(row).not.toBeNull()
+
+    const rowScope = within(row as HTMLTableRowElement)
+    await user.click(rowScope.getByRole('combobox'))
+    await user.click(screen.getByRole('option', { name: 'Administrator' }))
+
+    await waitFor(() => {
+      expect(mockUpdateUserAction).toHaveBeenCalledWith('user-4', { role: 'admin' })
+    })
+
+    await waitFor(() => {
+      expect(rowScope.getByRole('combobox')).toHaveTextContent('Administrator')
+    })
   })
 })
