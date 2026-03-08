@@ -8,7 +8,7 @@ router = APIRouter(tags=["info"])
 
 
 @router.get("/", summary="Welcome to MED13 Resource Library", tags=["info"])
-async def root() -> JSONObject:
+def root() -> JSONObject:
     """Welcome endpoint with API information."""
     return {
         "message": "Welcome to the MED13 Resource Library API",

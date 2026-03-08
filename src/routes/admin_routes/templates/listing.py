@@ -23,7 +23,7 @@ router = APIRouter()
     response_model=TemplateListResponse,
     summary="List available templates",
 )
-async def list_templates(
+def list_templates(
     scope: TemplateScope = Query(
         TemplateScope.AVAILABLE,
         description="Template listing scope",
@@ -57,7 +57,7 @@ async def list_templates(
     response_model=TemplateResponse,
     summary="Get template details",
 )
-async def get_template_detail(
+def get_template_detail(
     template_id: UUID,
     service: TemplateManagementService = Depends(get_template_service),
 ) -> TemplateResponse:

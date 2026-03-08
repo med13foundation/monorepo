@@ -42,7 +42,7 @@ class DataSourceStats(BaseModel):
     summary="Get system statistics",
     description="Retrieve overall system statistics for the admin dashboard.",
 )
-async def get_system_stats(
+def get_system_stats(
     service: SourceManagementService = Depends(get_source_service),
 ) -> SystemStatsResponse:
     """Get system-wide statistics."""
@@ -72,7 +72,7 @@ async def get_system_stats(
     summary="Get data source statistics",
     description="Retrieve statistics about data sources grouped by type and status.",
 )
-async def get_data_source_stats(
+def get_data_source_stats(
     service: SourceManagementService = Depends(get_source_service),
 ) -> DataSourceStats:
     """Get data source statistics."""

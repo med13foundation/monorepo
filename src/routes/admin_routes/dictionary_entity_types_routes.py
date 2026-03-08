@@ -28,7 +28,7 @@ router = APIRouter()
     response_model=DictionaryEntityTypeListResponse,
     summary="List dictionary entity types",
 )
-async def list_dictionary_entity_types(
+def list_dictionary_entity_types(
     domain_context: str | None = Query(None, description="Filter by domain context"),
     service: DictionaryPort = Depends(get_dictionary_service),
 ) -> DictionaryEntityTypeListResponse:
@@ -44,7 +44,7 @@ async def list_dictionary_entity_types(
     response_model=DictionaryEntityTypeResponse,
     summary="Get dictionary entity type",
 )
-async def get_dictionary_entity_type(
+def get_dictionary_entity_type(
     entity_type_id: str,
     service: DictionaryPort = Depends(get_dictionary_service),
 ) -> DictionaryEntityTypeResponse:
@@ -63,7 +63,7 @@ async def get_dictionary_entity_type(
     status_code=status.HTTP_201_CREATED,
     summary="Create dictionary entity type",
 )
-async def create_dictionary_entity_type(
+def create_dictionary_entity_type(
     request: DictionaryEntityTypeCreateRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -101,7 +101,7 @@ async def create_dictionary_entity_type(
     response_model=DictionaryEntityTypeResponse,
     summary="Set dictionary entity type review status",
 )
-async def set_dictionary_entity_type_review_status(
+def set_dictionary_entity_type_review_status(
     entity_type_id: str,
     request: VariableDefinitionReviewStatusRequest,
     current_user: User = Depends(require_admin_user),
@@ -139,7 +139,7 @@ async def set_dictionary_entity_type_review_status(
     response_model=DictionaryEntityTypeResponse,
     summary="Revoke dictionary entity type",
 )
-async def revoke_dictionary_entity_type(
+def revoke_dictionary_entity_type(
     entity_type_id: str,
     request: VariableDefinitionRevokeRequest,
     current_user: User = Depends(require_admin_user),
@@ -176,7 +176,7 @@ async def revoke_dictionary_entity_type(
     response_model=DictionaryEntityTypeResponse,
     summary="Merge dictionary entity type into another",
 )
-async def merge_dictionary_entity_type(
+def merge_dictionary_entity_type(
     entity_type_id: str,
     request: DictionaryMergeRequest,
     current_user: User = Depends(require_admin_user),

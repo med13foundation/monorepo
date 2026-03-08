@@ -5,62 +5,32 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from fastapi import Depends, HTTPException, Request, Response
 
 from src.application.services.source_workflow_monitor_service import (
     SourceWorkflowMonitorService,
 )
-from src.database.session import get_session
+from src.domain.entities.user import User
 from src.routes.auth import get_current_active_user
 
 from . import dependencies as space_dependencies
 from . import workflow_monitor_routes as monitor_routes
+from . import workflow_monitor_stream_dependencies as stream_dependencies
 from . import workflow_monitor_stream_utils as stream_utils
 from .router import HTTP_404_NOT_FOUND, research_spaces_router
 from .workflow_monitor_stream_sse import build_event_source_response
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class _MembershipContext:
-    membership_service: object
-    session: Session
-
-
-def get_membership_context(
-    membership_service: object = Depends(
-        space_dependencies.get_membership_service,
-    ),
-    session: Session = Depends(get_session),
-) -> _MembershipContext:
-    return _MembershipContext(
-        membership_service=membership_service,
-        session=session,
-    )
-
-
-class WorkflowSpaceStreamQueryParams(BaseModel):
-    source_ids: list[str] = Field(default_factory=list)
-    include_inactive: bool = False
-    events_limit: int = Field(default=3, ge=1, le=10)
-
-
-def get_workflow_space_stream_query_params(
-    source_ids: str | None = Query(default=None, min_length=1, max_length=4000),
-    include_inactive: bool = Query(default=False),
-    events_limit: int = Query(3, ge=1, le=10),
-) -> WorkflowSpaceStreamQueryParams:
-    return WorkflowSpaceStreamQueryParams(
-        source_ids=stream_utils.parse_requested_source_ids(source_ids),
-        include_inactive=include_inactive,
-        events_limit=events_limit,
-    )
+# Backward-compatible test seam after extracting shared stream helpers.
+_MembershipContext = stream_dependencies.MembershipContext
+get_membership_context = stream_dependencies.get_membership_context
+WorkflowSpaceStreamQueryParams = stream_dependencies.WorkflowSpaceStreamQueryParams
+get_workflow_space_stream_query_params = (
+    stream_dependencies.get_workflow_space_stream_query_params
+)
 
 
 @research_spaces_router.get(
@@ -74,8 +44,10 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
     query: monitor_routes.WorkflowMonitorQueryParams = Depends(
         monitor_routes.get_workflow_monitor_query_params,
     ),
-    current_user: object = Depends(get_current_active_user),
-    membership_context: _MembershipContext = Depends(get_membership_context),
+    current_user: User = Depends(get_current_active_user),
+    membership_context: stream_dependencies.MembershipContext = Depends(
+        stream_dependencies.get_membership_context,
+    ),
     monitor_service: SourceWorkflowMonitorService = Depends(
         monitor_routes.get_source_workflow_monitor_service,
     ),
@@ -86,14 +58,13 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
             detail="Workflow SSE is disabled",
         )
 
-    current_user_id = current_user.id  # type: ignore[attr-defined]
-    current_user_role = current_user.role  # type: ignore[attr-defined]
-    space_dependencies.verify_space_membership(
-        space_id,
-        current_user_id,
-        membership_context.membership_service,  # type: ignore[arg-type]
-        membership_context.session,
-        current_user_role,
+    current_user_id = current_user.id
+    current_user_role = current_user.role
+    await stream_dependencies.verify_stream_membership(
+        space_id=space_id,
+        current_user_id=current_user_id,
+        current_user_role=current_user_role,
+        membership_context=membership_context,
     )
 
     async def _event_generator() -> AsyncIterator[str]:
@@ -102,14 +73,16 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
         last_snapshot_hash: str | None = None
         last_heartbeat_mono = 0.0
 
-        bootstrap_monitor = monitor_service.get_source_workflow_monitor(
+        bootstrap_monitor = await stream_dependencies.load_monitor_payload(
+            monitor_service=monitor_service,
             space_id=space_id,
             source_id=source_id,
             run_id=query.run_id,
             limit=stream_utils.STREAM_SOURCE_MONITOR_LIMIT,
             include_graph=query.include_graph,
         )
-        bootstrap_events_payload = monitor_service.list_workflow_events(
+        bootstrap_events_payload = await stream_dependencies.load_events_payload(
+            monitor_service=monitor_service,
             space_id=space_id,
             source_id=source_id,
             run_id=query.run_id,
@@ -142,7 +115,8 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
 
             emitted_event = False
             try:
-                monitor_payload = monitor_service.get_source_workflow_monitor(
+                monitor_payload = await stream_dependencies.load_monitor_payload(
+                    monitor_service=monitor_service,
                     space_id=space_id,
                     source_id=source_id,
                     run_id=query.run_id,
@@ -164,7 +138,8 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
                         },
                     )
 
-                events_payload = monitor_service.list_workflow_events(
+                events_payload = await stream_dependencies.load_events_payload(
+                    monitor_service=monitor_service,
                     space_id=space_id,
                     source_id=source_id,
                     run_id=query.run_id,
@@ -233,11 +208,13 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
 async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
     request: Request,
     space_id: UUID,
-    query: WorkflowSpaceStreamQueryParams = Depends(
-        get_workflow_space_stream_query_params,
+    query: stream_dependencies.WorkflowSpaceStreamQueryParams = Depends(
+        stream_dependencies.get_workflow_space_stream_query_params,
     ),
-    current_user: object = Depends(get_current_active_user),
-    membership_context: _MembershipContext = Depends(get_membership_context),
+    current_user: User = Depends(get_current_active_user),
+    membership_context: stream_dependencies.MembershipContext = Depends(
+        stream_dependencies.get_membership_context,
+    ),
     monitor_service: SourceWorkflowMonitorService = Depends(
         monitor_routes.get_source_workflow_monitor_service,
     ),
@@ -248,14 +225,13 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
             detail="Workflow SSE is disabled",
         )
 
-    current_user_id = current_user.id  # type: ignore[attr-defined]
-    current_user_role = current_user.role  # type: ignore[attr-defined]
-    space_dependencies.verify_space_membership(
-        space_id,
-        current_user_id,
-        membership_context.membership_service,  # type: ignore[arg-type]
-        membership_context.session,
-        current_user_role,
+    current_user_id = current_user.id
+    current_user_role = current_user.role
+    await stream_dependencies.verify_stream_membership(
+        space_id=space_id,
+        current_user_id=current_user_id,
+        current_user_role=current_user_role,
+        membership_context=membership_context,
     )
 
     async def _event_generator() -> AsyncIterator[str]:  # noqa: PLR0912, PLR0915
@@ -264,7 +240,7 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
         last_hash_by_source: dict[str, str] = {}
         since_by_source: dict[str, str | None] = {}
 
-        source_ids = stream_utils.resolve_space_source_ids(
+        source_ids = await stream_dependencies.resolve_stream_source_ids(
             session=membership_context.session,
             space_id=space_id,
             include_inactive=query.include_inactive,
@@ -274,14 +250,16 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
         for source_id_str in source_ids:
             try:
                 source_uuid = UUID(source_id_str)
-                monitor_payload = monitor_service.get_source_workflow_monitor(
+                monitor_payload = await stream_dependencies.load_monitor_payload(
+                    monitor_service=monitor_service,
                     space_id=space_id,
                     source_id=source_uuid,
                     run_id=None,
                     limit=stream_utils.STREAM_MONITOR_LIMIT,
                     include_graph=False,
                 )
-                events_payload = monitor_service.list_workflow_events(
+                events_payload = await stream_dependencies.load_events_payload(
+                    monitor_service=monitor_service,
                     space_id=space_id,
                     source_id=source_uuid,
                     run_id=None,
@@ -327,7 +305,7 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
 
             emitted_event = False
             try:
-                source_ids = stream_utils.resolve_space_source_ids(
+                source_ids = await stream_dependencies.resolve_stream_source_ids(
                     session=membership_context.session,
                     space_id=space_id,
                     include_inactive=query.include_inactive,
@@ -342,14 +320,18 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
                 for source_id_str in source_ids:
                     try:
                         source_uuid = UUID(source_id_str)
-                        monitor_payload = monitor_service.get_source_workflow_monitor(
-                            space_id=space_id,
-                            source_id=source_uuid,
-                            run_id=None,
-                            limit=stream_utils.STREAM_MONITOR_LIMIT,
-                            include_graph=False,
+                        monitor_payload = (
+                            await stream_dependencies.load_monitor_payload(
+                                monitor_service=monitor_service,
+                                space_id=space_id,
+                                source_id=source_uuid,
+                                run_id=None,
+                                limit=stream_utils.STREAM_MONITOR_LIMIT,
+                                include_graph=False,
+                            )
                         )
-                        events_payload = monitor_service.list_workflow_events(
+                        events_payload = await stream_dependencies.load_events_payload(
+                            monitor_service=monitor_service,
                             space_id=space_id,
                             source_id=source_uuid,
                             run_id=None,
@@ -427,7 +409,10 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
 
 __all__ = [
     "WorkflowSpaceStreamQueryParams",
+    "_MembershipContext",
+    "get_membership_context",
     "get_workflow_space_stream_query_params",
+    "space_dependencies",
     "stream_source_workflow_monitor",
     "stream_space_workflow_cards",
 ]

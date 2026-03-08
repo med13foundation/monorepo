@@ -27,7 +27,7 @@ router = APIRouter(
     response_model=TransformRegistryListResponse,
     summary="List transform registry",
 )
-async def list_transform_registry(
+def list_transform_registry(
     status_filter: str = Query("ACTIVE", alias="status"),
     include_inactive: bool = Query(False),
     production_only: bool = Query(False),
@@ -49,7 +49,7 @@ async def list_transform_registry(
     response_model=TransformVerificationResponse,
     summary="Run transform fixture verification",
 )
-async def verify_transform_registry_entry(
+def verify_transform_registry_entry(
     transform_id: str,
     service: DictionaryPort = Depends(get_dictionary_service),
 ) -> TransformVerificationResponse:
@@ -68,7 +68,7 @@ async def verify_transform_registry_entry(
     response_model=TransformRegistryResponse,
     summary="Promote transform to production use",
 )
-async def promote_transform_registry_entry(
+def promote_transform_registry_entry(
     transform_id: str,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),

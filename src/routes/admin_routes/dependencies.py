@@ -87,7 +87,7 @@ def get_activation_service(
     return DataSourceActivationService(activation_repo)
 
 
-async def get_auth_service() -> DataSourceAuthorizationService:
+def get_auth_service() -> DataSourceAuthorizationService:
     """Instantiate the authorization service."""
     return DataSourceAuthorizationService()
 

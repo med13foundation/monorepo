@@ -42,7 +42,7 @@ router = APIRouter(
     response_model=ConceptSetListResponse,
     summary="List concept sets for one research space",
 )
-async def list_concept_sets(
+def list_concept_sets(
     research_space_id: str = Query(..., description="Research space UUID"),
     include_inactive: bool = Query(False),
     service: ConceptPort = Depends(get_concept_service),
@@ -62,7 +62,7 @@ async def list_concept_sets(
     response_model=ConceptMemberListResponse,
     summary="List concept members for one research space",
 )
-async def list_concept_members(
+def list_concept_members(
     research_space_id: str = Query(..., description="Research space UUID"),
     concept_set_id: str | None = Query(None, description="Optional concept set UUID"),
     include_inactive: bool = Query(False),
@@ -90,7 +90,7 @@ async def list_concept_members(
     response_model=ConceptAliasListResponse,
     summary="List concept aliases for one research space",
 )
-async def list_concept_aliases(
+def list_concept_aliases(
     research_space_id: str = Query(..., description="Research space UUID"),
     concept_member_id: str | None = Query(
         None,
@@ -121,7 +121,7 @@ async def list_concept_aliases(
     response_model=ConceptPolicyResponse | None,
     summary="Get active concept policy for one research space",
 )
-async def get_active_policy(
+def get_active_policy(
     research_space_id: str = Query(..., description="Research space UUID"),
     service: ConceptPort = Depends(get_concept_service),
 ) -> ConceptPolicyResponse | None:
@@ -136,7 +136,7 @@ async def get_active_policy(
     response_model=ConceptDecisionListResponse,
     summary="List concept decisions for one research space",
 )
-async def list_concept_decisions(
+def list_concept_decisions(
     research_space_id: str = Query(..., description="Research space UUID"),
     decision_status: (
         Literal[
@@ -172,7 +172,7 @@ async def list_concept_decisions(
     status_code=status.HTTP_201_CREATED,
     summary="Create one concept set",
 )
-async def create_concept_set(
+def create_concept_set(
     request: ConceptSetCreateRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -210,7 +210,7 @@ async def create_concept_set(
     status_code=status.HTTP_201_CREATED,
     summary="Create one concept member",
 )
-async def create_concept_member(
+def create_concept_member(
     request: ConceptMemberCreateRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -253,7 +253,7 @@ async def create_concept_member(
     status_code=status.HTTP_201_CREATED,
     summary="Create one concept alias",
 )
-async def create_concept_alias(
+def create_concept_alias(
     request: ConceptAliasCreateRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -291,7 +291,7 @@ async def create_concept_alias(
     response_model=ConceptPolicyResponse,
     summary="Upsert active concept policy for one research space",
 )
-async def upsert_active_policy(
+def upsert_active_policy(
     request: ConceptPolicyUpsertRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -331,7 +331,7 @@ async def upsert_active_policy(
     status_code=status.HTTP_201_CREATED,
     summary="Propose one concept decision (harness-gated)",
 )
-async def propose_decision(
+def propose_decision(
     request: ConceptDecisionProposeRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -383,7 +383,7 @@ async def propose_decision(
     response_model=ConceptDecisionResponse,
     summary="Manually set concept decision status",
 )
-async def set_decision_status(
+def set_decision_status(
     decision_id: str,
     request: ConceptDecisionStatusRequest,
     current_user: User = Depends(require_admin_user),

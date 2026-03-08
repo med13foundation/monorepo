@@ -47,7 +47,7 @@ def get_export_service(db: Session = Depends(get_session)) -> BulkExportService:
 
 
 @router.get("/{entity_type}")
-async def export_entity_data(
+def export_entity_data(
     entity_type: str,
     space_id: UUID = Query(..., description="Research space scope"),
     *,
@@ -154,7 +154,7 @@ async def export_entity_data(
 
 
 @router.get("/{entity_type}/info", response_model=ExportOptionsResponse)
-async def get_export_info(
+def get_export_info(
     entity_type: str,
     space_id: UUID = Query(..., description="Research space scope"),
     kernel_entity_type: str | None = Query(
@@ -209,7 +209,7 @@ async def get_export_info(
 
 
 @router.get("/", response_model=ExportableEntitiesResponse)
-async def list_exportable_entities() -> ExportableEntitiesResponse:
+def list_exportable_entities() -> ExportableEntitiesResponse:
     """
     List all entity types that can be exported.
     """

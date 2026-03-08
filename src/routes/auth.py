@@ -74,12 +74,12 @@ class RouteListResponse(BaseModel):
 
 
 @auth_router.get("/test")
-async def test_endpoint() -> dict[str, str]:
+def test_endpoint() -> dict[str, str]:
     return {"message": "Auth routes are working!"}
 
 
 @auth_router.get("/routes", response_model=RouteListResponse)
-async def list_routes() -> RouteListResponse:
+def list_routes() -> RouteListResponse:
     routes = [
         RouteInfo(
             path=getattr(route, "path", str(route)),
@@ -144,7 +144,7 @@ async def get_current_user(
         )
 
 
-async def get_current_active_user(
+def get_current_active_user(
     current_user: User = Depends(get_current_user),
 ) -> User:
     if not current_user.can_authenticate():
@@ -174,7 +174,7 @@ async def require_permission(
         )
 
 
-async def require_role(
+def require_role(
     role: str,
     current_user: User = Depends(get_current_active_user),
 ) -> User:
@@ -269,7 +269,7 @@ async def refresh_token(
     summary="User logout",
     description="Revoke current session",
 )
-async def logout(
+def logout(
     current_user: User = Depends(get_current_user),
     auth_service: authentication_service.AuthenticationService = Depends(
         container.get_authentication_service,
@@ -326,7 +326,7 @@ async def register_user(
     summary="Get current user profile",
     description="Get detailed information about the current user",
 )
-async def get_current_user_profile(
+def get_current_user_profile(
     current_user: User = Depends(get_current_active_user),
 ) -> UserProfileResponse:
     return UserProfileResponse(user=UserPublic.from_user(current_user))

@@ -76,6 +76,11 @@ def _read_first_sse_event_lines(response) -> list[str]:
     return first_chunk_text.splitlines()
 
 
+def _read_all_sse_text(response) -> str:
+    chunks = [chunk.decode("utf-8") for chunk in response.iter_bytes() if chunk]
+    return "".join(chunks)
+
+
 def _extract_sse_data(lines: list[str]) -> JSONObject:
     data_line = next((line for line in lines if line.startswith("data: ")), None)
     if data_line is None:
@@ -175,6 +180,35 @@ class StubSourceWorkflowMonitorService:
         else:
             events = []
         return {"events": events}
+
+
+class FlakySourceWorkflowMonitorService(StubSourceWorkflowMonitorService):
+    """Stub service that fails after the bootstrap monitor payload."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._should_fail = False
+
+    def get_source_workflow_monitor(
+        self,
+        *,
+        space_id: UUID,
+        source_id: UUID,
+        run_id: str | None = None,
+        limit: int = 50,
+        include_graph: bool = True,
+    ) -> dict[str, object]:
+        if self._should_fail:
+            msg = "workflow monitor failed"
+            raise RuntimeError(msg)
+        self._should_fail = True
+        return super().get_source_workflow_monitor(
+            space_id=space_id,
+            source_id=source_id,
+            run_id=run_id,
+            limit=limit,
+            include_graph=include_graph,
+        )
 
 
 @pytest.fixture(scope="function")
@@ -382,6 +416,86 @@ def test_space_workflow_stream_emits_bootstrap_payload(
     assert isinstance(workflow_status, dict)
     assert workflow_status.get("last_pipeline_status") == "running"
     assert workflow_status.get("extraction_timeout_failed_count") == 1
+
+
+def test_source_workflow_stream_emits_heartbeat_when_idle(
+    researcher_user: UserModel,
+    space: ResearchSpaceModel,
+    source: UserDataSourceModel,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MED13_ENABLE_WORKFLOW_SSE", "true")
+    monkeypatch.setattr(
+        "src.routes.research_spaces.workflow_monitor_stream_utils.STREAM_HEARTBEAT_SECONDS",
+        0.0,
+    )
+    monkeypatch.setattr(
+        "src.routes.research_spaces.workflow_monitor_stream_utils.STREAM_TICK_SECONDS",
+        0.0,
+    )
+
+    disconnect_checks = {"count": 0}
+
+    async def _disconnect_after_one_iteration(_: Request) -> bool:
+        disconnect_checks["count"] += 1
+        return disconnect_checks["count"] > 1
+
+    monkeypatch.setattr(Request, "is_disconnected", _disconnect_after_one_iteration)
+
+    app = create_app()
+    service = StubSourceWorkflowMonitorService()
+    app.dependency_overrides[get_source_workflow_monitor_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.get(
+        f"/research-spaces/{space.id}/sources/{source.id}/workflow-stream",
+        headers=_auth_headers(researcher_user),
+    )
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = _read_all_sse_text(response)
+    assert "event: bootstrap" in body
+    assert "event: heartbeat" in body
+
+
+def test_source_workflow_stream_emits_error_event_on_iteration_failure(
+    researcher_user: UserModel,
+    space: ResearchSpaceModel,
+    source: UserDataSourceModel,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MED13_ENABLE_WORKFLOW_SSE", "true")
+    monkeypatch.setattr(
+        "src.routes.research_spaces.workflow_monitor_stream_utils.STREAM_TICK_SECONDS",
+        0.0,
+    )
+
+    disconnect_checks = {"count": 0}
+
+    async def _disconnect_after_error(_: Request) -> bool:
+        disconnect_checks["count"] += 1
+        return disconnect_checks["count"] > 1
+
+    monkeypatch.setattr(Request, "is_disconnected", _disconnect_after_error)
+
+    app = create_app()
+    service = FlakySourceWorkflowMonitorService()
+    app.dependency_overrides[get_source_workflow_monitor_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.get(
+        f"/research-spaces/{space.id}/sources/{source.id}/workflow-stream",
+        headers=_auth_headers(researcher_user),
+    )
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = _read_all_sse_text(response)
+    assert "event: bootstrap" in body
+    assert "event: error" in body
 
 
 def test_source_workflow_monitor_reports_timeout_failure_counter(

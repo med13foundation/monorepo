@@ -28,7 +28,7 @@ router = APIRouter()
     response_model=DictionaryRelationTypeListResponse,
     summary="List dictionary relation types",
 )
-async def list_dictionary_relation_types(
+def list_dictionary_relation_types(
     domain_context: str | None = Query(None, description="Filter by domain context"),
     service: DictionaryPort = Depends(get_dictionary_service),
 ) -> DictionaryRelationTypeListResponse:
@@ -46,7 +46,7 @@ async def list_dictionary_relation_types(
     response_model=DictionaryRelationTypeResponse,
     summary="Get dictionary relation type",
 )
-async def get_dictionary_relation_type(
+def get_dictionary_relation_type(
     relation_type_id: str,
     service: DictionaryPort = Depends(get_dictionary_service),
 ) -> DictionaryRelationTypeResponse:
@@ -65,7 +65,7 @@ async def get_dictionary_relation_type(
     status_code=status.HTTP_201_CREATED,
     summary="Create dictionary relation type",
 )
-async def create_dictionary_relation_type(
+def create_dictionary_relation_type(
     request: DictionaryRelationTypeCreateRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -103,7 +103,7 @@ async def create_dictionary_relation_type(
     response_model=DictionaryRelationTypeResponse,
     summary="Set dictionary relation type review status",
 )
-async def set_dictionary_relation_type_review_status(
+def set_dictionary_relation_type_review_status(
     relation_type_id: str,
     request: VariableDefinitionReviewStatusRequest,
     current_user: User = Depends(require_admin_user),
@@ -141,7 +141,7 @@ async def set_dictionary_relation_type_review_status(
     response_model=DictionaryRelationTypeResponse,
     summary="Revoke dictionary relation type",
 )
-async def revoke_dictionary_relation_type(
+def revoke_dictionary_relation_type(
     relation_type_id: str,
     request: VariableDefinitionRevokeRequest,
     current_user: User = Depends(require_admin_user),
@@ -178,7 +178,7 @@ async def revoke_dictionary_relation_type(
     response_model=DictionaryRelationTypeResponse,
     summary="Merge dictionary relation type into another",
 )
-async def merge_dictionary_relation_type(
+def merge_dictionary_relation_type(
     relation_type_id: str,
     request: DictionaryMergeRequest,
     current_user: User = Depends(require_admin_user),

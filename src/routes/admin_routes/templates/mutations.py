@@ -31,7 +31,7 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
     summary="Create template",
 )
-async def create_template(
+def create_template(
     payload: TemplateCreatePayload,
     service: TemplateManagementService = Depends(get_template_service),
 ) -> TemplateResponse:
@@ -58,7 +58,7 @@ async def create_template(
     response_model=TemplateResponse,
     summary="Update template",
 )
-async def update_template(
+def update_template(
     template_id: UUID,
     payload: TemplateUpdatePayload,
     service: TemplateManagementService = Depends(get_template_service),
@@ -88,7 +88,7 @@ async def update_template(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete template",
 )
-async def delete_template(
+def delete_template(
     template_id: UUID,
     service: TemplateManagementService = Depends(get_template_service),
 ) -> None:
@@ -107,7 +107,7 @@ async def delete_template(
     response_model=TemplateResponse,
     summary="Make a template public",
 )
-async def make_template_public(
+def make_template_public(
     template_id: UUID,
     service: TemplateManagementService = Depends(get_template_service),
 ) -> TemplateResponse:
@@ -126,7 +126,7 @@ async def make_template_public(
     response_model=TemplateResponse,
     summary="Approve a template for general use",
 )
-async def approve_template(
+def approve_template(
     template_id: UUID,
     service: TemplateManagementService = Depends(get_template_service),
 ) -> TemplateResponse:

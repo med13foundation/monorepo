@@ -28,7 +28,7 @@ router = APIRouter()
     response_model=VariableDefinitionListResponse,
     summary="List dictionary variables",
 )
-async def list_dictionary_variables(
+def list_dictionary_variables(
     domain_context: str | None = Query(None, description="Filter by domain context"),
     data_type: str | None = Query(None, description="Filter by kernel data type"),
     service: DictionaryPort = Depends(get_dictionary_service),
@@ -49,7 +49,7 @@ async def list_dictionary_variables(
     status_code=status.HTTP_201_CREATED,
     summary="Create dictionary variable",
 )
-async def create_dictionary_variable(
+def create_dictionary_variable(
     request: VariableDefinitionCreateRequest,
     current_user: User = Depends(require_admin_user),
     session: Session = Depends(get_admin_db_session),
@@ -90,7 +90,7 @@ async def create_dictionary_variable(
     response_model=VariableDefinitionResponse,
     summary="Set dictionary variable review status",
 )
-async def set_dictionary_variable_review_status(
+def set_dictionary_variable_review_status(
     variable_id: str,
     request: VariableDefinitionReviewStatusRequest,
     current_user: User = Depends(require_admin_user),
@@ -119,7 +119,7 @@ async def set_dictionary_variable_review_status(
     response_model=VariableDefinitionResponse,
     summary="Revoke dictionary variable",
 )
-async def revoke_dictionary_variable(
+def revoke_dictionary_variable(
     variable_id: str,
     request: VariableDefinitionRevokeRequest,
     current_user: User = Depends(require_admin_user),
@@ -147,7 +147,7 @@ async def revoke_dictionary_variable(
     response_model=VariableDefinitionResponse,
     summary="Merge dictionary variable into another",
 )
-async def merge_dictionary_variable(
+def merge_dictionary_variable(
     variable_id: str,
     request: DictionaryMergeRequest,
     current_user: User = Depends(require_admin_user),

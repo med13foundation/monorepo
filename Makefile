@@ -302,7 +302,7 @@ security-audit: ## Run comprehensive security audit (pip-audit, bandit) [blockin
 	$(call check_venv)
 	@echo "Running pip-audit..."
 	@$(USE_PIP) install pip-audit --quiet || true
-	@pip-audit $(PIP_AUDIT_IGNORE_FLAGS) --format json > pip-audit-results.json || true
+	@PIP_NO_CACHE_DIR=1 pip-audit $(PIP_AUDIT_IGNORE_FLAGS) --format json > pip-audit-results.json || true
 	@if [ -n "$$SAFETY_API_KEY" ]; then \
 		echo "Running safety..."; \
 		SAFETY_API_KEY="$$SAFETY_API_KEY" safety --stage development scan --save-as json safety-results.json --use-server-matching || true; \
