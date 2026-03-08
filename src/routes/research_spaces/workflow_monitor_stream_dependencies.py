@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from fastapi import Depends, Query
+from fastapi import Query
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from src.application.services.membership_management_service import (
     MembershipManagementService,
@@ -16,30 +16,53 @@ from src.application.services.membership_management_service import (
 from src.application.services.source_workflow_monitor_service import (
     SourceWorkflowMonitorService,
 )
-from src.database.session import get_session
+from src.database.session import SessionLocal, set_session_rls_context
 from src.domain.entities.user import UserRole
+from src.infrastructure.repositories import SqlAlchemyResearchSpaceRepository
+from src.infrastructure.repositories.research_space_membership_repository import (
+    SqlAlchemyResearchSpaceMembershipRepository,
+)
 from src.type_definitions.common import JSONObject
 
 from . import dependencies as space_dependencies
+from . import workflow_monitor_routes as monitor_routes
 from . import workflow_monitor_stream_utils as stream_utils
+
+if TYPE_CHECKING:
+    from typing import Protocol
+
+    from sqlalchemy.orm import Session
+
+    class WorkflowMonitorReader(Protocol):
+        def get_source_workflow_monitor(
+            self,
+            *,
+            space_id: UUID,
+            source_id: UUID,
+            run_id: str | None,
+            limit: int,
+            include_graph: bool,
+        ) -> JSONObject: ...
+
+        def list_workflow_events(
+            self,
+            *,
+            space_id: UUID,
+            source_id: UUID,
+            run_id: str | None,
+            limit: int,
+            since: str | None,
+        ) -> JSONObject: ...
 
 
 @dataclass
 class MembershipContext:
-    membership_service: MembershipManagementService
-    session: Session
+    membership_service: object | None = None
+    session: object | None = None
 
 
-def get_membership_context(
-    membership_service: MembershipManagementService = Depends(
-        space_dependencies.get_membership_service,
-    ),
-    session: Session = Depends(get_session),
-) -> MembershipContext:
-    return MembershipContext(
-        membership_service=membership_service,
-        session=session,
-    )
+def get_membership_context() -> MembershipContext:
+    return MembershipContext()
 
 
 class WorkflowSpaceStreamQueryParams(BaseModel):
@@ -65,29 +88,41 @@ async def verify_stream_membership(
     space_id: UUID,
     current_user_id: UUID,
     current_user_role: UserRole | None,
-    membership_context: MembershipContext,
+    membership_context: MembershipContext | None = None,
 ) -> None:
     await asyncio.to_thread(
-        space_dependencies.verify_space_membership,
-        space_id,
-        current_user_id,
-        membership_context.membership_service,
-        membership_context.session,
-        current_user_role,
+        _verify_stream_membership_sync,
+        space_id=space_id,
+        current_user_id=current_user_id,
+        current_user_role=current_user_role,
     )
 
 
 async def load_monitor_payload(
     *,
-    monitor_service: SourceWorkflowMonitorService,
+    monitor_service: WorkflowMonitorReader,
     space_id: UUID,
     source_id: UUID,
     run_id: str | None,
     limit: int,
     include_graph: bool,
+    current_user_id: UUID,
+    current_user_role: UserRole | None,
 ) -> JSONObject:
+    if not isinstance(monitor_service, SourceWorkflowMonitorService):
+        return await asyncio.to_thread(
+            monitor_service.get_source_workflow_monitor,
+            space_id=space_id,
+            source_id=source_id,
+            run_id=run_id,
+            limit=limit,
+            include_graph=include_graph,
+        )
+
     return await asyncio.to_thread(
-        monitor_service.get_source_workflow_monitor,
+        _load_monitor_payload_sync,
+        current_user_id=current_user_id,
+        current_user_role=current_user_role,
         space_id=space_id,
         source_id=source_id,
         run_id=run_id,
@@ -98,15 +133,29 @@ async def load_monitor_payload(
 
 async def load_events_payload(
     *,
-    monitor_service: SourceWorkflowMonitorService,
+    monitor_service: WorkflowMonitorReader,
     space_id: UUID,
     source_id: UUID,
     run_id: str | None,
     limit: int,
     since: str | None,
+    current_user_id: UUID,
+    current_user_role: UserRole | None,
 ) -> JSONObject:
+    if not isinstance(monitor_service, SourceWorkflowMonitorService):
+        return await asyncio.to_thread(
+            monitor_service.list_workflow_events,
+            space_id=space_id,
+            source_id=source_id,
+            run_id=run_id,
+            limit=limit,
+            since=since,
+        )
+
     return await asyncio.to_thread(
-        monitor_service.list_workflow_events,
+        _load_events_payload_sync,
+        current_user_id=current_user_id,
+        current_user_role=current_user_role,
         space_id=space_id,
         source_id=source_id,
         run_id=run_id,
@@ -117,18 +166,157 @@ async def load_events_payload(
 
 async def resolve_stream_source_ids(
     *,
-    session: Session,
     space_id: UUID,
     include_inactive: bool,
     requested_source_ids: list[str],
+    current_user_id: UUID,
+    current_user_role: UserRole | None,
 ) -> list[str]:
     return await asyncio.to_thread(
-        stream_utils.resolve_space_source_ids,
-        session=session,
+        _resolve_stream_source_ids_sync,
+        current_user_id=current_user_id,
+        current_user_role=current_user_role,
         space_id=space_id,
         include_inactive=include_inactive,
         requested_source_ids=requested_source_ids,
     )
+
+
+def _is_admin_user(current_user_role: UserRole | None) -> bool:
+    return current_user_role == UserRole.ADMIN
+
+
+def _open_stream_session(
+    *,
+    current_user_id: UUID,
+    current_user_role: UserRole | None,
+) -> Session:
+    session = SessionLocal()
+    is_admin_user = _is_admin_user(current_user_role)
+    set_session_rls_context(
+        session,
+        current_user_id=current_user_id,
+        has_phi_access=is_admin_user,
+        is_admin=is_admin_user,
+        bypass_rls=False,
+    )
+    return session
+
+
+def _build_membership_service(session: Session) -> MembershipManagementService:
+    membership_repository = SqlAlchemyResearchSpaceMembershipRepository(session=session)
+    space_repository = SqlAlchemyResearchSpaceRepository(session=session)
+    return MembershipManagementService(
+        membership_repository=membership_repository,
+        research_space_repository=space_repository,
+    )
+
+
+def _build_monitor_service(session: Session) -> SourceWorkflowMonitorService:
+    return SourceWorkflowMonitorService(
+        session=session,
+        run_progress=monitor_routes.get_run_progress_port(),
+    )
+
+
+def _verify_stream_membership_sync(
+    *,
+    space_id: UUID,
+    current_user_id: UUID,
+    current_user_role: UserRole | None,
+) -> None:
+    session = _open_stream_session(
+        current_user_id=current_user_id,
+        current_user_role=current_user_role,
+    )
+    try:
+        membership_service = _build_membership_service(session)
+        space_dependencies.verify_space_membership(
+            space_id,
+            current_user_id,
+            membership_service,
+            session,
+            current_user_role,
+        )
+    finally:
+        session.close()
+
+
+def _load_monitor_payload_sync(
+    *,
+    current_user_id: UUID,
+    current_user_role: UserRole | None,
+    space_id: UUID,
+    source_id: UUID,
+    run_id: str | None,
+    limit: int,
+    include_graph: bool,
+) -> JSONObject:
+    session = _open_stream_session(
+        current_user_id=current_user_id,
+        current_user_role=current_user_role,
+    )
+    try:
+        monitor_service = _build_monitor_service(session)
+        return monitor_service.get_source_workflow_monitor(
+            space_id=space_id,
+            source_id=source_id,
+            run_id=run_id,
+            limit=limit,
+            include_graph=include_graph,
+        )
+    finally:
+        session.close()
+
+
+def _load_events_payload_sync(
+    *,
+    current_user_id: UUID,
+    current_user_role: UserRole | None,
+    space_id: UUID,
+    source_id: UUID,
+    run_id: str | None,
+    limit: int,
+    since: str | None,
+) -> JSONObject:
+    session = _open_stream_session(
+        current_user_id=current_user_id,
+        current_user_role=current_user_role,
+    )
+    try:
+        monitor_service = _build_monitor_service(session)
+        return monitor_service.list_workflow_events(
+            space_id=space_id,
+            source_id=source_id,
+            run_id=run_id,
+            limit=limit,
+            since=since,
+        )
+    finally:
+        session.close()
+
+
+def _resolve_stream_source_ids_sync(
+    *,
+    current_user_id: UUID,
+    current_user_role: UserRole | None,
+    space_id: UUID,
+    include_inactive: bool,
+    requested_source_ids: list[str],
+) -> list[str]:
+    session = _open_stream_session(
+        current_user_id=current_user_id,
+        current_user_role=current_user_role,
+    )
+    try:
+        return stream_utils.resolve_space_source_ids(
+            session=session,
+            space_id=space_id,
+            include_inactive=include_inactive,
+            requested_source_ids=requested_source_ids,
+        )
+    finally:
+        session.close()
 
 
 __all__ = [

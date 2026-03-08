@@ -80,6 +80,8 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
             run_id=query.run_id,
             limit=stream_utils.STREAM_SOURCE_MONITOR_LIMIT,
             include_graph=query.include_graph,
+            current_user_id=current_user_id,
+            current_user_role=current_user_role,
         )
         bootstrap_events_payload = await stream_dependencies.load_events_payload(
             monitor_service=monitor_service,
@@ -88,6 +90,8 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
             run_id=query.run_id,
             limit=stream_utils.STREAM_EVENTS_LIMIT,
             since=None,
+            current_user_id=current_user_id,
+            current_user_role=current_user_role,
         )
         bootstrap_events_raw = bootstrap_events_payload.get("events")
         bootstrap_events = (
@@ -122,6 +126,8 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
                     run_id=query.run_id,
                     limit=stream_utils.STREAM_SOURCE_MONITOR_LIMIT,
                     include_graph=query.include_graph,
+                    current_user_id=current_user_id,
+                    current_user_role=current_user_role,
                 )
                 snapshot_hash = stream_utils.hash_payload(monitor_payload)
                 if snapshot_hash != last_snapshot_hash:
@@ -145,6 +151,8 @@ async def stream_source_workflow_monitor(  # noqa: PLR0913, PLR0915
                     run_id=query.run_id,
                     limit=stream_utils.STREAM_EVENTS_LIMIT,
                     since=since_cursor,
+                    current_user_id=current_user_id,
+                    current_user_role=current_user_role,
                 )
                 events_raw = events_payload.get("events")
                 events = events_raw if isinstance(events_raw, list) else []
@@ -241,10 +249,11 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
         since_by_source: dict[str, str | None] = {}
 
         source_ids = await stream_dependencies.resolve_stream_source_ids(
-            session=membership_context.session,
             space_id=space_id,
             include_inactive=query.include_inactive,
             requested_source_ids=query.source_ids,
+            current_user_id=current_user_id,
+            current_user_role=current_user_role,
         )
         bootstrap_rows: list[dict[str, object]] = []
         for source_id_str in source_ids:
@@ -257,6 +266,8 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
                     run_id=None,
                     limit=stream_utils.STREAM_MONITOR_LIMIT,
                     include_graph=False,
+                    current_user_id=current_user_id,
+                    current_user_role=current_user_role,
                 )
                 events_payload = await stream_dependencies.load_events_payload(
                     monitor_service=monitor_service,
@@ -265,6 +276,8 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
                     run_id=None,
                     limit=query.events_limit,
                     since=None,
+                    current_user_id=current_user_id,
+                    current_user_role=current_user_role,
                 )
                 events_raw = events_payload.get("events")
                 events = events_raw if isinstance(events_raw, list) else []
@@ -306,10 +319,11 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
             emitted_event = False
             try:
                 source_ids = await stream_dependencies.resolve_stream_source_ids(
-                    session=membership_context.session,
                     space_id=space_id,
                     include_inactive=query.include_inactive,
                     requested_source_ids=query.source_ids,
+                    current_user_id=current_user_id,
+                    current_user_role=current_user_role,
                 )
                 active_source_set = set(source_ids)
                 for stale_source_id in list(last_hash_by_source.keys()):
@@ -328,6 +342,8 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
                                 run_id=None,
                                 limit=stream_utils.STREAM_MONITOR_LIMIT,
                                 include_graph=False,
+                                current_user_id=current_user_id,
+                                current_user_role=current_user_role,
                             )
                         )
                         events_payload = await stream_dependencies.load_events_payload(
@@ -337,6 +353,8 @@ async def stream_space_workflow_cards(  # noqa: PLR0913, PLR0915
                             run_id=None,
                             limit=query.events_limit,
                             since=since_by_source.get(source_id_str),
+                            current_user_id=current_user_id,
+                            current_user_role=current_user_role,
                         )
                         events_raw = events_payload.get("events")
                         events = events_raw if isinstance(events_raw, list) else []
