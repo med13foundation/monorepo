@@ -43,6 +43,7 @@ import {
   createUserAction,
   deleteUserAction,
   lockUserAction,
+  updateUserAction,
 } from '@/app/actions/users'
 import type {
   CreateUserRequest,
@@ -56,7 +57,6 @@ import { MaintenanceModePanel } from '@/components/system-settings/MaintenanceMo
 import { SpaceSourcePermissionsManager } from '@/components/system-settings/SpaceSourcePermissionsManager'
 import { StorageConfigurationManager } from '@/components/system-settings/StorageConfigurationManager'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useRouter } from 'next/navigation'
 import type { StorageConfigurationListResponse, StorageOverviewResponse } from '@/types/storage'
 import type { MaintenanceModeResponse } from '@/types/system-status'
 import type { SourceCatalogEntry } from '@/lib/types/data-discovery'
@@ -85,6 +85,16 @@ interface SystemSettingsClientProps {
   isAdmin: boolean
 }
 
+const ROLE_OPTIONS: Array<{
+  label: string
+  value: UserPublic['role']
+}> = [
+  { label: 'Administrator', value: 'admin' },
+  { label: 'Curator', value: 'curator' },
+  { label: 'Researcher', value: 'researcher' },
+  { label: 'Viewer', value: 'viewer' },
+]
+
 const ROLE_FILTERS = [
   { label: 'All roles', value: 'all' },
   { label: 'Administrators', value: 'admin' },
@@ -100,13 +110,6 @@ const STATUS_FILTERS = [
   { label: 'Pending verification', value: 'pending_verification' },
   { label: 'Inactive', value: 'inactive' },
 ]
-
-const roleLabels: Record<UserPublic['role'], string> = {
-  admin: 'Administrator',
-  curator: 'Curator',
-  researcher: 'Researcher',
-  viewer: 'Viewer',
-}
 
 const statusLabels: Record<UserPublic['status'], string> = {
   active: 'Active',
@@ -150,13 +153,13 @@ export default function SystemSettingsClient({
   currentUserId,
   isAdmin,
 }: SystemSettingsClientProps) {
-  const router = useRouter()
   const queryClient = useQueryClient()
   const [filters, setFilters] = useState<UserListParams>(initialParams)
   const [search, setSearch] = useState('')
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<UserPublic | null>(null)
   const [pendingUserId, setPendingUserId] = useState<string | null>(null)
+  const [roleDrafts, setRoleDrafts] = useState<Record<string, UserPublic['role']>>({})
   const [isRefreshing, startRefresh] = useTransition()
   const [isCreatingUser, setIsCreatingUser] = useState(false)
   const [isDeletingUser, setIsDeletingUser] = useState(false)
@@ -249,6 +252,50 @@ export default function SystemSettingsClient({
       toast.error('Failed to create user')
     } finally {
       setIsCreatingUser(false)
+    }
+  }
+
+  const clearRoleDraft = (userId: string) => {
+    setRoleDrafts((prev) => {
+      if (!(userId in prev)) {
+        return prev
+      }
+      const next = { ...prev }
+      delete next[userId]
+      return next
+    })
+  }
+
+  const handleUserRoleChange = async (
+    user: UserPublic,
+    nextRole: UserPublic['role'],
+  ) => {
+    if (nextRole === user.role) {
+      return
+    }
+
+    setRoleDrafts((prev) => ({ ...prev, [user.id]: nextRole }))
+    setPendingUserId(user.id)
+
+    try {
+      const result = await updateUserAction(user.id, { role: nextRole })
+      if (!result.success) {
+        clearRoleDraft(user.id)
+        toast.error(result.error)
+        return
+      }
+
+      replaceUserInLists(queryClient, result.data.user)
+      updateUserStatsCache(queryClient, user, result.data.user)
+      clearRoleDraft(user.id)
+      toast.success(`Updated role for ${user.full_name}`)
+      refreshUserQueries()
+    } catch (error) {
+      console.error('Failed to update user role', error)
+      clearRoleDraft(user.id)
+      toast.error('Unable to update user role')
+    } finally {
+      setPendingUserId(null)
     }
   }
 
@@ -474,64 +521,88 @@ export default function SystemSettingsClient({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredUsers.map((user) => (
-                    <TableRow key={user.id}>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-medium">{user.full_name}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {user.email}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{roleLabels[user.role]}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariantMap[user.status]}>
-                          {statusLabels[user.status]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{formatDate(user.created_at)}</TableCell>
-                      <TableCell>{formatDate(user.last_login)}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleStatusAction(user)}
-                            disabled={
-                              user.id === currentUserId ||
-                              pendingUserId === user.id
-                            }
-                          >
-                            {pendingUserId === user.id ? (
-                              <Loader2 className="mr-2 size-4 animate-spin" />
-                            ) : user.status === 'active' ? (
-                              <Ban className="mr-2 size-4 text-amber-500" />
-                            ) : (
-                              <CheckCircle className="mr-2 size-4 text-emerald-500" />
-                            )}
-                            {user.status === 'active' ? 'Suspend' : 'Activate'}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-destructive"
-                            onClick={() => setDeleteTarget(user)}
-                            disabled={
-                              user.id === currentUserId ||
-                              pendingUserId === user.id ||
-                              isDeletingUser
-                            }
-                          >
-                            <Trash2 className="mr-2 size-4" />
-                            Remove
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {filteredUsers.map((user) => {
+                    const effectiveRole = roleDrafts[user.id] ?? user.role
+                    const isPending = pendingUserId === user.id
+                    const isSelf = user.id === currentUserId
+
+                    return (
+                      <TableRow key={user.id}>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{user.full_name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {user.email}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Label className="sr-only" htmlFor={`role-${user.id}`}>
+                              Role for {user.full_name}
+                            </Label>
+                            <Select
+                              value={effectiveRole}
+                              onValueChange={(value: UserPublic['role']) => {
+                                void handleUserRoleChange(user, value)
+                              }}
+                              disabled={isPending || isSelf}
+                            >
+                              <SelectTrigger id={`role-${user.id}`} className="h-9 w-[170px]">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {ROLE_OPTIONS.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {isPending ? (
+                              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={statusVariantMap[user.status]}>
+                            {statusLabels[user.status]}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{formatDate(user.created_at)}</TableCell>
+                        <TableCell>{formatDate(user.last_login)}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleStatusAction(user)}
+                              disabled={isSelf || isPending}
+                            >
+                              {isPending ? (
+                                <Loader2 className="mr-2 size-4 animate-spin" />
+                              ) : user.status === 'active' ? (
+                                <Ban className="mr-2 size-4 text-amber-500" />
+                              ) : (
+                                <CheckCircle className="mr-2 size-4 text-emerald-500" />
+                              )}
+                              {user.status === 'active' ? 'Suspend' : 'Activate'}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive"
+                              onClick={() => setDeleteTarget(user)}
+                              disabled={isSelf || isPending || isDeletingUser}
+                            >
+                              <Trash2 className="mr-2 size-4" />
+                              Remove
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
               <p className="mt-3 text-sm text-muted-foreground">
@@ -700,15 +771,15 @@ function CreateUserDialog({
             </div>
             <div className="space-y-2">
               <Label htmlFor="role">Role</Label>
-              <Select
-                value={form.role}
-                onValueChange={(value) => updateField('role', value)}
-              >
+                <Select
+                  value={form.role}
+                  onValueChange={(value) => updateField('role', value)}
+                >
                 <SelectTrigger id="role">
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
                 <SelectContent>
-                  {ROLE_FILTERS.filter((role) => role.value !== 'all').map((option) => (
+                  {ROLE_OPTIONS.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>

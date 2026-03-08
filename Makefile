@@ -622,9 +622,9 @@ docker-postgres-logs: ## Tail Postgres logs
 docker-postgres-status: ## Show Postgres container status
 	@if [ ! -f "$(POSTGRES_ENV_FILE)" ]; then \
 		echo "No $(POSTGRES_ENV_FILE) found; Postgres not configured."; \
-		exit 0; \
+	else \
+		$(POSTGRES_COMPOSE) ps; \
 	fi
-	$(POSTGRES_COMPOSE) ps
 
 postgres-disable: ## Keep container running but disable auto-Postgres mode
 	@rm -f "$(POSTGRES_ACTIVE_FLAG)"

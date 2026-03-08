@@ -14,13 +14,21 @@ import { UserPlus } from 'lucide-react'
 import { Loader2 } from 'lucide-react'
 import { roleColors, roleLabels } from './role-utils'
 import { cn } from '@/lib/utils'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 interface SpaceMembersListProps {
   memberships: ResearchSpaceMembership[]
   isLoading: boolean
   errorMessage: string | null
   onInvite?: () => void
-  onUpdateRole?: (membershipId: string, currentRole: MembershipRole) => void
+  onUpdateRole?: (membershipId: string, nextRole: MembershipRole) => Promise<void> | void
   onRemove?: (membershipId: string) => void
   canManage?: boolean
   pendingMembershipId?: string | null
@@ -60,6 +68,13 @@ export function SpaceMembersList({
       </div>
     )
   }
+
+  const editableRoles = [
+    MembershipRole.ADMIN,
+    MembershipRole.CURATOR,
+    MembershipRole.RESEARCHER,
+    MembershipRole.VIEWER,
+  ] as const
 
   return (
     <div className="space-y-4">
@@ -107,14 +122,46 @@ export function SpaceMembersList({
                     {membership.user_id}
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      className={cn(
-                        roleColors[membership.role],
-                        'text-white'
-                      )}
-                    >
-                      {roleLabels[membership.role]}
-                    </Badge>
+                    {canManage && onUpdateRole && membership.role !== MembershipRole.OWNER ? (
+                      <div className="flex items-center gap-2">
+                        <Label className="sr-only" htmlFor={`space-role-${membership.id}`}>
+                          Role for {membership.user_id}
+                        </Label>
+                        <Select
+                          value={membership.role}
+                          onValueChange={(value: MembershipRole) => {
+                            void onUpdateRole(membership.id, value)
+                          }}
+                          disabled={pendingMembershipId === membership.id}
+                        >
+                          <SelectTrigger
+                            id={`space-role-${membership.id}`}
+                            className="h-9 w-[160px]"
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {editableRoles.map((role) => (
+                              <SelectItem key={role} value={role}>
+                                {roleLabels[role]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {pendingMembershipId === membership.id ? (
+                          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                        ) : null}
+                      </div>
+                    ) : (
+                      <Badge
+                        className={cn(
+                          roleColors[membership.role],
+                          'text-white'
+                        )}
+                      >
+                        {roleLabels[membership.role]}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>
                     {membership.is_active ? (
@@ -141,15 +188,6 @@ export function SpaceMembersList({
                       <div className="flex items-center gap-2">
                         {membership.role !== MembershipRole.OWNER && (
                           <>
-                            {onUpdateRole && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => onUpdateRole(membership.id, membership.role)}
-                              >
-                                Change Role
-                              </Button>
-                            )}
                             <Button
                               variant="ghost"
                               size="sm"
