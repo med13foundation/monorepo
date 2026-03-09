@@ -34,6 +34,20 @@ interface SpaceMembersListProps {
   pendingMembershipId?: string | null
 }
 
+function getMembershipDisplayName(membership: ResearchSpaceMembership): string {
+  const fullName = membership.user?.full_name?.trim()
+  if (fullName) {
+    return fullName
+  }
+
+  const username = membership.user?.username?.trim()
+  if (username) {
+    return username
+  }
+
+  return membership.user_id
+}
+
 export function SpaceMembersList({
   memberships,
   isLoading,
@@ -116,78 +130,78 @@ export function SpaceMembersList({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {memberships.map((membership) => (
-                <TableRow key={membership.id}>
-                  <TableCell className="font-medium">
-                    {membership.user_id}
-                  </TableCell>
-                  <TableCell>
-                    {canManage && onUpdateRole && membership.role !== MembershipRole.OWNER ? (
-                      <div className="flex items-center gap-2">
-                        <Label className="sr-only" htmlFor={`space-role-${membership.id}`}>
-                          Role for {membership.user_id}
-                        </Label>
-                        <Select
-                          value={membership.role}
-                          onValueChange={(value: MembershipRole) => {
-                            void onUpdateRole(membership.id, value)
-                          }}
-                          disabled={pendingMembershipId === membership.id}
-                        >
-                          <SelectTrigger
-                            id={`space-role-${membership.id}`}
-                            className="h-9 w-[160px]"
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {editableRoles.map((role) => (
-                              <SelectItem key={role} value={role}>
-                                {roleLabels[role]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        {pendingMembershipId === membership.id ? (
-                          <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                        ) : null}
-                      </div>
-                    ) : (
-                      <Badge
-                        className={cn(
-                          roleColors[membership.role],
-                          'text-white'
-                        )}
-                      >
-                        {roleLabels[membership.role]}
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {membership.is_active ? (
-                      <Badge variant="outline" className="border-green-200 bg-green-50 text-green-700">
-                        Active
-                      </Badge>
-                    ) : membership.joined_at ? (
-                      <Badge variant="outline">Inactive</Badge>
-                    ) : (
-                      <Badge variant="outline" className="border-yellow-200 bg-yellow-50 text-yellow-700">
-                        Pending
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {membership.joined_at
-                      ? new Date(membership.joined_at).toLocaleDateString()
-                      : membership.invited_at
-                      ? `Invited ${new Date(membership.invited_at).toLocaleDateString()}`
-                      : '-'}
-                  </TableCell>
-                  {canManage && (
+              {memberships.map((membership) => {
+                const displayName = getMembershipDisplayName(membership)
+
+                return (
+                  <TableRow key={membership.id}>
+                    <TableCell className="font-medium">{displayName}</TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-2">
-                        {membership.role !== MembershipRole.OWNER && (
-                          <>
+                      {canManage && onUpdateRole && membership.role !== MembershipRole.OWNER ? (
+                        <div className="flex items-center gap-2">
+                          <Label className="sr-only" htmlFor={`space-role-${membership.id}`}>
+                            Role for {displayName}
+                          </Label>
+                          <Select
+                            value={membership.role}
+                            onValueChange={(value: MembershipRole) => {
+                              void onUpdateRole(membership.id, value)
+                            }}
+                            disabled={pendingMembershipId === membership.id}
+                          >
+                            <SelectTrigger
+                              id={`space-role-${membership.id}`}
+                              className="h-9 w-[160px]"
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {editableRoles.map((role) => (
+                                <SelectItem key={role} value={role}>
+                                  {roleLabels[role]}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {pendingMembershipId === membership.id ? (
+                            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                          ) : null}
+                        </div>
+                      ) : (
+                        <Badge
+                          className={cn(
+                            roleColors[membership.role],
+                            'text-white'
+                          )}
+                        >
+                          {roleLabels[membership.role]}
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {membership.is_active ? (
+                        <Badge variant="outline" className="border-green-200 bg-green-50 text-green-700">
+                          Active
+                        </Badge>
+                      ) : membership.joined_at ? (
+                        <Badge variant="outline">Inactive</Badge>
+                      ) : (
+                        <Badge variant="outline" className="border-yellow-200 bg-yellow-50 text-yellow-700">
+                          Pending
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {membership.joined_at
+                        ? new Date(membership.joined_at).toLocaleDateString()
+                        : membership.invited_at
+                        ? `Invited ${new Date(membership.invited_at).toLocaleDateString()}`
+                        : '-'}
+                    </TableCell>
+                    {canManage && (
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {membership.role !== MembershipRole.OWNER && (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -196,13 +210,13 @@ export function SpaceMembersList({
                             >
                               Remove
                             </Button>
-                          </>
-                        )}
-                      </div>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
+                          )}
+                        </div>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         </div>

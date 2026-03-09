@@ -1,10 +1,13 @@
 "use client"
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Loader2 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
 import { inviteMemberAction } from '@/app/actions/research-spaces'
-import { inviteMemberSchema, type InviteMemberFormData } from '@/lib/schemas/research-space'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -22,8 +25,6 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -31,37 +32,49 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Loader2 } from 'lucide-react'
+import { useInvitableUserSearch } from '@/hooks/use-invitable-user-search'
+import {
+  inviteMemberSchema,
+  type InviteMemberFormData,
+} from '@/lib/schemas/research-space'
 import { MembershipRole } from '@/types/research-space'
+import { InviteMemberUserPicker } from './InviteMemberUserPicker'
 import { roleLabels } from './role-utils'
-import { toast } from 'sonner'
-import { useRouter } from 'next/navigation'
+
+const DEFAULT_INVITE_MEMBER_VALUES: InviteMemberFormData = {
+  user_id: '',
+  role: MembershipRole.VIEWER,
+}
 
 interface InviteMemberDialogProps {
-  spaceId: string
+  afterInvite?: () => void
   open: boolean
-  onOpenChange: (open: boolean) => void
-  onSuccess?: () => void
+  setDialogOpen: (open: boolean) => void
+  spaceId: string
 }
 
 export function InviteMemberDialog({
-  spaceId,
+  afterInvite,
   open,
-  onOpenChange,
-  onSuccess,
+  setDialogOpen,
+  spaceId,
 }: InviteMemberDialogProps) {
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const userSearch = useInvitableUserSearch({ spaceId, open })
 
   const form = useForm<InviteMemberFormData>({
     resolver: zodResolver(inviteMemberSchema),
-    defaultValues: {
-      user_id: '',
-      role: MembershipRole.VIEWER,
-    },
+    defaultValues: DEFAULT_INVITE_MEMBER_VALUES,
   })
 
-  const onSubmit = async (data: InviteMemberFormData) => {
+  useEffect(() => {
+    if (!open) {
+      form.reset(DEFAULT_INVITE_MEMBER_VALUES)
+    }
+  }, [form, open])
+
+  const submitInvite = async (data: InviteMemberFormData) => {
     try {
       setIsSubmitting(true)
       const result = await inviteMemberAction(spaceId, {
@@ -72,15 +85,13 @@ export function InviteMemberDialog({
         toast.error(result.error)
         return
       }
-      form.reset()
-      onOpenChange(false)
-      onSuccess?.()
-      if (!onSuccess) {
+      setDialogOpen(false)
+      afterInvite?.()
+      if (!afterInvite) {
         router.refresh()
       }
       toast.success('Invitation sent')
     } catch (error) {
-      // Error handling is done by form validation
       console.error('Failed to invite member:', error)
       toast.error('Failed to invite member')
     } finally {
@@ -89,7 +100,7 @@ export function InviteMemberDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={setDialogOpen}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Invite Member</DialogTitle>
@@ -98,25 +109,16 @@ export function InviteMemberDialog({
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={form.handleSubmit(submitInvite)} className="space-y-4">
             <FormField
               control={form.control}
               name="user_id"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>User ID</FormLabel>
-                  <FormControl>
-                    <Input
-                      {...field}
-                      placeholder="Enter user UUID"
-                      className="font-mono"
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    The UUID of the user to invite
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
+                <InviteMemberUserPicker
+                  clearUserError={() => form.clearErrors('user_id')}
+                  field={field}
+                  searchState={userSearch}
+                />
               )}
             />
 
@@ -155,15 +157,18 @@ export function InviteMemberDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => onOpenChange(false)}
+                onClick={() => setDialogOpen(false)}
                 disabled={isSubmitting}
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting && (
+              <Button
+                type="submit"
+                disabled={isSubmitting || userSearch.selectedUser === null}
+              >
+                {isSubmitting ? (
                   <Loader2 className="mr-2 size-4 animate-spin" />
-                )}
+                ) : null}
                 Send Invitation
               </Button>
             </DialogFooter>

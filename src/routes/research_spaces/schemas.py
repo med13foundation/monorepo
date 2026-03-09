@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from src.domain.entities.research_space import ResearchSpace
 from src.domain.entities.research_space_membership import ResearchSpaceMembership
+from src.domain.entities.user import User
 from src.domain.entities.user_data_source import SourceConfiguration, UserDataSource
 from src.type_definitions.common import JSONObject
 
@@ -52,6 +53,25 @@ class ResearchSpaceListResponse(BaseModel):
     limit: int
 
 
+class MembershipUserResponse(BaseModel):
+    """Compact user profile included with membership responses."""
+
+    id: UUID
+    email: str
+    username: str
+    full_name: str
+
+    @classmethod
+    def from_user(cls, user: User) -> MembershipUserResponse:
+        """Create a compact membership user payload from a user entity."""
+        return cls(
+            id=user.id,
+            email=str(user.email),
+            username=user.username,
+            full_name=user.full_name,
+        )
+
+
 class MembershipResponse(BaseModel):
     """Response model for research space membership."""
 
@@ -65,11 +85,14 @@ class MembershipResponse(BaseModel):
     is_active: bool
     created_at: str
     updated_at: str
+    user: MembershipUserResponse | None = None
 
     @classmethod
     def from_entity(
         cls,
         membership: ResearchSpaceMembership,
+        *,
+        user: MembershipUserResponse | None = None,
     ) -> MembershipResponse:
         """Create response from domain entity."""
         return cls(
@@ -87,6 +110,7 @@ class MembershipResponse(BaseModel):
             is_active=membership.is_active,
             created_at=membership.created_at.isoformat(),
             updated_at=membership.updated_at.isoformat(),
+            user=user,
         )
 
 
@@ -96,6 +120,15 @@ class MembershipListResponse(BaseModel):
     memberships: list[MembershipResponse]
     total: int
     skip: int
+    limit: int
+
+
+class InvitableUserSearchResponse(BaseModel):
+    """Response model for active-user autocomplete in invite flows."""
+
+    query: str
+    users: list[MembershipUserResponse]
+    total: int
     limit: int
 
 

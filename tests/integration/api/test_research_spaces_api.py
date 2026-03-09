@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.database import session as session_module
-from src.domain.entities.user import UserRole
+from src.domain.entities.user import UserRole, UserStatus
 from src.infrastructure.security.jwt_provider import JWTProvider
 from src.main import create_app
 from src.models.database import Base
@@ -239,6 +239,115 @@ class TestMembershipAPI:
         payload = response.json()
         assert payload["id"] == str(membership_id)
         assert payload["role"] == "admin"
+
+    def test_list_members_includes_user_display_details(
+        self,
+        test_client,
+        db_session,
+        test_space,
+        test_user,
+    ):
+        """Listing members should include compact user details for display."""
+        membership_id = uuid4()
+        with _session_for_api(db_session) as session:
+            session.execute(
+                ResearchSpaceMembershipModel.__table__.insert(),
+                {
+                    "id": membership_id,
+                    "space_id": test_space.id,
+                    "user_id": test_user.id,
+                    "role": "researcher",
+                    "invited_by": test_user.id,
+                    "invited_at": datetime.now(UTC),
+                    "joined_at": datetime.now(UTC),
+                    "is_active": True,
+                    "created_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC),
+                },
+            )
+            session.commit()
+
+        response = test_client.get(
+            f"/research-spaces/{test_space.id}/members",
+            headers=_auth_headers(test_user),
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        membership = payload["memberships"][0]
+        assert membership["id"] == str(membership_id)
+        assert membership["user"]["id"] == str(test_user.id)
+        assert membership["user"]["username"] == test_user.username
+        assert membership["user"]["full_name"] == test_user.full_name
+
+    def test_search_invitable_users_returns_active_non_members_only(
+        self,
+        test_client,
+        db_session,
+        test_space,
+        test_user,
+    ):
+        """Autocomplete should return active non-members that match the query."""
+        unique_suffix = uuid4().hex[:8]
+        active_candidate_username = f"candidate-{unique_suffix}"
+        suspended_candidate_username = f"candidate-suspended-{unique_suffix}"
+        existing_member_username = f"candidate-member-{unique_suffix}"
+        with _session_for_api(db_session) as session:
+            active_candidate = UserModel(
+                email=f"candidate-{unique_suffix}@example.com",
+                username=active_candidate_username,
+                full_name="Candidate Active",
+                hashed_password="hashed_password",
+                role=UserRole.RESEARCHER,
+                status=UserStatus.ACTIVE,
+            )
+            suspended_candidate = UserModel(
+                email=f"candidate-suspended-{unique_suffix}@example.com",
+                username=suspended_candidate_username,
+                full_name="Candidate Suspended",
+                hashed_password="hashed_password",
+                role=UserRole.RESEARCHER,
+                status=UserStatus.SUSPENDED,
+            )
+            existing_member = UserModel(
+                email=f"candidate-member-{unique_suffix}@example.com",
+                username=existing_member_username,
+                full_name="Candidate Member",
+                hashed_password="hashed_password",
+                role=UserRole.RESEARCHER,
+                status=UserStatus.ACTIVE,
+            )
+            session.add_all([active_candidate, suspended_candidate, existing_member])
+            session.flush()
+            session.execute(
+                ResearchSpaceMembershipModel.__table__.insert(),
+                {
+                    "id": uuid4(),
+                    "space_id": test_space.id,
+                    "user_id": existing_member.id,
+                    "role": "viewer",
+                    "invited_by": test_user.id,
+                    "invited_at": datetime.now(UTC),
+                    "joined_at": datetime.now(UTC),
+                    "is_active": True,
+                    "created_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC),
+                },
+            )
+            session.commit()
+
+        response = test_client.get(
+            f"/research-spaces/{test_space.id}/members/search-users",
+            params={"query": "candidate"},
+            headers=_auth_headers(test_user),
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        usernames = [user["username"] for user in payload["users"]]
+        assert active_candidate_username in usernames
+        assert suspended_candidate_username not in usernames
+        assert existing_member_username not in usernames
 
     # Note: Full integration tests would require:
     # - Authentication fixtures

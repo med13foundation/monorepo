@@ -17,6 +17,12 @@ function buildMembership(
     is_active: true,
     created_at: '2026-03-07T00:00:00Z',
     updated_at: '2026-03-07T00:00:00Z',
+    user: {
+      id: 'user-1',
+      email: 'jane@example.com',
+      username: 'jane',
+      full_name: 'Dr. Jane Smith',
+    },
     ...overrides,
   }
 }
@@ -44,8 +50,9 @@ describe('SpaceMembersList', () => {
       />,
     )
 
-    const row = screen.getByText('user-1').closest('tr')
+    const row = screen.getByText('Dr. Jane Smith').closest('tr')
     expect(row).not.toBeNull()
+    expect(screen.queryByText('user-1')).not.toBeInTheDocument()
 
     const rowScope = within(row as HTMLTableRowElement)
     await user.click(rowScope.getByRole('combobox'))
@@ -62,6 +69,12 @@ describe('SpaceMembersList', () => {
             id: 'membership-owner',
             user_id: 'owner-user',
             role: MembershipRole.OWNER,
+            user: {
+              id: 'owner-user',
+              email: 'owner@example.com',
+              username: 'owner',
+              full_name: 'Owner User',
+            },
           }),
         ]}
         isLoading={false}
@@ -71,7 +84,7 @@ describe('SpaceMembersList', () => {
       />,
     )
 
-    const row = screen.getByText('owner-user').closest('tr')
+    const row = screen.getByText('Owner User').closest('tr')
     expect(row).not.toBeNull()
 
     const rowScope = within(row as HTMLTableRowElement)
