@@ -27,6 +27,7 @@ from src.models.database.user import UserModel
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
+    verify_space_membership,
     verify_space_role,
 )
 from src.routes.research_spaces.schemas import (
@@ -155,6 +156,13 @@ def list_space_members(
     session: Session = Depends(get_session),
 ) -> MembershipListResponse:
     """List all members of a research space."""
+    verify_space_membership(
+        space_id,
+        current_user.id,
+        service,
+        session,
+        current_user.role,
+    )
     memberships = service.get_space_members(space_id, skip, limit)
     users_by_id = _build_membership_user_map(session, memberships)
     return MembershipListResponse(

@@ -280,6 +280,63 @@ class TestMembershipAPI:
         assert membership["user"]["username"] == test_user.username
         assert membership["user"]["full_name"] == test_user.full_name
 
+    def test_list_members_requires_space_access(
+        self,
+        test_client,
+        db_session,
+        test_space,
+        test_user,
+    ):
+        """Non-members should not be able to enumerate enriched member profiles."""
+        unique_suffix = uuid4().hex[:8]
+        with _session_for_api(db_session) as session:
+            listed_member = UserModel(
+                email=f"member-{unique_suffix}@example.com",
+                username=f"member-{unique_suffix}",
+                full_name="Listed Member",
+                hashed_password="hashed_password",
+                role=UserRole.RESEARCHER.value,
+                status="active",
+            )
+            outsider_user = UserModel(
+                email=f"outsider-{unique_suffix}@example.com",
+                username=f"outsider-{unique_suffix}",
+                full_name="Outsider User",
+                hashed_password="hashed_password",
+                role=UserRole.RESEARCHER.value,
+                status="active",
+            )
+            session.add_all([listed_member, outsider_user])
+            session.flush()
+            session.execute(
+                ResearchSpaceMembershipModel.__table__.insert(),
+                {
+                    "id": uuid4(),
+                    "space_id": test_space.id,
+                    "user_id": listed_member.id,
+                    "role": "researcher",
+                    "invited_by": test_user.id,
+                    "invited_at": datetime.now(UTC),
+                    "joined_at": datetime.now(UTC),
+                    "is_active": True,
+                    "created_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC),
+                },
+            )
+            session.commit()
+            session.refresh(outsider_user)
+            session.expunge(outsider_user)
+
+        response = test_client.get(
+            f"/research-spaces/{test_space.id}/members",
+            headers=_auth_headers(outsider_user),
+        )
+
+        assert response.status_code == 403
+        assert (
+            response.json()["detail"] == "User is not a member of this research space"
+        )
+
     def test_search_invitable_users_returns_active_non_members_only(
         self,
         test_client,
