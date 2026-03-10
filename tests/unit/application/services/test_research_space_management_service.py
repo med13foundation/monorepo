@@ -9,9 +9,10 @@ from src.application.services.research_space_management_service import (
     CreateSpaceRequest,
     ResearchSpaceManagementService,
 )
+from src.domain.entities.research_space import SpaceStatus
 
 if TYPE_CHECKING:
-    from src.domain.entities.research_space import ResearchSpace, SpaceStatus
+    from src.domain.entities.research_space import ResearchSpace
 
 
 class StubResearchSpaceRepository:
@@ -24,6 +25,10 @@ class StubResearchSpaceRepository:
         return any(space.slug == slug for space in self.saved_spaces)
 
     def save(self, space: ResearchSpace) -> ResearchSpace:
+        for index, existing_space in enumerate(self.saved_spaces):
+            if existing_space.id == space.id:
+                self.saved_spaces[index] = space
+                return space
         self.saved_spaces.append(space)
         return space
 
@@ -113,3 +118,26 @@ def test_create_space_preserves_explicit_relation_auto_promotion_setting() -> No
     )
 
     assert created.settings["relation_auto_promotion"]["enabled"] is True
+
+
+def test_delete_space_archives_space_instead_of_hard_deleting() -> None:
+    repository = StubResearchSpaceRepository()
+    service = ResearchSpaceManagementService(repository)
+    owner_id = uuid4()
+
+    created = service.create_space(
+        CreateSpaceRequest(
+            owner_id=owner_id,
+            name="Archive Me",
+            slug="archive-me",
+            settings={},
+            tags=[],
+        ),
+    )
+
+    success = service.delete_space(created.id, owner_id)
+
+    assert success is True
+    archived = repository.find_by_id(created.id)
+    assert archived is not None
+    assert archived.status == SpaceStatus.ARCHIVED

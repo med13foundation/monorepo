@@ -88,7 +88,7 @@ export async function deleteResearchSpaceAction(
     }
     return {
       success: false,
-      error: getActionErrorMessage(error, 'Failed to delete research space'),
+      error: getActionErrorMessage(error, 'Failed to archive research space'),
     }
   }
 }

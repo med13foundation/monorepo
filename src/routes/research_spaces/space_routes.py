@@ -396,15 +396,15 @@ def update_space(
 @research_spaces_router.delete(
     "/{space_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete research space",
-    description="Delete a research space",
+    summary="Archive research space",
+    description="Archive a research space and hide it from active listings",
 )
 def delete_space(
     space_id: UUID,
     current_user: User = Depends(get_current_active_user),
     service: ResearchSpaceManagementService = Depends(get_research_space_service),
 ) -> None:
-    """Delete a research space."""
+    """Archive a research space."""
     success = service.delete_space(space_id, current_user.id)
     if not success:
         raise HTTPException(

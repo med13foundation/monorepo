@@ -210,14 +210,14 @@ class ResearchSpaceManagementService:
 
     def delete_space(self, space_id: UUID, user_id: UUID) -> bool:
         """
-        Delete a research space.
+        Archive a research space via the delete action.
 
         Args:
             space_id: The space ID
             user_id: The user making the request (for authorization)
 
         Returns:
-            True if deleted, False if not found or not authorized
+            True if archived, False if not found or not authorized
         """
         space = self._space_repository.find_by_id(space_id)
         if not space:
@@ -227,7 +227,9 @@ class ResearchSpaceManagementService:
         if not space.can_be_modified_by(user_id):
             return False
 
-        return self._space_repository.delete(space_id)
+        archived_space = space.with_status(SpaceStatus.ARCHIVED)
+        self._space_repository.save(archived_space)
+        return True
 
     def archive_space(self, space_id: UUID, user_id: UUID) -> ResearchSpace | None:
         """

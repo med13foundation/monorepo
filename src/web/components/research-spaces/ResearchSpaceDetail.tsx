@@ -186,7 +186,7 @@ export function ResearchSpaceDetail({
   }
 
   const handleDeleteSpace = async () => {
-    if (confirm('Are you sure you want to delete this space? This action cannot be undone.')) {
+    if (confirm('Archive this space and remove it from active views?')) {
       try {
         setIsDeletingSpace(true)
         const result = await deleteResearchSpaceAction(spaceId)
@@ -194,11 +194,11 @@ export function ResearchSpaceDetail({
           toast.error(result.error)
           return
         }
-        toast.success('Space deleted')
+        toast.success('Space archived')
         router.push('/dashboard')
       } catch (error) {
-        console.error('Failed to delete space:', error)
-        toast.error('Failed to delete space')
+        console.error('Failed to archive space:', error)
+        toast.error('Failed to archive space')
       } finally {
         setIsDeletingSpace(false)
       }
@@ -244,7 +244,7 @@ export function ResearchSpaceDetail({
                 disabled={isDeletingSpace}
               >
                 <Trash2 className="mr-2 size-4" />
-                Delete
+                Archive
               </Button>
             )}
           </div>
