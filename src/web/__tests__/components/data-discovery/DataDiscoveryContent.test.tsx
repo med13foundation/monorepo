@@ -6,7 +6,7 @@ import type { OrchestratedSessionState, SourceCatalogEntry } from '@/types/gener
 const mockUpdateSelection = jest.fn()
 const mockAddSources = jest.fn()
 
-jest.mock('@/app/actions/space-discovery', () => ({
+jest.mock('@/components/data-discovery/space-discovery-api', () => ({
   updateSpaceDiscoverySelection: (...args: unknown[]) => mockUpdateSelection(...args),
   addSpaceDiscoverySources: (...args: unknown[]) => mockAddSources(...args),
 }))
@@ -114,9 +114,9 @@ describe('DataDiscoveryContent', () => {
 
     await waitFor(() => {
       expect(mockUpdateSelection).toHaveBeenCalledWith(
+        'space-123',
         'session-123',
         ['pubmed'],
-        '/spaces/space-123/data-sources',
       )
     })
   })
@@ -154,10 +154,9 @@ describe('DataDiscoveryContent', () => {
 
     await waitFor(() => {
       expect(mockAddSources).toHaveBeenCalledWith(
-        'session-123',
         'space-123',
+        'session-123',
         ['pubmed'],
-        '/spaces/space-123/data-sources',
       )
       expect(onComplete).toHaveBeenCalled()
     })

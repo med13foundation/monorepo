@@ -42,9 +42,6 @@ from src.infrastructure.llm.adapters.pubmed_relevance_agent_adapter import (
     ArtanaPubMedRelevanceAdapter,
 )
 from src.infrastructure.llm.adapters.query_agent_adapter import ArtanaQueryAgentAdapter
-from src.infrastructure.llm.state.shared_postgres_store import (
-    get_shared_artana_postgres_store,
-)
 from src.infrastructure.repositories import (
     SQLAlchemyDiscoverySearchJobRepository,
     SqlAlchemyExtractionQueueRepository,
@@ -398,11 +395,8 @@ def build_ingestion_scheduling_service(  # noqa: C901, PLR0915
         post_ingestion_hook = _run_post_ingestion_pipeline
 
     # Initialize Query Agent
-    shared_artana_store = get_shared_artana_postgres_store()
-    query_agent = ArtanaQueryAgentAdapter(artana_store=shared_artana_store)
-    pubmed_relevance_agent = ArtanaPubMedRelevanceAdapter(
-        artana_store=shared_artana_store,
-    )
+    query_agent = ArtanaQueryAgentAdapter()
+    pubmed_relevance_agent = ArtanaPubMedRelevanceAdapter()
 
     pipeline = create_ingestion_pipeline(session)
 

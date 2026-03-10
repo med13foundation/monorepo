@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING
 from src.application.services._pipeline_failure_classification import (
     resolve_pipeline_error_category,
 )
+from src.application.services._pipeline_orchestration_checkpoint_metadata import (
+    coerce_json_object,
+)
 from src.application.services._pipeline_orchestration_graph_seed_discovery import (
     discover_graph_seed,
 )
@@ -64,6 +67,82 @@ class _PipelineOrchestrationGraphStageHelpers:
         graph_seed_mode = (
             "explicit" if graph_stage_input.explicit_graph_seed_entity_ids else "none"
         )
+        trace_service = getattr(self, "_pipeline_trace", None)
+
+        def _record_graph_event(  # noqa: PLR0913
+            *,
+            event_type: str,
+            message: str,
+            level: str = "info",
+            status: str | None = None,
+            error_code: str | None = None,
+            occurred_at: datetime | None = None,
+            started_at: datetime | None = None,
+            completed_at: datetime | None = None,
+            duration_ms: int | None = None,
+            timeout_budget_ms: int | None = None,
+            payload: dict[str, object] | None = None,
+        ) -> None:
+            if trace_service is None:
+                return
+            trace_service.record_event(
+                research_space_id=graph_stage_input.research_space_id,
+                source_id=graph_stage_input.source_id,
+                pipeline_run_id=graph_stage_input.run_id,
+                event_type=event_type,
+                stage="graph",
+                scope_kind="graph",
+                level=level,
+                status=status,
+                error_code=error_code,
+                occurred_at=occurred_at,
+                started_at=started_at,
+                completed_at=completed_at,
+                duration_ms=duration_ms,
+                timeout_budget_ms=timeout_budget_ms,
+                message=message,
+                payload=payload,
+            )
+
+        def _persist_graph_timing(
+            *,
+            status: str | None,
+            graph_started_at: datetime | None,
+            graph_completed_at: datetime | None,
+            duration_ms: int | None,
+            timeout_budget_ms: int | None = None,
+        ) -> None:
+            nonlocal pipeline_run_job
+            if trace_service is None:
+                return
+            existing_timing_summary = {}
+            if pipeline_run_job is not None:
+                metadata = coerce_json_object(pipeline_run_job.metadata)
+                pipeline_payload = coerce_json_object(metadata.get("pipeline_run"))
+                existing_timing_summary = coerce_json_object(
+                    pipeline_payload.get("timing_summary"),
+                )
+            timing_summary = trace_service.merge_timing_summary(
+                existing_summary=existing_timing_summary,
+                stage_timing=trace_service.build_stage_timing(
+                    stage="graph",
+                    status=status,
+                    started_at=graph_started_at,
+                    completed_at=graph_completed_at,
+                    duration_ms=duration_ms,
+                    timeout_budget_ms=timeout_budget_ms,
+                ),
+            )
+            pipeline_run_job = self._persist_pipeline_run_progress(
+                run_job=pipeline_run_job,
+                source_id=graph_stage_input.source_id,
+                research_space_id=graph_stage_input.research_space_id,
+                run_id=graph_stage_input.run_id,
+                resume_from_stage=graph_stage_input.resume_from_stage,
+                progress_key="timing_summary",
+                progress_payload=timing_summary.to_json_object(),
+                overall_status="running",
+            )
 
         if (
             not run_cancelled
@@ -169,6 +248,20 @@ class _PipelineOrchestrationGraphStageHelpers:
                     "requested_seed_count": graph_requested,
                     "max_concurrency": graph_max_concurrency,
                     "seed_timeout_seconds": graph_seed_timeout_seconds,
+                },
+            )
+            _record_graph_event(
+                event_type="stage_started",
+                message="Graph stage started.",
+                status="running",
+                occurred_at=graph_started_at,
+                started_at=graph_started_at,
+                timeout_budget_ms=int(graph_seed_timeout_seconds * 1000),
+                payload={
+                    "requested_seed_count": graph_requested,
+                    "max_concurrency": graph_max_concurrency,
+                    "seed_timeout_seconds": graph_seed_timeout_seconds,
+                    "graph_seed_mode": graph_seed_mode,
                 },
             )
             normalized_source = (
@@ -304,6 +397,7 @@ class _PipelineOrchestrationGraphStageHelpers:
             graph_duration_ms = int(
                 (datetime.now(UTC) - graph_started_at).total_seconds() * 1000,
             )
+            graph_completed_at = datetime.now(UTC)
             pipeline_run_job = self._persist_pipeline_run_progress(
                 run_job=pipeline_run_job,
                 source_id=graph_stage_input.source_id,
@@ -351,11 +445,49 @@ class _PipelineOrchestrationGraphStageHelpers:
                     "total_persisted_relations": total_persisted_relations,
                 },
             )
+            _persist_graph_timing(
+                status=graph_status,
+                graph_started_at=graph_started_at,
+                graph_completed_at=graph_completed_at,
+                duration_ms=graph_duration_ms,
+                timeout_budget_ms=int(graph_seed_timeout_seconds * 1000),
+            )
+            _record_graph_event(
+                event_type="stage_finished",
+                message=(
+                    "Graph stage completed successfully."
+                    if graph_status == "completed"
+                    else "Graph stage failed."
+                ),
+                level="error" if graph_status == "failed" else "info",
+                status=graph_status,
+                error_code=pipeline_error_category,
+                occurred_at=graph_completed_at,
+                started_at=graph_started_at,
+                completed_at=graph_completed_at,
+                duration_ms=graph_duration_ms,
+                timeout_budget_ms=int(graph_seed_timeout_seconds * 1000),
+                payload={
+                    "requested_seed_count": graph_requested,
+                    "processed_seed_count": graph_processed,
+                    "graph_stage_persisted_relations": graph_stage_persisted_relations,
+                    "total_persisted_relations": total_persisted_relations,
+                    "graph_seed_mode": graph_seed_mode,
+                },
+            )
         elif (
             graph_stage_input.should_run_graph and can_run_graph and graph_requested > 0
         ):
             graph_status = "failed"
             errors.append("graph:service_unavailable")
+            _record_graph_event(
+                event_type="stage_finished",
+                message="Graph stage failed because the graph service is unavailable.",
+                level="error",
+                status=graph_status,
+                error_code="service_unavailable",
+                payload={"requested_seed_count": graph_requested},
+            )
 
         if graph_stage_input.should_run_graph and can_run_graph and graph_requested > 0:
             pipeline_run_job = self._persist_pipeline_stage_checkpoint(

@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING
 
 from src.domain.entities.data_source_configs import PubMedQueryConfig  # noqa: TCH001
 from src.domain.entities.source_sync_state import CheckpointKind
-from src.domain.services.pubmed_ingestion import PubMedGateway, PubMedGatewayFetchResult
+from src.domain.services.pubmed_ingestion import (
+    PubMedGateway,
+    PubMedGatewayFetchResult,
+    PubMedQueryValidationResult,
+)
 from src.infrastructure.ingest.pubmed_ingestor import PubMedIngestor
 from src.type_definitions.common import JSONObject, JSONValue, RawRecord  # noqa: TCH001
 
@@ -100,6 +104,20 @@ class PubMedSourceGateway(PubMedGateway):
             config=config,
         )
         return outcome.records
+
+    async def validate_query(
+        self,
+        config: PubMedQueryConfig,
+    ) -> PubMedQueryValidationResult:
+        """Validate a PubMed query against ESearch before running ingestion."""
+        return await self._ingestor.validate_query(
+            config.query,
+            publication_types=config.publication_types,
+            mindate=config.date_from,
+            maxdate=config.date_to,
+            publication_date_from=config.date_from,
+            open_access_only=config.open_access_only,
+        )
 
     async def fetch_records_incremental(
         self,

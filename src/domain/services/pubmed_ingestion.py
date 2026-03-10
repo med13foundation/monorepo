@@ -20,6 +20,27 @@ class PubMedGateway(Protocol):
 
 
 @dataclass(frozen=True)
+class PubMedQueryValidationResult:
+    """Outcome of validating a PubMed query against the upstream API."""
+
+    is_valid: bool
+    api_feedback: str | None = None
+    translated_query: str | None = None
+    result_count: int | None = None
+
+
+@runtime_checkable
+class PubMedQueryValidationGateway(Protocol):
+    """Optional protocol for validating source queries before execution."""
+
+    async def validate_query(
+        self,
+        config: PubMedQueryConfig,
+    ) -> PubMedQueryValidationResult:
+        """Validate a PubMed query and return structured API feedback."""
+
+
+@dataclass(frozen=True)
 class PubMedGatewayFetchResult:
     """Gateway response including records and checkpoint cursor metadata."""
 

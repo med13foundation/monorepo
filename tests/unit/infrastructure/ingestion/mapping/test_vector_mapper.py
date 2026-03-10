@@ -150,3 +150,61 @@ def test_hybrid_mapper_falls_back_from_exact_to_vector() -> None:
     assert observations[0].variable_id == "VAR_CARDIOMEGALY"
     assert "enlarged heart" in dictionary_service.resolve_synonym_calls
     assert dictionary_service.dictionary_search_calls
+
+
+def test_vector_mapper_skips_low_value_pubmed_metadata_fields() -> None:
+    dictionary_service = StubDictionaryService(
+        search_results_by_term={},
+    )
+    mapper = VectorMapper(dictionary_service, similarity_threshold=0.7, top_k=5)
+    record = RawRecord(
+        source_id="source-1",
+        data={
+            "pmid": "123456",
+            "title": "Mediator kinase module paper",
+            "abstract": "Long abstract text",
+            "publication_date": "2024-01-01",
+            "journal": "Nature",
+        },
+        metadata={"type": "pubmed", "entity_type": "PUBLICATION"},
+    )
+
+    observations = mapper.map(record)
+    metrics = mapper.consume_run_metrics()
+
+    assert observations == []
+    assert dictionary_service.dictionary_search_calls == []
+    assert metrics is not None
+    assert metrics["searched_field_count"] == 0
+    assert metrics["skipped_field_count"] == 5
+
+
+def test_vector_mapper_caches_dictionary_searches_across_records() -> None:
+    dictionary_service = StubDictionaryService(
+        search_results_by_term={
+            "enlarged heart": [
+                _build_vector_result(variable_id="VAR_CARDIOMEGALY", similarity=0.92),
+            ],
+        },
+    )
+    mapper = VectorMapper(dictionary_service, similarity_threshold=0.7, top_k=5)
+    record = RawRecord(
+        source_id="source-1",
+        data={"enlarged heart": True},
+        metadata={"entity_type": "PUBLICATION"},
+    )
+
+    first_observations = mapper.map(record)
+    first_metrics = mapper.consume_run_metrics()
+    second_observations = mapper.map(record)
+    second_metrics = mapper.consume_run_metrics()
+
+    assert len(first_observations) == 1
+    assert len(second_observations) == 1
+    assert len(dictionary_service.dictionary_search_calls) == 1
+    assert first_metrics is not None
+    assert second_metrics is not None
+    assert first_metrics["cache_hit_count"] == 0
+    assert first_metrics["cache_miss_count"] == 1
+    assert second_metrics["cache_hit_count"] == 1
+    assert second_metrics["cache_miss_count"] == 0

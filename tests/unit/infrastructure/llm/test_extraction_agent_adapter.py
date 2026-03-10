@@ -133,7 +133,7 @@ async def test_extract_escalates_without_openai_key() -> None:
 async def test_extract_normalizes_source_document_and_payloads() -> None:
     with (
         patch.dict(os.environ, {"OPENAI_API_KEY": "test-openai-key"}, clear=True),
-        _build_adapter() as (adapter, client, _, _),
+        _build_adapter() as (adapter, client, kernel, model_port),
     ):
         context = ExtractionContext(
             document_id="doc-3",
@@ -155,11 +155,13 @@ async def test_extract_normalizes_source_document_and_payloads() -> None:
     assert contract.agent_run_id is not None
     assert contract.agent_run_id.startswith("extraction:pubmed:")
     client.step.assert_awaited_once()
+    kernel.close.assert_awaited_once()
+    model_port.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_close_closes_kernel_and_model_port() -> None:
+async def test_close_is_noop() -> None:
     with _build_adapter() as (adapter, _, kernel, model_port):
         await adapter.close()
-    kernel.close.assert_awaited_once()
-    model_port.aclose.assert_awaited_once()
+    kernel.close.assert_not_awaited()
+    model_port.aclose.assert_not_awaited()

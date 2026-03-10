@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_HEAD_REVISION = "024_claim_first_orchestration"
-CURRENT_HEAD_REVISION = "036_pipeline_job_kind"
+CURRENT_HEAD_REVISION = "038_pipeline_event_audit"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"
@@ -100,6 +100,73 @@ def test_upgrade_head_remaps_legacy_revision_alias(tmp_path: Path) -> None:
         )
 
     assert versions == [CURRENT_HEAD_REVISION]
+
+
+def test_038_pipeline_run_events_include_audit_columns_after_upgrade(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'pipeline_run_events_audit_columns.db'}"
+    engine = create_engine(database_url, future=True)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "037_pipeline_run_events"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE pipeline_run_events ("
+                "seq INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "research_space_id VARCHAR(36) NOT NULL, "
+                "source_id VARCHAR(36) NOT NULL, "
+                "pipeline_run_id VARCHAR(255) NOT NULL, "
+                "event_type VARCHAR(64) NOT NULL, "
+                "stage VARCHAR(64), "
+                "scope_kind VARCHAR(32) NOT NULL, "
+                "scope_id VARCHAR(255), "
+                "level VARCHAR(16) NOT NULL DEFAULT 'info', "
+                "status VARCHAR(64), "
+                "agent_kind VARCHAR(64), "
+                "agent_run_id VARCHAR(255), "
+                "error_code VARCHAR(128), "
+                "message TEXT NOT NULL, "
+                "occurred_at DATETIME NOT NULL, "
+                "started_at DATETIME, "
+                "completed_at DATETIME, "
+                "duration_ms BIGINT, "
+                "queue_wait_ms BIGINT, "
+                "timeout_budget_ms BIGINT, "
+                "payload JSON NOT NULL DEFAULT '{}'"
+                ")",
+            ),
+        )
+
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision="038_pipeline_event_audit",
+    )
+
+    inspector = inspect(engine)
+    pipeline_run_event_columns = {
+        column["name"] for column in inspector.get_columns("pipeline_run_events")
+    }
+
+    assert {
+        "seq",
+        "research_space_id",
+        "source_id",
+        "pipeline_run_id",
+        "event_type",
+        "created_at",
+        "updated_at",
+    }.issubset(pipeline_run_event_columns)
 
 
 def test_022_run_id_columns_are_textual_after_upgrade(tmp_path: Path) -> None:

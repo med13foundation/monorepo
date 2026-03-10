@@ -69,7 +69,10 @@ class StubPipeline:
         self,
         records: list[PipelineRawRecord],
         research_space_id: str,
+        *,
+        progress_callback=None,
     ) -> IngestResult:
+        _ = progress_callback
         self.calls.append((records, research_space_id))
         return IngestResult(success=True, observations_created=len(records))
 

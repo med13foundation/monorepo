@@ -7,7 +7,7 @@ Provides typed contracts for data source testing results.
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003
-from typing import TypedDict, TypeVar
+from typing import Literal, TypedDict, TypeVar
 from uuid import UUID  # noqa: TC003
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -128,6 +128,93 @@ class IngestionExtractionRunMetadata(BaseModel):
                 if self.completed_at is not None
                 else None
             ),
+        }
+
+
+class PipelineRunOwnerMetadata(BaseModel):
+    """Typed ownership attribution for one orchestrated pipeline run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_owner_user_id: str | None = None
+    run_owner_source: Literal["triggered_by", "source_owner", "system"] = "system"
+
+    def to_json_object(self) -> JSONObject:
+        return {
+            "run_owner_user_id": self.run_owner_user_id,
+            "run_owner_source": self.run_owner_source,
+        }
+
+
+class PipelineStageTimingMetadata(BaseModel):
+    """Typed timing envelope for one pipeline stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stage: str
+    status: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
+    queue_wait_ms: int | None = Field(default=None, ge=0)
+    timeout_budget_ms: int | None = Field(default=None, ge=0)
+
+    def to_json_object(self) -> JSONObject:
+        return {
+            "stage": self.stage,
+            "status": self.status,
+            "started_at": (
+                self.started_at.isoformat(timespec="seconds")
+                if self.started_at is not None
+                else None
+            ),
+            "completed_at": (
+                self.completed_at.isoformat(timespec="seconds")
+                if self.completed_at is not None
+                else None
+            ),
+            "duration_ms": self.duration_ms,
+            "queue_wait_ms": self.queue_wait_ms,
+            "timeout_budget_ms": self.timeout_budget_ms,
+        }
+
+
+class PipelineRunTimingMetadata(BaseModel):
+    """Typed timing summary for one orchestrated pipeline run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_duration_ms: int | None = Field(default=None, ge=0)
+    stage_timings: dict[str, PipelineStageTimingMetadata] = Field(default_factory=dict)
+
+    def to_json_object(self) -> JSONObject:
+        return {
+            "total_duration_ms": self.total_duration_ms,
+            "stage_timings": {
+                stage: summary.to_json_object()
+                for stage, summary in self.stage_timings.items()
+            },
+        }
+
+
+class PipelineRunCostMetadata(BaseModel):
+    """Typed direct AI/tool cost summary for one orchestrated pipeline run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    currency: Literal["USD"] = "USD"
+    total_cost_usd: float = Field(default=0.0, ge=0.0)
+    stage_costs_usd: dict[str, float] = Field(default_factory=dict)
+    linked_run_ids: list[str] = Field(default_factory=list)
+
+    def to_json_object(self) -> JSONObject:
+        return {
+            "currency": self.currency,
+            "total_cost_usd": self.total_cost_usd,
+            "stage_costs_usd": {
+                str(key): value for key, value in self.stage_costs_usd.items()
+            },
+            "linked_run_ids": list(self.linked_run_ids),
         }
 
 
@@ -326,6 +413,10 @@ __all__ = [
     "IngestionIdempotencyMetadata",
     "IngestionJobMetadata",
     "IngestionQueryGenerationMetadata",
+    "PipelineRunCostMetadata",
+    "PipelineRunOwnerMetadata",
+    "PipelineRunTimingMetadata",
+    "PipelineStageTimingMetadata",
     "normalize_ingestion_job_metadata",
     "SourceCatalogEntrySeed",
 ]

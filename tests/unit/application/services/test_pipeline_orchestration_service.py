@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, NoReturn
 from uuid import UUID, uuid4
 
@@ -25,9 +25,17 @@ from src.domain.entities.ingestion_job import (
     JobMetrics,
 )
 from src.domain.repositories.ingestion_job_repository import IngestionJobRepository
+from src.domain.services.ingestion import IngestionProgressUpdate
+from src.type_definitions.data_sources import (
+    PipelineRunCostMetadata,
+    PipelineRunOwnerMetadata,
+    PipelineRunTimingMetadata,
+    PipelineStageTimingMetadata,
+)
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
+    from src.domain.services.ingestion import IngestionProgressCallback
     from src.type_definitions.common import JSONObject
 
 
@@ -48,6 +56,9 @@ class StubIngestionSummary:
     checkpoint_before: JSONObject | None = None
     checkpoint_after: JSONObject | None = None
     checkpoint_kind: str | None = None
+    query_generation_decision: str | None = None
+    query_generation_confidence: float | None = None
+    query_generation_run_id: str | None = None
     query_generation_execution_mode: str | None = "ai"
     query_generation_fallback_reason: str | None = None
     new_records: int = 0
@@ -72,7 +83,13 @@ class StubExtractionSummary:
     processed: int = 3
     extracted: int = 3
     failed: int = 0
+    relation_claims_count: int = 0
+    pending_review_relations_count: int = 0
+    undefined_relations_count: int = 0
     persisted_relations_count: int = 0
+    dictionary_variables_created: int = 0
+    dictionary_synonyms_created: int = 0
+    dictionary_entity_types_created: int = 0
     concept_members_created_count: int = 0
     concept_aliases_created_count: int = 0
     concept_decisions_proposed_count: int = 0
@@ -102,15 +119,33 @@ class StubIngestionSchedulingService:
         summary: StubIngestionSummary,
         *,
         error: Exception | None = None,
+        progress_updates: tuple[IngestionProgressUpdate, ...] = (),
     ) -> None:
         self._summary = summary
         self._error = error
+        self._progress_updates = progress_updates
         self.calls: list[UUID] = []
 
-    async def trigger_ingestion(self, source_id: UUID) -> StubIngestionSummary:
+    async def trigger_ingestion(
+        self,
+        source_id: UUID,
+        *,
+        skip_post_ingestion_hook: bool = False,
+        skip_legacy_extraction_queue: bool = False,
+        force_recover_lock: bool = False,
+        pipeline_run_id: str | None = None,
+        progress_callback: IngestionProgressCallback | None = None,
+    ) -> StubIngestionSummary:
+        _ = skip_post_ingestion_hook
+        _ = skip_legacy_extraction_queue
+        _ = force_recover_lock
+        _ = pipeline_run_id
         self.calls.append(source_id)
         if self._error is not None:
             raise self._error
+        if progress_callback is not None:
+            for update in self._progress_updates:
+                progress_callback(update)
         return self._summary
 
 
@@ -292,6 +327,80 @@ class StubGraphSearchService:
         if self._error is not None:
             raise self._error
         return self._contract
+
+
+class StubPipelineTraceService:
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def record_event(self, **kwargs: object) -> dict[str, object]:
+        self.events.append(dict(kwargs))
+        return dict(kwargs)
+
+    def resolve_run_owner(
+        self,
+        *,
+        source_id: UUID,
+        triggered_by_user_id: UUID | None,
+    ) -> PipelineRunOwnerMetadata:
+        _ = source_id
+        if triggered_by_user_id is not None:
+            return PipelineRunOwnerMetadata(
+                run_owner_user_id=str(triggered_by_user_id),
+                run_owner_source="triggered_by",
+            )
+        return PipelineRunOwnerMetadata(
+            run_owner_user_id=None,
+            run_owner_source="system",
+        )
+
+    @staticmethod
+    def build_stage_timing(  # noqa: PLR0913
+        *,
+        stage: str,
+        status: str | None,
+        started_at: datetime | None,
+        completed_at: datetime | None,
+        duration_ms: int | None,
+        queue_wait_ms: int | None = None,
+        timeout_budget_ms: int | None = None,
+    ) -> PipelineStageTimingMetadata:
+        return PipelineStageTimingMetadata(
+            stage=stage,
+            status=status,
+            started_at=started_at,
+            completed_at=completed_at,
+            duration_ms=duration_ms,
+            queue_wait_ms=queue_wait_ms,
+            timeout_budget_ms=timeout_budget_ms,
+        )
+
+    @staticmethod
+    def merge_timing_summary(
+        *,
+        existing_summary: object,
+        stage_timing: PipelineStageTimingMetadata,
+        total_duration_ms: int | None = None,
+    ) -> PipelineRunTimingMetadata:
+        _ = existing_summary
+        return PipelineRunTimingMetadata(
+            total_duration_ms=total_duration_ms,
+            stage_timings={stage_timing.stage: stage_timing},
+        )
+
+    @staticmethod
+    def record_cost_event_if_available(
+        *,
+        research_space_id: UUID,
+        source_id: UUID,
+        pipeline_run_id: str,
+        additional_stage_costs_usd: dict[str, float] | None = None,
+    ) -> PipelineRunCostMetadata:
+        _ = research_space_id
+        _ = source_id
+        _ = pipeline_run_id
+        _ = additional_stage_costs_usd
+        return PipelineRunCostMetadata()
 
 
 class StubPipelineRunRepository(IngestionJobRepository):
@@ -740,6 +849,59 @@ def test_enqueue_run_rejects_when_queue_is_full(
         )
 
 
+def test_claim_next_queued_run_records_worker_claim_event() -> None:
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    pipeline_trace = StubPipelineTraceService()
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=StubIngestionSchedulingService(
+                StubIngestionSummary(source_id=source_id),
+            ),
+            content_enrichment_service=StubContentEnrichmentService(
+                StubEnrichmentSummary(),
+            ),
+            entity_recognition_service=StubEntityRecognitionService(
+                StubExtractionSummary(),
+            ),
+            pipeline_run_repository=repository,
+            pipeline_trace_service=pipeline_trace,
+        ),
+    )
+
+    service.enqueue_run(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="queued-run-claim-001",
+    )
+
+    claimed_job = service.claim_next_queued_run(
+        worker_id="worker-claim-1",
+        as_of=datetime.now(UTC) + timedelta(seconds=3),
+    )
+
+    assert claimed_job is not None
+    claim_events = [
+        event
+        for event in pipeline_trace.events
+        if event.get("event_type") == "run_claimed"
+    ]
+    assert len(claim_events) == 1
+    claim_event = claim_events[0]
+    assert claim_event["pipeline_run_id"] == "queued-run-claim-001"
+    assert claim_event["status"] == "claimed"
+    assert claim_event["stage"] == "ingestion"
+    assert claim_event["queue_wait_ms"] is not None
+    assert isinstance(claim_event["queue_wait_ms"], int)
+    assert claim_event["queue_wait_ms"] >= 0
+    assert claim_event["payload"] == {
+        "worker_id": "worker-claim-1",
+        "accepted_at": claimed_job.triggered_at.isoformat(timespec="seconds"),
+        "claimed_at": claimed_job.started_at.isoformat(timespec="seconds"),
+    }
+
+
 @pytest.mark.asyncio
 async def test_run_for_source_records_stage_checkpoints_with_run_id() -> None:
     source_id = uuid4()
@@ -801,6 +963,257 @@ async def test_run_for_source_records_stage_checkpoints_with_run_id() -> None:
         _coerce_json_object(checkpoints.get("extraction")).get("status") == "completed"
     )
     assert _coerce_json_object(checkpoints.get("graph")).get("status") == "completed"
+
+
+@pytest.mark.asyncio
+async def test_run_for_source_persists_ingestion_progress_before_stage_completion() -> (
+    None
+):
+    source_id = uuid4()
+    research_space_id = uuid4()
+    ingestion_job_id = uuid4()
+    repository = StubPipelineRunRepository()
+    pipeline_trace = StubPipelineTraceService()
+    ingestion_service = StubIngestionSchedulingService(
+        StubIngestionSummary(
+            source_id=source_id,
+            ingestion_job_id=ingestion_job_id,
+            executed_query="MED13",
+            query_signature="query-signature-123",
+        ),
+        progress_updates=(
+            IngestionProgressUpdate(
+                event_type="ingestion_job_started",
+                message="Nested ingestion job started.",
+                ingestion_job_id=ingestion_job_id,
+                payload={"pipeline_run_id": "run-progress-001"},
+            ),
+            IngestionProgressUpdate(
+                event_type="query_resolved",
+                message="Resolved PubMed query configuration.",
+                ingestion_job_id=ingestion_job_id,
+                payload={
+                    "executed_query": "MED13",
+                    "query_signature": "query-signature-123",
+                    "query_generation_decision": "generated",
+                    "query_generation_confidence": 0.91,
+                    "query_generation_run_id": "query-run-123",
+                    "query_generation_execution_mode": "ai",
+                },
+            ),
+            IngestionProgressUpdate(
+                event_type="source_documents_upserted",
+                message="Upserted source documents for fetched PubMed records.",
+                ingestion_job_id=ingestion_job_id,
+                payload={"document_count": 3},
+            ),
+            IngestionProgressUpdate(
+                event_type="kernel_ingestion_record_started",
+                message="Kernel ingestion record 1 started.",
+                ingestion_job_id=ingestion_job_id,
+                payload={
+                    "record_index": 1,
+                    "total_records": 3,
+                    "source_record_id": "pubmed:pmid:100",
+                },
+            ),
+            IngestionProgressUpdate(
+                event_type="kernel_ingestion_mapper_started",
+                message="Mapper ExactMapper started.",
+                ingestion_job_id=ingestion_job_id,
+                payload={
+                    "mapper_name": "ExactMapper",
+                    "source_record_id": "pubmed:pmid:100",
+                    "field_count": 5,
+                },
+            ),
+            IngestionProgressUpdate(
+                event_type="kernel_ingestion_mapper_finished",
+                message="Mapper ExactMapper finished.",
+                ingestion_job_id=ingestion_job_id,
+                payload={
+                    "mapper_name": "ExactMapper",
+                    "source_record_id": "pubmed:pmid:100",
+                    "field_count": 5,
+                    "matched_observations": 1,
+                    "selected": True,
+                    "duration_ms": 8,
+                },
+            ),
+            IngestionProgressUpdate(
+                event_type="resolver_warning",
+                message=(
+                    "No resolution policy configured for entity_type=GENE; "
+                    "falling back to STRICT_MATCH with best-effort anchors."
+                ),
+                ingestion_job_id=ingestion_job_id,
+                payload={
+                    "entity_type": "GENE",
+                    "fallback_strategy": "STRICT_MATCH",
+                    "reason": "missing_resolution_policy",
+                    "source_record_id": "pubmed:pmid:100",
+                },
+            ),
+            IngestionProgressUpdate(
+                event_type="kernel_ingestion_record_finished",
+                message="Kernel ingestion record 1 finished.",
+                ingestion_job_id=ingestion_job_id,
+                payload={
+                    "record_index": 1,
+                    "total_records": 3,
+                    "source_record_id": "pubmed:pmid:100",
+                    "duration_ms": 8,
+                    "mapped_observations_count": 1,
+                    "validation_failures": 0,
+                    "entities_created_total": 1,
+                    "observations_created_total": 1,
+                    "errors_total": 0,
+                    "success": True,
+                },
+            ),
+        ),
+    )
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=ingestion_service,
+            content_enrichment_service=StubContentEnrichmentService(
+                StubEnrichmentSummary(),
+            ),
+            entity_recognition_service=StubEntityRecognitionService(
+                StubExtractionSummary(),
+            ),
+            pipeline_run_repository=repository,
+            pipeline_trace_service=pipeline_trace,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-progress-001",
+        source_type="pubmed",
+    )
+
+    assert summary.status == "completed"
+    job = repository.find_by_source(source_id)[0]
+    pipeline_run = _coerce_json_object(job.metadata.get("pipeline_run"))
+    run_scope = _coerce_json_object(pipeline_run.get("run_scope"))
+    query_progress = _coerce_json_object(pipeline_run.get("query_progress"))
+    ingestion_progress = _coerce_json_object(pipeline_run.get("ingestion_progress"))
+
+    assert run_scope == {"ingestion_job_id": str(ingestion_job_id)}
+    assert query_progress["executed_query"] == "MED13"
+    assert query_progress["query_signature"] == "query-signature-123"
+    assert ingestion_progress["event_type"] == "kernel_ingestion_record_finished"
+    assert ingestion_progress["source_record_id"] == "pubmed:pmid:100"
+    assert any(
+        event.get("event_type") == "ingestion_job_started"
+        for event in pipeline_trace.events
+    )
+    assert any(
+        event.get("event_type") == "query_resolved"
+        and event.get("scope_id") == "query-signature-123"
+        for event in pipeline_trace.events
+    )
+    assert any(
+        event.get("event_type") == "source_documents_upserted"
+        for event in pipeline_trace.events
+    )
+    assert any(
+        event.get("event_type") == "kernel_ingestion_mapper_started"
+        and event.get("agent_kind") == "ExactMapper"
+        for event in pipeline_trace.events
+    )
+    assert any(
+        event.get("event_type") == "kernel_ingestion_record_finished"
+        and event.get("scope_id") == "pubmed:pmid:100"
+        for event in pipeline_trace.events
+    )
+    assert any(
+        event.get("event_type") == "resolver_warning"
+        and event.get("stage") == "ingestion"
+        and event.get("level") == "warning"
+        and event.get("agent_kind") == "entity_resolver"
+        and event.get("error_code") == "resolver_policy_missing"
+        and event.get("scope_id") == "pubmed:pmid:100"
+        for event in pipeline_trace.events
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_for_source_marks_query_resolution_escalation_as_fallback_warning() -> (
+    None
+):
+    source_id = uuid4()
+    research_space_id = uuid4()
+    ingestion_job_id = uuid4()
+    repository = StubPipelineRunRepository()
+    pipeline_trace = StubPipelineTraceService()
+    ingestion_service = StubIngestionSchedulingService(
+        StubIngestionSummary(
+            source_id=source_id,
+            ingestion_job_id=ingestion_job_id,
+            executed_query="MED13",
+            query_signature="query-signature-456",
+            query_generation_decision="escalate",
+            query_generation_confidence=0.0,
+            query_generation_run_id="query-run-456",
+            query_generation_fallback_reason="agent_requested_escalation",
+        ),
+        progress_updates=(
+            IngestionProgressUpdate(
+                event_type="query_resolved",
+                message="Fell back to base PubMed query configuration.",
+                ingestion_job_id=ingestion_job_id,
+                payload={
+                    "executed_query": "MED13",
+                    "query_signature": "query-signature-456",
+                    "query_generation_decision": "escalate",
+                    "query_generation_confidence": 0.0,
+                    "query_generation_run_id": "query-run-456",
+                    "query_generation_execution_mode": "ai",
+                    "query_generation_fallback_reason": ("agent_requested_escalation"),
+                },
+            ),
+        ),
+    )
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=ingestion_service,
+            content_enrichment_service=StubContentEnrichmentService(
+                StubEnrichmentSummary(),
+            ),
+            entity_recognition_service=StubEntityRecognitionService(
+                StubExtractionSummary(),
+            ),
+            pipeline_run_repository=repository,
+            pipeline_trace_service=pipeline_trace,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-progress-002",
+        source_type="pubmed",
+    )
+
+    assert summary.status == "completed"
+    query_event = next(
+        event
+        for event in pipeline_trace.events
+        if event.get("event_type") == "query_resolved"
+    )
+    assert query_event["level"] == "warning"
+    assert query_event["status"] == "fallback"
+    assert query_event["message"] == "Fell back to base PubMed query configuration."
+    assert query_event["payload"]["query_generation_decision"] == "escalate"
+    assert (
+        query_event["payload"]["query_generation_fallback_reason"]
+        == "agent_requested_escalation"
+    )
 
 
 @pytest.mark.asyncio
@@ -972,6 +1385,7 @@ async def test_run_for_source_completed_with_warnings_keeps_failed_metrics_zero(
     source_id = uuid4()
     research_space_id = uuid4()
     repository = StubPipelineRunRepository()
+    pipeline_trace = StubPipelineTraceService()
     ingestion_service = StubIngestionSchedulingService(
         StubIngestionSummary(source_id=source_id),
     )
@@ -986,6 +1400,7 @@ async def test_run_for_source_completed_with_warnings_keeps_failed_metrics_zero(
             content_enrichment_service=enrichment_service,
             entity_recognition_service=extraction_service,
             pipeline_run_repository=repository,
+            pipeline_trace_service=pipeline_trace,
         ),
     )
 
@@ -1002,6 +1417,156 @@ async def test_run_for_source_completed_with_warnings_keeps_failed_metrics_zero(
     assert job.status == IngestionStatus.COMPLETED
     assert job.metrics is not None
     assert job.metrics.records_failed == 0
+    pipeline_run = _coerce_json_object(job.metadata.get("pipeline_run"))
+    assert pipeline_run.get("last_error") is None
+    assert pipeline_run.get("error_category") is None
+    assert any(
+        event.get("event_type") == "stage_warning"
+        and event.get("stage") == "enrichment"
+        and event.get("level") == "warning"
+        for event in pipeline_trace.events
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_for_source_records_dictionary_concept_and_relation_change_events() -> (
+    None
+):
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    pipeline_trace = StubPipelineTraceService()
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=StubIngestionSchedulingService(
+                StubIngestionSummary(source_id=source_id),
+            ),
+            content_enrichment_service=StubContentEnrichmentService(
+                StubEnrichmentSummary(),
+            ),
+            entity_recognition_service=StubEntityRecognitionService(
+                StubExtractionSummary(
+                    relation_claims_count=31,
+                    pending_review_relations_count=31,
+                    undefined_relations_count=31,
+                    persisted_relations_count=0,
+                    dictionary_variables_created=2,
+                    dictionary_synonyms_created=5,
+                    dictionary_entity_types_created=1,
+                    concept_members_created_count=47,
+                    concept_aliases_created_count=47,
+                    concept_decisions_proposed_count=3,
+                ),
+            ),
+            pipeline_run_repository=repository,
+            pipeline_trace_service=pipeline_trace,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-change-events",
+        source_type="pubmed",
+    )
+
+    assert summary.status == "completed"
+
+    relation_event = next(
+        event
+        for event in pipeline_trace.events
+        if event.get("event_type") == "relation_changes_recorded"
+    )
+    assert relation_event["scope_kind"] == "relation"
+    assert relation_event["payload"] == {
+        "relation_claims_count": 31,
+        "pending_review_relations_count": 31,
+        "undefined_relations_count": 31,
+        "persisted_relations_count": 0,
+    }
+
+    concept_event = next(
+        event
+        for event in pipeline_trace.events
+        if event.get("event_type") == "concept_changes_recorded"
+    )
+    assert concept_event["scope_kind"] == "concept"
+    assert concept_event["payload"] == {
+        "concept_members_created_count": 47,
+        "concept_aliases_created_count": 47,
+        "concept_decisions_proposed_count": 3,
+    }
+
+    dictionary_event = next(
+        event
+        for event in pipeline_trace.events
+        if event.get("event_type") == "dictionary_changes_recorded"
+    )
+    assert dictionary_event["scope_kind"] == "dictionary"
+    assert dictionary_event["payload"] == {
+        "dictionary_variables_created": 2,
+        "dictionary_synonyms_created": 5,
+        "dictionary_entity_types_created": 1,
+    }
+
+    assert summary.metadata is not None
+    assert summary.metadata.get("extraction_relation_claims") == 31
+    assert summary.metadata.get("extraction_pending_review_relations") == 31
+    assert summary.metadata.get("extraction_undefined_relations") == 31
+
+
+def test_persist_pipeline_run_progress_clears_terminal_last_error() -> None:
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=StubIngestionSchedulingService(
+                StubIngestionSummary(source_id=source_id),
+            ),
+            content_enrichment_service=StubContentEnrichmentService(
+                StubEnrichmentSummary(),
+            ),
+            entity_recognition_service=StubEntityRecognitionService(
+                StubExtractionSummary(),
+            ),
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    service.enqueue_run(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-terminal-clear",
+    )
+    seeded_job = repository.find_by_source(source_id)[0]
+    stale_error_job = seeded_job.model_copy(
+        update={
+            "metadata": repository._update_pipeline_metadata(
+                seeded_job,
+                last_error="agent_requested_escalation",
+                error_category="resolver_policy_missing",
+            ),
+        },
+    )
+    repository.save(stale_error_job)
+
+    persisted = service._persist_pipeline_run_progress(
+        run_job=stale_error_job,
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-terminal-clear",
+        resume_from_stage=None,
+        progress_key="cost_summary",
+        progress_payload={"total_cost_usd": 0.0},
+        overall_status="completed",
+    )
+
+    assert persisted is not None
+    pipeline_run = _coerce_json_object(persisted.metadata.get("pipeline_run"))
+    assert pipeline_run.get("last_error") is None
+    assert pipeline_run.get("error_category") is None
 
 
 @pytest.mark.asyncio

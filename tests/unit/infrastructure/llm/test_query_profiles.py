@@ -31,6 +31,7 @@ def test_load_query_source_policies_with_inline_limits(
         [source_profiles]
         [source_profiles.clinvar]
         model = "openai:gpt-5"
+        timeout_seconds = 45.0
 
         [source_profiles.clinvar.usage_limits]
         total_cost_usd = 2.5
@@ -45,6 +46,7 @@ def test_load_query_source_policies_with_inline_limits(
     policy = policies["clinvar"]
     assert isinstance(policy, QuerySourcePolicy)
     assert policy.model_id == "openai:gpt-5"
+    assert policy.timeout_seconds == 45.0
     assert policy.usage_limits == UsageLimits(
         total_cost_usd=2.5,
         max_turns=20,
@@ -69,12 +71,14 @@ def test_load_query_source_policies_from_budget_profile(
         [source_profiles]
         [source_profiles.pubmed]
         budget_profile = "research"
+        timeout_seconds = 30
         """,
     )
 
     policy = resolve_source_policy("pubmed", str(config))
     assert policy is not None
     assert policy.model_id is None
+    assert policy.timeout_seconds == 30.0
     assert policy.usage_limits == UsageLimits(
         total_cost_usd=5.0,
         max_turns=25,

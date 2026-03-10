@@ -25,6 +25,15 @@ if TYPE_CHECKING:
 def mock_model_specs() -> dict[str, ModelSpec]:
     """Create model specs used by registry mocks."""
     return {
+        "openai:gpt-4o-mini": ModelSpec(
+            model_id="openai:gpt-4o-mini",
+            display_name="GPT-4o Mini",
+            provider="openai",
+            capabilities=frozenset({ModelCapability.QUERY_GENERATION}),
+            prompt_tokens_per_1k=0.00015,
+            completion_tokens_per_1k=0.0006,
+            timeout_seconds=60.0,
+        ),
         "openai:gpt-5-mini": ModelSpec(
             model_id="openai:gpt-5-mini",
             display_name="GPT-5 Mini",
@@ -212,6 +221,42 @@ class TestArtanaQueryAgentAdapter:
             assert limits.max_turns == 8
             assert limits.max_tokens == 2048
 
+    def test_resolve_timeout_seconds_applies_source_timeout_cap(
+        self,
+        mock_registry: MagicMock,
+        mock_governance: MagicMock,
+    ) -> None:
+        policies = {
+            "pubmed": QuerySourcePolicy(timeout_seconds=45.0),
+        }
+        with create_adapter(
+            mock_registry=mock_registry,
+            mock_governance=mock_governance,
+            source_policies=policies,
+            model="openai:gpt-5-mini",
+        ) as (adapter, _, _, _):
+            timeout_seconds = adapter._resolve_timeout_seconds(
+                "pubmed",
+                "openai:gpt-5-mini",
+            )
+            assert timeout_seconds == 45.0
+
+    def test_resolve_timeout_seconds_uses_registry_timeout_when_no_source_cap(
+        self,
+        mock_registry: MagicMock,
+        mock_governance: MagicMock,
+    ) -> None:
+        with create_adapter(
+            mock_registry=mock_registry,
+            mock_governance=mock_governance,
+            model="openai:gpt-5-mini",
+        ) as (adapter, _, _, _):
+            timeout_seconds = adapter._resolve_timeout_seconds(
+                "pubmed",
+                "openai:gpt-5-mini",
+            )
+            assert timeout_seconds == 120.0
+
     @pytest.mark.asyncio
     async def test_generate_query_unsupported_source_returns_escalate(
         self,
@@ -264,7 +309,7 @@ class TestArtanaQueryAgentAdapter:
             create_adapter(
                 mock_registry=mock_registry,
                 mock_governance=mock_governance,
-            ) as (adapter, client, _, _),
+            ) as (adapter, client, kernel, model_port),
         ):
             result = await adapter.generate_query(
                 research_space_description="MED13 project",
@@ -279,6 +324,8 @@ class TestArtanaQueryAgentAdapter:
             assert adapter.get_last_run_id() is not None
             assert adapter.get_last_run_id().startswith("query:pubmed:")
             client.step.assert_awaited_once()
+            kernel.close.assert_awaited_once()
+            model_port.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_generate_query_step_error_returns_escalate(
@@ -303,7 +350,8 @@ class TestArtanaQueryAgentAdapter:
             assert "network timeout" in result.rationale
 
     @pytest.mark.asyncio
-    async def test_close_closes_kernel_and_model_port(
+    @pytest.mark.asyncio
+    async def test_close_is_noop_when_runtime_is_scoped_per_generate_call(
         self,
         mock_registry: MagicMock,
         mock_governance: MagicMock,
@@ -313,5 +361,5 @@ class TestArtanaQueryAgentAdapter:
             mock_governance=mock_governance,
         ) as (adapter, _, kernel, model_port):
             await adapter.close()
-            kernel.close.assert_awaited_once()
-            model_port.aclose.assert_awaited_once()
+            kernel.close.assert_not_awaited()
+            model_port.aclose.assert_not_awaited()

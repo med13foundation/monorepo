@@ -15,7 +15,7 @@ from src.infrastructure.llm.config.model_registry import DEFAULT_CONFIG_PATH
 ReplayPolicy = Literal["strict", "allow_prompt_drift", "fork_on_drift"]
 
 _RUNTIME_SECTION = "runtime"
-_DEFAULT_REPLAY_POLICY: ReplayPolicy = "strict"
+_DEFAULT_REPLAY_POLICY: ReplayPolicy = "fork_on_drift"
 _DEFAULT_EXTRACTION_CONFIG_VERSION = "v1"
 
 

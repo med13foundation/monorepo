@@ -46,10 +46,17 @@ import type {
   KernelRelationResponse,
   PipelineRunRequest,
   PipelineRunCancelResponse,
+  PipelineRunComparisonResponse,
+  PipelineRunCostReportResponse,
+  PipelineRunCostSummaryResponse,
   PipelineRunResponse,
+  PipelineRunSummaryEnvelopeResponse,
+  PipelineRunTimingSummaryResponse,
   SourcePipelineRunsResponse,
+  SourceWorkflowDocumentTraceResponse,
   SourceWorkflowEventsResponse,
   SourceWorkflowMonitorResponse,
+  SourceWorkflowQueryTraceResponse,
   SpaceRunActiveSourcesResponse,
   SpaceSourceIngestionRunResponse,
 } from '@/types/kernel'
@@ -848,6 +855,11 @@ export interface SourceWorkflowEventsParams {
   run_id?: string
   limit?: number
   since?: string
+  stage?: string
+  level?: string
+  scope_kind?: string
+  scope_id?: string
+  agent_kind?: string
 }
 
 export async function fetchSourceWorkflowEvents(
@@ -864,11 +876,168 @@ export async function fetchSourceWorkflowEvents(
     params: {
       ...(params.run_id ? { run_id: params.run_id } : {}),
       ...(params.since ? { since: params.since } : {}),
+      ...(params.stage ? { stage: params.stage } : {}),
+      ...(params.level ? { level: params.level } : {}),
+      ...(params.scope_kind ? { scope_kind: params.scope_kind } : {}),
+      ...(params.scope_id ? { scope_id: params.scope_id } : {}),
+      ...(params.agent_kind ? { agent_kind: params.agent_kind } : {}),
       limit: params.limit ?? 200,
     },
   }
   return apiGet<SourceWorkflowEventsResponse>(
     `/research-spaces/${spaceId}/sources/${sourceId}/workflow-events`,
     options,
+  )
+}
+
+export async function fetchPipelineRunSummary(
+  spaceId: string,
+  sourceId: string,
+  runId: string,
+  token?: string,
+): Promise<PipelineRunSummaryEnvelopeResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchPipelineRunSummary')
+  }
+  return apiGet<PipelineRunSummaryEnvelopeResponse>(
+    `/research-spaces/${spaceId}/sources/${sourceId}/pipeline-runs/${encodeURIComponent(runId)}/summary`,
+    { token },
+  )
+}
+
+export async function fetchSourceWorkflowDocumentTrace(
+  spaceId: string,
+  sourceId: string,
+  runId: string,
+  documentId: string,
+  token?: string,
+): Promise<SourceWorkflowDocumentTraceResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchSourceWorkflowDocumentTrace')
+  }
+  return apiGet<SourceWorkflowDocumentTraceResponse>(
+    `/research-spaces/${spaceId}/sources/${sourceId}/pipeline-runs/${encodeURIComponent(runId)}/documents/${encodeURIComponent(documentId)}/trace`,
+    { token },
+  )
+}
+
+export async function fetchSourceWorkflowQueryTrace(
+  spaceId: string,
+  sourceId: string,
+  runId: string,
+  token?: string,
+): Promise<SourceWorkflowQueryTraceResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchSourceWorkflowQueryTrace')
+  }
+  return apiGet<SourceWorkflowQueryTraceResponse>(
+    `/research-spaces/${spaceId}/sources/${sourceId}/pipeline-runs/${encodeURIComponent(runId)}/query-trace`,
+    { token },
+  )
+}
+
+export async function fetchPipelineRunTimingSummary(
+  spaceId: string,
+  sourceId: string,
+  runId: string,
+  token?: string,
+): Promise<PipelineRunTimingSummaryResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchPipelineRunTimingSummary')
+  }
+  return apiGet<PipelineRunTimingSummaryResponse>(
+    `/research-spaces/${spaceId}/sources/${sourceId}/pipeline-runs/${encodeURIComponent(runId)}/timing`,
+    { token },
+  )
+}
+
+export async function fetchPipelineRunCostSummary(
+  spaceId: string,
+  sourceId: string,
+  runId: string,
+  token?: string,
+): Promise<PipelineRunCostSummaryResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchPipelineRunCostSummary')
+  }
+  return apiGet<PipelineRunCostSummaryResponse>(
+    `/research-spaces/${spaceId}/sources/${sourceId}/pipeline-runs/${encodeURIComponent(runId)}/cost`,
+    { token },
+  )
+}
+
+export interface PipelineRunCostReportParams {
+  source_type?: string
+  user_id?: string
+  date_from?: string
+  date_to?: string
+  limit?: number
+}
+
+export async function fetchPipelineRunCostReport(
+  spaceId: string,
+  params: PipelineRunCostReportParams = {},
+  token?: string,
+): Promise<PipelineRunCostReportResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchPipelineRunCostReport')
+  }
+  return apiGet<PipelineRunCostReportResponse>(
+    `/research-spaces/${spaceId}/pipeline-run-costs`,
+    {
+      token,
+      params: {
+        ...(params.source_type ? { source_type: params.source_type } : {}),
+        ...(params.user_id ? { user_id: params.user_id } : {}),
+        ...(params.date_from ? { date_from: params.date_from } : {}),
+        ...(params.date_to ? { date_to: params.date_to } : {}),
+        limit: params.limit ?? 200,
+      },
+    },
+  )
+}
+
+export async function fetchUserPipelineRunCostReport(
+  spaceId: string,
+  userId: string,
+  params: Omit<PipelineRunCostReportParams, 'user_id'> = {},
+  token?: string,
+): Promise<PipelineRunCostReportResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchUserPipelineRunCostReport')
+  }
+  return apiGet<PipelineRunCostReportResponse>(
+    `/research-spaces/${spaceId}/users/${encodeURIComponent(userId)}/pipeline-run-costs`,
+    {
+      token,
+      params: {
+        ...(params.source_type ? { source_type: params.source_type } : {}),
+        ...(params.date_from ? { date_from: params.date_from } : {}),
+        ...(params.date_to ? { date_to: params.date_to } : {}),
+        limit: params.limit ?? 200,
+      },
+    },
+  )
+}
+
+export async function fetchPipelineRunComparison(
+  spaceId: string,
+  sourceId: string,
+  runA: string,
+  runB: string,
+  token?: string,
+): Promise<PipelineRunComparisonResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchPipelineRunComparison')
+  }
+  return apiGet<PipelineRunComparisonResponse>(
+    `/research-spaces/${spaceId}/sources/${sourceId}/pipeline-runs/compare`,
+    {
+      token,
+      params: {
+        run_a: runA,
+        run_b: runB,
+      },
+    },
   )
 }

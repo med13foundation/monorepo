@@ -15,6 +15,7 @@ from . import (
     ingestion_job,
     ingestion_scheduler_job,
     ingestion_source_lock,
+    pipeline_run_event,
     research_space,
     session,
     source_document,
@@ -71,6 +72,7 @@ SourceRecordLedgerModel = source_record_ledger.SourceRecordLedgerModel
 SourceDocumentModel = source_document.SourceDocumentModel
 IngestionSchedulerJobModel = ingestion_scheduler_job.IngestionSchedulerJobModel
 IngestionSourceLockModel = ingestion_source_lock.IngestionSourceLockModel
+PipelineRunEventModel = pipeline_run_event.PipelineRunEventModel
 DocumentFormatEnum = source_document.DocumentFormatEnum
 EnrichmentStatusEnum = source_document.EnrichmentStatusEnum
 DocumentExtractionStatusEnum = source_document.DocumentExtractionStatusEnum
@@ -143,6 +145,7 @@ __all__ = [
     "SourceDocumentModel",
     "IngestionSchedulerJobModel",
     "IngestionSourceLockModel",
+    "PipelineRunEventModel",
     "DocumentFormatEnum",
     "EnrichmentStatusEnum",
     "DocumentExtractionStatusEnum",

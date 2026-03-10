@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextvars import copy_context
 from threading import Thread
 from typing import TYPE_CHECKING
 
@@ -27,7 +28,7 @@ from src.infrastructure.llm.config import (
 )
 from src.infrastructure.llm.prompts.mapping_judge import MAPPING_JUDGE_SYSTEM_PROMPT
 from src.infrastructure.llm.state.shared_postgres_store import (
-    get_shared_artana_postgres_store,
+    create_artana_postgres_store,
 )
 
 if TYPE_CHECKING:
@@ -71,7 +72,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         self._governance = GovernanceConfig.from_environment()
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
-        self._artana_store = artana_store or self._create_store()
+        self._artana_store = artana_store
 
     def judge(
         self,
@@ -157,7 +158,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        return get_shared_artana_postgres_store()
+        return create_artana_postgres_store()
 
     def _create_runtime(
         self,
@@ -168,7 +169,7 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
             schema_name_fallback="mapping_judge_contract",
         )
         kernel = ArtanaKernel(
-            store=self._artana_store,
+            store=self._artana_store or self._create_store(),
             model_port=model_port,
         )
         client = SingleStepModelClient(kernel=kernel)
@@ -356,10 +357,14 @@ class ArtanaMappingJudgeAdapter(MappingJudgePort):
         result_holder: dict[str, MappingJudgeContract | None] = {"result": None}
         error_holder: dict[str, BaseException | None] = {"error": None}
         bridge_started_at = time.monotonic()
+        execution_context = copy_context()
 
         def _target() -> None:
             try:
-                result_holder["result"] = asyncio.run(_typed_coroutine())
+                result_holder["result"] = execution_context.run(
+                    asyncio.run,
+                    _typed_coroutine(),
+                )
             except BaseException as exc:  # noqa: BLE001
                 error_holder["error"] = exc
 

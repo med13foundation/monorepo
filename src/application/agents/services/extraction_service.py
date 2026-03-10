@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from src.domain.agents.contracts.entity_recognition import EntityRecognitionContract
     from src.domain.agents.contracts.extraction import ExtractionContract
     from src.domain.entities.source_document import SourceDocument
+    from src.domain.services.ingestion import IngestionProgressCallback
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         self._concepts = dependencies.concept_service
         self._evidence_sentence_harness = dependencies.evidence_sentence_harness
         self._endpoint_shape_judge = dependencies.endpoint_shape_judge
+        self._concept_merge_judge = dependencies.concept_merge_judge
         self._governance = dependencies.governance_service or GovernanceService()
         self._review_queue_submitter = dependencies.review_queue_submitter
         self._rollback_on_error = dependencies.rollback_on_error
@@ -75,6 +77,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         research_space_settings: ResearchSpaceSettings,
         model_id: str | None = None,
         shadow_mode: bool | None = None,
+        ingestion_progress_callback: IngestionProgressCallback | None = None,
     ) -> ExtractionDocumentOutcome:
         """Run extraction for one recognized document and forward to kernel ingest."""
         started_at = datetime.now(UTC)
@@ -316,6 +319,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         ingestion_result = self._ingestion_pipeline.run(
             pipeline_records,
             str(document.research_space_id),
+            progress_callback=ingestion_progress_callback,
         )
         logger.info(
             "Extraction ingestion pipeline finished",
@@ -449,6 +453,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
             reason="processed",
             ingestion_entities_created=ingestion_result.entities_created,
             ingestion_observations_created=ingestion_result.observations_created,
+            relation_claims_count=relation_persistence_result.relation_claims_count,
             persisted_relations_count=(
                 relation_persistence_result.persisted_relations_count
             ),
@@ -512,33 +517,11 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         if not normalized:
             return False
 
-        existing = dictionary.get_entity_type(
-            normalized,
-            include_inactive=True,
-        )
-        if existing is not None:
-            if existing.is_active and existing.review_status == "ACTIVE":
-                return True
-            try:
-                dictionary.set_entity_type_review_status(
-                    normalized,
-                    review_status="ACTIVE",
-                    reviewed_by=_EXTRACTION_ENTITY_TYPE_CREATED_BY,
-                )
-            except ValueError as exc:
-                logger.warning(
-                    "Failed to activate extraction primary entity type=%s (%s)",
-                    normalized,
-                    exc,
-                )
-                return False
-            return dictionary.get_entity_type(normalized) is not None
-
         creation_settings: ResearchSpaceSettings = {
             "dictionary_agent_creation_policy": "ACTIVE",
         }
         try:
-            dictionary.create_entity_type(
+            resolved = dictionary.create_entity_type(
                 entity_type=normalized,
                 display_name=normalized.replace("_", " ").title(),
                 description=(
@@ -557,7 +540,23 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
                 exc,
             )
             return False
-        return dictionary.get_entity_type(normalized) is not None
+
+        if resolved.is_active and resolved.review_status == "ACTIVE":
+            return True
+        try:
+            dictionary.set_entity_type_review_status(
+                resolved.id,
+                review_status="ACTIVE",
+                reviewed_by=_EXTRACTION_ENTITY_TYPE_CREATED_BY,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "Failed to activate extraction primary entity type=%s (%s)",
+                resolved.id,
+                exc,
+            )
+            return False
+        return dictionary.get_entity_type(resolved.id) is not None
 
     @staticmethod
     def _resolve_run_id(contract: ExtractionContract) -> str | None:

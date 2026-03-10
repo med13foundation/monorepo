@@ -36,6 +36,7 @@ from src.domain.entities.source_document import (
 )
 from src.domain.entities.user_data_source import SourceType
 from src.domain.repositories.source_document_repository import SourceDocumentRepository
+from src.domain.services.ingestion import IngestionProgressUpdate
 from src.type_definitions.ingestion import IngestResult, RawRecord
 from src.type_definitions.json_utils import to_json_value
 
@@ -264,18 +265,30 @@ class StubIngestionPipeline:
 
     def __init__(self, result: IngestResult) -> None:
         self.result = result
-        self.calls: list[tuple[list[RawRecord], str]] = []
+        self.calls: list[tuple[list[RawRecord], str, object | None]] = []
 
-    def run(self, records: list[RawRecord], research_space_id: str) -> IngestResult:
-        self.calls.append((records, research_space_id))
+    def run(
+        self,
+        records: list[RawRecord],
+        research_space_id: str,
+        *,
+        progress_callback: object | None = None,
+    ) -> IngestResult:
+        self.calls.append((records, research_space_id, progress_callback))
         return self.result
 
 
 class StubExtractionService:
     """Extraction service stub to assert ERA->EXA handoff."""
 
-    def __init__(self, outcome: ExtractionDocumentOutcome) -> None:
+    def __init__(
+        self,
+        outcome: ExtractionDocumentOutcome,
+        *,
+        progress_updates: tuple[IngestionProgressUpdate, ...] = (),
+    ) -> None:
         self.outcome = outcome
+        self._progress_updates = progress_updates
         self.calls: list[tuple[SourceDocument, EntityRecognitionContract]] = []
 
     async def extract_from_entity_recognition(
@@ -286,11 +299,15 @@ class StubExtractionService:
         research_space_settings: object,
         model_id: str | None = None,
         shadow_mode: bool | None = None,
+        ingestion_progress_callback: object | None = None,
     ) -> ExtractionDocumentOutcome:
         _ = research_space_settings
         _ = model_id
         _ = shadow_mode
         self.calls.append((document, recognition_contract))
+        if callable(ingestion_progress_callback):
+            for update in self._progress_updates:
+                ingestion_progress_callback(update)
         return self.outcome
 
     async def close(self) -> None:
@@ -317,13 +334,27 @@ class SlowExtractionService(StubExtractionService):
         research_space_settings: object,
         model_id: str | None = None,
         shadow_mode: bool | None = None,
+        ingestion_progress_callback: object | None = None,
     ) -> ExtractionDocumentOutcome:
         _ = research_space_settings
         _ = model_id
         _ = shadow_mode
+        _ = ingestion_progress_callback
         self.calls.append((document, recognition_contract))
         await asyncio.sleep(self._delay_seconds)
         return self.outcome
+
+
+class StubPipelineTraceService:
+    """Minimal trace sink for warning-event assertions."""
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def record_event(self, **kwargs: object) -> dict[str, object]:
+        event = dict(kwargs)
+        self.events.append(event)
+        return event
 
 
 @dataclass(frozen=True)
@@ -907,6 +938,118 @@ async def test_process_document_fails_when_agent_times_out(
     assert (
         persisted_document.metadata.get("entity_recognition_failure_reason")
         == "agent_execution_timeout"
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_pending_documents_records_retry_warning_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MED13_ENTITY_RECOGNITION_AGENT_TIMEOUT_SECONDS", "0.01")
+    monkeypatch.setenv("MED13_ENTITY_RECOGNITION_AGENT_TIMEOUT_RETRY_ATTEMPTS", "1")
+    document = _build_document(include_raw_record=True)
+    repository = StubSourceDocumentRepository([document])
+    contract = _build_contract(document.id)
+    agent = SlowEntityRecognitionAgent(contract=contract, delay_seconds=0.05)
+    dictionary = StubDictionaryService()
+    ingestion = StubIngestionPipeline(
+        IngestResult(success=True, entities_created=1, observations_created=1),
+    )
+    pipeline_trace = StubPipelineTraceService()
+    service = EntityRecognitionService(
+        dependencies=EntityRecognitionServiceDependencies(
+            entity_recognition_agent=agent,
+            source_document_repository=repository,
+            ingestion_pipeline=ingestion,
+            dictionary_service=cast("DictionaryPort", dictionary),
+            governance_service=_build_governance_service(),
+            pipeline_trace_service=pipeline_trace,
+        ),
+        default_shadow_mode=False,
+    )
+
+    summary = await service.process_pending_documents(
+        limit=1,
+        source_id=document.source_id,
+        research_space_id=document.research_space_id,
+        pipeline_run_id="pipeline-run-timeout-warning",
+    )
+
+    assert summary.failed == 1
+    assert any(
+        event.get("event_type") == "entity_recognition_retry_scheduled"
+        and event.get("level") == "warning"
+        and event.get("status") == "retrying"
+        for event in pipeline_trace.events
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_pending_documents_records_resolver_warning_event() -> None:
+    document = _build_document(include_raw_record=True)
+    repository = StubSourceDocumentRepository([document])
+    contract = _build_contract(document.id)
+    agent = StubEntityRecognitionAgent(contract=contract)
+    dictionary = StubDictionaryService()
+    pipeline_trace = StubPipelineTraceService()
+    extraction_service = StubExtractionService(
+        ExtractionDocumentOutcome(
+            document_id=document.id,
+            status="extracted",
+            reason="processed",
+            review_required=False,
+            shadow_mode=False,
+            wrote_to_kernel=True,
+            run_id="extract:resolver-warning",
+        ),
+        progress_updates=(
+            IngestionProgressUpdate(
+                event_type="resolver_warning",
+                message=(
+                    "No resolution policy configured for entity_type=GENE; "
+                    "falling back to STRICT_MATCH with best-effort anchors."
+                ),
+                payload={
+                    "entity_type": "GENE",
+                    "fallback_strategy": "STRICT_MATCH",
+                    "reason": "missing_resolution_policy",
+                    "source_record_id": "pubmed:pmid:123456",
+                },
+            ),
+        ),
+    )
+    service = EntityRecognitionService(
+        dependencies=EntityRecognitionServiceDependencies(
+            entity_recognition_agent=agent,
+            source_document_repository=repository,
+            ingestion_pipeline=StubIngestionPipeline(
+                IngestResult(success=True, entities_created=1, observations_created=1),
+            ),
+            extraction_service=cast("ExtractionService", extraction_service),
+            dictionary_service=cast("DictionaryPort", dictionary),
+            governance_service=_build_governance_service(),
+            pipeline_trace_service=pipeline_trace,
+        ),
+        default_shadow_mode=False,
+    )
+
+    summary = await service.process_pending_documents(
+        limit=1,
+        source_id=document.source_id,
+        research_space_id=document.research_space_id,
+        pipeline_run_id="pipeline-run-resolver-warning",
+    )
+
+    assert summary.extracted == 1
+    assert any(
+        event.get("event_type") == "resolver_warning"
+        and event.get("stage") == "extraction"
+        and event.get("level") == "warning"
+        and event.get("status") == "warning"
+        and event.get("agent_kind") == "entity_resolver"
+        and event.get("error_code") == "resolver_policy_missing"
+        and event.get("scope_id") == str(document.id)
+        for event in pipeline_trace.events
     )
 
 

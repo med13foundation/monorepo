@@ -61,6 +61,7 @@ class ExtractionServiceDependencies:
     ingestion_pipeline: IngestionPipelinePort
     extraction_policy_agent: ExtractionPolicyAgentPort | None = None
     endpoint_shape_judge: MappingJudgePort | None = None
+    concept_merge_judge: MappingJudgePort | None = None
     relation_repository: KernelRelationRepository | None = None
     relation_claim_repository: KernelRelationClaimRepository | None = None
     claim_participant_repository: KernelClaimParticipantRepository | None = None
@@ -92,6 +93,7 @@ class ExtractionDocumentOutcome:
     rejected_relation_details: tuple[JSONObject, ...] = ()
     ingestion_entities_created: int = 0
     ingestion_observations_created: int = 0
+    relation_claims_count: int = 0
     persisted_relations_count: int = 0
     pending_review_relations_count: int = 0
     forbidden_relations_count: int = 0
@@ -163,6 +165,7 @@ def build_extraction_outcome(  # noqa: PLR0913
     reason: str,
     ingestion_entities_created: int = 0,
     ingestion_observations_created: int = 0,
+    relation_claims_count: int = 0,
     persisted_relations_count: int = 0,
     pending_review_relations_count: int = 0,
     forbidden_relations_count: int = 0,
@@ -206,6 +209,7 @@ def build_extraction_outcome(  # noqa: PLR0913
         ),
         ingestion_entities_created=ingestion_entities_created,
         ingestion_observations_created=ingestion_observations_created,
+        relation_claims_count=relation_claims_count,
         persisted_relations_count=persisted_relations_count,
         pending_review_relations_count=pending_review_relations_count,
         forbidden_relations_count=forbidden_relations_count,

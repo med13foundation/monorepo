@@ -33,6 +33,9 @@ from src.domain.entities.source_document import EnrichmentStatus, SourceDocument
 if TYPE_CHECKING:
     from uuid import UUID
 
+    from src.application.services.pipeline_run_trace_service import (
+        PipelineRunTraceService,
+    )
     from src.application.services.storage_operation_coordinator import (
         StorageOperationCoordinator,
     )
@@ -112,6 +115,7 @@ class ContentEnrichmentServiceDependencies:
     source_document_repository: SourceDocumentRepository
     content_enrichment_agent: ContentEnrichmentPort | None = None
     storage_coordinator: StorageOperationCoordinator | None = None
+    pipeline_trace_service: PipelineRunTraceService | None = None
 
 
 class ContentEnrichmentService(
@@ -125,6 +129,7 @@ class ContentEnrichmentService(
         self._agent = dependencies.content_enrichment_agent
         self._source_documents = dependencies.source_document_repository
         self._storage_coordinator = dependencies.storage_coordinator
+        self._pipeline_trace = dependencies.pipeline_trace_service
         self._agent_timeout_seconds = _read_positive_timeout_seconds(
             _ENV_AGENT_TIMEOUT_SECONDS,
             default_seconds=_DEFAULT_AGENT_TIMEOUT_SECONDS,
@@ -166,6 +171,29 @@ class ContentEnrichmentService(
             reverse=True,
         )[:requested_limit]
 
+        if (
+            self._pipeline_trace is not None
+            and pipeline_run_id is not None
+            and source_id is not None
+            and research_space_id is not None
+        ):
+            self._pipeline_trace.record_event(
+                research_space_id=research_space_id,
+                source_id=source_id,
+                pipeline_run_id=pipeline_run_id,
+                event_type="enrichment_batch_started",
+                stage="enrichment",
+                scope_kind="run",
+                message="Content enrichment batch started.",
+                status="running",
+                occurred_at=started_at,
+                started_at=started_at,
+                payload={
+                    "requested_limit": requested_limit,
+                    "candidate_count": len(pending_documents),
+                },
+            )
+
         outcomes_by_index: list[ContentEnrichmentDocumentOutcome | None] = [None] * len(
             pending_documents,
         )
@@ -179,6 +207,32 @@ class ContentEnrichmentService(
                 document: SourceDocument,
             ) -> None:
                 async with semaphore:
+                    document_started_at = datetime.now(UTC)
+                    if (
+                        self._pipeline_trace is not None
+                        and pipeline_run_id is not None
+                        and document.research_space_id is not None
+                    ):
+                        self._pipeline_trace.record_event(
+                            research_space_id=document.research_space_id,
+                            source_id=document.source_id,
+                            pipeline_run_id=pipeline_run_id,
+                            event_type="document_started",
+                            stage="enrichment",
+                            scope_kind="document",
+                            scope_id=str(document.id),
+                            message=(
+                                "Content enrichment started for document "
+                                f"{document.external_record_id}."
+                            ),
+                            status="running",
+                            occurred_at=document_started_at,
+                            started_at=document_started_at,
+                            payload={
+                                "document_id": str(document.id),
+                                "external_record_id": document.external_record_id,
+                            },
+                        )
                     try:
                         outcome = await self._process_document(
                             document=document,
@@ -222,6 +276,48 @@ class ContentEnrichmentService(
                             errors=(str(exc),),
                         )
                     outcomes_by_index[index] = outcome
+                    document_completed_at = datetime.now(UTC)
+                    if (
+                        self._pipeline_trace is not None
+                        and pipeline_run_id is not None
+                        and document.research_space_id is not None
+                    ):
+                        self._pipeline_trace.record_event(
+                            research_space_id=document.research_space_id,
+                            source_id=document.source_id,
+                            pipeline_run_id=pipeline_run_id,
+                            event_type="document_finished",
+                            stage="enrichment",
+                            scope_kind="document",
+                            scope_id=str(document.id),
+                            message=(
+                                "Content enrichment finished for document "
+                                f"{document.external_record_id}."
+                            ),
+                            level="error" if outcome.status == "failed" else "info",
+                            status=outcome.status,
+                            agent_kind="content_enrichment",
+                            agent_run_id=outcome.run_id,
+                            occurred_at=document_completed_at,
+                            started_at=document_started_at,
+                            completed_at=document_completed_at,
+                            duration_ms=int(
+                                (
+                                    document_completed_at - document_started_at
+                                ).total_seconds()
+                                * 1000,
+                            ),
+                            payload={
+                                "document_id": str(document.id),
+                                "external_record_id": document.external_record_id,
+                                "reason": outcome.reason,
+                                "execution_mode": outcome.execution_mode,
+                                "acquisition_method": outcome.acquisition_method,
+                                "content_storage_key": outcome.content_storage_key,
+                                "content_length_chars": outcome.content_length_chars,
+                                "errors": list(outcome.errors),
+                            },
+                        )
 
             await asyncio.gather(
                 *(
@@ -235,12 +331,44 @@ class ContentEnrichmentService(
         ]
 
         completed_at = datetime.now(UTC)
-        return self._build_run_summary(
+        summary = self._build_run_summary(
             outcomes=outcomes,
             requested=len(pending_documents),
             started_at=started_at,
             completed_at=completed_at,
         )
+        if (
+            self._pipeline_trace is not None
+            and pipeline_run_id is not None
+            and source_id is not None
+            and research_space_id is not None
+        ):
+            self._pipeline_trace.record_event(
+                research_space_id=research_space_id,
+                source_id=source_id,
+                pipeline_run_id=pipeline_run_id,
+                event_type="enrichment_batch_finished",
+                stage="enrichment",
+                scope_kind="run",
+                message="Content enrichment batch finished.",
+                level="error" if summary.failed > 0 else "info",
+                status="completed" if summary.failed == 0 else "partial",
+                occurred_at=completed_at,
+                started_at=started_at,
+                completed_at=completed_at,
+                duration_ms=int((completed_at - started_at).total_seconds() * 1000),
+                payload={
+                    "requested": summary.requested,
+                    "processed": summary.processed,
+                    "enriched": summary.enriched,
+                    "skipped": summary.skipped,
+                    "failed": summary.failed,
+                    "ai_runs": summary.ai_runs,
+                    "deterministic_runs": summary.deterministic_runs,
+                    "errors": list(summary.errors),
+                },
+            )
+        return summary
 
     async def process_document(
         self,

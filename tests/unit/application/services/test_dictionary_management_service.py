@@ -17,6 +17,7 @@ from src.domain.entities.kernel.dictionary import (
     DictionaryRelationSynonym,
     DictionaryRelationType,
     DictionarySearchResult,
+    EntityResolutionPolicy,
     RelationConstraint,
     ValueSet,
     ValueSetItem,
@@ -225,6 +226,28 @@ def _build_relation_constraint(
     )
 
 
+def _build_resolution_policy(*, entity_type: str = "GENE") -> EntityResolutionPolicy:
+    now = datetime.now(UTC)
+    return EntityResolutionPolicy(
+        entity_type=entity_type,
+        policy_strategy="STRICT_MATCH",
+        required_anchors=[],
+        auto_merge_threshold=1.0,
+        created_by="seed",
+        is_active=True,
+        valid_from=now,
+        valid_to=None,
+        superseded_by=None,
+        source_ref=None,
+        review_status="ACTIVE",
+        reviewed_by=None,
+        reviewed_at=None,
+        revocation_reason=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
 def _build_changelog() -> DictionaryChangelog:
     now = datetime.now(UTC)
     return DictionaryChangelog(
@@ -316,6 +339,8 @@ def _build_value_set_item(
 def dictionary_repo() -> Mock:
     repo = Mock(spec=DictionaryRepository)
     repo.search_dictionary.return_value = []
+    repo.get_resolution_policy.return_value = None
+    repo.get_entity_type.return_value = None
     return repo
 
 
@@ -1059,6 +1084,128 @@ def test_create_entity_type_reuses_existing_on_exact_search_match(
 
     assert resolved.id == "GENE"
     dictionary_repo.create_entity_type.assert_not_called()
+
+
+def test_create_entity_type_auto_creates_default_resolution_policy(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    created_entity_type = _build_entity_type()
+    dictionary_repo.create_entity_type.return_value = created_entity_type
+    dictionary_repo.get_entity_type.return_value = created_entity_type
+    dictionary_repo.get_resolution_policy.return_value = None
+    dictionary_repo.create_resolution_policy.return_value = _build_resolution_policy()
+
+    resolved = service.create_entity_type(
+        entity_type="GENE",
+        display_name="Gene",
+        description="Gene entity type",
+        domain_context="general",
+        created_by="agent:run-123",
+        research_space_settings={
+            "dictionary_agent_creation_policy": "ACTIVE",
+        },
+    )
+
+    assert resolved.id == "GENE"
+    dictionary_repo.create_resolution_policy.assert_called_once()
+    called_kwargs = dictionary_repo.create_resolution_policy.call_args.kwargs
+    assert called_kwargs["entity_type"] == "GENE"
+    assert called_kwargs["policy_strategy"] == "LOOKUP"
+    assert called_kwargs["required_anchors"] == ["hgnc_id"]
+
+
+def test_create_entity_type_reuses_collapsed_composite_match(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    existing = DictionaryEntityType(
+        **(
+            _build_entity_type().model_dump()
+            | {"id": "PROTEIN_COMPLEX", "display_name": "Protein Complex"}
+        ),
+    )
+    dictionary_repo.search_dictionary.return_value = [
+        DictionarySearchResult(
+            dimension="entity_types",
+            entry_id="PROTEIN_COMPLEX",
+            display_name="Protein Complex",
+            description="Protein complex entity type",
+            domain_context="general",
+            match_method="exact",
+            similarity_score=1.0,
+            metadata={},
+        ),
+    ]
+    dictionary_repo.get_entity_type.return_value = existing
+
+    resolved = service.create_entity_type(
+        entity_type="PROTEIN_PROTEIN_COMPLEX",
+        display_name="Protein Protein Complex",
+        description="Composite protein complex entity type",
+        domain_context="general",
+        created_by="agent:run-123",
+    )
+
+    assert resolved.id == "PROTEIN_COMPLEX"
+    dictionary_repo.create_entity_type.assert_not_called()
+
+
+def test_create_entity_type_activates_existing_inactive_match(
+    service: DictionaryManagementService,
+    dictionary_repo: Mock,
+) -> None:
+    existing = DictionaryEntityType(
+        **(
+            _build_entity_type().model_dump()
+            | {
+                "id": "PROTEIN_COMPLEX",
+                "display_name": "Protein Complex",
+                "is_active": False,
+                "review_status": "PENDING_REVIEW",
+            }
+        ),
+    )
+    activated = DictionaryEntityType(
+        **(
+            existing.model_dump()
+            | {
+                "is_active": True,
+                "review_status": "ACTIVE",
+            }
+        ),
+    )
+    dictionary_repo.search_dictionary.return_value = [
+        DictionarySearchResult(
+            dimension="entity_types",
+            entry_id="PROTEIN_COMPLEX",
+            display_name="Protein Complex",
+            description="Protein complex entity type",
+            domain_context="general",
+            match_method="exact",
+            similarity_score=1.0,
+            metadata={},
+        ),
+    ]
+    dictionary_repo.get_entity_type.return_value = existing
+    dictionary_repo.set_entity_type_review_status.return_value = activated
+
+    resolved = service.create_entity_type(
+        entity_type="PROTEIN_PROTEIN_COMPLEX",
+        display_name="Protein Protein Complex",
+        description="Composite protein complex entity type",
+        domain_context="general",
+        created_by="agent:run-123",
+        research_space_settings={"dictionary_agent_creation_policy": "ACTIVE"},
+    )
+
+    assert resolved.is_active is True
+    assert resolved.review_status == "ACTIVE"
+    dictionary_repo.set_entity_type_review_status.assert_called_once_with(
+        "PROTEIN_COMPLEX",
+        review_status="ACTIVE",
+        reviewed_by="agent:run-123",
+    )
 
 
 def test_create_relation_type_reuses_existing_on_exact_search_match(

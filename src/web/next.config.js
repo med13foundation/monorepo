@@ -112,6 +112,8 @@ const nextConfig = {
   },
   // Configure images for external domains if needed
   images: {
+    dangerouslyAllowSVG: true,
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
     domains: ['localhost'],
     remotePatterns: [
       {

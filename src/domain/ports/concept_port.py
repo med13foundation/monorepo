@@ -103,6 +103,17 @@ class ConceptPort(ABC):
         """List concept aliases in one research space."""
 
     @abstractmethod
+    def resolve_member_by_alias(
+        self,
+        *,
+        research_space_id: str,
+        domain_context: str,
+        alias_normalized: str,
+        include_inactive: bool = False,
+    ) -> ConceptMember | None:
+        """Resolve one alias to a concept member in scope."""
+
+    @abstractmethod
     def upsert_active_policy(  # noqa: PLR0913
         self,
         *,

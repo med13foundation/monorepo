@@ -51,7 +51,10 @@ def upgrade() -> None:
     bind = op.get_bind()
     job_kind_enum.create(bind, checkfirst=True)
 
-    with op.batch_alter_table(_TABLE_NAME) as batch_op:
+    with op.batch_alter_table(
+        _TABLE_NAME,
+        reflect_kwargs={"resolve_fks": False},
+    ) as batch_op:
         if not _has_column(_TABLE_NAME, _COLUMN_NAME):
             batch_op.add_column(
                 sa.Column(
@@ -67,7 +70,10 @@ def downgrade() -> None:
     if not _has_table(_TABLE_NAME):
         return
 
-    with op.batch_alter_table(_TABLE_NAME) as batch_op:
+    with op.batch_alter_table(
+        _TABLE_NAME,
+        reflect_kwargs={"resolve_fks": False},
+    ) as batch_op:
         if _has_column(_TABLE_NAME, _COLUMN_NAME):
             batch_op.drop_column(_COLUMN_NAME)
 

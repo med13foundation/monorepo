@@ -280,6 +280,9 @@ class _PipelineOrchestrationCheckpointHelpers:
             else {}
         )
         pipeline_payload[progress_key] = self._coerce_json_object(progress_payload)
+        if overall_status in {"completed", "cancelled"}:
+            pipeline_payload["last_error"] = None
+            pipeline_payload["error_category"] = None
         pipeline_payload["updated_at"] = datetime.now(UTC).isoformat(
             timespec="seconds",
         )
@@ -333,12 +336,12 @@ class _PipelineOrchestrationCheckpointHelpers:
             if isinstance(pipeline_raw, dict)
             else {}
         )
-        if errors:
+        if run_status == "failed" and errors:
             pipeline_payload["last_error"] = errors[-1]
         else:
             pipeline_payload["last_error"] = None
         error_category = resolve_pipeline_error_category(errors)
-        if error_category is not None:
+        if run_status == "failed" and error_category is not None:
             pipeline_payload["error_category"] = error_category
         else:
             pipeline_payload["error_category"] = None

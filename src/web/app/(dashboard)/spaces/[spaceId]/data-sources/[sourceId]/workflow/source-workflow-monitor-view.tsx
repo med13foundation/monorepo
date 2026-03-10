@@ -7,7 +7,11 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { ArtanaRunTraceResponse } from '@/types/artana'
-import type { SourcePipelineRunsResponse, SourceWorkflowMonitorResponse } from '@/types/kernel'
+import type {
+  SourcePipelineRunsResponse,
+  SourceWorkflowEventsResponse,
+  SourceWorkflowMonitorResponse,
+} from '@/types/kernel'
 
 import {
   GraphTabSection,
@@ -22,9 +26,11 @@ import { asList, asRecord, displayValue } from './source-workflow-monitor-utils'
 interface SourceWorkflowMonitorViewProps {
   spaceId: string
   selectedRunId?: string
+  traceRunId?: string
   monitor: SourceWorkflowMonitorResponse | null
   monitorError: string | null
   pipelineRuns: SourcePipelineRunsResponse | null
+  workflowEvents: SourceWorkflowEventsResponse | null
   trace: ArtanaRunTraceResponse | null
   traceError: string | null
   initialTab?: WorkflowTabKey
@@ -41,12 +47,22 @@ function toNumber(value: unknown): number {
   return 0
 }
 
+function resolveArtanaStageLabel(stageName: string, currentStage: unknown): string {
+  if (stageName !== 'pipeline' || typeof currentStage !== 'string') {
+    return stageName
+  }
+  const normalized = currentStage.trim().toLowerCase()
+  return normalized.length > 0 ? normalized : stageName
+}
+
 export function SourceWorkflowMonitorView({
   spaceId,
   selectedRunId,
+  traceRunId,
   monitor,
   monitorError,
   pipelineRuns,
+  workflowEvents,
   trace,
   traceError,
   initialTab = 'setup',
@@ -56,6 +72,7 @@ export function SourceWorkflowMonitorView({
   const counters = asRecord(monitor?.operational_counters)
   const runRows = asList(pipelineRuns?.runs ?? monitor?.pipeline_runs ?? [])
   const documentRows = asList(monitor?.documents)
+  const paperCandidateRows = asList(monitor?.paper_candidates)
   const queueRows = asList(monitor?.extraction_queue)
   const extractionRows = asList(monitor?.publication_extractions)
   const relationReview = asRecord(monitor?.relation_review)
@@ -63,6 +80,8 @@ export function SourceWorkflowMonitorView({
   const pendingRelationRows = asList(relationReview.pending_review_relation_rows)
   const reviewQueueRows = asList(relationReview.review_queue_rows)
   const rejectedRows = asList(relationReview.rejected_relation_rows)
+  const lastRun = asRecord(monitor?.last_run)
+  const workflowEventRows = asList(workflowEvents?.events)
   const graphSummary = asRecord(monitor?.graph_summary)
   const artanaProgress = asRecord(monitor?.artana_progress)
   const artanaProgressRows = Object.entries(artanaProgress).map(([stageName, rawValue]) => {
@@ -129,9 +148,13 @@ export function SourceWorkflowMonitorView({
             {artanaProgressRows.map((row) => {
               const percentLabel =
                 typeof row.percent === 'number' ? `${row.percent}%` : 'n/a'
+              const stageLabel = resolveArtanaStageLabel(
+                displayValue(row.stage),
+                row.current_stage,
+              )
               return (
                 <Badge key={`${displayValue(row.stage)}-${displayValue(row.run_id)}`} variant="outline">
-                  {displayValue(row.stage)}: {displayValue(row.status)} ({percentLabel})
+                  {stageLabel}: {displayValue(row.status)} ({percentLabel})
                 </Badge>
               )
             })}
@@ -159,15 +182,21 @@ export function SourceWorkflowMonitorView({
               schedule={schedule}
               selectedRunId={selectedRunId}
               warnings={warnings}
+              eventRows={workflowEventRows}
             />
           </TabsContent>
 
           <TabsContent value="run">
             <RunMonitorTabSection
+              lastRun={lastRun}
+              counters={counters}
               runRows={runRows}
               documentRows={documentRows}
+              paperCandidateRows={paperCandidateRows}
               queueRows={queueRows}
               extractionRows={extractionRows}
+              eventRows={workflowEventRows}
+              warnings={warnings}
             />
           </TabsContent>
 
@@ -186,7 +215,7 @@ export function SourceWorkflowMonitorView({
 
           <TabsContent value="trace">
             <TraceTabSection
-              selectedRunId={selectedRunId}
+              selectedRunId={traceRunId}
               trace={trace}
               traceError={traceError}
             />

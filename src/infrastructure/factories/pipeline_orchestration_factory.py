@@ -9,6 +9,9 @@ from src.application.services.pipeline_orchestration_service import (
     PipelineOrchestrationDependencies,
     PipelineOrchestrationService,
 )
+from src.application.services.pipeline_run_trace_service import (
+    PipelineRunTraceService,
+)
 from src.database.session import SessionLocal, set_session_rls_context
 from src.infrastructure.dependency_injection.dependencies import (
     get_legacy_dependency_container,
@@ -16,7 +19,10 @@ from src.infrastructure.dependency_injection.dependencies import (
 from src.infrastructure.factories.ingestion_scheduler_factory import (
     build_ingestion_scheduling_service,
 )
-from src.infrastructure.repositories import SqlAlchemyResearchSpaceRepository
+from src.infrastructure.repositories import (
+    SqlAlchemyPipelineRunEventRepository,
+    SqlAlchemyResearchSpaceRepository,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -83,7 +89,9 @@ async def pipeline_orchestration_service_context() -> (  # noqa: PLR0915
                     pipeline_run_id=pipeline_run_id,
                 )
             finally:
-                await isolated_service.close()
+                # The agent services use the shared process-local Artana store.
+                # Closing them per worker unit-of-work tears down shared asyncpg
+                # pools and breaks sibling worker slots bound to the same loop.
                 isolated_session.close()
 
         async def run_extraction_stage_isolated_uow(  # noqa: PLR0913
@@ -114,7 +122,7 @@ async def pipeline_orchestration_service_context() -> (  # noqa: PLR0915
                     pipeline_run_id=pipeline_run_id,
                 )
             finally:
-                await isolated_service.close()
+                # Keep the shared Artana store alive for the process lifetime.
                 isolated_session.close()
 
         async def run_graph_seed_isolated_uow(  # noqa: PLR0913
@@ -149,7 +157,7 @@ async def pipeline_orchestration_service_context() -> (  # noqa: PLR0915
                     fallback_relations=fallback_relations,
                 )
             finally:
-                await isolated_service.close()
+                # Keep the shared Artana store alive for the process lifetime.
                 isolated_session.close()
 
         yield PipelineOrchestrationService(
@@ -164,15 +172,16 @@ async def pipeline_orchestration_service_context() -> (  # noqa: PLR0915
                 graph_search_service=graph_search_service,
                 research_space_repository=SqlAlchemyResearchSpaceRepository(session),
                 pipeline_run_repository=scheduling_service.get_job_repository(),
+                pipeline_trace_service=PipelineRunTraceService(
+                    session,
+                    event_repository=SqlAlchemyPipelineRunEventRepository(session),
+                ),
             ),
         )
     finally:
-        if graph_search_service is not None:
-            await graph_search_service.close()
-        if graph_connection_service is not None:
-            await graph_connection_service.close()
-        if entity_recognition_service is not None:
-            await entity_recognition_service.close()
-        if content_enrichment_service is not None:
-            await content_enrichment_service.close()
+        # These worker-scoped services are created with the container's shared
+        # process-local Artana store. Closing them here tears down that shared
+        # asyncpg pool from arbitrary worker contexts and can strand claimed
+        # runs before execution starts. The SQLAlchemy session remains scoped
+        # to this context and is still closed below.
         session.close()

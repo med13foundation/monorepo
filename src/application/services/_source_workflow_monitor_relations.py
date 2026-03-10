@@ -60,7 +60,7 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
         document_context_by_id: dict[str, JSONObject],
         queue_id_to_document_id: dict[str, str],
         extraction_rows: list[JSONObject],
-        limit: int,
+        limit: int | None,
     ) -> JSONObject:
         persisted = self._load_document_relations(
             space_id=space_id,
@@ -106,7 +106,7 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
         space_id: UUID,
         document_ids: set[str],
         document_context_by_id: dict[str, JSONObject],
-        limit: int,
+        limit: int | None,
     ) -> list[JSONObject]:
         if not document_ids:
             return []
@@ -149,8 +149,9 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
             .where(RelationEvidenceModel.source_document_id.in_(document_uuid_to_id))
             .where(RelationModel.research_space_id == space_id)
             .order_by(desc(RelationEvidenceModel.created_at))
-            .limit(max(limit, 1) * 20)
         )
+        if limit is not None:
+            statement = statement.limit(max(limit, 1) * 20)
         rows = self._session.execute(statement).all()
         payload_rows: list[JSONObject] = []
         for row in rows:
@@ -249,15 +250,16 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
         self,
         *,
         space_id: UUID,
-        limit: int,
+        limit: int | None,
     ) -> list[JSONObject]:
         statement = (
             select(ReviewRecord)
             .where(ReviewRecord.research_space_id == str(space_id))
             .where(ReviewRecord.status == "pending")
             .order_by(desc(ReviewRecord.last_updated))
-            .limit(max(limit, 1) * 3)
         )
+        if limit is not None:
+            statement = statement.limit(max(limit, 1) * 3)
         try:
             rows = self._session.execute(statement).scalars().all()
         except (OperationalError, ProgrammingError):
@@ -380,6 +382,16 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
             if selected_run is not None
             else {}
         )
+        selected_cost_summary = (
+            coerce_json_object(selected_run.payload.get("cost_summary"))
+            if selected_run is not None
+            else {}
+        )
+        selected_timing_summary = (
+            coerce_json_object(selected_run.payload.get("timing_summary"))
+            if selected_run is not None
+            else {}
+        )
         return {
             "last_pipeline_status": (
                 normalize_optional_string(selected_run.payload.get("status"))
@@ -398,6 +410,8 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
             "graph_edges_for_source": graph_edges_for_source,
             "graph_edges_delta_last_run": max(relation_edge_delta, 0),
             "stage_counters": stage_counters,
+            "last_run_total_cost_usd": selected_cost_summary.get("total_cost_usd"),
+            "last_run_duration_ms": selected_timing_summary.get("total_duration_ms"),
         }
 
     def _count_pending_documents(self, *, source_id: UUID) -> int:

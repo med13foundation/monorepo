@@ -19,11 +19,30 @@ from src.infrastructure.embeddings._deterministic_embedding import (
 )
 from src.infrastructure.embeddings._embedding_cache import EmbeddingCache
 from src.infrastructure.embeddings._provider_config import env_bool, env_float, env_int
+from src.infrastructure.llm.costs import (
+    calculate_openai_usage_cost_usd,
+    record_cost_usage,
+)
 
 logger = logging.getLogger(__name__)
 
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _usage_int(raw_value: object) -> int:
+    if isinstance(raw_value, bool):
+        return 0
+    if isinstance(raw_value, int):
+        return max(raw_value, 0)
+    if isinstance(raw_value, float):
+        return max(int(raw_value), 0)
+    if isinstance(raw_value, str):
+        try:
+            return max(int(raw_value.strip()), 0)
+        except ValueError:
+            return 0
+    return 0
 
 
 def _env_bool_optional(name: str) -> bool | None:
@@ -298,6 +317,7 @@ class HybridTextEmbeddingProvider(TextEmbeddingPort):
         payload = self._post_embeddings_with_retry(
             request_payload=request_payload,
             headers=headers,
+            model_name=model_name,
         )
         if payload is None:
             return None
@@ -312,6 +332,7 @@ class HybridTextEmbeddingProvider(TextEmbeddingPort):
         *,
         request_payload: dict[str, object],
         headers: dict[str, str],
+        model_name: str,
     ) -> dict[str, object] | None:
         payload_result: dict[str, object] | None = None
         try:
@@ -327,6 +348,7 @@ class HybridTextEmbeddingProvider(TextEmbeddingPort):
                         response.raise_for_status()
                         payload_result = self._parse_embedding_response_payload(
                             response,
+                            model_name=model_name,
                         )
                         if payload_result is None:
                             logger.error(
@@ -385,6 +407,8 @@ class HybridTextEmbeddingProvider(TextEmbeddingPort):
     def _parse_embedding_response_payload(
         self,
         response: httpx.Response,
+        *,
+        model_name: str,
     ) -> dict[str, object] | None:
         try:
             payload = response.json()
@@ -393,7 +417,34 @@ class HybridTextEmbeddingProvider(TextEmbeddingPort):
             return None
         if not isinstance(payload, dict):
             return None
+        self._record_embedding_cost(payload=payload, model_name=model_name)
         return payload
+
+    def _record_embedding_cost(
+        self,
+        *,
+        payload: dict[str, object],
+        model_name: str,
+    ) -> None:
+        usage_raw = payload.get("usage")
+        if not isinstance(usage_raw, dict):
+            return
+        prompt_tokens = _usage_int(
+            usage_raw.get("prompt_tokens", usage_raw.get("total_tokens")),
+        )
+        cost_usd = calculate_openai_usage_cost_usd(
+            model_id=model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=0,
+        )
+        record_cost_usage(
+            provider="openai",
+            model_id=model_name,
+            operation="embeddings",
+            cost_usd=cost_usd,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=0,
+        )
 
     def _compute_retry_delay_seconds(
         self,

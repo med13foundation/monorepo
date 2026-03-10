@@ -327,13 +327,8 @@ class _ExtractionRelationPolicyConstraintHelpers:
     ) -> bool:
         if self._dictionary is None:
             return False
-        if (
-            self._dictionary.get_entity_type(entity_type, include_inactive=True)
-            is not None
-        ):
-            return True
         try:
-            self._dictionary.create_entity_type(
+            resolved = self._dictionary.create_entity_type(
                 entity_type=entity_type,
                 display_name=entity_type.replace("_", " ").title(),
                 description=("Auto-created to persist extraction policy proposal."),
@@ -349,7 +344,22 @@ class _ExtractionRelationPolicyConstraintHelpers:
                 exc,
             )
             return False
-        return True
+        if resolved.is_active and resolved.review_status == "ACTIVE":
+            return True
+        try:
+            self._dictionary.set_entity_type_review_status(
+                resolved.id,
+                review_status="ACTIVE",
+                reviewed_by=_POLICY_AGENT_CREATED_BY,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "Failed to activate entity_type=%s for relation proposals (%s)",
+                resolved.id,
+                exc,
+            )
+            return False
+        return self._dictionary.get_entity_type(resolved.id) is not None
 
     def _ensure_relation_type_exists(  # noqa: C901, PLR0911
         self,

@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from src.infrastructure.llm.costs import (
+    calculate_openai_usage_cost_usd,
+    record_cost_usage,
+)
+
 if TYPE_CHECKING:
     from artana.ports.model import ModelRequest, ModelResult
 
@@ -121,6 +126,25 @@ def _extract_openai_request_id(response: httpx.Response | None) -> str | None:
 
 def _elapsed_ms(started_at: float) -> int:
     return int((time.perf_counter() - started_at) * 1000)
+
+
+def _resolve_pipeline_cost_stage(step_key: str | None) -> str | None:
+    if step_key is None:
+        return None
+    normalized_step_key = step_key.strip().lower()
+    if not normalized_step_key:
+        return None
+    prefix_map = (
+        ("query.generate.", "query_generation"),
+        ("content.enrichment.", "enrichment"),
+        ("graph.connection.", "graph"),
+        ("entity.recognition.", "extraction"),
+        ("extraction.", "extraction"),
+    )
+    for prefix, stage in prefix_map:
+        if normalized_step_key.startswith(prefix):
+            return stage
+    return None
 
 
 def _raise_type_error(message: str) -> None:
@@ -358,10 +382,26 @@ class OpenAIJSONSchemaModelPort:
 
         from artana.ports.model import ModelResult, ModelUsage
 
+        prompt_tokens = _to_int(usage_raw.get("prompt_tokens"))
+        completion_tokens = _to_int(usage_raw.get("completion_tokens"))
+        cost_usd = calculate_openai_usage_cost_usd(
+            model_id=requested_model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        record_cost_usage(
+            provider="openai",
+            model_id=requested_model,
+            operation="chat_completion",
+            cost_usd=cost_usd,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            stage=_resolve_pipeline_cost_stage(step_key),
+        )
         usage = ModelUsage(
-            prompt_tokens=_to_int(usage_raw.get("prompt_tokens")),
-            completion_tokens=_to_int(usage_raw.get("completion_tokens")),
-            cost_usd=0.0,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=cost_usd,
         )
         return ModelResult(output=output, usage=usage)
 

@@ -61,6 +61,13 @@ class ClinVarIngestionService(ClinVarIngestionServiceHelpers):
                 metadata=config.model_dump(mode="json"),
             )
         )
+        pipeline_run_id = (
+            context.pipeline_run_id
+            if context is not None
+            and isinstance(context.pipeline_run_id, str)
+            and context.pipeline_run_id.strip()
+            else None
+        )
 
         fetch_result = await self._fetch_records_with_checkpoint(
             config=config,
@@ -94,6 +101,7 @@ class ClinVarIngestionService(ClinVarIngestionServiceHelpers):
             result = self._pipeline.run(
                 raw_records,
                 research_space_id=str(source.research_space_id),
+                progress_callback=self._build_pipeline_progress_callback(context),
             )
             observations_created = result.observations_created
         else:
@@ -130,6 +138,7 @@ class ClinVarIngestionService(ClinVarIngestionServiceHelpers):
             extraction_targets=self._build_extraction_targets(
                 filtered_records,
                 source_type=source.source_type,
+                pipeline_run_id=pipeline_run_id,
             ),
             executed_query=config.query,
             query_signature=query_signature,

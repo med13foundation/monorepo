@@ -11,6 +11,7 @@ from .extraction_queue_repository import ExtractionQueueRepository
 from .ingestion_job_repository import IngestionJobRepository
 from .ingestion_scheduler_job_repository import IngestionSchedulerJobRepository
 from .ingestion_source_lock_repository import IngestionSourceLockRepository
+from .pipeline_run_event_repository import PipelineRunEventRepository
 from .publication_extraction_repository import PublicationExtractionRepository
 from .publication_repository import PublicationRepository
 from .research_space_repository import ResearchSpaceRepository
@@ -31,6 +32,7 @@ __all__ = [
     "IngestionSchedulerJobRepository",
     "IngestionSourceLockRepository",
     "PublicationExtractionRepository",
+    "PipelineRunEventRepository",
     "PublicationRepository",
     "ResearchSpaceRepository",
     "QuerySpecification",

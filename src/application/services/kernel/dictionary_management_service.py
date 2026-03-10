@@ -56,6 +56,22 @@ _DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 _DETERMINISTIC_MATCH_METHODS: frozenset[str] = frozenset({"exact", "synonym"})
 _AGENT_VECTOR_REUSE_THRESHOLD = 0.93
 _AGENT_FUZZY_REUSE_THRESHOLD = 0.97
+_DEFAULT_RESOLUTION_POLICY_BY_ENTITY_TYPE: dict[
+    str,
+    tuple[str, tuple[str, ...], float],
+] = {
+    "GENE": ("LOOKUP", ("hgnc_id",), 1.0),
+    "VARIANT": ("STRICT_MATCH", ("hgvs_notation", "gene_symbol"), 1.0),
+    "PHENOTYPE": ("LOOKUP", ("hpo_id",), 1.0),
+    "PUBLICATION": ("FUZZY", ("doi", "title"), 0.95),
+    "DRUG": ("LOOKUP", ("drugbank_id",), 1.0),
+    "PATHWAY": ("LOOKUP", ("reactome_id",), 1.0),
+    "MECHANISM": ("NONE", (), 1.0),
+    "PATIENT": ("STRICT_MATCH", ("mrn", "issuer"), 1.0),
+    "PROTEIN": ("LOOKUP", ("uniprot_id",), 1.0),
+    "COMPLEX": ("STRICT_MATCH", ("name",), 1.0),
+    "MICROBIOTA_TAXON": ("LOOKUP", ("taxon_id",), 1.0),
+}
 
 
 def _parse_review_status(value: str) -> ReviewStatus:
@@ -94,6 +110,70 @@ class DictionaryManagementService(DictionaryPort):
             return self._default_embedding_model
         normalized = model_name.strip()
         return normalized if normalized else self._default_embedding_model
+
+    @staticmethod
+    def _normalize_entity_type_id(entity_type: str) -> str:
+        normalized = entity_type.strip().upper()
+        return normalized.replace("-", "_").replace("/", "_").replace(" ", "_")
+
+    @classmethod
+    def _collapse_entity_type_tokens(cls, entity_type: str) -> str:
+        parts = [
+            token
+            for token in cls._normalize_entity_type_id(entity_type).split("_")
+            if token
+        ]
+        if not parts:
+            return ""
+        collapsed: list[str] = []
+        for token in parts:
+            if collapsed and collapsed[-1] == token:
+                continue
+            collapsed.append(token)
+        return "_".join(collapsed)
+
+    @classmethod
+    def _dedupe_entity_type_tokens(cls, entity_type: str) -> str:
+        parts = [
+            token
+            for token in cls._normalize_entity_type_id(entity_type).split("_")
+            if token
+        ]
+        if not parts:
+            return ""
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for token in parts:
+            if token in seen:
+                continue
+            seen.add(token)
+            deduped.append(token)
+        return "_".join(deduped)
+
+    @classmethod
+    def _build_entity_type_search_terms(
+        cls,
+        *,
+        entity_type: str,
+        display_name: str,
+    ) -> list[str]:
+        normalized_entity_type = cls._normalize_entity_type_id(entity_type)
+        terms = [normalized_entity_type, display_name]
+        collapsed_entity_type = cls._collapse_entity_type_tokens(normalized_entity_type)
+        if collapsed_entity_type and collapsed_entity_type != normalized_entity_type:
+            terms.append(collapsed_entity_type)
+        deduped_entity_type = cls._dedupe_entity_type_tokens(normalized_entity_type)
+        if deduped_entity_type and deduped_entity_type not in {
+            normalized_entity_type,
+            collapsed_entity_type,
+        }:
+            terms.append(deduped_entity_type)
+        terms.extend(
+            candidate.replace("_", " ").title()
+            for candidate in (collapsed_entity_type, deduped_entity_type)
+            if candidate
+        )
+        return cls._normalize_search_terms(terms)
 
     @staticmethod
     def _resolve_domain_context(
@@ -254,15 +334,23 @@ class DictionaryManagementService(DictionaryPort):
         domain_context: str,
         allow_semantic_reuse: bool,
     ) -> DictionaryEntityType | None:
+        search_terms = self._build_entity_type_search_terms(
+            entity_type=entity_type,
+            display_name=display_name,
+        )
         search_results = self.dictionary_search(
-            terms=[entity_type, display_name],
+            terms=search_terms,
             dimensions=["entity_types"],
             domain_context=domain_context,
             limit=10,
             include_inactive=True,
         )
-        normalized_entity_type = entity_type.strip().casefold()
-        normalized_display_name = display_name.strip().casefold()
+        normalized_entity_type_ids = {
+            self._normalize_entity_type_id(term).casefold()
+            for term in search_terms
+            if term.strip()
+        }
+        normalized_display_names = {term.strip().casefold() for term in search_terms}
         for result in search_results:
             if result.dimension != "entity_types":
                 continue
@@ -273,9 +361,13 @@ class DictionaryManagementService(DictionaryPort):
             if candidate is None:
                 continue
             if (
-                result.entry_id.strip().casefold() == normalized_entity_type
-                or result.display_name.strip().casefold() == normalized_display_name
+                result.entry_id.strip().casefold() in normalized_entity_type_ids
+                or result.display_name.strip().casefold() in normalized_display_names
                 or result.match_method == "exact"
+                or (
+                    result.match_method == "fuzzy"
+                    and result.similarity_score >= _AGENT_FUZZY_REUSE_THRESHOLD
+                )
             ):
                 return candidate
             if (
@@ -932,6 +1024,62 @@ class DictionaryManagementService(DictionaryPort):
             include_inactive=include_inactive,
         )
 
+    def ensure_resolution_policy_for_entity_type(
+        self,
+        *,
+        entity_type: str,
+        created_by: str,
+        source_ref: str | None = None,
+        research_space_settings: ResearchSpaceSettings | None = None,
+    ) -> EntityResolutionPolicy | None:
+        """Ensure an active resolution policy exists for an entity type."""
+        normalized_entity_type = self._normalize_entity_type_id(entity_type)
+        created_by_normalized = self._normalize_created_by(created_by)
+        existing_policy = self._dictionary.get_resolution_policy(normalized_entity_type)
+        if existing_policy is not None:
+            return existing_policy
+        if (
+            self._dictionary.get_entity_type(
+                normalized_entity_type,
+                include_inactive=True,
+            )
+            is None
+        ):
+            return None
+
+        policy_strategy, required_anchors, auto_merge_threshold = (
+            self._resolve_default_resolution_policy(normalized_entity_type)
+        )
+        initial_review_status = self._resolve_agent_creation_review_status(
+            created_by=created_by_normalized,
+            research_space_settings=research_space_settings,
+        )
+        return self._dictionary.create_resolution_policy(
+            entity_type=normalized_entity_type,
+            policy_strategy=policy_strategy,
+            required_anchors=list(required_anchors),
+            auto_merge_threshold=auto_merge_threshold,
+            created_by=created_by_normalized,
+            source_ref=source_ref,
+            review_status=initial_review_status,
+        )
+
+    @staticmethod
+    def _resolve_default_resolution_policy(
+        entity_type: str,
+    ) -> tuple[str, tuple[str, ...], float]:
+        normalized_entity_type = entity_type.strip().upper()
+        direct_match = _DEFAULT_RESOLUTION_POLICY_BY_ENTITY_TYPE.get(
+            normalized_entity_type,
+        )
+        if direct_match is not None:
+            return direct_match
+        if normalized_entity_type.startswith("GENE_"):
+            return ("STRICT_MATCH", (), 1.0)
+        if normalized_entity_type.startswith("PROTEIN_"):
+            return ("STRICT_MATCH", (), 1.0)
+        return ("STRICT_MATCH", (), 1.0)
+
     def create_entity_type(  # noqa: PLR0913
         self,
         *,
@@ -960,7 +1108,27 @@ class DictionaryManagementService(DictionaryPort):
             allow_semantic_reuse=created_by_normalized.startswith("agent:"),
         )
         if existing_entity_type is not None:
-            return existing_entity_type
+            target_review_status = self._resolve_agent_creation_review_status(
+                created_by=created_by_normalized,
+                research_space_settings=research_space_settings,
+            )
+            resolved_entity_type = existing_entity_type
+            if target_review_status == "ACTIVE" and (
+                not existing_entity_type.is_active
+                or existing_entity_type.review_status != "ACTIVE"
+            ):
+                resolved_entity_type = self._dictionary.set_entity_type_review_status(
+                    existing_entity_type.id,
+                    review_status="ACTIVE",
+                    reviewed_by=created_by_normalized,
+                )
+            self.ensure_resolution_policy_for_entity_type(
+                entity_type=resolved_entity_type.id,
+                created_by=created_by_normalized,
+                source_ref=source_ref,
+                research_space_settings=research_space_settings,
+            )
+            return resolved_entity_type
 
         initial_review_status = self._resolve_agent_creation_review_status(
             created_by=created_by_normalized,
@@ -973,7 +1141,7 @@ class DictionaryManagementService(DictionaryPort):
                 model_name=embedding_model,
             )
         )
-        return self._dictionary.create_entity_type(
+        created_entity_type = self._dictionary.create_entity_type(
             entity_type=entity_type,
             display_name=display_name,
             description=description,
@@ -987,6 +1155,13 @@ class DictionaryManagementService(DictionaryPort):
             source_ref=source_ref,
             review_status=initial_review_status,
         )
+        self.ensure_resolution_policy_for_entity_type(
+            entity_type=created_entity_type.id,
+            created_by=created_by_normalized,
+            source_ref=source_ref,
+            research_space_settings=research_space_settings,
+        )
+        return created_entity_type
 
     def list_entity_types(
         self,

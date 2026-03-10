@@ -32,7 +32,7 @@ from src.infrastructure.llm.prompts.entity_recognition import (
     PUBMED_ENTITY_RECOGNITION_POLICY_SYSTEM_PROMPT,
 )
 from src.infrastructure.llm.state.shared_postgres_store import (
-    get_shared_artana_postgres_store,
+    create_artana_postgres_store,
 )
 from src.type_definitions.json_utils import to_json_value
 
@@ -94,17 +94,7 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
         self._last_run_id: str | None = None
-        timeout_seconds = self._resolve_timeout_seconds(model)
-        self._model_port = _OpenAIChatModelPort(
-            timeout_seconds=timeout_seconds,
-            schema_name_fallback="entity_recognition_contract",
-        )
-        resolved_artana_store = artana_store or self._create_store()
-        self._kernel = ArtanaKernel(
-            store=resolved_artana_store,
-            model_port=self._model_port,
-        )
-        self._client = SingleStepModelClient(kernel=self._kernel)
+        self._artana_store = artana_store
 
     async def recognize(
         self,
@@ -147,8 +137,9 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
                 tenant_id=context.research_space_id or "entity_recognition",
                 budget_usd_limit=max(float(budget_limit), 0.01),
             )
+            kernel, client, model_port = self._create_runtime()
             result = await run_single_step_with_policy(
-                self._client,
+                client,
                 run_id=run_id,
                 tenant=tenant,
                 model=effective_model,
@@ -180,12 +171,15 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
                 context,
                 reason=f"pipeline_execution_failed:{type(exc).__name__}",
             )
+        finally:
+            if "kernel" in locals() and "model_port" in locals():
+                try:
+                    await kernel.close()
+                finally:
+                    await model_port.aclose()
 
     async def close(self) -> None:
-        try:
-            await self._kernel.close()
-        finally:
-            await self._model_port.aclose()
+        return
 
     def get_last_run_id(self) -> str | None:
         """Return the last Artana run id if available."""
@@ -194,6 +188,21 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
     @staticmethod
     def _has_openai_key() -> bool:
         return has_configured_openai_api_key()
+
+    def _create_runtime(
+        self,
+    ) -> tuple[ArtanaKernel, SingleStepModelClient, _OpenAIChatModelPort]:
+        timeout_seconds = self._resolve_timeout_seconds(self._default_model)
+        model_port = _OpenAIChatModelPort(
+            timeout_seconds=timeout_seconds,
+            schema_name_fallback="entity_recognition_contract",
+        )
+        kernel = ArtanaKernel(
+            store=self._artana_store or self._create_store(),
+            model_port=model_port,
+        )
+        client = SingleStepModelClient(kernel=kernel)
+        return kernel, client, model_port
 
     def _resolve_timeout_seconds(self, model: str | None) -> float:
         if model:
@@ -212,7 +221,7 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        return get_shared_artana_postgres_store()
+        return create_artana_postgres_store()
 
     def _resolve_model_id(self, model_id: str | None) -> str:
         if (

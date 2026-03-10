@@ -13,12 +13,18 @@ from pydantic import BaseModel, Field
 from src.application.services.membership_management_service import (
     MembershipManagementService,
 )
+from src.application.services.pipeline_run_trace_service import (
+    PipelineRunTraceService,
+)
 from src.application.services.source_workflow_monitor_service import (
     SourceWorkflowMonitorService,
 )
 from src.database.session import SessionLocal, set_session_rls_context
 from src.domain.entities.user import UserRole
-from src.infrastructure.repositories import SqlAlchemyResearchSpaceRepository
+from src.infrastructure.repositories import (
+    SqlAlchemyPipelineRunEventRepository,
+    SqlAlchemyResearchSpaceRepository,
+)
 from src.infrastructure.repositories.research_space_membership_repository import (
     SqlAlchemyResearchSpaceMembershipRepository,
 )
@@ -52,6 +58,11 @@ if TYPE_CHECKING:
             run_id: str | None,
             limit: int,
             since: str | None,
+            stage: str | None = None,
+            level: str | None = None,
+            scope_kind: str | None = None,
+            scope_id: str | None = None,
+            agent_kind: str | None = None,
         ) -> JSONObject: ...
 
 
@@ -216,6 +227,10 @@ def _build_monitor_service(session: Session) -> SourceWorkflowMonitorService:
     return SourceWorkflowMonitorService(
         session=session,
         run_progress=monitor_routes.get_run_progress_port(),
+        pipeline_trace=PipelineRunTraceService(
+            session,
+            event_repository=SqlAlchemyPipelineRunEventRepository(session),
+        ),
     )
 
 

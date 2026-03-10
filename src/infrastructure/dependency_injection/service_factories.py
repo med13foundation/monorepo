@@ -22,6 +22,9 @@ from src.application.agents.services import (
     GraphSearchService,
     GraphSearchServiceDependencies,
 )
+from src.application.services.pipeline_run_trace_service import (
+    PipelineRunTraceService,
+)
 from src.domain.agents.models import ModelCapability
 from src.infrastructure.dependency_injection import (
     analysis_service_factories,
@@ -45,6 +48,7 @@ from src.infrastructure.llm.adapters import (
 )
 from src.infrastructure.llm.config.model_registry import get_model_registry
 from src.infrastructure.repositories import (
+    SqlAlchemyPipelineRunEventRepository,
     SqlAlchemyResearchSpaceRepository,
     SqlAlchemySourceDocumentRepository,
 )
@@ -108,7 +112,6 @@ class ApplicationServiceFactoryMixin(
             model_spec = registry.get_default_model(ModelCapability.QUERY_GENERATION)
             self._query_agent = ArtanaQueryAgentAdapter(
                 model=model_spec.model_id,
-                artana_store=self.get_artana_store(),
             )
         return self._query_agent
 
@@ -170,7 +173,6 @@ class ApplicationServiceFactoryMixin(
             )
             self._entity_recognition_agent = ArtanaEntityRecognitionAdapter(
                 model=model_spec.model_id,
-                artana_store=self.get_artana_store(),
             )
         return self._entity_recognition_agent
 
@@ -182,7 +184,6 @@ class ApplicationServiceFactoryMixin(
             )
             self._extraction_agent = ArtanaExtractionAdapter(
                 model=model_spec.model_id,
-                artana_store=self.get_artana_store(),
             )
         return self._extraction_agent
 
@@ -198,7 +199,6 @@ class ApplicationServiceFactoryMixin(
         try:
             self._mapping_judge_agent = ArtanaMappingJudgeAdapter(
                 model=model_spec.model_id,
-                artana_store=self.get_artana_store(),
             )
         except Exception as exc:  # noqa: BLE001 - fail-closed to deterministic guard
             self._logger.warning(
@@ -223,16 +223,13 @@ class ApplicationServiceFactoryMixin(
         entity_recognition_agent = ArtanaEntityRecognitionAdapter(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
-            artana_store=self.get_artana_store(),
         )
         extraction_agent = ArtanaExtractionAdapter(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
-            artana_store=self.get_artana_store(),
         )
         extraction_policy_agent = ArtanaExtractionPolicyAdapter(
             model=model_spec.model_id,
-            artana_store=self.get_artana_store(),
         )
         evidence_sentence_harness = self._create_evidence_sentence_harness(
             model_id=model_spec.model_id,
@@ -257,6 +254,7 @@ class ApplicationServiceFactoryMixin(
                 concept_service=concept_service,
                 evidence_sentence_harness=evidence_sentence_harness,
                 endpoint_shape_judge=self.get_mapping_judge_agent(),
+                concept_merge_judge=self.get_mapping_judge_agent(),
                 governance_service=governance_service,
                 review_queue_submitter=self._build_review_queue_submitter(session),
                 rollback_on_error=session.rollback,
@@ -272,6 +270,10 @@ class ApplicationServiceFactoryMixin(
                 extraction_service=extraction_service,
                 governance_service=governance_service,
                 research_space_repository=SqlAlchemyResearchSpaceRepository(session),
+                pipeline_trace_service=PipelineRunTraceService(
+                    session,
+                    event_repository=SqlAlchemyPipelineRunEventRepository(session),
+                ),
             ),
             default_shadow_mode=False,
         )
@@ -286,11 +288,9 @@ class ApplicationServiceFactoryMixin(
         extraction_agent = ArtanaExtractionAdapter(
             model=model_spec.model_id,
             dictionary_service=dictionary_service,
-            artana_store=self.get_artana_store(),
         )
         extraction_policy_agent = ArtanaExtractionPolicyAdapter(
             model=model_spec.model_id,
-            artana_store=self.get_artana_store(),
         )
         evidence_sentence_harness = self._create_evidence_sentence_harness(
             model_id=model_spec.model_id,
@@ -315,6 +315,7 @@ class ApplicationServiceFactoryMixin(
                 concept_service=concept_service,
                 evidence_sentence_harness=evidence_sentence_harness,
                 endpoint_shape_judge=self.get_mapping_judge_agent(),
+                concept_merge_judge=self.get_mapping_judge_agent(),
                 governance_service=GovernanceService(),
                 review_queue_submitter=self._build_review_queue_submitter(session),
                 rollback_on_error=session.rollback,
@@ -329,7 +330,6 @@ class ApplicationServiceFactoryMixin(
         try:
             return ArtanaEvidenceSentenceHarnessAdapter(
                 model=model_id,
-                artana_store=self.get_artana_store(),
             )
         except Exception as exc:  # noqa: BLE001 - fail-open for optional path
             self._logger.warning(
@@ -354,7 +354,6 @@ class ApplicationServiceFactoryMixin(
             dictionary_service=dictionary_service,
             graph_query_service=graph_query_service,
             relation_repository=relation_repository,
-            artana_store=self.get_artana_store(),
         )
         return GraphConnectionService(
             dependencies=GraphConnectionServiceDependencies(
@@ -405,12 +404,15 @@ class ApplicationServiceFactoryMixin(
             )
             content_enrichment_agent = ArtanaContentEnrichmentAdapter(
                 model=model_spec.model_id,
-                artana_store=self.get_artana_store(),
             )
         return ContentEnrichmentService(
             dependencies=ContentEnrichmentServiceDependencies(
                 source_document_repository=SqlAlchemySourceDocumentRepository(session),
                 content_enrichment_agent=content_enrichment_agent,
                 storage_coordinator=self.create_storage_operation_coordinator(session),
+                pipeline_trace_service=PipelineRunTraceService(
+                    session,
+                    event_repository=SqlAlchemyPipelineRunEventRepository(session),
+                ),
             ),
         )

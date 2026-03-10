@@ -180,8 +180,14 @@ class _RaisingEvidenceSentenceHarness(EvidenceSentenceHarnessPort):
 class _NoopIngestionPipeline:
     """No-op ingestion pipeline used for extraction relation tests."""
 
-    def run(self, records: list[RawRecord], research_space_id: str) -> IngestResult:
-        del records, research_space_id
+    def run(
+        self,
+        records: list[RawRecord],
+        research_space_id: str,
+        *,
+        progress_callback: object | None = None,
+    ) -> IngestResult:
+        del records, research_space_id, progress_callback
         return IngestResult(success=True, entities_created=0, observations_created=0)
 
 

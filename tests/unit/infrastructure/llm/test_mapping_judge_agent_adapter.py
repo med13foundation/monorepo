@@ -230,6 +230,8 @@ def test_judge_creates_runtime_per_call() -> None:
     first_model_port.aclose = AsyncMock()
     second_model_port = MagicMock()
     second_model_port.aclose = AsyncMock()
+    first_store = object()
+    second_store = object()
 
     with (
         patch.dict(os.environ, {"OPENAI_API_KEY": "test-openai-key"}, clear=True),
@@ -239,7 +241,11 @@ def test_judge_creates_runtime_per_call() -> None:
             f"{_ADAPTER_MODULE}.GovernanceConfig.from_environment",
             return_value=governance,
         ),
-        patch.object(ArtanaMappingJudgeAdapter, "_create_store", return_value=object()),
+        patch.object(
+            ArtanaMappingJudgeAdapter,
+            "_create_store",
+            side_effect=[first_store, second_store],
+        ),
         patch.object(
             ArtanaMappingJudgeAdapter,
             "_create_tenant",
@@ -267,6 +273,8 @@ def test_judge_creates_runtime_per_call() -> None:
     assert first.decision == "matched"
     assert second.decision == "matched"
     assert kernel_constructor.call_count == 2
+    assert kernel_constructor.call_args_list[0].kwargs["store"] is first_store
+    assert kernel_constructor.call_args_list[1].kwargs["store"] is second_store
     first_kernel.close.assert_awaited_once()
     second_kernel.close.assert_awaited_once()
     first_model_port.aclose.assert_awaited_once()

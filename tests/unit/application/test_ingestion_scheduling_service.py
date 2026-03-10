@@ -73,6 +73,7 @@ from src.domain.repositories.storage_repository import StorageOperationRepositor
 from src.domain.repositories.user_data_source_repository import UserDataSourceRepository
 from src.domain.services.ingestion import (
     IngestionExtractionTarget,
+    IngestionProgressUpdate,
     IngestionRunContext,  # noqa: TC001
 )
 from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
@@ -1897,3 +1898,40 @@ async def test_query_signature_change_logs_checkpoint_reset_warning(
     )
     assert pubmed_service.contexts
     assert pubmed_service.contexts[0].source_sync_state.checkpoint_payload == {}
+
+
+@pytest.mark.asyncio
+async def test_trigger_ingestion_provides_pipeline_progress_context() -> None:
+    schedule = IngestionSchedule(
+        enabled=True,
+        frequency=ScheduleFrequency.HOURLY,
+        start_time=datetime.now(UTC) - timedelta(hours=1),
+    )
+    source = _build_source(schedule)
+    source_repo = StubSourceRepository(source)
+    job_repo = StubJobRepository()
+    pubmed_service = ContextAwarePubMedIngestionService()
+    scheduler = InMemoryScheduler()
+    progress_updates: list[IngestionProgressUpdate] = []
+
+    service = IngestionSchedulingService(
+        scheduler=scheduler,
+        source_repository=source_repo,
+        job_repository=job_repo,
+        ingestion_services={SourceType.PUBMED: pubmed_service.ingest},
+        options=_build_ingestion_options(),
+    )
+
+    await service.trigger_ingestion(
+        source.id,
+        pipeline_run_id="pipeline-run-ctx-001",
+        progress_callback=progress_updates.append,
+    )
+
+    assert pubmed_service.contexts
+    context = pubmed_service.contexts[0]
+    assert context.pipeline_run_id == "pipeline-run-ctx-001"
+    assert context.progress_callback is not None
+    assert progress_updates
+    assert progress_updates[0].event_type == "ingestion_job_started"
+    assert progress_updates[0].ingestion_job_id == context.ingestion_job_id

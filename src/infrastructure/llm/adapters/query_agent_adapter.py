@@ -32,7 +32,7 @@ from src.infrastructure.llm.prompts.query import (
     PUBMED_QUERY_SYSTEM_PROMPT,
 )
 from src.infrastructure.llm.state.shared_postgres_store import (
-    get_shared_artana_postgres_store,
+    create_artana_postgres_store,
 )
 
 if TYPE_CHECKING:
@@ -96,36 +96,63 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
         self._last_run_id: str | None = None
-        timeout_seconds = self._resolve_timeout_seconds(model)
-        self._model_port = _OpenAIChatModelPort(
-            timeout_seconds=timeout_seconds,
-            schema_name_fallback="query_generation_contract",
-        )
-        resolved_artana_store = artana_store or self._create_store()
-        self._kernel = ArtanaKernel(
-            store=resolved_artana_store,
-            model_port=self._model_port,
-        )
-        self._client = SingleStepModelClient(kernel=self._kernel)
+        self._artana_store = artana_store
 
-    def _resolve_timeout_seconds(self, model: str | None) -> float:
+    def _resolve_timeout_seconds(
+        self,
+        source_type: str,
+        model: str | None,
+    ) -> float:
+        timeout_seconds: float | None = None
         if model:
             try:
                 model_spec = self._registry.get_model(model)
-                return float(model_spec.timeout_seconds)
+                timeout_seconds = float(model_spec.timeout_seconds)
             except (KeyError, ValueError):
-                pass
-        try:
-            default_spec = self._registry.get_default_model(
-                ModelCapability.QUERY_GENERATION,
-            )
-            return float(default_spec.timeout_seconds)
-        except (KeyError, ValueError):
-            return 120.0
+                timeout_seconds = None
+        if timeout_seconds is None:
+            try:
+                default_spec = self._registry.get_default_model(
+                    ModelCapability.QUERY_GENERATION,
+                )
+                timeout_seconds = float(default_spec.timeout_seconds)
+            except (KeyError, ValueError):
+                timeout_seconds = 120.0
+
+        source_policy = self._query_source_policies.get(
+            source_type,
+            QuerySourcePolicy(),
+        )
+        configured_timeout_seconds = source_policy.timeout_seconds
+        if configured_timeout_seconds is None:
+            return timeout_seconds
+
+        normalized_timeout_seconds = max(float(configured_timeout_seconds), 1.0)
+        return min(timeout_seconds, normalized_timeout_seconds)
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        return get_shared_artana_postgres_store()
+        return create_artana_postgres_store()
+
+    def _create_runtime(
+        self,
+        *,
+        source_type: str,
+        model_id: str | None,
+    ) -> tuple[ArtanaKernel, SingleStepModelClient, _OpenAIChatModelPort]:
+        model_port = _OpenAIChatModelPort(
+            timeout_seconds=self._resolve_timeout_seconds(
+                source_type,
+                model_id,
+            ),
+            schema_name_fallback="query_generation_contract",
+        )
+        kernel = ArtanaKernel(
+            store=self._artana_store or self._create_store(),
+            model_port=model_port,
+        )
+        client = SingleStepModelClient(kernel=kernel)
+        return kernel, client, model_port
 
     @staticmethod
     def _has_openai_key() -> bool:
@@ -184,6 +211,46 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
         return self._registry.get_default_model(
             ModelCapability.QUERY_GENERATION,
         ).model_id
+
+    async def _execute_query_generation(  # noqa: PLR0913
+        self,
+        *,
+        source_key: str,
+        model_id: str,
+        run_id: str,
+        tenant: object,
+        combined_prompt: str,
+    ) -> QueryGenerationContract:
+        kernel, client, model_port = self._create_runtime(
+            source_type=source_key,
+            model_id=model_id,
+        )
+        try:
+            result = await run_single_step_with_policy(
+                client,
+                run_id=run_id,
+                tenant=tenant,
+                model=model_id,
+                prompt=combined_prompt,
+                output_schema=QueryGenerationContract,
+                step_key=f"query.generate.{source_key}.v1",
+                replay_policy=self._runtime_policy.replay_policy,
+                context_version=self._runtime_policy.to_context_version(),
+            )
+            output = result.output
+            contract = (
+                output
+                if isinstance(output, QueryGenerationContract)
+                else QueryGenerationContract.model_validate(output)
+            )
+            return self._apply_governance(
+                contract.model_copy(update={"source_type": source_key}),
+            )
+        finally:
+            try:
+                await kernel.close()
+            finally:
+                await model_port.aclose()
 
     @staticmethod
     def _create_run_id(
@@ -288,8 +355,6 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
     ) -> QueryGenerationContract:
         self._last_run_id = None
         source_key = source_type.lower().strip()
-        if not source_key:
-            return self._create_unsupported_source_contract(source_type)
         if not self._is_supported_source(source_key):
             logger.warning(
                 "Unsupported source type: %s. Returning escalation contract.",
@@ -340,29 +405,14 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
             tenant_id=user_id or "med13_query_agent",
             budget_usd_limit=max(float(budget_limit), 0.01),
         )
-
         try:
-            result = await run_single_step_with_policy(
-                self._client,
+            return await self._execute_query_generation(
+                source_key=source_key,
+                model_id=effective_model_id,
                 run_id=run_id,
                 tenant=tenant,
-                model=effective_model_id,
-                prompt=combined_prompt,
-                output_schema=QueryGenerationContract,
-                step_key=f"query.generate.{source_key}.v1",
-                replay_policy=self._runtime_policy.replay_policy,
-                context_version=self._runtime_policy.to_context_version(),
+                combined_prompt=combined_prompt,
             )
-            output = result.output
-            contract = (
-                output
-                if isinstance(output, QueryGenerationContract)
-                else QueryGenerationContract.model_validate(output)
-            )
-            normalized_contract = contract.model_copy(
-                update={"source_type": source_key},
-            )
-            return self._apply_governance(normalized_contract)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Artana query execution failed for %s; returning fallback contract. Error: %s",
@@ -372,10 +422,7 @@ class ArtanaQueryAgentAdapter(QueryAgentPort, QueryAgentRunMetadataProvider):
             return self._create_error_contract(source_key, str(exc))
 
     async def close(self) -> None:
-        try:
-            await self._kernel.close()
-        finally:
-            await self._model_port.aclose()
+        return None
 
     def get_last_run_id(self) -> str | None:
         return self._last_run_id

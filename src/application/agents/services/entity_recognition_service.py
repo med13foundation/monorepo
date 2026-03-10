@@ -34,6 +34,9 @@ if TYPE_CHECKING:
     from src.application.agents.services.extraction_service import (
         ExtractionService,
     )
+    from src.application.services.pipeline_run_trace_service import (
+        PipelineRunTraceService,
+    )
     from src.application.services.ports.ingestion_pipeline_port import (
         IngestionPipelinePort,
     )
@@ -180,6 +183,7 @@ class EntityRecognitionServiceDependencies:
     extraction_service: ExtractionService | None = None
     governance_service: GovernanceService | None = None
     research_space_repository: ResearchSpaceRepository | None = None
+    pipeline_trace_service: PipelineRunTraceService | None = None
 
 
 @dataclass(frozen=True)
@@ -198,6 +202,9 @@ class EntityRecognitionDocumentOutcome:
     dictionary_entity_types_created: int = 0
     ingestion_entities_created: int = 0
     ingestion_observations_created: int = 0
+    relation_claims_count: int = 0
+    pending_review_relations_count: int = 0
+    undefined_relations_count: int = 0
     persisted_relations_count: int = 0
     concept_members_created_count: int = 0
     concept_aliases_created_count: int = 0
@@ -223,6 +230,9 @@ class EntityRecognitionRunSummary:
     dictionary_entity_types_created: int
     ingestion_entities_created: int
     ingestion_observations_created: int
+    relation_claims_count: int
+    pending_review_relations_count: int
+    undefined_relations_count: int
     derived_graph_seed_entity_ids: tuple[str, ...]
     errors: tuple[str, ...]
     started_at: datetime
@@ -257,6 +267,7 @@ class EntityRecognitionService(
         self._extraction_service = dependencies.extraction_service
         self._governance = dependencies.governance_service or GovernanceService()
         self._research_spaces = dependencies.research_space_repository
+        self._pipeline_trace = dependencies.pipeline_trace_service
         self._default_shadow_mode = default_shadow_mode
         normalized_created_by = agent_created_by.strip()
         self._agent_created_by = normalized_created_by or _AGENT_CREATED_BY
@@ -289,7 +300,7 @@ class EntityRecognitionService(
             default_value=_DEFAULT_AGENT_RAW_RECORD_MAX_TEXT_CHARS,
         )
 
-    async def process_pending_documents(  # noqa: PLR0913
+    async def process_pending_documents(  # noqa: C901, PLR0913
         self,
         *,
         limit: int = 25,
@@ -371,6 +382,30 @@ class EntityRecognitionService(
             key=lambda document: document.created_at,
             reverse=True,
         )[:requested_limit]
+        if (
+            self._pipeline_trace is not None
+            and pipeline_run_id is not None
+            and source_id is not None
+            and research_space_id is not None
+        ):
+            self._pipeline_trace.record_event(
+                research_space_id=research_space_id,
+                source_id=source_id,
+                pipeline_run_id=pipeline_run_id,
+                event_type="extraction_batch_started",
+                stage="extraction",
+                scope_kind="run",
+                message="Entity recognition batch started.",
+                status="running",
+                occurred_at=started_at,
+                started_at=started_at,
+                payload={
+                    "requested_limit": requested_limit,
+                    "candidate_count": len(pending_documents),
+                    "recovered_stale_documents": recovered_stale_documents,
+                    "batch_max_concurrency": self._batch_max_concurrency,
+                },
+            )
         logger.info(
             "Entity recognition batch started",
             extra={
@@ -408,6 +443,32 @@ class EntityRecognitionService(
                 document: SourceDocument,
             ) -> None:
                 async with semaphore:
+                    document_started_at = datetime.now(UTC)
+                    if (
+                        self._pipeline_trace is not None
+                        and pipeline_run_id is not None
+                        and document.research_space_id is not None
+                    ):
+                        self._pipeline_trace.record_event(
+                            research_space_id=document.research_space_id,
+                            source_id=document.source_id,
+                            pipeline_run_id=pipeline_run_id,
+                            event_type="document_started",
+                            stage="extraction",
+                            scope_kind="document",
+                            scope_id=str(document.id),
+                            message=(
+                                "Extraction started for document "
+                                f"{document.external_record_id}."
+                            ),
+                            status="running",
+                            occurred_at=document_started_at,
+                            started_at=document_started_at,
+                            payload={
+                                "document_id": str(document.id),
+                                "external_record_id": document.external_record_id,
+                            },
+                        )
                     logger.info(
                         "Entity recognition document started",
                         extra={
@@ -467,6 +528,77 @@ class EntityRecognitionService(
                         )
 
                     outcomes_by_index[index] = outcome
+                    document_completed_at = datetime.now(UTC)
+                    if (
+                        self._pipeline_trace is not None
+                        and pipeline_run_id is not None
+                        and document.research_space_id is not None
+                    ):
+                        self._pipeline_trace.record_event(
+                            research_space_id=document.research_space_id,
+                            source_id=document.source_id,
+                            pipeline_run_id=pipeline_run_id,
+                            event_type="document_finished",
+                            stage="extraction",
+                            scope_kind="document",
+                            scope_id=str(document.id),
+                            message=(
+                                "Extraction finished for document "
+                                f"{document.external_record_id}."
+                            ),
+                            level="error" if outcome.status == "failed" else "info",
+                            status=outcome.status,
+                            agent_kind="entity_recognition",
+                            agent_run_id=outcome.run_id,
+                            occurred_at=document_completed_at,
+                            started_at=document_started_at,
+                            completed_at=document_completed_at,
+                            duration_ms=int(
+                                (
+                                    document_completed_at - document_started_at
+                                ).total_seconds()
+                                * 1000,
+                            ),
+                            payload={
+                                "document_id": str(document.id),
+                                "external_record_id": document.external_record_id,
+                                "reason": outcome.reason,
+                                "review_required": outcome.review_required,
+                                "shadow_mode": outcome.shadow_mode,
+                                "wrote_to_kernel": outcome.wrote_to_kernel,
+                                "relation_claims_count": (
+                                    outcome.relation_claims_count
+                                ),
+                                "pending_review_relations_count": (
+                                    outcome.pending_review_relations_count
+                                ),
+                                "undefined_relations_count": (
+                                    outcome.undefined_relations_count
+                                ),
+                                "persisted_relations_count": (
+                                    outcome.persisted_relations_count
+                                ),
+                                "concept_members_created_count": (
+                                    outcome.concept_members_created_count
+                                ),
+                                "concept_aliases_created_count": (
+                                    outcome.concept_aliases_created_count
+                                ),
+                                "concept_decisions_proposed_count": (
+                                    outcome.concept_decisions_proposed_count
+                                ),
+                                "dictionary_variables_created": (
+                                    outcome.dictionary_variables_created
+                                ),
+                                "dictionary_synonyms_created": (
+                                    outcome.dictionary_synonyms_created
+                                ),
+                                "dictionary_entity_types_created": (
+                                    outcome.dictionary_entity_types_created
+                                ),
+                                "errors": list(outcome.errors),
+                            },
+                        )
                     logger.info(
                         "Entity recognition document finished",
                         extra={
@@ -526,6 +658,52 @@ class EntityRecognitionService(
                 ),
             },
         )
+        if (
+            self._pipeline_trace is not None
+            and pipeline_run_id is not None
+            and source_id is not None
+            and research_space_id is not None
+        ):
+            self._pipeline_trace.record_event(
+                research_space_id=research_space_id,
+                source_id=source_id,
+                pipeline_run_id=pipeline_run_id,
+                event_type="extraction_batch_finished",
+                stage="extraction",
+                scope_kind="run",
+                message="Entity recognition batch finished.",
+                level="error" if summary.failed > 0 else "info",
+                status="completed" if summary.failed == 0 else "partial",
+                occurred_at=completed_at,
+                started_at=started_at,
+                completed_at=completed_at,
+                duration_ms=int((completed_at - started_at).total_seconds() * 1000),
+                payload={
+                    "requested": summary.requested,
+                    "processed": summary.processed,
+                    "extracted": summary.extracted,
+                    "failed": summary.failed,
+                    "skipped": summary.skipped,
+                    "review_required": summary.review_required,
+                    "shadow_runs": summary.shadow_runs,
+                    "relation_claims_count": summary.relation_claims_count,
+                    "pending_review_relations_count": (
+                        summary.pending_review_relations_count
+                    ),
+                    "undefined_relations_count": (summary.undefined_relations_count),
+                    "persisted_relations_count": summary.persisted_relations_count,
+                    "concept_members_created_count": (
+                        summary.concept_members_created_count
+                    ),
+                    "concept_aliases_created_count": (
+                        summary.concept_aliases_created_count
+                    ),
+                    "concept_decisions_proposed_count": (
+                        summary.concept_decisions_proposed_count
+                    ),
+                    "errors": list(summary.errors),
+                },
+            )
         return summary
 
     async def process_document(
@@ -570,6 +748,9 @@ class EntityRecognitionService(
         dictionary_entity_types_created: int = 0,
         ingestion_entities_created: int = 0,
         ingestion_observations_created: int = 0,
+        relation_claims_count: int = 0,
+        pending_review_relations_count: int = 0,
+        undefined_relations_count: int = 0,
         persisted_relations_count: int = 0,
         concept_members_created_count: int = 0,
         concept_aliases_created_count: int = 0,
@@ -591,6 +772,9 @@ class EntityRecognitionService(
             dictionary_entity_types_created=dictionary_entity_types_created,
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
+            relation_claims_count=relation_claims_count,
+            pending_review_relations_count=pending_review_relations_count,
+            undefined_relations_count=undefined_relations_count,
             persisted_relations_count=persisted_relations_count,
             concept_members_created_count=concept_members_created_count,
             concept_aliases_created_count=concept_aliases_created_count,
@@ -994,6 +1178,15 @@ class EntityRecognitionService(
         ingestion_observations_created = sum(
             outcome.ingestion_observations_created for outcome in outcomes
         )
+        relation_claims_count = sum(
+            outcome.relation_claims_count for outcome in outcomes
+        )
+        pending_review_relations_count = sum(
+            outcome.pending_review_relations_count for outcome in outcomes
+        )
+        undefined_relations_count = sum(
+            outcome.undefined_relations_count for outcome in outcomes
+        )
         persisted_relations_count = sum(
             outcome.persisted_relations_count for outcome in outcomes
         )
@@ -1090,6 +1283,9 @@ class EntityRecognitionService(
             dictionary_entity_types_created=dictionary_entity_types_created,
             ingestion_entities_created=ingestion_entities_created,
             ingestion_observations_created=ingestion_observations_created,
+            relation_claims_count=relation_claims_count,
+            pending_review_relations_count=pending_review_relations_count,
+            undefined_relations_count=undefined_relations_count,
             persisted_relations_count=persisted_relations_count,
             concept_members_created_count=concept_members_created_count,
             concept_aliases_created_count=concept_aliases_created_count,

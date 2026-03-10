@@ -35,6 +35,9 @@ if TYPE_CHECKING:
     from src.application.services.ingestion_scheduling_service import (
         IngestionSchedulingService,
     )
+    from src.application.services.pipeline_run_trace_service import (
+        PipelineRunTraceService,
+    )
     from src.domain.repositories.ingestion_job_repository import IngestionJobRepository
     from src.domain.repositories.research_space_repository import (
         ResearchSpaceRepository,
@@ -146,6 +149,7 @@ class PipelineOrchestrationDependencies:
     graph_search_service: GraphSearchService | None = None
     research_space_repository: ResearchSpaceRepository | None = None
     pipeline_run_repository: IngestionJobRepository | None = None
+    pipeline_trace_service: PipelineRunTraceService | None = None
 
 
 __all__ = [

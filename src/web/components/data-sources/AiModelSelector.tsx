@@ -3,8 +3,8 @@
 import { forwardRef, useEffect, useState } from 'react'
 import type { ComponentPropsWithoutRef, ElementRef } from 'react'
 
-import { fetchAvailableModelsAction } from '@/app/actions/data-sources'
 import type { ModelSpec } from '@/types/ai-models'
+import { fetchAvailableModelsClient } from '@/lib/client/ai-models'
 import {
   Select,
   SelectContent,
@@ -38,12 +38,8 @@ export const AiModelSelector = forwardRef<
 
   useEffect(() => {
     setIsLoading(true)
-    fetchAvailableModelsAction()
-      .then((result) => {
-        if (!result.success) {
-          throw new Error(result.error)
-        }
-        const response = result.data
+    fetchAvailableModelsClient()
+      .then((response) => {
         // Filter to only models that support query_generation
         const queryModels = response.models.filter((m) =>
           m.capabilities.includes('query_generation'),
@@ -87,7 +83,7 @@ export const AiModelSelector = forwardRef<
           <div className="flex items-center gap-2">
             <span>System default</span>
             {defaultModelId && (
-              <span className="text-xs text-muted-foreground">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
                 ({availableModels.find((m) => m.model_id === defaultModelId)?.display_name ?? defaultModelId})
               </span>
             )}
