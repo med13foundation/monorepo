@@ -16,7 +16,10 @@ from . import (
     ingestion_scheduler_job,
     ingestion_source_lock,
     pipeline_run_event,
+    publication,
+    publication_extraction,
     research_space,
+    review,
     session,
     source_document,
     source_record_ledger,
@@ -67,6 +70,11 @@ UserDataSourceModel = user_data_source.UserDataSourceModel
 DataSourceActivationModel = data_source_activation.DataSourceActivationModel
 IngestionJobModel = ingestion_job.IngestionJobModel
 ExtractionQueueItemModel = extraction_queue.ExtractionQueueItemModel
+PublicationModel = publication.PublicationModel
+PublicationType = publication.PublicationType
+PublicationExtractionModel = publication_extraction.PublicationExtractionModel
+ExtractionOutcomeEnum = publication_extraction.ExtractionOutcomeEnum
+ReviewRecord = review.ReviewRecord
 SourceSyncStateModel = source_sync_state.SourceSyncStateModel
 SourceRecordLedgerModel = source_record_ledger.SourceRecordLedgerModel
 SourceDocumentModel = source_document.SourceDocumentModel
@@ -140,6 +148,11 @@ __all__ = [
     "DataSourceActivationModel",
     "IngestionJobModel",
     "ExtractionQueueItemModel",
+    "PublicationModel",
+    "PublicationType",
+    "PublicationExtractionModel",
+    "ExtractionOutcomeEnum",
+    "ReviewRecord",
     "SourceSyncStateModel",
     "SourceRecordLedgerModel",
     "SourceDocumentModel",
