@@ -72,6 +72,7 @@ export interface ResearchSpaceMembership {
   is_active: boolean
   created_at: string
   updated_at: string
+  user?: ResearchSpaceMembershipUser | null
 }
 
 // Request types
@@ -116,12 +117,19 @@ export interface MembershipListResponse {
   limit: number
 }
 
-// Extended types with user info (for member lists)
-export interface MembershipWithUser extends ResearchSpaceMembership {
-  user?: {
-    id: string
-    email: string
-    username: string
-    full_name: string
-  }
+export interface ResearchSpaceMembershipUser {
+  id: string
+  email: string
+  username: string
+  full_name: string
+}
+
+export type MembershipWithUser = ResearchSpaceMembership
+export type InvitableUserOption = ResearchSpaceMembershipUser
+
+export interface InvitableUserSearchResponse {
+  query: string
+  users: InvitableUserOption[]
+  total: number
+  limit: number
 }

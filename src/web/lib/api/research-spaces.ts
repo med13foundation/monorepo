@@ -3,6 +3,7 @@ import type { AxiosError } from 'axios'
 import type { DataSourceListResponse } from '@/lib/api/data-sources'
 import type {
   CreateSpaceRequest,
+  InvitableUserSearchResponse,
   InviteMemberRequest,
   MembershipListResponse,
   ResearchSpace,
@@ -232,6 +233,27 @@ export async function fetchSpaceMembers(
   }
   const resp = await apiClient.get<MembershipListResponse>(
     `/research-spaces/${spaceId}/members`,
+    {
+      params,
+      ...authHeaders(token),
+    },
+  )
+  return resp.data
+}
+
+export async function searchInvitableUsers(
+  spaceId: string,
+  params: {
+    query: string
+    limit?: number
+  },
+  token?: string,
+): Promise<InvitableUserSearchResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required')
+  }
+  const resp = await apiClient.get<InvitableUserSearchResponse>(
+    `/research-spaces/${spaceId}/members/search-users`,
     {
       params,
       ...authHeaders(token),

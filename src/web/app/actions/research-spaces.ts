@@ -6,11 +6,13 @@ import {
   deleteResearchSpace,
   inviteMember,
   removeMember,
+  searchInvitableUsers,
   updateMemberRole,
   updateResearchSpace,
 } from '@/lib/api/research-spaces'
 import type {
   CreateSpaceRequest,
+  InvitableUserSearchResponse,
   InviteMemberRequest,
   ResearchSpace,
   ResearchSpaceMembership,
@@ -107,6 +109,32 @@ export async function inviteMemberAction(
     return {
       success: false,
       error: getActionErrorMessage(error, 'Failed to invite member'),
+    }
+  }
+}
+
+export async function searchInvitableUsersAction(
+  spaceId: string,
+  query: string,
+): Promise<ActionResult<InvitableUserSearchResponse>> {
+  try {
+    const token = await requireAccessToken()
+    const results = await searchInvitableUsers(
+      spaceId,
+      {
+        query,
+        limit: 8,
+      },
+      token,
+    )
+    return { success: true, data: results }
+  } catch (error: unknown) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('[ServerAction] searchInvitableUsers failed:', error)
+    }
+    return {
+      success: false,
+      error: getActionErrorMessage(error, 'Failed to search users'),
     }
   }
 }

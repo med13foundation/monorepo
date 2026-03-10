@@ -637,8 +637,8 @@ export function ResearchSpaceDetail({
       <InviteMemberDialog
         spaceId={spaceId}
         open={inviteDialogOpen}
-        onOpenChange={setInviteDialogOpen}
-        onSuccess={() => router.refresh()}
+        setDialogOpen={setInviteDialogOpen}
+        afterInvite={() => router.refresh()}
       />
     </div>
   )
