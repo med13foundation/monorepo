@@ -270,7 +270,11 @@ class SourceWorkflowMonitorService(
             source_id=source_id,
             limit=max(limit * 4, 50),
         )
-        selected_run = self._select_run_record(run_records, run_id)
+        selected_run = self._resolve_run_record(
+            source_id=source_id,
+            requested_run_id=run_id,
+            recent_limit=max(limit * 4, 50),
+        )
         selected_run_id = selected_run.run_id if selected_run is not None else None
         selected_run_job_id = selected_run.job_id if selected_run is not None else None
         selected_run_payload = (
@@ -435,13 +439,14 @@ class SourceWorkflowMonitorService(
         run_id: str,
     ) -> JSONObject:
         self._require_source(space_id=space_id, source_id=source_id)
-        run_record = self._select_run_record(
-            self._load_pipeline_runs(source_id=source_id, limit=200),
-            run_id,
+        run_record = self._resolve_run_record(
+            source_id=source_id,
+            requested_run_id=run_id,
+            recent_limit=200,
         )
         if run_record is None:
             msg = "Pipeline run not found for this source"
-            raise ValueError(msg)
+            raise LookupError(msg)
         run_payload = coerce_json_object(run_record.payload)
         run_ingestion_job_id = normalize_optional_string(
             run_payload.get("ingestion_job_id"),
@@ -450,7 +455,7 @@ class SourceWorkflowMonitorService(
             source_id=source_id,
             run_id=run_record.run_id,
             ingestion_job_id=run_ingestion_job_id,
-            limit=500,
+            limit=None,
         )
         external_record_to_document_id = {
             str(item["external_record_id"]): str(item["id"])
@@ -463,7 +468,7 @@ class SourceWorkflowMonitorService(
             run_id=run_record.run_id,
             ingestion_job_id=run_ingestion_job_id,
             external_record_ids=set(external_record_to_document_id.keys()),
-            limit=500,
+            limit=None,
         )
         queue_id_to_document_id = {
             str(item["id"]): external_record_to_document_id[
@@ -479,7 +484,7 @@ class SourceWorkflowMonitorService(
             run_id=run_record.run_id,
             ingestion_job_id=run_ingestion_job_id,
             queue_item_ids=set(queue_id_to_document_id.keys()),
-            limit=500,
+            limit=None,
         )
         relation_review_payload = self._build_relation_review_payload(
             space_id=space_id,
@@ -497,7 +502,7 @@ class SourceWorkflowMonitorService(
             },
             queue_id_to_document_id=queue_id_to_document_id,
             extraction_rows=extraction_rows,
-            limit=500,
+            limit=None,
         )
         run_payload = self._enrich_run_diagnostic_signals(
             space_id=space_id,
@@ -523,13 +528,14 @@ class SourceWorkflowMonitorService(
         document_id: UUID,
     ) -> JSONObject:
         self._require_source(space_id=space_id, source_id=source_id)
-        run_record = self._select_run_record(
-            self._load_pipeline_runs(source_id=source_id, limit=200),
-            run_id,
+        run_record = self._resolve_run_record(
+            source_id=source_id,
+            requested_run_id=run_id,
+            recent_limit=200,
         )
         if run_record is None:
             msg = "Pipeline run not found for this source"
-            raise ValueError(msg)
+            raise LookupError(msg)
         run_payload = coerce_json_object(run_record.payload)
         run_ingestion_job_id = normalize_optional_string(
             run_payload.get("ingestion_job_id"),
@@ -550,7 +556,7 @@ class SourceWorkflowMonitorService(
         )
         if document_payload is None:
             msg = "Document not found for this pipeline run"
-            raise ValueError(msg)
+            raise LookupError(msg)
 
         external_record_id = normalize_optional_string(
             document_payload.get("external_record_id"),
@@ -574,14 +580,36 @@ class SourceWorkflowMonitorService(
             queue_item_ids=queue_ids,
             limit=50,
         )
-        events_payload = self.list_workflow_events(
-            space_id=space_id,
-            source_id=source_id,
-            run_id=run_record.run_id,
-            limit=500,
-            since=None,
-            scope_kind="document",
-            scope_id=str(document_id),
+        scope_ids = [str(document_id)]
+        if external_record_id is not None and external_record_id not in scope_ids:
+            scope_ids.append(external_record_id)
+        merged_events: list[JSONObject] = []
+        seen_event_ids: set[str] = set()
+        for scope_id in scope_ids:
+            events_payload = self.list_workflow_events(
+                space_id=space_id,
+                source_id=source_id,
+                run_id=run_record.run_id,
+                limit=500,
+                since=None,
+                scope_kind="document",
+                scope_id=scope_id,
+            )
+            for raw_event in coerce_json_list(events_payload.get("events")):
+                event = coerce_json_object(raw_event)
+                event_id = normalize_optional_string(event.get("event_id"))
+                if event_id is not None:
+                    if event_id in seen_event_ids:
+                        continue
+                    seen_event_ids.add(event_id)
+                merged_events.append(event)
+
+        merged_events.sort(
+            key=lambda event: (
+                normalize_optional_string(event.get("occurred_at")) or "",
+                normalize_optional_string(event.get("event_id")) or "",
+            ),
+            reverse=True,
         )
         return {
             "source_id": str(source_id),
@@ -590,7 +618,7 @@ class SourceWorkflowMonitorService(
             "generated_at": datetime.now(UTC).isoformat(),
             "document": document_payload,
             "extraction_rows": extraction_rows,
-            "events": events_payload.get("events", []),
+            "events": merged_events,
         }
 
     def get_query_generation_trace(
@@ -601,13 +629,14 @@ class SourceWorkflowMonitorService(
         run_id: str,
     ) -> JSONObject:
         source = self._require_source(space_id=space_id, source_id=source_id)
-        run_record = self._select_run_record(
-            self._load_pipeline_runs(source_id=source_id, limit=200),
-            run_id,
+        run_record = self._resolve_run_record(
+            source_id=source_id,
+            requested_run_id=run_id,
+            recent_limit=200,
         )
         if run_record is None:
             msg = "Pipeline run not found for this source"
-            raise ValueError(msg)
+            raise LookupError(msg)
         run_payload = coerce_json_object(run_record.payload)
         events_payload = self.list_workflow_events(
             space_id=space_id,
@@ -786,9 +815,16 @@ class SourceWorkflowMonitorService(
         run_b_id: str,
     ) -> JSONObject:
         self._require_source(space_id=space_id, source_id=source_id)
-        run_records = self._load_pipeline_runs(source_id=source_id, limit=500)
-        run_a = self._select_run_record(run_records, run_a_id)
-        run_b = self._select_run_record(run_records, run_b_id)
+        run_a = self._resolve_run_record(
+            source_id=source_id,
+            requested_run_id=run_a_id,
+            recent_limit=500,
+        )
+        run_b = self._resolve_run_record(
+            source_id=source_id,
+            requested_run_id=run_b_id,
+            recent_limit=500,
+        )
         if run_a is None or run_b is None:
             msg = "Both pipeline runs must exist for this source"
             raise ValueError(msg)

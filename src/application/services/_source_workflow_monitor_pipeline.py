@@ -145,6 +145,69 @@ class SourceWorkflowMonitorPipelineMixin:
                 break
         return run_records
 
+    def _load_pipeline_run_by_id(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str,
+    ) -> PipelineRunRecord | None:
+        normalized_run_id = run_id.strip()
+        if not normalized_run_id:
+            return None
+
+        statement = (
+            select(IngestionJobModel)
+            .where(IngestionJobModel.source_id == str(source_id))
+            .where(
+                IngestionJobModel.job_kind
+                == IngestionJobKindEnum.PIPELINE_ORCHESTRATION,
+            )
+            .order_by(desc(IngestionJobModel.triggered_at))
+        )
+        rows = self._session.execute(statement).scalars().all()
+        for row in rows:
+            metadata = coerce_json_object(row.job_metadata)
+            pipeline_payload = coerce_json_object(metadata.get("pipeline_run"))
+            candidate_run_id = normalize_optional_string(pipeline_payload.get("run_id"))
+            if candidate_run_id != normalized_run_id:
+                continue
+            payload = self._build_pipeline_run_payload(
+                row=row,
+                pipeline_payload=pipeline_payload,
+            )
+            return PipelineRunRecord(
+                payload=payload,
+                run_id=normalized_run_id,
+                job_id=str(row.id),
+            )
+        return None
+
+    def _resolve_run_record(
+        self,
+        *,
+        source_id: UUID,
+        requested_run_id: str | None,
+        recent_limit: int,
+    ) -> PipelineRunRecord | None:
+        recent_runs = self._load_pipeline_runs(source_id=source_id, limit=recent_limit)
+        if requested_run_id is None or not requested_run_id.strip():
+            return self._select_run_record(recent_runs, None)
+
+        normalized_run_id = requested_run_id.strip()
+        for recent_record in recent_runs:
+            if recent_record.run_id == normalized_run_id:
+                return recent_record
+
+        direct_record = self._load_pipeline_run_by_id(
+            source_id=source_id,
+            run_id=normalized_run_id,
+        )
+        if direct_record is not None:
+            return direct_record
+
+        msg = f"Pipeline run '{normalized_run_id}' not found for this source"
+        raise LookupError(msg)
+
     @staticmethod
     def _select_run_record(
         run_records: list[PipelineRunRecord],
@@ -153,7 +216,7 @@ class SourceWorkflowMonitorPipelineMixin:
         if not run_records:
             if requested_run_id is not None and requested_run_id.strip():
                 msg = f"Pipeline run '{requested_run_id.strip()}' not found for this source"
-                raise ValueError(msg)
+                raise LookupError(msg)
             return None
         if requested_run_id is None or not requested_run_id.strip():
             return run_records[0]
@@ -162,7 +225,7 @@ class SourceWorkflowMonitorPipelineMixin:
             if record.run_id == normalized:
                 return record
         msg = f"Pipeline run '{normalized}' not found for this source"
-        raise ValueError(msg)
+        raise LookupError(msg)
 
     def _build_pipeline_run_payload(  # noqa: C901, PLR0912, PLR0915
         self,
@@ -631,7 +694,7 @@ class SourceWorkflowMonitorPipelineMixin:
         source_id: UUID,
         run_id: str | None,
         ingestion_job_id: str | None,
-        limit: int,
+        limit: int | None,
     ) -> list[JSONObject]:
         normalized_run_id = (
             run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
@@ -641,18 +704,20 @@ class SourceWorkflowMonitorPipelineMixin:
             if isinstance(ingestion_job_id, str) and ingestion_job_id.strip()
             else None
         )
-        fetch_limit = self._resolve_prefetch_limit(
-            limit=limit,
-            run_scoped=(
-                normalized_run_id is not None or normalized_ingestion_job_id is not None
-            ),
-        )
         statement = (
             select(SourceDocumentModel)
             .where(SourceDocumentModel.source_id == str(source_id))
             .order_by(desc(SourceDocumentModel.created_at))
-            .limit(fetch_limit)
         )
+        if limit is not None:
+            fetch_limit = self._resolve_prefetch_limit(
+                limit=limit,
+                run_scoped=(
+                    normalized_run_id is not None
+                    or normalized_ingestion_job_id is not None
+                ),
+            )
+            statement = statement.limit(fetch_limit)
         rows = self._session.execute(statement).scalars().all()
 
         documents: list[JSONObject] = []
@@ -688,7 +753,7 @@ class SourceWorkflowMonitorPipelineMixin:
                     "updated_at": row.updated_at.isoformat(),
                 },
             )
-            if len(documents) >= limit:
+            if limit is not None and len(documents) >= limit:
                 break
         return documents
 
@@ -699,7 +764,7 @@ class SourceWorkflowMonitorPipelineMixin:
         run_id: str | None,
         ingestion_job_id: str | None,
         external_record_ids: set[str],
-        limit: int,
+        limit: int | None,
     ) -> list[JSONObject]:
         normalized_run_id = (
             run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
@@ -709,18 +774,20 @@ class SourceWorkflowMonitorPipelineMixin:
             if isinstance(ingestion_job_id, str) and ingestion_job_id.strip()
             else None
         )
-        fetch_limit = self._resolve_prefetch_limit(
-            limit=limit,
-            run_scoped=(
-                normalized_run_id is not None or normalized_ingestion_job_id is not None
-            ),
-        )
         statement = (
             select(ExtractionQueueItemModel)
             .where(ExtractionQueueItemModel.source_id == str(source_id))
             .order_by(desc(ExtractionQueueItemModel.queued_at))
-            .limit(fetch_limit)
         )
+        if limit is not None:
+            fetch_limit = self._resolve_prefetch_limit(
+                limit=limit,
+                run_scoped=(
+                    normalized_run_id is not None
+                    or normalized_ingestion_job_id is not None
+                ),
+            )
+            statement = statement.limit(fetch_limit)
         rows = self._session.execute(statement).scalars().all()
 
         queue_rows: list[JSONObject] = []
@@ -759,7 +826,7 @@ class SourceWorkflowMonitorPipelineMixin:
                     "metadata": metadata,
                 },
             )
-            if len(queue_rows) >= limit:
+            if limit is not None and len(queue_rows) >= limit:
                 break
         return queue_rows
 
@@ -770,7 +837,7 @@ class SourceWorkflowMonitorPipelineMixin:
         run_id: str | None,
         ingestion_job_id: str | None,
         queue_item_ids: set[str],
-        limit: int,
+        limit: int | None,
     ) -> list[JSONObject]:
         normalized_run_id = (
             run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
@@ -780,18 +847,20 @@ class SourceWorkflowMonitorPipelineMixin:
             if isinstance(ingestion_job_id, str) and ingestion_job_id.strip()
             else None
         )
-        fetch_limit = self._resolve_prefetch_limit(
-            limit=limit,
-            run_scoped=(
-                normalized_run_id is not None or normalized_ingestion_job_id is not None
-            ),
-        )
         statement = (
             select(PublicationExtractionModel)
             .where(PublicationExtractionModel.source_id == str(source_id))
             .order_by(desc(PublicationExtractionModel.extracted_at))
-            .limit(fetch_limit)
         )
+        if limit is not None:
+            fetch_limit = self._resolve_prefetch_limit(
+                limit=limit,
+                run_scoped=(
+                    normalized_run_id is not None
+                    or normalized_ingestion_job_id is not None
+                ),
+            )
+            statement = statement.limit(fetch_limit)
         rows = self._session.execute(statement).scalars().all()
 
         extraction_rows: list[JSONObject] = []
@@ -824,7 +893,7 @@ class SourceWorkflowMonitorPipelineMixin:
                     "extracted_at": row.extracted_at.isoformat(),
                 },
             )
-            if len(extraction_rows) >= limit:
+            if limit is not None and len(extraction_rows) >= limit:
                 break
         return extraction_rows
 

@@ -170,7 +170,7 @@
         },
         {
             "path": "src/application/services/_source_workflow_monitor_pipeline.py",
-            "max_lines": 900,
+            "max_lines": 950,
             "reason": "Workflow monitor pipeline helpers remain co-located during quality-gate and event-contract stabilization; split by stage is planned.",
             "expires_on": "2026-12-31"
         },

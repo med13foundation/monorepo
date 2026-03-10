@@ -414,6 +414,390 @@ class _RunScopedFilterCaptureService(SourceWorkflowMonitorService):
         return []
 
 
+class _DocumentTraceCaptureService(SourceWorkflowMonitorService):
+    def __init__(self) -> None:
+        super().__init__(session=Mock(), run_progress=None)
+        self.requested_scope_ids: list[str] = []
+        self._record = PipelineRunRecord(
+            payload={
+                "run_id": "run-match",
+                "status": "completed",
+                "stage_statuses": {},
+                "stage_errors": {},
+                "stage_checkpoints": {},
+                "stage_counters": {},
+            },
+            run_id="run-match",
+            job_id="pipeline-job-id",
+        )
+
+    def _require_source(
+        self,
+        *,
+        space_id: UUID,
+        source_id: UUID,
+    ) -> UserDataSourceModel:
+        del space_id
+        del source_id
+        return cast(
+            "UserDataSourceModel",
+            _FakeSource(source_type=_SourceTypeValue(value="pubmed")),
+        )
+
+    def _load_pipeline_runs(
+        self,
+        *,
+        source_id: UUID,
+        limit: int,
+    ) -> list[PipelineRunRecord]:
+        del source_id
+        del limit
+        return [self._record]
+
+    def _load_source_documents(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str | None,
+        ingestion_job_id: str | None,
+        limit: int,
+    ) -> list[JSONObject]:
+        del source_id
+        del run_id
+        del ingestion_job_id
+        del limit
+        return [
+            {
+                "id": "00000000-0000-0000-0000-000000000123",
+                "external_record_id": "pubmed:pubmed_id:28659948",
+            },
+        ]
+
+    def _load_extraction_queue(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str | None,
+        ingestion_job_id: str | None,
+        external_record_ids: set[str],
+        limit: int,
+    ) -> list[JSONObject]:
+        del source_id
+        del run_id
+        del ingestion_job_id
+        del external_record_ids
+        del limit
+        return []
+
+    def _load_publication_extractions(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str | None,
+        ingestion_job_id: str | None,
+        queue_item_ids: set[str],
+        limit: int,
+    ) -> list[JSONObject]:
+        del source_id
+        del run_id
+        del ingestion_job_id
+        del queue_item_ids
+        del limit
+        return []
+
+    def list_workflow_events(
+        self,
+        *,
+        space_id: UUID,
+        source_id: UUID,
+        run_id: str | None,
+        limit: int,
+        since: str | None,
+        stage: str | None = None,
+        level: str | None = None,
+        scope_kind: str | None = None,
+        scope_id: str | None = None,
+        agent_kind: str | None = None,
+    ) -> JSONObject:
+        del space_id
+        del source_id
+        del run_id
+        del limit
+        del since
+        del stage
+        del level
+        del scope_kind
+        del agent_kind
+        if scope_id is None:
+            return {"events": []}
+        self.requested_scope_ids.append(scope_id)
+        if scope_id == "00000000-0000-0000-0000-000000000123":
+            return {
+                "events": [
+                    {
+                        "event_id": "run-match:20",
+                        "event_type": "document_started",
+                        "scope_id": scope_id,
+                        "occurred_at": "2026-03-09T23:36:52+00:00",
+                    },
+                ],
+            }
+        if scope_id == "pubmed:pubmed_id:28659948":
+            return {
+                "events": [
+                    {
+                        "event_id": "run-match:5",
+                        "event_type": "document_found",
+                        "scope_id": scope_id,
+                        "occurred_at": "2026-03-09T23:34:10+00:00",
+                    },
+                ],
+            }
+        return {"events": []}
+
+
+class _OlderRunLookupService(SourceWorkflowMonitorService):
+    def __init__(self) -> None:
+        super().__init__(session=Mock(), run_progress=None)
+        self.direct_lookup_calls: list[str] = []
+        self.recent_limits: list[int] = []
+        self.recent_record = PipelineRunRecord(
+            payload={"run_id": "run-recent", "status": "completed"},
+            run_id="run-recent",
+            job_id="job-recent",
+        )
+        self.older_record = PipelineRunRecord(
+            payload={"run_id": "run-older", "status": "completed"},
+            run_id="run-older",
+            job_id="job-older",
+        )
+
+    def _require_source(
+        self,
+        *,
+        space_id: UUID,
+        source_id: UUID,
+    ) -> UserDataSourceModel:
+        del space_id
+        del source_id
+        return cast(
+            "UserDataSourceModel",
+            _FakeSource(source_type=_SourceTypeValue(value="pubmed")),
+        )
+
+    def _load_pipeline_runs(
+        self,
+        *,
+        source_id: UUID,
+        limit: int,
+    ) -> list[PipelineRunRecord]:
+        del source_id
+        self.recent_limits.append(limit)
+        return [self.recent_record]
+
+    def _load_pipeline_run_by_id(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str,
+    ) -> PipelineRunRecord | None:
+        del source_id
+        self.direct_lookup_calls.append(run_id)
+        if run_id == "run-older":
+            return self.older_record
+        if run_id == "run-recent":
+            return self.recent_record
+        return None
+
+    def _load_source_documents(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str | None,
+        ingestion_job_id: str | None,
+        limit: int,
+    ) -> list[JSONObject]:
+        del source_id
+        del run_id
+        del ingestion_job_id
+        del limit
+        return []
+
+    def _load_extraction_queue(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str | None,
+        ingestion_job_id: str | None,
+        external_record_ids: set[str],
+        limit: int,
+    ) -> list[JSONObject]:
+        del source_id
+        del run_id
+        del ingestion_job_id
+        del external_record_ids
+        del limit
+        return []
+
+    def _load_publication_extractions(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str | None,
+        ingestion_job_id: str | None,
+        queue_item_ids: set[str],
+        limit: int,
+    ) -> list[JSONObject]:
+        del source_id
+        del run_id
+        del ingestion_job_id
+        del queue_item_ids
+        del limit
+        return []
+
+    def _build_relation_review_payload(  # noqa: PLR0913
+        self,
+        *,
+        space_id: UUID,
+        document_ids: set[str],
+        document_context_by_id: dict[str, JSONObject],
+        queue_id_to_document_id: dict[str, str],
+        extraction_rows: list[JSONObject],
+        limit: int,
+    ) -> JSONObject:
+        del space_id
+        del document_ids
+        del document_context_by_id
+        del queue_id_to_document_id
+        del extraction_rows
+        del limit
+        return {
+            "persisted_relation_rows": [],
+            "pending_review_relation_rows": [],
+            "pending_review_relation_count": 0,
+            "review_queue_rows": [],
+            "rejected_relation_rows": [],
+            "rejected_reason_counts": {},
+        }
+
+    def list_workflow_events(
+        self,
+        **_: object,
+    ) -> JSONObject:
+        return {"events": [], "total": 0, "has_more": False}
+
+
+class _SummaryUncappedLoadService(SourceWorkflowMonitorService):
+    def __init__(self) -> None:
+        super().__init__(session=Mock(), run_progress=None)
+        self.captured_limits: dict[str, int | None] = {}
+        self._record = PipelineRunRecord(
+            payload={"run_id": "run-summary", "status": "completed"},
+            run_id="run-summary",
+            job_id="job-summary",
+        )
+
+    def _require_source(
+        self,
+        *,
+        space_id: UUID,
+        source_id: UUID,
+    ) -> UserDataSourceModel:
+        del space_id
+        del source_id
+        return cast(
+            "UserDataSourceModel",
+            _FakeSource(source_type=_SourceTypeValue(value="pubmed")),
+        )
+
+    def _load_pipeline_runs(
+        self,
+        *,
+        source_id: UUID,
+        limit: int,
+    ) -> list[PipelineRunRecord]:
+        del source_id
+        del limit
+        return [self._record]
+
+    def _load_source_documents(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str | None,
+        ingestion_job_id: str | None,
+        limit: int | None,
+    ) -> list[JSONObject]:
+        del source_id
+        del run_id
+        del ingestion_job_id
+        self.captured_limits["documents"] = limit
+        return []
+
+    def _load_extraction_queue(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str | None,
+        ingestion_job_id: str | None,
+        external_record_ids: set[str],
+        limit: int | None,
+    ) -> list[JSONObject]:
+        del source_id
+        del run_id
+        del ingestion_job_id
+        del external_record_ids
+        self.captured_limits["queue"] = limit
+        return []
+
+    def _load_publication_extractions(
+        self,
+        *,
+        source_id: UUID,
+        run_id: str | None,
+        ingestion_job_id: str | None,
+        queue_item_ids: set[str],
+        limit: int | None,
+    ) -> list[JSONObject]:
+        del source_id
+        del run_id
+        del ingestion_job_id
+        del queue_item_ids
+        self.captured_limits["extractions"] = limit
+        return []
+
+    def _build_relation_review_payload(  # noqa: PLR0913
+        self,
+        *,
+        space_id: UUID,
+        document_ids: set[str],
+        document_context_by_id: dict[str, JSONObject],
+        queue_id_to_document_id: dict[str, str],
+        extraction_rows: list[JSONObject],
+        limit: int | None,
+    ) -> JSONObject:
+        del space_id
+        del document_ids
+        del document_context_by_id
+        del queue_id_to_document_id
+        del extraction_rows
+        self.captured_limits["relation_review"] = limit
+        return {
+            "persisted_relation_rows": [],
+            "pending_review_relation_rows": [],
+            "pending_review_relation_count": 0,
+            "review_queue_rows": [],
+            "rejected_relation_rows": [],
+            "rejected_reason_counts": {},
+        }
+
+    def list_workflow_events(
+        self,
+        **_: object,
+    ) -> JSONObject:
+        return {"events": [], "total": 0, "has_more": False}
+
+
 def test_build_artana_progress_resolves_stage_snapshots_from_candidates() -> None:
     run_progress = _StubRunProgressPort(
         {
@@ -803,6 +1187,73 @@ def test_monitor_run_scope_prefers_underlying_ingestion_job_id_when_present() ->
     assert service.captured["documents"] == ("run-match", "ingestion-job-123")
     assert service.captured["queue"] == ("run-match", "ingestion-job-123")
     assert service.captured["extractions"] == ("run-match", "ingestion-job-123")
+
+
+def test_get_document_trace_includes_external_record_scoped_ingestion_events() -> None:
+    service = _DocumentTraceCaptureService()
+
+    payload = service.get_document_trace(
+        space_id=uuid4(),
+        source_id=uuid4(),
+        run_id="run-match",
+        document_id=UUID("00000000-0000-0000-0000-000000000123"),
+    )
+
+    assert service.requested_scope_ids == [
+        "00000000-0000-0000-0000-000000000123",
+        "pubmed:pubmed_id:28659948",
+    ]
+    events = cast("list[JSONObject]", payload["events"])
+    assert [event["event_type"] for event in events] == [
+        "document_started",
+        "document_found",
+    ]
+
+
+def test_get_pipeline_run_summary_directly_loads_older_requested_run() -> None:
+    service = _OlderRunLookupService()
+
+    payload = service.get_pipeline_run_summary(
+        space_id=uuid4(),
+        source_id=uuid4(),
+        run_id="run-older",
+    )
+
+    assert payload["run_id"] == "run-older"
+    assert service.direct_lookup_calls == ["run-older"]
+
+
+def test_get_pipeline_run_summary_uses_uncapped_run_scoped_loads() -> None:
+    service = _SummaryUncappedLoadService()
+
+    payload = service.get_pipeline_run_summary(
+        space_id=uuid4(),
+        source_id=uuid4(),
+        run_id="run-summary",
+    )
+
+    assert payload["run_id"] == "run-summary"
+    assert service.captured_limits == {
+        "documents": None,
+        "queue": None,
+        "extractions": None,
+        "relation_review": None,
+    }
+
+
+def test_compare_source_runs_directly_loads_older_requested_runs() -> None:
+    service = _OlderRunLookupService()
+
+    payload = service.compare_source_runs(
+        space_id=uuid4(),
+        source_id=uuid4(),
+        run_a_id="run-older",
+        run_b_id="run-recent",
+    )
+
+    assert payload["run_a"]["run_id"] == "run-older"
+    assert payload["run_b"]["run_id"] == "run-recent"
+    assert service.direct_lookup_calls == ["run-older"]
 
 
 def test_build_pipeline_run_payload_falls_back_to_graph_extraction_counters() -> None:

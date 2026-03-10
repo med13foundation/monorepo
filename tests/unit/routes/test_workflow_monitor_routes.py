@@ -106,6 +106,24 @@ class _CostAndCompareMonitorServiceStub:
         }
 
 
+class _NotFoundMonitorServiceStub:
+    def get_pipeline_run_summary(self, **_: object) -> dict[str, object]:
+        msg = "Pipeline run not found for this source"
+        raise LookupError(msg)
+
+    def get_document_trace(self, **_: object) -> dict[str, object]:
+        msg = "Document not found for this pipeline run"
+        raise LookupError(msg)
+
+    def get_query_generation_trace(self, **_: object) -> dict[str, object]:
+        msg = "Pipeline run not found for this source"
+        raise LookupError(msg)
+
+    def compare_source_runs(self, **_: object) -> dict[str, object]:
+        msg = "Pipeline run 'missing-run' not found for this source"
+        raise LookupError(msg)
+
+
 def _extract_data_payload(sse_event: str) -> dict[str, object]:
     data_line = next(
         line for line in sse_event.splitlines() if line.startswith("data: ")
@@ -259,6 +277,86 @@ def test_compare_source_pipeline_runs_returns_validated_payload(monkeypatch) -> 
             "run_b_id": "run-b",
         },
     ]
+
+
+def test_get_source_pipeline_run_summary_returns_404_for_missing_run(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(routes, "verify_space_membership", lambda *args, **kwargs: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        routes.get_source_pipeline_run_summary(
+            space_id=uuid4(),
+            source_id=uuid4(),
+            run_id="missing-run",
+            current_user=SimpleNamespace(id=uuid4(), role="member"),
+            membership_service=object(),
+            monitor_service=_NotFoundMonitorServiceStub(),
+            session=object(),
+        )
+
+    assert exc_info.value.status_code == 404
+
+
+def test_get_source_document_trace_returns_404_for_missing_document(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(routes, "verify_space_membership", lambda *args, **kwargs: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        routes.get_source_document_trace(
+            space_id=uuid4(),
+            source_id=uuid4(),
+            run_id="run-1",
+            document_id=uuid4(),
+            route_context=routes.WorkflowMonitorRouteContext(
+                current_user=SimpleNamespace(id=uuid4(), role="member"),
+                membership_service=object(),
+                monitor_service=_NotFoundMonitorServiceStub(),
+                session=object(),
+            ),
+        )
+
+    assert exc_info.value.status_code == 404
+
+
+def test_get_source_query_trace_returns_404_for_missing_run(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "verify_space_membership", lambda *args, **kwargs: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        routes.get_source_query_trace(
+            space_id=uuid4(),
+            source_id=uuid4(),
+            run_id="missing-run",
+            current_user=SimpleNamespace(id=uuid4(), role="member"),
+            membership_service=object(),
+            monitor_service=_NotFoundMonitorServiceStub(),
+            session=object(),
+        )
+
+    assert exc_info.value.status_code == 404
+
+
+def test_compare_source_pipeline_runs_returns_404_for_missing_run(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(routes, "verify_space_membership", lambda *args, **kwargs: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        routes.compare_source_pipeline_runs(
+            space_id=uuid4(),
+            source_id=uuid4(),
+            run_a="missing-run",
+            run_b="run-b",
+            route_context=routes.WorkflowMonitorRouteContext(
+                current_user=SimpleNamespace(id=uuid4(), role="member"),
+                membership_service=object(),
+                monitor_service=_NotFoundMonitorServiceStub(),
+                session=object(),
+            ),
+        )
+
+    assert exc_info.value.status_code == 404
 
 
 def test_sse_event_payload_serializes_to_expected_shape() -> None:
