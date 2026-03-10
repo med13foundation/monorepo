@@ -17,6 +17,9 @@ POSTGRES_ACTIVE_FLAG := .postgres-active
 POSTGRES_ACTIVE := $(wildcard $(POSTGRES_ACTIVE_FLAG))
 BACKEND_PID_FILE := .uvicorn.pid
 BACKEND_LOG := logs/backend.log
+BACKEND_PORT := 8080
+BACKEND_UVICORN_APP := main:app
+BACKEND_UVICORN_MATCH := uvicorn .*main:app
 WEB_PID_FILE := .next.dev.pid
 WEB_LOG := logs/web.log
 WEB_PID_FILE_ABS := $(abspath $(WEB_PID_FILE))
@@ -325,7 +328,7 @@ run-local: ## Run the application locally
 	$(call check_venv)
 	@$(MAKE) -s setup-postgres
 	@$(MAKE) postgres-migrate
-	$(call run_with_postgres_env,$(BACKEND_DEV_ENV) $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload)
+	$(call run_with_postgres_env,$(BACKEND_DEV_ENV) $(USE_PYTHON) -m uvicorn $(BACKEND_UVICORN_APP) --host 0.0.0.0 --port $(BACKEND_PORT) --reload)
 
 run-all-postgres: ## Restart Postgres, run migrations, seed admin, start backend + Next.js
 	$(call check_venv)
@@ -356,8 +359,8 @@ else
 	@$(MAKE) -s postgres-wait SUPPRESS_VENV_WARNING=1
 endif
 	@mkdir -p $(dir $(BACKEND_LOG))
-	@if lsof -ti tcp:8080 >/dev/null 2>&1; then \
-		echo "Port 8080 already in use. Run 'make stop-local' or free the port before starting in background."; \
+	@if lsof -nP -iTCP:$(BACKEND_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+		echo "Port $(BACKEND_PORT) already in use. Run 'make stop-local' or free the port before starting in background."; \
 		exit 1; \
 	fi
 	@if [ -f "$(BACKEND_PID_FILE)" ] && kill -0 $$(cat "$(BACKEND_PID_FILE)") 2>/dev/null; then \
@@ -367,7 +370,7 @@ endif
 ifneq ($(SKIP_POSTGRES_MIGRATE),1)
 	@$(MAKE) postgres-migrate
 endif
-	@/bin/bash -lc "set -a; source \"$(POSTGRES_ENV_FILE)\"; set +a; $(BACKEND_DEV_ENV) nohup $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 >> \"$(BACKEND_LOG)\" 2>&1 & echo \$$! > \"$(BACKEND_PID_FILE)\""
+	@/bin/bash -lc "set -a; source \"$(POSTGRES_ENV_FILE)\"; set +a; $(BACKEND_DEV_ENV) nohup $(USE_PYTHON) -m uvicorn $(BACKEND_UVICORN_APP) --host 0.0.0.0 --port $(BACKEND_PORT) >> \"$(BACKEND_LOG)\" 2>&1 & echo \$$! > \"$(BACKEND_PID_FILE)\""
 	@i=0; while [ ! -f "$(BACKEND_PID_FILE)" ] && [ $$i -lt 10 ]; do sleep 0.5; i=$$((i+1)); done
 	@if [ -f "$(BACKEND_PID_FILE)" ]; then \
 		PID=$$(cat "$(BACKEND_PID_FILE)"); \
@@ -389,7 +392,7 @@ backend-status: ## Show FastAPI background process status
 	fi
 
 run-local-postgres: ## Run the FastAPI backend with Postgres env vars loaded
-	$(call run_with_postgres_env,$(BACKEND_DEV_ENV) $(USE_PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload)
+	$(call run_with_postgres_env,$(BACKEND_DEV_ENV) $(USE_PYTHON) -m uvicorn $(BACKEND_UVICORN_APP) --host 0.0.0.0 --port $(BACKEND_PORT) --reload)
 
 
 run-web: ## Run the Next.js admin interface locally (seeds admin user if needed)
@@ -491,17 +494,38 @@ postgres-cmd: ## Run arbitrary CMD with Postgres env vars (usage: make postgres-
 
 stop-local: ## Stop the local FastAPI backend
 	@echo "Stopping FastAPI backend..."
-	@if [ -f "$(BACKEND_PID_FILE)" ]; then \
+	@handled=0; \
+	if [ -f "$(BACKEND_PID_FILE)" ]; then \
 		PID=$$(cat "$(BACKEND_PID_FILE)"); \
 		if kill -0 $$PID 2>/dev/null; then \
 			kill $$PID && echo "Stopped FastAPI process $$PID."; \
+			handled=1; \
+			sleep 1; \
 		else \
 			echo "PID $$PID not running; cleaning up stale PID file."; \
 		fi; \
 		rm -f "$(BACKEND_PID_FILE)"; \
 	else \
 		echo "No PID file found; attempting graceful shutdown."; \
-		pkill -f "uvicorn main:app" || echo "No FastAPI process found"; \
+	fi; \
+	MATCHED_PIDS=$$(pgrep -f "$(BACKEND_UVICORN_MATCH)" 2>/dev/null || true); \
+	if [ -n "$$MATCHED_PIDS" ]; then \
+		echo "Stopping matching FastAPI process(es): $$MATCHED_PIDS"; \
+		kill $$MATCHED_PIDS >/dev/null 2>&1 || true; \
+		handled=1; \
+		for _ in 1 2 3 4 5 6; do \
+			if ! lsof -tiTCP:$(BACKEND_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+				break; \
+			fi; \
+			sleep 0.5; \
+		done; \
+	fi; \
+	LISTEN_PIDS=$$(lsof -tiTCP:$(BACKEND_PORT) -sTCP:LISTEN 2>/dev/null || true); \
+	if [ -n "$$LISTEN_PIDS" ]; then \
+		echo "Port $(BACKEND_PORT) is still held by: $$LISTEN_PIDS"; \
+		ps -p $$LISTEN_PIDS -o pid=,command=; \
+	elif [ $$handled -eq 0 ]; then \
+		echo "No FastAPI process found"; \
 	fi
 
 stop-web: ## Stop the Next.js admin interface

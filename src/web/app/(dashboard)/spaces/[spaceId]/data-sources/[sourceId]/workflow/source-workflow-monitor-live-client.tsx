@@ -7,6 +7,7 @@ import { useSourceWorkflowStream } from '@/hooks/use-source-workflow-stream'
 import type { ArtanaRunTraceResponse } from '@/types/artana'
 import type {
   SourcePipelineRunsResponse,
+  SourceWorkflowEventsResponse,
   SourceWorkflowMonitorResponse,
   SourceWorkflowStreamBootstrapPayload,
   SourceWorkflowStreamSnapshotPayload,
@@ -21,12 +22,18 @@ interface SourceWorkflowMonitorLiveClientProps {
   spaceId: string
   sourceId: string
   selectedRunId?: string
+  traceRunId?: string
   initialTab: WorkflowTabKey
-  initialMonitor: SourceWorkflowMonitorResponse | null
-  initialMonitorError: string | null
-  initialPipelineRuns: SourcePipelineRunsResponse | null
-  initialTrace: ArtanaRunTraceResponse | null
-  initialTraceError: string | null
+  initialState: {
+    monitor: SourceWorkflowMonitorResponse | null
+    pipelineRuns: SourcePipelineRunsResponse | null
+    workflowEvents: SourceWorkflowEventsResponse | null
+    trace: ArtanaRunTraceResponse | null
+  }
+  initialErrors: {
+    monitor: string | null
+    trace: string | null
+  }
 }
 
 function resolveSourceIdFromMonitor(
@@ -73,27 +80,76 @@ function applyMonitorSnapshot(
   }
 }
 
+function asIsoTimestamp(value: string | null | undefined): number {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return 0
+  }
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function extractEventSequence(eventId: string): number {
+  const separatorIndex = eventId.lastIndexOf(':')
+  if (separatorIndex < 0) {
+    return -1
+  }
+  const parsed = Number(eventId.slice(separatorIndex + 1))
+  return Number.isFinite(parsed) ? parsed : -1
+}
+
+export function mergeWorkflowEvents(
+  previous: SourceWorkflowEventsResponse | null,
+  incoming: SourceWorkflowEventsResponse,
+): SourceWorkflowEventsResponse {
+  const mergedById = new Map<string, SourceWorkflowEventsResponse['events'][number]>()
+
+  for (const event of previous?.events ?? []) {
+    mergedById.set(event.event_id, event)
+  }
+  for (const event of incoming.events) {
+    mergedById.set(event.event_id, event)
+  }
+
+  const mergedEvents = Array.from(mergedById.values()).sort((left, right) => {
+    const timestampDelta = asIsoTimestamp(right.occurred_at) - asIsoTimestamp(left.occurred_at)
+    if (timestampDelta !== 0) {
+      return timestampDelta
+    }
+    return extractEventSequence(right.event_id) - extractEventSequence(left.event_id)
+  })
+
+  return {
+    source_id: incoming.source_id,
+    run_id: incoming.run_id,
+    generated_at: incoming.generated_at,
+    events: mergedEvents,
+    total: mergedEvents.length,
+    has_more: incoming.has_more,
+  }
+}
+
 export function SourceWorkflowMonitorLiveClient({
   spaceId,
   sourceId,
   selectedRunId,
+  traceRunId,
   initialTab,
-  initialMonitor,
-  initialMonitorError,
-  initialPipelineRuns,
-  initialTrace,
-  initialTraceError,
+  initialState,
+  initialErrors,
 }: SourceWorkflowMonitorLiveClientProps) {
   const router = useRouter()
   const [monitor, setMonitor] = useState<SourceWorkflowMonitorResponse | null>(
-    initialMonitor,
+    initialState.monitor,
   )
-  const [monitorError, setMonitorError] = useState<string | null>(initialMonitorError)
+  const [monitorError, setMonitorError] = useState<string | null>(initialErrors.monitor)
   const [pipelineRuns, setPipelineRuns] = useState<SourcePipelineRunsResponse | null>(
-    initialPipelineRuns,
+    initialState.pipelineRuns,
   )
-  const [trace, setTrace] = useState<ArtanaRunTraceResponse | null>(initialTrace)
-  const [traceError, setTraceError] = useState<string | null>(initialTraceError)
+  const [workflowEvents, setWorkflowEvents] = useState<SourceWorkflowEventsResponse | null>(
+    initialState.workflowEvents,
+  )
+  const [trace, setTrace] = useState<ArtanaRunTraceResponse | null>(initialState.trace)
+  const [traceError, setTraceError] = useState<string | null>(initialErrors.trace)
   const streamEnabled = useMemo(() => WORKFLOW_SSE_ENABLED, [])
 
   const refreshTrace = useCallback(async (runId: string) => {
@@ -137,9 +193,19 @@ export function SourceWorkflowMonitorLiveClient({
       const nextState = applyMonitorSnapshot(sourceId, payload)
       setMonitor(nextState.monitor)
       setPipelineRuns(nextState.pipelineRuns)
+      setWorkflowEvents((previous) =>
+        mergeWorkflowEvents(previous, {
+          source_id: nextState.pipelineRuns.source_id,
+          run_id: payload.run_id ?? null,
+          generated_at: payload.generated_at,
+          events: payload.events,
+          total: payload.events.length,
+          has_more: false,
+        }),
+      )
       setMonitorError(null)
-      if (selectedRunId) {
-        void refreshTrace(selectedRunId).catch((error: unknown) => {
+      if (traceRunId) {
+        void refreshTrace(traceRunId).catch((error: unknown) => {
           setTraceError(error instanceof Error ? error.message : 'Unable to load Artana trace.')
         })
       }
@@ -149,11 +215,23 @@ export function SourceWorkflowMonitorLiveClient({
       setMonitor(nextState.monitor)
       setPipelineRuns(nextState.pipelineRuns)
       setMonitorError(null)
-      if (selectedRunId) {
-        void refreshTrace(selectedRunId).catch((error: unknown) => {
+      if (traceRunId) {
+        void refreshTrace(traceRunId).catch((error: unknown) => {
           setTraceError(error instanceof Error ? error.message : 'Unable to load Artana trace.')
         })
       }
+    },
+    onEvents: (payload) => {
+      setWorkflowEvents((previous) => ({
+        ...mergeWorkflowEvents(previous, {
+          source_id: previous?.source_id ?? sourceId,
+          run_id: payload.run_id ?? null,
+          generated_at: payload.generated_at,
+          events: payload.events,
+          total: payload.events.length,
+          has_more: false,
+        }),
+      }))
     },
   })
 
@@ -176,24 +254,26 @@ export function SourceWorkflowMonitorLiveClient({
   }, [isSseFallbackActive, router, streamEnabled])
 
   useEffect(() => {
-    if (!selectedRunId) {
+    if (!traceRunId) {
       setTrace(null)
       setTraceError(null)
       return
     }
-    void refreshTrace(selectedRunId).catch((error: unknown) => {
+    void refreshTrace(traceRunId).catch((error: unknown) => {
       setTrace(null)
       setTraceError(error instanceof Error ? error.message : 'Unable to load Artana trace.')
     })
-  }, [refreshTrace, selectedRunId])
+  }, [refreshTrace, traceRunId])
 
   return (
     <SourceWorkflowMonitorView
       spaceId={spaceId}
       selectedRunId={selectedRunId}
+      traceRunId={traceRunId}
       monitor={monitor}
       monitorError={monitorError}
       pipelineRuns={pipelineRuns}
+      workflowEvents={workflowEvents}
       trace={trace}
       traceError={traceError}
       initialTab={initialTab}

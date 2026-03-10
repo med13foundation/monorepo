@@ -413,6 +413,8 @@ def test_search_creates_runtime_per_call_to_avoid_loop_bound_reuse() -> None:
         ],
     )
     mapping_judge = _StubMappingJudge(selected_variable_id=None)
+    first_store = object()
+    second_store = object()
 
     with (
         patch.dict(
@@ -444,7 +446,7 @@ def test_search_creates_runtime_per_call_to_avoid_loop_bound_reuse() -> None:
         patch.object(
             ArtanaDictionarySearchHarnessAdapter,
             "_create_store",
-            return_value=object(),
+            side_effect=[first_store, second_store],
         ),
         patch.object(
             ArtanaDictionarySearchHarnessAdapter,
@@ -464,6 +466,8 @@ def test_search_creates_runtime_per_call_to_avoid_loop_bound_reuse() -> None:
     assert second[0].entry_id == "VAR_VECTOR"
     # Runtime must be recreated per search to avoid reusing loop-bound async pools.
     assert kernel_constructor.call_count == 2
+    assert kernel_constructor.call_args_list[0].kwargs["store"] is first_store
+    assert kernel_constructor.call_args_list[1].kwargs["store"] is second_store
     fake_model_port_first.aclose.assert_awaited_once()
     fake_model_port_second.aclose.assert_awaited_once()
     fake_kernel_first.close.assert_awaited_once()

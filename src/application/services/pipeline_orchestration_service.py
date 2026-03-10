@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.application.services._pipeline_failure_classification import (
     resolve_pipeline_error_category,
@@ -51,9 +54,15 @@ from src.domain.entities.ingestion_job import (
     IngestionTrigger,
 )
 from src.domain.value_objects.provenance import DataSource, Provenance
+from src.type_definitions.data_sources import (
+    PipelineRunCostMetadata,
+    PipelineRunTimingMetadata,
+)
 
 if TYPE_CHECKING:
     from src.domain.repositories.ingestion_job_repository import IngestionJobRepository
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineOrchestrationService(
@@ -73,12 +82,14 @@ class PipelineOrchestrationService(
         self._graph_search = dependencies.graph_search_service
         self._research_spaces = dependencies.research_space_repository
         self._pipeline_runs = dependencies.pipeline_run_repository
+        self._pipeline_trace = dependencies.pipeline_trace_service
 
     def enqueue_run(  # noqa: PLR0913
         self,
         *,
         source_id: UUID,
         research_space_id: UUID,
+        triggered_by_user_id: UUID | None = None,
         run_id: str | None = None,
         resume_from_stage: PipelineStageName | None = None,
         enrichment_limit: int = 25,
@@ -144,12 +155,23 @@ class PipelineOrchestrationService(
             last_error=None,
             error_category=None,
         )
+        if self._pipeline_trace is not None:
+            owner_summary = self._pipeline_trace.resolve_run_owner(
+                source_id=source_id,
+                triggered_by_user_id=triggered_by_user_id,
+            )
+            metadata = update_pipeline_metadata_fields(
+                existing_metadata=metadata,
+                owner=owner_summary.to_json_object(),
+                timing_summary=PipelineRunTimingMetadata().to_json_object(),
+                cost_summary=PipelineRunCostMetadata().to_json_object(),
+            )
         job = IngestionJob(
             id=uuid4(),
             source_id=source_id,
             job_kind=IngestionJobKind.PIPELINE_ORCHESTRATION,
             trigger=IngestionTrigger.API,
-            triggered_by=None,
+            triggered_by=triggered_by_user_id,
             triggered_at=accepted_at,
             status=IngestionStatus.PENDING,
             started_at=None,
@@ -167,6 +189,25 @@ class PipelineOrchestrationService(
             source_config_snapshot={},
         )
         saved_job = repository.save(job)
+        if self._pipeline_trace is not None:
+            self._pipeline_trace.record_event(
+                research_space_id=research_space_id,
+                source_id=source_id,
+                pipeline_run_id=normalized_run_id,
+                event_type="run_queued",
+                scope_kind="run",
+                message="Pipeline run accepted and queued for execution.",
+                status="queued",
+                payload={
+                    "accepted_at": accepted_at.isoformat(timespec="seconds"),
+                    "resume_from_stage": normalized_resume_stage,
+                    "triggered_by_user_id": (
+                        str(triggered_by_user_id)
+                        if triggered_by_user_id is not None
+                        else None
+                    ),
+                },
+            )
         return PipelineRunEnqueueResult(
             run_id=normalized_run_id,
             source_id=saved_job.source_id,
@@ -182,10 +223,47 @@ class PipelineOrchestrationService(
         as_of: datetime | None = None,
     ) -> IngestionJob | None:
         repository = self._require_pipeline_repository()
-        return repository.claim_next_pipeline_job(
+        claimed_at = as_of or datetime.now(UTC)
+        claimed_job = repository.claim_next_pipeline_job(
             worker_id=worker_id,
-            as_of=as_of or datetime.now(UTC),
+            as_of=claimed_at,
         )
+        if claimed_job is None or self._pipeline_trace is None:
+            return claimed_job
+        try:
+            queued_request = self._resolve_queued_request(claimed_job)
+            queue_wait_ms = max(
+                int((claimed_at - claimed_job.triggered_at).total_seconds() * 1000),
+                0,
+            )
+            self._pipeline_trace.record_event(
+                research_space_id=queued_request.research_space_id,
+                source_id=claimed_job.source_id,
+                pipeline_run_id=queued_request.run_id,
+                event_type="run_claimed",
+                stage="ingestion",
+                scope_kind="run",
+                message="Worker claimed queued pipeline run for execution.",
+                status="claimed",
+                occurred_at=claimed_at,
+                started_at=claimed_at,
+                queue_wait_ms=queue_wait_ms,
+                payload={
+                    "worker_id": worker_id,
+                    "accepted_at": claimed_job.triggered_at.isoformat(
+                        timespec="seconds",
+                    ),
+                    "claimed_at": claimed_at.isoformat(timespec="seconds"),
+                },
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError, SQLAlchemyError):
+            logger.warning(
+                "Failed to record pipeline run claim event for job_id=%s worker_id=%s",
+                claimed_job.id,
+                worker_id,
+                exc_info=True,
+            )
+        return claimed_job
 
     def heartbeat_claimed_run(
         self,
@@ -206,8 +284,7 @@ class PipelineOrchestrationService(
         *,
         worker_id: str,
     ) -> bool:
-        repository = self._require_pipeline_repository()
-        claimed_job = repository.claim_next_pipeline_job(
+        claimed_job = self.claim_next_queued_run(
             worker_id=worker_id,
             as_of=datetime.now(UTC),
         )

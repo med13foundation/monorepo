@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID  # noqa: TCH003
 
 from src.type_definitions.common import JSONObject  # noqa: TC001
@@ -15,6 +17,35 @@ if TYPE_CHECKING:
     )
 
 
+IngestionProgressEventType = Literal[
+    "ingestion_job_started",
+    "query_resolved",
+    "records_fetched",
+    "source_documents_upserted",
+    "resolver_warning",
+    "kernel_ingestion_started",
+    "kernel_ingestion_finished",
+    "kernel_ingestion_record_started",
+    "kernel_ingestion_record_finished",
+    "kernel_ingestion_mapper_started",
+    "kernel_ingestion_mapper_finished",
+]
+
+
+@dataclass(frozen=True)
+class IngestionProgressUpdate:
+    """Incremental progress emitted while a source ingestion run is active."""
+
+    event_type: IngestionProgressEventType
+    message: str
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    ingestion_job_id: UUID | None = None
+    payload: JSONObject = field(default_factory=dict)
+
+
+IngestionProgressCallback = Callable[[IngestionProgressUpdate], None]
+
+
 @dataclass(frozen=True)
 class IngestionRunContext:
     """Context passed by scheduler to source ingestion services."""
@@ -22,7 +53,9 @@ class IngestionRunContext:
     ingestion_job_id: UUID
     source_sync_state: SourceSyncState
     query_signature: str
+    pipeline_run_id: str | None = None
     source_record_ledger_repository: SourceRecordLedgerRepository | None = None
+    progress_callback: IngestionProgressCallback | None = None
 
 
 @dataclass(frozen=True)

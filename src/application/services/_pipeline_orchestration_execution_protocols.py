@@ -36,6 +36,9 @@ if TYPE_CHECKING:
     from src.application.services.ingestion_scheduling_service import (
         IngestionSchedulingService,
     )
+    from src.application.services.pipeline_run_trace_service import (
+        PipelineRunTraceService,
+    )
     from src.domain.entities.ingestion_job import IngestionJob
     from src.domain.repositories.research_space_repository import (
         ResearchSpaceRepository,
@@ -57,6 +60,7 @@ class _PipelineExecutionSelf(Protocol):
     _graph_seed_runner: Callable[..., Awaitable[GraphConnectionOutcome]] | None
     _graph_search: GraphSearchService | None
     _research_spaces: ResearchSpaceRepository | None
+    _pipeline_trace: PipelineRunTraceService | None
 
     def _start_or_resume_pipeline_run(
         self,

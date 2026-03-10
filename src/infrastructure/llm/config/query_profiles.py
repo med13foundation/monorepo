@@ -16,6 +16,7 @@ _MODEL_KEY = "model"
 _USAGE_LIMITS_KEY = "usage_limits"
 _USAGE_LIMITS_PROFILE_KEY = "budget_profile"
 _DEFAULT_BUDGET_SECTION = "budgets"
+_TIMEOUT_SECONDS_KEY = "timeout_seconds"
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class QuerySourcePolicy:
 
     model_id: str | None = None
     usage_limits: UsageLimits | None = None
+    timeout_seconds: float | None = None
 
 
 def load_query_source_policies(
@@ -66,12 +68,16 @@ def load_query_source_policies(
 
         model_id = _coerce_string(raw_profile.get(_MODEL_KEY))
         usage_limits = _build_usage_limits(raw_profile, budgets)
-        if model_id is None and usage_limits is None:
+        timeout_seconds = _coerce_optional_float(
+            raw_profile.get(_TIMEOUT_SECONDS_KEY),
+        )
+        if model_id is None and usage_limits is None and timeout_seconds is None:
             continue
 
         policies[source_type] = QuerySourcePolicy(
             model_id=model_id,
             usage_limits=usage_limits,
+            timeout_seconds=timeout_seconds,
         )
 
     return policies

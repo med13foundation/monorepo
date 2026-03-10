@@ -40,6 +40,43 @@ async def test_search_publications_uses_free_full_text_subset_filter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_publications_does_not_pass_duplicate_retstart_to_esearch() -> (
+    None
+):
+    """Search helper should sanitize kwargs before building ESearch params."""
+    ingestor = PubMedIngestor()
+    ingestor._make_request = AsyncMock(
+        return_value=Mock(
+            json=Mock(
+                return_value={
+                    "esearchresult": {
+                        "idlist": [],
+                        "count": "0",
+                        "retstart": "15",
+                        "retmax": "25",
+                    },
+                },
+            ),
+        ),
+    )
+
+    page = await ingestor._search_publications(
+        "MED13",
+        retstart=15,
+        max_results=25,
+        open_access_only=True,
+    )
+
+    call_kwargs = ingestor._make_request.await_args.kwargs
+    params = call_kwargs["params"]
+    assert isinstance(params, dict)
+    assert params["retstart"] == 15
+    assert params["retmax"] == 25
+    assert page.retstart == 15
+    assert page.retmax == 25
+
+
+@pytest.mark.asyncio
 async def test_fetch_page_enforces_pmcid_for_open_access_records() -> None:
     """Open-access fetch should drop records that do not have a PMCID."""
     ingestor = PubMedIngestor()
@@ -131,3 +168,38 @@ async def test_fetch_article_details_extracts_pmcid_from_pubmed_data() -> None:
     assert records[0]["pubmed_id"] == "12345678"
     assert records[0]["doi"] == "10.1000/example"
     assert records[0]["pmc_id"] == "PMC1234567"
+
+
+@pytest.mark.asyncio
+async def test_validate_query_returns_api_feedback_for_invalid_query() -> None:
+    """Validation should preserve ESearch error feedback for repair prompts."""
+    ingestor = PubMedIngestor()
+    ingestor._make_request = AsyncMock(
+        return_value=Mock(
+            json=Mock(
+                return_value={
+                    "esearchresult": {
+                        "count": "0",
+                        "retstart": "0",
+                        "retmax": "0",
+                        "idlist": [],
+                        "errorlist": {
+                            "phrasesnotfound": ["Unexpected right parenthesis"],
+                        },
+                        "querytranslation": "(MED13)",
+                    },
+                },
+            ),
+        ),
+    )
+
+    result = await ingestor.validate_query(
+        "MED13 AND )",
+        open_access_only=True,
+    )
+
+    assert result.is_valid is False
+    assert result.translated_query == "(MED13)"
+    assert result.result_count == 0
+    assert result.api_feedback is not None
+    assert "phrasesnotfound: Unexpected right parenthesis" in result.api_feedback

@@ -329,6 +329,30 @@ class ConceptManagementService(ConceptPort):
             limit=normalized_limit,
         )
 
+    def resolve_member_by_alias(
+        self,
+        *,
+        research_space_id: str,
+        domain_context: str,
+        alias_normalized: str,
+        include_inactive: bool = False,
+    ) -> ConceptMember | None:
+        normalized_research_space_id = _normalize_identifier(research_space_id)
+        normalized_domain_context = _normalize_non_empty(
+            domain_context,
+            field_name="domain_context",
+        )
+        normalized_alias = _normalize_label(
+            alias_normalized,
+            field_name="alias_normalized",
+        ).lower()
+        return self._concepts.resolve_member_by_alias(
+            research_space_id=normalized_research_space_id,
+            domain_context=normalized_domain_context,
+            alias_normalized=normalized_alias,
+            include_inactive=include_inactive,
+        )
+
     def upsert_active_policy(  # noqa: PLR0913
         self,
         *,

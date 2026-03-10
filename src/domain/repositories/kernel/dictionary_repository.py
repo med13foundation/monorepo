@@ -225,6 +225,20 @@ class DictionaryRepository(ABC):
         """List all entity resolution policies."""
 
     @abstractmethod
+    def create_resolution_policy(  # noqa: PLR0913
+        self,
+        *,
+        entity_type: str,
+        policy_strategy: str,
+        required_anchors: list[str],
+        auto_merge_threshold: float = 1.0,
+        created_by: str = "seed",
+        source_ref: str | None = None,
+        review_status: Literal["ACTIVE", "PENDING_REVIEW", "REVOKED"] = "ACTIVE",
+    ) -> EntityResolutionPolicy:
+        """Create an entity resolution policy for a dictionary entity type."""
+
+    @abstractmethod
     def create_entity_type(  # noqa: PLR0913
         self,
         *,

@@ -509,6 +509,45 @@ describe('DataSourcesList - Artana progress display', () => {
 
     expect(screen.getByText(/Artana extraction 45%/i)).toBeInTheDocument()
   })
+
+  it('shows early pipeline startup state instead of finalizing when ingestion has just started', async () => {
+    render(
+      <DataSourcesList
+        spaceId="space-123"
+        dataSources={dataSourcesResponse}
+        discoveryState={discoveryState}
+        discoveryCatalog={[]}
+        workflowStatusBySource={{
+          'source-1': {
+            last_pipeline_status: 'running',
+            pending_paper_count: 0,
+            pending_relation_review_count: 0,
+            extraction_extracted_count: 0,
+            extraction_failed_count: 0,
+            extraction_skipped_count: 0,
+            extraction_timeout_failed_count: 0,
+            graph_edges_delta_last_run: 0,
+            graph_edges_total: 10,
+            artana_progress: {
+              pipeline: {
+                run_id: 'pipeline-run-1',
+                status: 'running',
+                percent: 0,
+                current_stage: 'ingestion',
+              },
+            },
+            last_failed_stage: null,
+          },
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/Stage: Starting ingestion/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/Artana ingestion 0%/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Finalizing run/i)).not.toBeInTheDocument()
+  })
 })
 
 describe('DataSourcesList - Workflow streaming and fallback', () => {

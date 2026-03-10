@@ -26,6 +26,9 @@ if TYPE_CHECKING:
         GovernanceDecision,
         GovernanceService,
     )
+    from src.application.services.pipeline_run_trace_service import (
+        PipelineRunTraceService,
+    )
     from src.application.services.ports.ingestion_pipeline_port import (
         IngestionPipelinePort,
     )
@@ -34,6 +37,10 @@ if TYPE_CHECKING:
     from src.domain.entities.source_document import SourceDocument
     from src.domain.repositories.source_document_repository import (
         SourceDocumentRepository,
+    )
+    from src.domain.services.ingestion import (
+        IngestionProgressCallback,
+        IngestionProgressUpdate,
     )
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
     from src.type_definitions.ingestion import IngestResult, RawRecord
@@ -50,6 +57,7 @@ class _EntityRecognitionProcessingContext(Protocol):
     _ingestion_pipeline: IngestionPipelinePort
     _extraction_service: ExtractionService | None
     _governance: GovernanceService
+    _pipeline_trace: PipelineRunTraceService | None
     _agent_timeout_seconds: float
     _agent_timeout_retry_attempts: int
     _agent_timeout_retry_backoff_seconds: float
@@ -177,6 +185,9 @@ class _EntityRecognitionProcessingContext(Protocol):
         dictionary_entity_types_created: int = 0,
         ingestion_entities_created: int = 0,
         ingestion_observations_created: int = 0,
+        relation_claims_count: int = 0,
+        pending_review_relations_count: int = 0,
+        undefined_relations_count: int = 0,
         persisted_relations_count: int = 0,
         concept_members_created_count: int = 0,
         concept_aliases_created_count: int = 0,
@@ -185,6 +196,14 @@ class _EntityRecognitionProcessingContext(Protocol):
         graph_fallback_relation_payloads: tuple[JSONObject, ...] = (),
         errors: tuple[str, ...] = (),
     ) -> EntityRecognitionDocumentOutcome: ...
+
+    def _build_resolver_warning_progress_callback(
+        self,
+        *,
+        document: SourceDocument,
+        pipeline_run_id: str | None,
+        stage: Literal["extraction"],
+    ) -> IngestionProgressCallback | None: ...
 
     async def _process_document_with_extraction(  # noqa: PLR0913
         self,
@@ -216,6 +235,58 @@ class _EntityRecognitionProcessingContext(Protocol):
 
 class _EntityRecognitionProcessingHelpers:
     """Mixin containing heavy document processing paths."""
+
+    def _build_resolver_warning_progress_callback(
+        self: _EntityRecognitionProcessingContext,
+        *,
+        document: SourceDocument,
+        pipeline_run_id: str | None,
+        stage: Literal["extraction"],
+    ) -> IngestionProgressCallback | None:
+        if (
+            self._pipeline_trace is None
+            or pipeline_run_id is None
+            or document.research_space_id is None
+        ):
+            return None
+        trace = self._pipeline_trace
+        research_space_id = document.research_space_id
+
+        def _callback(update: IngestionProgressUpdate) -> None:
+            if update.event_type != "resolver_warning":
+                return
+            payload = {str(key): value for key, value in dict(update.payload).items()}
+            payload.setdefault("document_id", str(document.id))
+            payload.setdefault("external_record_id", document.external_record_id)
+            raw_source_record_id = payload.get("source_record_id")
+            source_record_id = (
+                raw_source_record_id.strip()
+                if isinstance(raw_source_record_id, str)
+                and raw_source_record_id.strip()
+                else None
+            )
+            trace.record_event(
+                research_space_id=research_space_id,
+                source_id=document.source_id,
+                pipeline_run_id=pipeline_run_id,
+                event_type="resolver_warning",
+                stage=stage,
+                scope_kind="document",
+                scope_id=str(document.id),
+                message=update.message,
+                level="warning",
+                status="warning",
+                agent_kind="entity_resolver",
+                error_code="resolver_policy_missing",
+                occurred_at=update.occurred_at,
+                payload={
+                    **payload,
+                    "stage": stage,
+                    "source_record_id": source_record_id,
+                },
+            )
+
+        return _callback
 
     async def _process_document_entity(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self: _EntityRecognitionProcessingContext,
@@ -376,6 +447,36 @@ class _EntityRecognitionProcessingHelpers:
                     timeout_attempts,
                     backoff_seconds,
                 )
+                if (
+                    self._pipeline_trace is not None
+                    and pipeline_run_id is not None
+                    and document.research_space_id is not None
+                ):
+                    self._pipeline_trace.record_event(
+                        research_space_id=document.research_space_id,
+                        source_id=document.source_id,
+                        pipeline_run_id=pipeline_run_id,
+                        event_type="entity_recognition_retry_scheduled",
+                        stage="extraction",
+                        scope_kind="document",
+                        scope_id=str(document.id),
+                        message=(
+                            "Entity recognition timed out and will retry for "
+                            f"document {document.external_record_id}."
+                        ),
+                        level="warning",
+                        status="retrying",
+                        agent_kind="entity_recognition",
+                        occurred_at=datetime.now(UTC),
+                        payload={
+                            "document_id": str(document.id),
+                            "external_record_id": document.external_record_id,
+                            "attempt": attempt_index + 1,
+                            "attempts_total": timeout_attempts,
+                            "timeout_seconds": self._agent_timeout_seconds,
+                            "backoff_seconds": backoff_seconds,
+                        },
+                    )
                 await asyncio.sleep(max(backoff_seconds, 0.0))
             except Exception as exc:  # noqa: BLE001 - surfaced via metadata/outcome
                 logger.exception(
@@ -431,6 +532,37 @@ class _EntityRecognitionProcessingHelpers:
             )
 
         run_id = self._resolve_run_id(contract)
+        if (
+            contract.decision != "generated"
+            and self._pipeline_trace is not None
+            and pipeline_run_id is not None
+            and document.research_space_id is not None
+        ):
+            self._pipeline_trace.record_event(
+                research_space_id=document.research_space_id,
+                source_id=document.source_id,
+                pipeline_run_id=pipeline_run_id,
+                event_type="entity_recognition_decision_warning",
+                stage="extraction",
+                scope_kind="document",
+                scope_id=str(document.id),
+                message=(
+                    "Entity recognition returned a non-generated decision for "
+                    f"document {document.external_record_id}."
+                ),
+                level="warning",
+                status=contract.decision,
+                agent_kind="entity_recognition",
+                agent_run_id=run_id,
+                occurred_at=datetime.now(UTC),
+                payload={
+                    "document_id": str(document.id),
+                    "external_record_id": document.external_record_id,
+                    "decision": contract.decision,
+                    "confidence_score": contract.confidence_score,
+                    "rationale": contract.rationale,
+                },
+            )
         governance = self._governance.evaluate(
             confidence_score=contract.confidence_score,
             evidence_count=len(contract.evidence),
@@ -634,6 +766,11 @@ class _EntityRecognitionProcessingHelpers:
         ingestion_result = self._ingestion_pipeline.run(
             pipeline_records,
             str(document.research_space_id),
+            progress_callback=self._build_resolver_warning_progress_callback(
+                document=document,
+                pipeline_run_id=pipeline_run_id,
+                stage="extraction",
+            ),
         )
         if not ingestion_result.success:
             failure_reason = "kernel_ingestion_failed"
@@ -744,6 +881,13 @@ class _EntityRecognitionProcessingHelpers:
                     research_space_settings=research_space_settings,
                     model_id=model_id,
                     shadow_mode=requested_shadow_mode,
+                    ingestion_progress_callback=(
+                        self._build_resolver_warning_progress_callback(
+                            document=document,
+                            pipeline_run_id=pipeline_run_id,
+                            stage="extraction",
+                        )
+                    ),
                 ),
                 timeout=self._extraction_stage_timeout_seconds,
             )
@@ -952,6 +1096,13 @@ class _EntityRecognitionProcessingHelpers:
                 ingestion_observations_created=(
                     extraction_outcome.ingestion_observations_created
                 ),
+                relation_claims_count=extraction_outcome.relation_claims_count,
+                pending_review_relations_count=(
+                    extraction_outcome.pending_review_relations_count
+                ),
+                undefined_relations_count=(
+                    extraction_outcome.undefined_relations_count
+                ),
                 persisted_relations_count=(
                     extraction_outcome.persisted_relations_count
                 ),
@@ -989,6 +1140,11 @@ class _EntityRecognitionProcessingHelpers:
             ingestion_observations_created=(
                 extraction_outcome.ingestion_observations_created
             ),
+            relation_claims_count=extraction_outcome.relation_claims_count,
+            pending_review_relations_count=(
+                extraction_outcome.pending_review_relations_count
+            ),
+            undefined_relations_count=(extraction_outcome.undefined_relations_count),
             persisted_relations_count=extraction_outcome.persisted_relations_count,
             concept_members_created_count=(
                 extraction_outcome.concept_members_created_count

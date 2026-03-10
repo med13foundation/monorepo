@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -62,6 +63,49 @@ class _MonitorServiceStub:
         return {"events": self._events}
 
 
+class _CostAndCompareMonitorServiceStub:
+    def __init__(self) -> None:
+        self.list_run_costs_calls: list[dict[str, object]] = []
+        self.compare_source_runs_calls: list[dict[str, object]] = []
+
+    def list_run_costs(self, **kwargs: object) -> dict[str, object]:
+        self.list_run_costs_calls.append(kwargs)
+        return {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "items": [
+                {
+                    "run_id": "run-1",
+                    "source_id": str(kwargs["source_id"] or uuid4()),
+                    "research_space_id": str(kwargs["space_id"]),
+                    "source_name": "PubMed Source",
+                    "source_type": kwargs.get("source_type"),
+                    "status": "completed",
+                    "run_owner_user_id": kwargs.get("user_id"),
+                    "run_owner_source": "triggered_by",
+                    "started_at": datetime.now(UTC).isoformat(),
+                    "completed_at": datetime.now(UTC).isoformat(),
+                    "total_duration_ms": 1200,
+                    "total_cost_usd": 1.25,
+                    "extracted_documents": 3,
+                    "persisted_relations": 8,
+                },
+            ],
+            "total": 1,
+        }
+
+    def compare_source_runs(self, **kwargs: object) -> dict[str, object]:
+        self.compare_source_runs_calls.append(kwargs)
+        return {
+            "source_id": str(kwargs["source_id"]),
+            "run_a_id": kwargs["run_a_id"],
+            "run_b_id": kwargs["run_b_id"],
+            "generated_at": datetime.now(UTC).isoformat(),
+            "run_a": {"run_id": kwargs["run_a_id"], "status": "completed"},
+            "run_b": {"run_id": kwargs["run_b_id"], "status": "completed"},
+            "delta": {"total_cost_usd": 0.5},
+        }
+
+
 def _extract_data_payload(sse_event: str) -> dict[str, object]:
     data_line = next(
         line for line in sse_event.splitlines() if line.startswith("data: ")
@@ -114,6 +158,107 @@ def test_parse_requested_source_ids_returns_unique_uuid_strings() -> None:
 def test_parse_requested_source_ids_rejects_invalid_uuid() -> None:
     with pytest.raises(ValueError, match="Invalid source id in source_ids"):
         stream_utils.parse_requested_source_ids("not-a-uuid")
+
+
+def test_list_space_pipeline_run_costs_forwards_query_filters(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "verify_space_membership", lambda *args, **kwargs: None)
+    service = _CostAndCompareMonitorServiceStub()
+    space_id = uuid4()
+
+    response = routes.list_space_pipeline_run_costs(
+        space_id=space_id,
+        query=routes.CostReportQueryParams(
+            source_type="pubmed",
+            user_id="user-123",
+            date_from="2026-01-01T00:00:00Z",
+            date_to="2026-01-31T23:59:59Z",
+            limit=25,
+        ),
+        current_user=SimpleNamespace(id=uuid4(), role="member"),
+        membership_service=object(),
+        monitor_service=service,
+        session=object(),
+    )
+
+    assert response.total == 1
+    assert response.items[0].run_owner_user_id == "user-123"
+    assert service.list_run_costs_calls == [
+        {
+            "space_id": space_id,
+            "source_id": None,
+            "source_type": "pubmed",
+            "user_id": "user-123",
+            "date_from": "2026-01-01T00:00:00Z",
+            "date_to": "2026-01-31T23:59:59Z",
+            "limit": 25,
+        },
+    ]
+
+
+def test_list_user_pipeline_run_costs_prefers_path_user_id(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "verify_space_membership", lambda *args, **kwargs: None)
+    service = _CostAndCompareMonitorServiceStub()
+    space_id = uuid4()
+
+    response = routes.list_user_pipeline_run_costs(
+        space_id=space_id,
+        user_id="path-user",
+        query=routes.CostReportQueryParams(
+            source_type="pubmed",
+            user_id="query-user",
+            date_from=None,
+            date_to=None,
+            limit=10,
+        ),
+        current_user=SimpleNamespace(id=uuid4(), role="member"),
+        membership_service=object(),
+        monitor_service=service,
+        session=object(),
+    )
+
+    assert response.items[0].run_owner_user_id == "path-user"
+    assert service.list_run_costs_calls == [
+        {
+            "space_id": space_id,
+            "source_id": None,
+            "source_type": "pubmed",
+            "user_id": "path-user",
+            "date_from": None,
+            "date_to": None,
+            "limit": 10,
+        },
+    ]
+
+
+def test_compare_source_pipeline_runs_returns_validated_payload(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "verify_space_membership", lambda *args, **kwargs: None)
+    service = _CostAndCompareMonitorServiceStub()
+    space_id = uuid4()
+    source_id = uuid4()
+
+    response = routes.compare_source_pipeline_runs(
+        space_id=space_id,
+        source_id=source_id,
+        run_a="run-a",
+        run_b="run-b",
+        route_context=routes.WorkflowMonitorRouteContext(
+            current_user=SimpleNamespace(id=uuid4(), role="member"),
+            membership_service=object(),
+            monitor_service=service,
+            session=object(),
+        ),
+    )
+
+    assert response.source_id == source_id
+    assert response.delta == {"total_cost_usd": 0.5}
+    assert service.compare_source_runs_calls == [
+        {
+            "space_id": space_id,
+            "source_id": source_id,
+            "run_a_id": "run-a",
+            "run_b_id": "run-b",
+        },
+    ]
 
 
 def test_sse_event_payload_serializes_to_expected_shape() -> None:

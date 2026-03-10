@@ -29,7 +29,7 @@ from src.infrastructure.llm.config import (
     load_runtime_policy,
 )
 from src.infrastructure.llm.state.shared_postgres_store import (
-    get_shared_artana_postgres_store,
+    create_artana_postgres_store,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class ArtanaEvidenceSentenceHarnessAdapter(EvidenceSentenceHarnessPort):
         self._governance = GovernanceConfig.from_environment()
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
-        self._artana_store = artana_store or self._create_store()
+        self._artana_store = artana_store
 
     def generate(
         self,
@@ -177,7 +177,7 @@ class ArtanaEvidenceSentenceHarnessAdapter(EvidenceSentenceHarnessPort):
             schema_name_fallback="evidence_sentence_contract",
         )
         kernel = ArtanaKernel(
-            store=self._artana_store,
+            store=self._artana_store or self._create_store(),
             model_port=model_port,
         )
         client = SingleStepModelClient(kernel=kernel)
@@ -208,7 +208,7 @@ class ArtanaEvidenceSentenceHarnessAdapter(EvidenceSentenceHarnessPort):
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        return get_shared_artana_postgres_store()
+        return create_artana_postgres_store()
 
     @staticmethod
     def _create_tenant(

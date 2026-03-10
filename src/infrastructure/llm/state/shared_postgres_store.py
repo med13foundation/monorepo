@@ -175,6 +175,24 @@ def get_shared_artana_postgres_store() -> PostgresStore:
         return _SHARED_STORE_STATE.store
 
 
+def create_artana_postgres_store() -> PostgresStore:
+    """Create a new Artana PostgresStore using the effective runtime config."""
+    if _ARTANA_IMPORT_ERROR is not None:  # pragma: no cover - import guard
+        msg = (
+            "artana-kernel is required for Artana state storage. Install dependency "
+            "'artana @ git+https://github.com/aandresalvarez/artana-kernel.git@main'."
+        )
+        raise RuntimeError(msg) from _ARTANA_IMPORT_ERROR
+
+    resolved_config = resolve_artana_postgres_store_config()
+    return PostgresStore(
+        resolved_config.dsn,
+        min_pool_size=resolved_config.min_pool_size,
+        max_pool_size=resolved_config.max_pool_size,
+        command_timeout_seconds=resolved_config.command_timeout_seconds,
+    )
+
+
 async def close_shared_artana_postgres_store() -> None:
     """Best-effort shutdown for the shared Artana PostgresStore."""
     with _SHARED_STORE_LOCK:
@@ -212,6 +230,7 @@ def _reset_shared_artana_postgres_store_for_tests() -> None:
 __all__ = [
     "ArtanaPostgresStoreConfig",
     "_reset_shared_artana_postgres_store_for_tests",
+    "create_artana_postgres_store",
     "close_shared_artana_postgres_store",
     "close_shared_artana_postgres_store_sync",
     "get_shared_artana_postgres_store",

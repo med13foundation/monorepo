@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from src.domain.services.pubmed_ingestion import PubMedQueryValidationResult
+
 from .base_ingestor import BaseIngestor
 from .pubmed_record_parser_mixin import PubMedRecordParserMixin
 
@@ -144,6 +146,68 @@ class PubMedIngestor(BaseIngestor, PubMedRecordParserMixin):
             returned_count=search_page.returned_count,
         )
 
+    async def validate_query(
+        self,
+        query: str,
+        **kwargs: JSONValue,
+    ) -> PubMedQueryValidationResult:
+        """Validate a PubMed query against ESearch and capture API feedback."""
+        full_query = self._build_full_query(query, **kwargs)
+        esearch_kwargs = {
+            key: value
+            for key, value in kwargs.items()
+            if key not in {"retstart", "retmax", "max_results", "query"}
+        }
+        params = self._build_esearch_params(
+            full_query=full_query,
+            retstart=0,
+            retmax=0,
+            **esearch_kwargs,
+        )
+        response = await self._make_request("GET", "esearch.fcgi", params=params)
+        try:
+            data = self._ensure_raw_record(response.json())
+        except ValueError as exc:
+            return PubMedQueryValidationResult(
+                is_valid=False,
+                api_feedback=f"PubMed query validation returned malformed JSON: {exc}",
+            )
+
+        top_level_error = data.get("error")
+        if isinstance(top_level_error, str) and top_level_error.strip():
+            return PubMedQueryValidationResult(
+                is_valid=False,
+                api_feedback=top_level_error.strip(),
+            )
+
+        esearch_section = data.get("esearchresult")
+        if not isinstance(esearch_section, dict):
+            return PubMedQueryValidationResult(
+                is_valid=False,
+                api_feedback="PubMed query validation response was missing esearchresult.",
+            )
+
+        errors = self._extract_feedback_messages(esearch_section.get("errorlist"))
+        warnings = self._extract_feedback_messages(esearch_section.get("warninglist"))
+        translated_query = self._coerce_optional_string(
+            esearch_section.get("querytranslation"),
+        )
+        result_count = self._coerce_int(esearch_section.get("count"), 0)
+        feedback_parts: list[str] = []
+        if errors:
+            feedback_parts.extend(errors)
+        if warnings:
+            feedback_parts.extend(warnings)
+        if translated_query:
+            feedback_parts.append(f"PubMed translated query: {translated_query}")
+
+        return PubMedQueryValidationResult(
+            is_valid=not errors,
+            api_feedback=" ".join(feedback_parts) or None,
+            translated_query=translated_query,
+            result_count=result_count,
+        )
+
     async def _search_publications(
         self,
         query: str,
@@ -159,47 +223,20 @@ class PubMedIngestor(BaseIngestor, PubMedRecordParserMixin):
         Returns:
             List of PubMed article IDs
         """
-        # Build comprehensive search query
-        query_terms = [query]
-
-        # Add filters if provided
-        publication_date_from = kwargs.get("publication_date_from")
-        if isinstance(publication_date_from, str):
-            query_terms.append(f"{publication_date_from}[pdat]")
-
-        publication_types = kwargs.get("publication_types")
-        if isinstance(publication_types, list):
-            pub_types = " OR ".join(
-                f'"{pt}"[pt]' for pt in publication_types if isinstance(pt, str)
-            )
-            if pub_types:
-                query_terms.append(f"({pub_types})")
-
-        if self._coerce_bool(kwargs.get("open_access_only"), default=True):
-            # Use PubMed "free full text" subset, then enforce PMCID presence
-            # post-fetch so downstream enrichment can deterministically retrieve
-            # full text through PMC/Europe PMC.
-            query_terms.append('"free full text"[sb]')
-
-        full_query = " AND ".join(f"({term})" for term in query_terms)
-
-        # Use ESearch to find relevant records
-        mindate_value = kwargs.get("mindate")
-        maxdate_value = kwargs.get("maxdate")
-
         retstart = max(self._coerce_int(kwargs.get("retstart"), 0), 0)
         retmax = max(self._coerce_int(kwargs.get("max_results"), 500), 1)
-        params: dict[str, str | int | float | bool | None] = {
-            "db": "pubmed",
-            "term": full_query,
-            "retmode": "json",
-            "retstart": retstart,
-            "retmax": retmax,
-            "sort": "relevance",
-            "datetype": "pdat",
-            "mindate": mindate_value if isinstance(mindate_value, str) else None,
-            "maxdate": maxdate_value if isinstance(maxdate_value, str) else None,
+        full_query = self._build_full_query(query, **kwargs)
+        esearch_kwargs = {
+            key: value
+            for key, value in kwargs.items()
+            if key not in {"retstart", "retmax", "max_results", "query"}
         }
+        params = self._build_esearch_params(
+            full_query=full_query,
+            retstart=retstart,
+            retmax=retmax,
+            **esearch_kwargs,
+        )
 
         response = await self._make_request("GET", "esearch.fcgi", params=params)
         data = self._ensure_raw_record(response.json())
@@ -230,6 +267,85 @@ class PubMedIngestor(BaseIngestor, PubMedRecordParserMixin):
             retstart=response_retstart,
             retmax=response_retmax,
         )
+
+    def _build_full_query(self, query: str, **kwargs: JSONValue) -> str:
+        """Compose the final PubMed ESearch term including source filters."""
+        query_terms = [query]
+
+        publication_date_from = kwargs.get("publication_date_from")
+        if isinstance(publication_date_from, str):
+            query_terms.append(f"{publication_date_from}[pdat]")
+
+        publication_types = kwargs.get("publication_types")
+        if isinstance(publication_types, list):
+            pub_types = " OR ".join(
+                f'"{pt}"[pt]' for pt in publication_types if isinstance(pt, str)
+            )
+            if pub_types:
+                query_terms.append(f"({pub_types})")
+
+        if self._coerce_bool(kwargs.get("open_access_only"), default=True):
+            query_terms.append('"free full text"[sb]')
+
+        return " AND ".join(f"({term})" for term in query_terms)
+
+    def _build_esearch_params(
+        self,
+        *,
+        full_query: str,
+        retstart: int,
+        retmax: int,
+        **kwargs: JSONValue,
+    ) -> dict[str, str | int | float | bool | None]:
+        """Build the PubMed ESearch request payload."""
+        mindate_value = kwargs.get("mindate")
+        maxdate_value = kwargs.get("maxdate")
+        return {
+            "db": "pubmed",
+            "term": full_query,
+            "retmode": "json",
+            "retstart": retstart,
+            "retmax": retmax,
+            "sort": "relevance",
+            "datetype": "pdat",
+            "mindate": mindate_value if isinstance(mindate_value, str) else None,
+            "maxdate": maxdate_value if isinstance(maxdate_value, str) else None,
+        }
+
+    @staticmethod
+    def _extract_feedback_messages(raw_feedback: object) -> list[str]:
+        if isinstance(raw_feedback, str):
+            normalized = raw_feedback.strip()
+            return [normalized] if normalized else []
+        if isinstance(raw_feedback, list):
+            return [
+                entry.strip()
+                for entry in raw_feedback
+                if isinstance(entry, str) and entry.strip()
+            ]
+        if isinstance(raw_feedback, dict):
+            messages = []
+            for key, value in raw_feedback.items():
+                if isinstance(value, str) and value.strip():
+                    messages.append(f"{key}: {value.strip()}")
+                    continue
+                if isinstance(value, list):
+                    normalized_values = [
+                        item.strip()
+                        for item in value
+                        if isinstance(item, str) and item.strip()
+                    ]
+                    if normalized_values:
+                        messages.append(f"{key}: {', '.join(normalized_values)}")
+            return messages
+        return []
+
+    @staticmethod
+    def _coerce_optional_string(raw_value: object) -> str | None:
+        if not isinstance(raw_value, str):
+            return None
+        normalized = raw_value.strip()
+        return normalized or None
 
     def _enforce_open_access_record_set(
         self,

@@ -115,6 +115,13 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
         query_generation_fallback_reason = (
             query_resolution.query_generation_fallback_reason
         )
+        pipeline_run_id = (
+            context.pipeline_run_id
+            if context is not None
+            and isinstance(context.pipeline_run_id, str)
+            and context.pipeline_run_id.strip()
+            else None
+        )
         checkpoint_before = (
             dict(context.source_sync_state.checkpoint_payload)
             if context is not None
@@ -128,12 +135,41 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
                 metadata=config.model_dump(mode="json"),
             )
         )
+        query_resolved_message = "Resolved PubMed query configuration."
+        if query_generation_fallback_reason is not None:
+            query_resolved_message = "Fell back to base PubMed query configuration."
+        self._emit_progress_update(
+            context=context,
+            event_type="query_resolved",
+            message=query_resolved_message,
+            payload={
+                "executed_query": config.query,
+                "query_signature": query_signature,
+                "query_generation_decision": query_generation_decision,
+                "query_generation_confidence": query_generation_confidence,
+                "query_generation_run_id": query_generation_run_id,
+                "query_generation_execution_mode": (query_generation_execution_mode),
+                "query_generation_fallback_reason": (query_generation_fallback_reason),
+            },
+        )
 
         fetch_result = await self._fetch_records_with_checkpoint(
             config=config,
             checkpoint_before=checkpoint_before,
         )
         raw_records_data = fetch_result.records
+        self._emit_progress_update(
+            context=context,
+            event_type="records_fetched",
+            message=(
+                "Fetched candidate PubMed records "
+                f"({fetch_result.fetched_records} records)."
+            ),
+            payload={
+                "fetched_records": fetch_result.fetched_records,
+                "checkpoint_kind": fetch_result.checkpoint_kind.value,
+            },
+        )
         forced_external_record_ids: set[str] | None = None
         if isinstance(config.pinned_pubmed_id, str) and config.pinned_pubmed_id.strip():
             normalized_pmid = config.pinned_pubmed_id.strip()
@@ -158,6 +194,19 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
             context=context,
             raw_storage_key=raw_storage_key,
         )
+        self._emit_progress_update(
+            context=context,
+            event_type="source_documents_upserted",
+            message=(
+                "Upserted source documents for fetched PubMed records "
+                f"({len(raw_records_data)} documents)."
+            ),
+            payload={
+                "document_count": len(raw_records_data),
+                "raw_storage_key": raw_storage_key,
+                "pipeline_run_id": pipeline_run_id,
+            },
+        )
 
         raw_records = self._to_pipeline_records(
             filtered_records,
@@ -167,11 +216,33 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
 
         observations_created = 0
         if source.research_space_id is not None:
+            self._emit_progress_update(
+                context=context,
+                event_type="kernel_ingestion_started",
+                message="Kernel ingestion pipeline started for filtered PubMed records.",
+                payload={
+                    "record_count": len(raw_records),
+                    "pipeline_run_id": pipeline_run_id,
+                },
+            )
             result = self._pipeline.run(
                 raw_records,
                 research_space_id=str(source.research_space_id),
+                progress_callback=self._build_pipeline_progress_callback(context),
             )
             observations_created = result.observations_created
+            self._emit_progress_update(
+                context=context,
+                event_type="kernel_ingestion_finished",
+                message="Kernel ingestion pipeline finished for PubMed records.",
+                payload={
+                    "record_count": len(raw_records),
+                    "observations_created": observations_created,
+                    "error_count": len(result.errors),
+                    "pipeline_run_id": pipeline_run_id,
+                    "success": result.success,
+                },
+            )
         else:
             # Keep source-level behavior consistent with legacy implementation
             # without requiring an injected logger.
@@ -205,6 +276,7 @@ class PubMedIngestionService(PubMedIngestionServiceHelpers):
             extraction_targets=self._build_extraction_targets(
                 filtered_records,
                 source_type=source.source_type,
+                pipeline_run_id=pipeline_run_id,
             ),
             executed_query=config.query,
             query_generation_run_id=query_generation_run_id,

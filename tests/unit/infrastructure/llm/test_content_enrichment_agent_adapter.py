@@ -166,8 +166,8 @@ async def test_enrich_executes_artana_step_for_unstructured_sources() -> None:
 
 
 @pytest.mark.asyncio
-async def test_close_closes_kernel_and_model_port() -> None:
+async def test_close_is_noop_when_runtime_is_scoped_per_enrich_call() -> None:
     with _build_adapter() as (adapter, _, kernel, model_port):
         await adapter.close()
-    kernel.close.assert_awaited_once()
-    model_port.aclose.assert_awaited_once()
+    kernel.close.assert_not_awaited()
+    model_port.aclose.assert_not_awaited()

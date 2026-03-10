@@ -546,6 +546,7 @@ export interface SourceWorkflowMonitorResponse {
   last_run: JSONObject | null
   pipeline_runs: JSONObject[]
   documents: JSONObject[]
+  paper_candidates?: JSONObject[]
   document_status_counts: Record<string, number>
   extraction_queue: JSONObject[]
   extraction_queue_status_counts: Record<string, number>
@@ -573,9 +574,21 @@ export interface SourceWorkflowEvent {
   run_id: string | null
   occurred_at: string
   category: SourceWorkflowEventCategory
+  event_type?: string | null
   stage: string | null
   status: string | null
+  level?: string | null
+  scope_kind?: string | null
+  scope_id?: string | null
+  agent_kind?: string | null
+  agent_run_id?: string | null
+  error_code?: string | null
   message: string
+  started_at?: string | null
+  completed_at?: string | null
+  duration_ms?: number | null
+  queue_wait_ms?: number | null
+  timeout_budget_ms?: number | null
   payload: JSONObject
 }
 
@@ -586,6 +599,80 @@ export interface SourceWorkflowEventsResponse {
   events: SourceWorkflowEvent[]
   total: number
   has_more: boolean
+}
+
+export interface PipelineRunSummaryEnvelopeResponse {
+  source_id: string
+  run_id: string
+  generated_at: string
+  run: JSONObject
+}
+
+export interface SourceWorkflowDocumentTraceResponse {
+  source_id: string
+  run_id: string
+  document_id: string
+  generated_at: string
+  document: JSONObject | null
+  extraction_rows: JSONObject[]
+  events: SourceWorkflowEvent[]
+}
+
+export interface SourceWorkflowQueryTraceResponse {
+  source_id: string
+  run_id: string
+  generated_at: string
+  base_query: string | null
+  executed_query: string | null
+  query_generation: JSONObject
+  events: SourceWorkflowEvent[]
+}
+
+export interface PipelineRunTimingSummaryResponse {
+  source_id: string
+  run_id: string
+  generated_at: string
+  timing_summary: JSONObject
+}
+
+export interface PipelineRunCostSummaryResponse {
+  source_id: string
+  run_id: string
+  generated_at: string
+  cost_summary: JSONObject
+}
+
+export interface PipelineRunCostReportItem {
+  run_id: string
+  source_id: string
+  research_space_id: string
+  source_name: string | null
+  source_type: string | null
+  status: string | null
+  run_owner_user_id: string | null
+  run_owner_source: string | null
+  started_at: string | null
+  completed_at: string | null
+  total_duration_ms: number | null
+  total_cost_usd: number
+  extracted_documents: number
+  persisted_relations: number
+}
+
+export interface PipelineRunCostReportResponse {
+  generated_at: string
+  items: PipelineRunCostReportItem[]
+  total: number
+}
+
+export interface PipelineRunComparisonResponse {
+  source_id: string
+  run_a_id: string
+  run_b_id: string
+  generated_at: string
+  run_a: JSONObject
+  run_b: JSONObject
+  delta: JSONObject
 }
 
 export interface SourceWorkflowCardStatusPayload {

@@ -8,7 +8,7 @@ import hashlib
 import json
 import logging
 import tempfile
-from dataclasses import dataclass
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,40 +22,29 @@ from src.domain.services.ingestion import IngestionExtractionTarget
 from src.type_definitions.ingestion import RawRecord as IngestionRawRecord
 from src.type_definitions.storage import StorageUseCase
 
+from ._pubmed_ingestion_models import LedgerDedupOutcome, QueryResolution
+from ._pubmed_ingestion_record_helpers import extract_pubmed_id
+
 if TYPE_CHECKING:
     from src.application.services.pubmed_ingestion_service import (
         PubMedIngestionService,
     )
+    from src.application.services.query_generation_service import (
+        QueryGenerationRequest,
+        QueryGenerationResult,
+    )
     from src.domain.entities import data_source_configs, user_data_source
-    from src.domain.services.ingestion import IngestionRunContext
+    from src.domain.services.ingestion import (
+        IngestionProgressCallback,
+        IngestionProgressEventType,
+        IngestionProgressUpdate,
+        IngestionRunContext,
+    )
     from src.type_definitions.common import JSONObject
 
 
 logger = logging.getLogger(__name__)
 LOW_CONFIDENCE_THRESHOLD = 0.5
-
-
-@dataclass(frozen=True)
-class _LedgerDedupOutcome:
-    """Result of applying record-ledger deduplication to fetched records."""
-
-    filtered_records: list[JSONObject]
-    entries_to_upsert: list[SourceRecordLedgerEntry]
-    new_records: int
-    updated_records: int
-    unchanged_records: int
-
-
-@dataclass(frozen=True)
-class _QueryResolution:
-    """Resolved query configuration and AI generation metadata."""
-
-    config: data_source_configs.PubMedQueryConfig
-    query_generation_decision: str
-    query_generation_confidence: float
-    query_generation_run_id: str | None
-    query_generation_execution_mode: str
-    query_generation_fallback_reason: str | None
 
 
 class PubMedIngestionServiceHelpers:
@@ -66,6 +55,7 @@ class PubMedIngestionServiceHelpers:
         records: list[JSONObject],
         *,
         source_type: user_data_source.SourceType,
+        pipeline_run_id: str | None = None,
     ) -> tuple[IngestionExtractionTarget, ...]:
         targets: list[IngestionExtractionTarget] = []
         seen_source_record_ids: set[str] = set()
@@ -79,33 +69,25 @@ class PubMedIngestionServiceHelpers:
                 "source_record_id": source_record_id,
                 "source_type": source_type.value,
             }
+            if isinstance(pipeline_run_id, str) and pipeline_run_id.strip():
+                metadata_payload["pipeline_run_id"] = pipeline_run_id.strip()
             targets.append(
                 IngestionExtractionTarget(
                     source_record_id=source_record_id,
                     source_type=source_type.value,
                     publication_id=None,
-                    pubmed_id=self._extract_pubmed_id(record),
+                    pubmed_id=extract_pubmed_id(record),
                     metadata=metadata_payload,
                 ),
             )
         return tuple(targets)
-
-    @staticmethod
-    def _extract_pubmed_id(record: JSONObject) -> str | None:
-        for key in ("pmid", "pubmed_id"):
-            value = record.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-            if isinstance(value, int):
-                return str(value)
-        return None
 
     async def _resolve_query_configuration(
         self: PubMedIngestionService,
         *,
         source: user_data_source.UserDataSource,
         config: data_source_configs.PubMedQueryConfig,
-    ) -> _QueryResolution:
+    ) -> QueryResolution:
         """Resolve AI-managed query overrides and associated metadata."""
         from .query_generation_service import QueryGenerationRequest
 
@@ -119,6 +101,12 @@ class PubMedIngestionServiceHelpers:
             research_space_id=source.research_space_id,
         )
         result = await self._query_generation_service.resolve_query(request)
+        result = await self._repair_invalid_pubmed_query(
+            source=source,
+            config=config,
+            request=request,
+            result=result,
+        )
 
         resolved_query = config.query
         if result.query.strip() and result.query.strip() != config.query:
@@ -145,7 +133,7 @@ class PubMedIngestionServiceHelpers:
                 result.decision,
             )
 
-        return _QueryResolution(
+        return QueryResolution(
             config=resolved_config,
             query_generation_decision=result.decision,
             query_generation_confidence=result.confidence,
@@ -153,6 +141,105 @@ class PubMedIngestionServiceHelpers:
             query_generation_execution_mode=result.execution_mode,
             query_generation_fallback_reason=result.fallback_reason,
         )
+
+    async def _repair_invalid_pubmed_query(
+        self: PubMedIngestionService,
+        *,
+        source: user_data_source.UserDataSource,
+        config: data_source_configs.PubMedQueryConfig,
+        request: QueryGenerationRequest,
+        result: QueryGenerationResult,
+    ) -> QueryGenerationResult:
+        from .query_generation_service import QueryGenerationResult
+
+        if not request.is_ai_managed:
+            return result
+        if not isinstance(
+            self._gateway,
+            pubmed_ingestion.PubMedQueryValidationGateway,
+        ):
+            return result
+
+        candidate_query = result.query.strip()
+        if not candidate_query or result.execution_mode != "ai":
+            return result
+
+        validation = await self._gateway.validate_query(
+            config.model_copy(update={"query": candidate_query}),
+        )
+        if validation.is_valid:
+            return result
+
+        repair_prompt = self._build_query_repair_prompt(
+            original_prompt=request.agent_prompt,
+            invalid_query=candidate_query,
+            validation=validation,
+        )
+        logger.warning(
+            "Generated PubMed query failed validation; retrying with API feedback.",
+            extra={
+                "source_id": str(source.id),
+                "invalid_query": candidate_query,
+                "api_feedback": validation.api_feedback,
+            },
+        )
+        repaired_result: QueryGenerationResult = (
+            await self._query_generation_service.resolve_query(
+                replace(request, agent_prompt=repair_prompt),
+            )
+        )
+        repaired_query = repaired_result.query.strip()
+        if repaired_query:
+            repaired_validation = await self._gateway.validate_query(
+                config.model_copy(update={"query": repaired_query}),
+            )
+            if repaired_validation.is_valid:
+                return repaired_result
+
+        logger.warning(
+            "PubMed query repair did not produce a valid query; falling back to base query.",
+            extra={
+                "source_id": str(source.id),
+                "base_query": request.base_query,
+                "api_feedback": validation.api_feedback,
+            },
+        )
+        return QueryGenerationResult(
+            query=request.base_query.strip(),
+            decision="fallback",
+            confidence=0.0,
+            run_id=repaired_result.run_id,
+            execution_mode="ai",
+            fallback_reason="pubmed_api_query_validation_failed",
+        )
+
+    @staticmethod
+    def _build_query_repair_prompt(
+        *,
+        original_prompt: str,
+        invalid_query: str,
+        validation: pubmed_ingestion.PubMedQueryValidationResult,
+    ) -> str:
+        prompt_sections: list[str] = []
+        normalized_original_prompt = original_prompt.strip()
+        if normalized_original_prompt:
+            prompt_sections.append(normalized_original_prompt)
+        prompt_sections.extend(
+            [
+                "Your previous PubMed query failed validation.",
+                f"Malformed query: {invalid_query}",
+            ],
+        )
+        if validation.api_feedback:
+            prompt_sections.append(f"PubMed API feedback: {validation.api_feedback}")
+        if validation.translated_query:
+            prompt_sections.append(
+                f"PubMed query translation: {validation.translated_query}",
+            )
+        prompt_sections.append(
+            "Repair the query using the same research intent. Return a valid PubMed Boolean query only.",
+        )
+        return "\n\n".join(prompt_sections)
 
     @staticmethod
     def _apply_pinned_pubmed_filter(
@@ -192,6 +279,52 @@ class PubMedIngestionServiceHelpers:
             fetched_records=len(records),
             checkpoint_after=None,
         )
+
+    @staticmethod
+    def _emit_progress_update(
+        *,
+        context: IngestionRunContext | None,
+        event_type: IngestionProgressEventType,
+        message: str,
+        payload: JSONObject | None = None,
+    ) -> None:
+        if context is None or context.progress_callback is None:
+            return
+        from src.domain.services.ingestion import IngestionProgressUpdate
+
+        try:
+            context.progress_callback(
+                IngestionProgressUpdate(
+                    event_type=event_type,
+                    message=message,
+                    ingestion_job_id=context.ingestion_job_id,
+                    payload=payload or {},
+                ),
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            logger.warning(
+                "Failed to emit PubMed ingestion progress update %s",
+                event_type,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _build_pipeline_progress_callback(
+        context: IngestionRunContext | None,
+    ) -> IngestionProgressCallback | None:
+        if context is None or context.progress_callback is None:
+            return None
+
+        def _forward(update: IngestionProgressUpdate) -> None:
+            context.progress_callback(
+                replace(
+                    update,
+                    ingestion_job_id=update.ingestion_job_id
+                    or context.ingestion_job_id,
+                ),
+            )
+
+        return _forward
 
     @staticmethod
     def _build_fallback_checkpoint(
@@ -248,9 +381,9 @@ class PubMedIngestionServiceHelpers:
         records: list[JSONObject],
         context: IngestionRunContext | None,
         force_external_record_ids: set[str] | None = None,
-    ) -> _LedgerDedupOutcome:
+    ) -> LedgerDedupOutcome:
         if context is None or context.source_record_ledger_repository is None:
-            return _LedgerDedupOutcome(
+            return LedgerDedupOutcome(
                 filtered_records=records,
                 entries_to_upsert=[],
                 new_records=len(records),
@@ -321,7 +454,7 @@ class PubMedIngestionServiceHelpers:
             updated_records += 1
             filtered_records.append(record)
 
-        return _LedgerDedupOutcome(
+        return LedgerDedupOutcome(
             filtered_records=filtered_records,
             entries_to_upsert=entries_to_upsert,
             new_records=new_records,
@@ -443,6 +576,12 @@ class PubMedIngestionServiceHelpers:
             metadata_payload: JSONObject = {
                 "raw_record": dict(record),
             }
+            if (
+                context is not None
+                and isinstance(context.pipeline_run_id, str)
+                and context.pipeline_run_id.strip()
+            ):
+                metadata_payload["pipeline_run_id"] = context.pipeline_run_id.strip()
             documents.append(
                 source_document.SourceDocument(
                     id=uuid4(),

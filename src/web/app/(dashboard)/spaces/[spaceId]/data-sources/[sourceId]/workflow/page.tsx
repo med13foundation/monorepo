@@ -2,12 +2,21 @@ import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 
 import { fetchSpaceArtanaRunTrace } from '@/lib/api/artana'
-import { fetchSourcePipelineRuns, fetchSourceWorkflowMonitor } from '@/lib/api/kernel'
+import {
+  fetchSourcePipelineRuns,
+  fetchSourceWorkflowEvents,
+  fetchSourceWorkflowMonitor,
+} from '@/lib/api/kernel'
 import { authOptions } from '@/lib/auth'
 import type { ArtanaRunTraceResponse } from '@/types/artana'
-import type { SourcePipelineRunsResponse, SourceWorkflowMonitorResponse } from '@/types/kernel'
+import type {
+  SourcePipelineRunsResponse,
+  SourceWorkflowEventsResponse,
+  SourceWorkflowMonitorResponse,
+} from '@/types/kernel'
 
 import { SourceWorkflowMonitorLiveClient } from './source-workflow-monitor-live-client'
+import { resolveInitialWorkflowRunId } from './source-workflow-monitor-run-selection'
 import type { WorkflowTabKey } from './source-workflow-monitor-tab-sections'
 
 interface SourceWorkflowMonitorPageProps {
@@ -38,7 +47,7 @@ export default async function SourceWorkflowMonitorPage({
 }: SourceWorkflowMonitorPageProps) {
   const { spaceId, sourceId } = await params
   const resolvedSearchParams = searchParams ? await searchParams : undefined
-  const selectedRunId = firstParam(resolvedSearchParams?.run_id)
+  const requestedRunId = firstParam(resolvedSearchParams?.run_id)
   const initialTab = parseTab(firstParam(resolvedSearchParams?.tab))
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
@@ -50,6 +59,7 @@ export default async function SourceWorkflowMonitorPage({
   let monitor: SourceWorkflowMonitorResponse | null = null
   let monitorError: string | null = null
   let pipelineRuns: SourcePipelineRunsResponse | null = null
+  let workflowEvents: SourceWorkflowEventsResponse | null = null
   let trace: ArtanaRunTraceResponse | null = null
   let traceError: string | null = null
 
@@ -58,7 +68,7 @@ export default async function SourceWorkflowMonitorPage({
       spaceId,
       sourceId,
       {
-        run_id: selectedRunId,
+        run_id: requestedRunId,
         limit: 50,
         include_graph: true,
       },
@@ -74,9 +84,29 @@ export default async function SourceWorkflowMonitorPage({
     pipelineRuns = null
   }
 
-  if (selectedRunId) {
+  const effectiveRunId = resolveInitialWorkflowRunId(
+    requestedRunId,
+    monitor,
+    pipelineRuns,
+  )
+
+  try {
+    workflowEvents = await fetchSourceWorkflowEvents(
+      spaceId,
+      sourceId,
+      {
+        run_id: effectiveRunId,
+        limit: 100,
+      },
+      token,
+    )
+  } catch {
+    workflowEvents = null
+  }
+
+  if (requestedRunId) {
     try {
-      trace = await fetchSpaceArtanaRunTrace(spaceId, selectedRunId, token)
+      trace = await fetchSpaceArtanaRunTrace(spaceId, requestedRunId, token)
     } catch (error) {
       traceError = error instanceof Error ? error.message : 'Unable to load Artana trace.'
     }
@@ -86,13 +116,19 @@ export default async function SourceWorkflowMonitorPage({
     <SourceWorkflowMonitorLiveClient
       spaceId={spaceId}
       sourceId={sourceId}
-      selectedRunId={selectedRunId}
-      initialMonitor={monitor}
-      initialMonitorError={monitorError}
-      initialPipelineRuns={pipelineRuns}
-      initialTrace={trace}
-      initialTraceError={traceError}
+      selectedRunId={effectiveRunId}
+      traceRunId={requestedRunId}
       initialTab={initialTab}
+      initialState={{
+        monitor,
+        pipelineRuns,
+        workflowEvents,
+        trace,
+      }}
+      initialErrors={{
+        monitor: monitorError,
+        trace: traceError,
+      }}
     />
   )
 }

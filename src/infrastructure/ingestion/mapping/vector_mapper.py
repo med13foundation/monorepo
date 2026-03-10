@@ -14,6 +14,7 @@ from src.infrastructure.ingestion.types import MappedObservation, RawRecord
 if TYPE_CHECKING:
     from src.domain.entities.kernel.dictionary import DictionarySearchResult
     from src.domain.ports.dictionary_port import DictionaryPort
+    from src.domain.services.ingestion import IngestionProgressCallback
     from src.type_definitions.common import JSONObject
 
 
@@ -45,6 +46,48 @@ def _read_top_k() -> int:
 
 VECTOR_MAPPER_SIMILARITY_THRESHOLD = _read_similarity_threshold()
 VECTOR_MAPPER_TOP_K = _read_top_k()
+_COMMON_IGNORED_FIELDS = frozenset(
+    {
+        "created_at",
+        "date",
+        "fetched_at",
+        "id",
+        "identifier",
+        "original_source_id",
+        "source",
+        "source_id",
+        "source_record_id",
+        "timestamp",
+        "type",
+        "updated_at",
+    },
+)
+_PUBMED_PUBLICATION_IGNORED_FIELDS = frozenset(
+    {
+        "abstract",
+        "authors",
+        "country",
+        "doi",
+        "fetched_at",
+        "issue",
+        "journal",
+        "keywords",
+        "language",
+        "medline_date",
+        "mesh_terms",
+        "pages",
+        "pmc_id",
+        "pmcid",
+        "pmid",
+        "publication_date",
+        "publication_types",
+        "pubmed_id",
+        "pubmed_ids",
+        "source",
+        "title",
+        "volume",
+    },
+)
 
 
 class VectorMapper:
@@ -62,23 +105,47 @@ class VectorMapper:
         self.dictionary_repo = dictionary_repository
         self.similarity_threshold = min(1.0, max(0.0, similarity_threshold))
         self.top_k = max(1, top_k)
+        self._search_cache: dict[
+            tuple[str | None, str],
+            list[DictionarySearchResult],
+        ] = {}
+        self._last_run_metrics: JSONObject | None = None
 
     def map(self, record: RawRecord) -> list[MappedObservation]:
+        return self.map_with_progress(record)
+
+    def map_with_progress(
+        self,
+        record: RawRecord,
+        *,
+        progress_callback: IngestionProgressCallback | None = None,
+    ) -> list[MappedObservation]:
+        _ = progress_callback
         observations: list[MappedObservation] = []
         subject_anchor = self._extract_subject_anchor(record)
         observed_at = self._extract_timestamp(record)
         domain_context = self._extract_domain_context(record)
+        metrics: dict[str, int] = {
+            "searched_field_count": 0,
+            "skipped_field_count": 0,
+            "cache_hit_count": 0,
+            "cache_miss_count": 0,
+        }
 
         for key, value in record.data.items():
-            if value is None or value == "":
+            if self._should_skip_field(record, key, value):
+                metrics["skipped_field_count"] += 1
                 continue
 
-            search_results = self.dictionary_repo.dictionary_search(
-                terms=[key],
-                dimensions=["variables"],
+            metrics["searched_field_count"] += 1
+            search_results, from_cache = self._search_variables(
+                key,
                 domain_context=domain_context,
-                limit=self.top_k,
             )
+            if from_cache:
+                metrics["cache_hit_count"] += 1
+            else:
+                metrics["cache_miss_count"] += 1
             vector_matches = self._select_vector_matches(search_results)
             if not vector_matches:
                 continue
@@ -109,7 +176,17 @@ class VectorMapper:
                 ),
             )
 
+        self._last_run_metrics = self._build_run_metrics(
+            record=record,
+            metrics=metrics,
+            matched_observations_count=len(observations),
+        )
         return observations
+
+    def consume_run_metrics(self) -> JSONObject | None:
+        metrics = self._last_run_metrics
+        self._last_run_metrics = None
+        return metrics
 
     def _select_vector_matches(
         self,
@@ -122,6 +199,54 @@ class VectorMapper:
             and result.match_method == "vector"
             and result.similarity_score >= self.similarity_threshold
         ]
+
+    def _search_variables(
+        self,
+        key: str,
+        *,
+        domain_context: str | None,
+    ) -> tuple[list[DictionarySearchResult], bool]:
+        cache_key = (domain_context, self._normalize_field_name(key))
+        cached_results = self._search_cache.get(cache_key)
+        if cached_results is not None:
+            return list(cached_results), True
+
+        search_results = self.dictionary_repo.dictionary_search(
+            terms=[key],
+            dimensions=["variables"],
+            domain_context=domain_context,
+            limit=self.top_k,
+        )
+        cached_copy = list(search_results)
+        self._search_cache[cache_key] = cached_copy
+        return list(cached_copy), False
+
+    def _should_skip_field(
+        self,
+        record: RawRecord,
+        key: str,
+        value: object,
+    ) -> bool:
+        if value is None or value == "":
+            return True
+        if isinstance(value, dict | list | tuple | set):
+            return True
+
+        normalized_key = self._normalize_field_name(key)
+        if normalized_key in _COMMON_IGNORED_FIELDS:
+            return True
+
+        record_type = record.metadata.get("type")
+        entity_type = record.metadata.get("entity_type")
+        return (
+            record_type == "pubmed"
+            and entity_type == "PUBLICATION"
+            and normalized_key in _PUBMED_PUBLICATION_IGNORED_FIELDS
+        )
+
+    @staticmethod
+    def _normalize_field_name(key: str) -> str:
+        return key.strip().casefold().replace("-", "_").replace(" ", "_")
 
     def _extract_domain_context(self, record: RawRecord) -> str | None:
         raw_source_type = record.metadata.get("type")
@@ -191,3 +316,34 @@ class VectorMapper:
                 dt = dt.replace(tzinfo=UTC)
             return dt
         return None
+
+    def _build_run_metrics(
+        self,
+        *,
+        record: RawRecord,
+        metrics: dict[str, int],
+        matched_observations_count: int,
+    ) -> JSONObject:
+        searched_field_count = metrics["searched_field_count"]
+        skipped_field_count = metrics["skipped_field_count"]
+        cache_hit_count = metrics["cache_hit_count"]
+        cache_miss_count = metrics["cache_miss_count"]
+        summary_message = (
+            "Vector search scanned "
+            f"{searched_field_count} candidate field"
+            f"{'' if searched_field_count == 1 else 's'}, "
+            f"skipped {skipped_field_count} low-value field"
+            f"{'' if skipped_field_count == 1 else 's'}, "
+            f"cache hits {cache_hit_count}, "
+            f"cache misses {cache_miss_count}."
+        )
+        return {
+            "record_type": record.metadata.get("type"),
+            "entity_type": record.metadata.get("entity_type"),
+            "searched_field_count": searched_field_count,
+            "skipped_field_count": skipped_field_count,
+            "cache_hit_count": cache_hit_count,
+            "cache_miss_count": cache_miss_count,
+            "matched_observations_count": matched_observations_count,
+            "summary_message": summary_message,
+        }

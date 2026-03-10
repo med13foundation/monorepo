@@ -434,6 +434,7 @@ def _attach_concept_refs(  # noqa: C901, PLR0912
         member_cache=state.concept_member_cache,
         alias_cache=state.concept_alias_cache,
         alias_scope_cache=state.concept_alias_scope_cache,
+        mapping_judge_agent=context.helper._concept_merge_judge,
     )
     target_concept = _ensure_concept_member(
         concept_service=context.helper._concepts,
@@ -448,6 +449,7 @@ def _attach_concept_refs(  # noqa: C901, PLR0912
         member_cache=state.concept_member_cache,
         alias_cache=state.concept_alias_cache,
         alias_scope_cache=state.concept_alias_scope_cache,
+        mapping_judge_agent=context.helper._concept_merge_judge,
     )
     state.concept_members_created_count += (
         source_concept.members_created_count + target_concept.members_created_count

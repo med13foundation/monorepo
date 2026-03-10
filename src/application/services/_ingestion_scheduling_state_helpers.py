@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from src.application.services.ingestion_scheduling_service import (
         IngestionSchedulingService,
     )
+    from src.domain.services.ingestion import IngestionProgressCallback
 
 
 logger = logging.getLogger(__name__)
@@ -82,10 +83,14 @@ class _IngestionSchedulingStateHelpers:
         source: user_data_source.UserDataSource,
         ingestion_job_id: UUID,
         sync_state: SourceSyncState | None,
+        pipeline_run_id: str | None = None,
+        progress_callback: IngestionProgressCallback | None = None,
     ) -> IngestionRunContext | None:
         if (
             self._source_sync_state_repository is None
             and self._source_record_ledger_repository is None
+            and pipeline_run_id is None
+            and progress_callback is None
         ):
             return None
 
@@ -101,7 +106,9 @@ class _IngestionSchedulingStateHelpers:
             ingestion_job_id=ingestion_job_id,
             source_sync_state=resolved_state,
             query_signature=query_signature,
+            pipeline_run_id=pipeline_run_id,
             source_record_ledger_repository=self._source_record_ledger_repository,
+            progress_callback=progress_callback,
         )
 
     def _persist_sync_state_on_success(

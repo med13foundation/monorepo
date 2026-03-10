@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from src.domain.services.ingestion import IngestionProgressCallback
     from src.infrastructure.ingestion.types import (
         MappedObservation,
         NormalizedObservation,
@@ -22,6 +23,29 @@ class Mapper(Protocol):
 
     def map(self, record: RawRecord) -> list[MappedObservation]:
         """Map a raw record to a list of observations."""
+        ...
+
+
+@runtime_checkable
+class ProgressAwareMapper(Protocol):
+    """Optional mapper contract for emitting fine-grained mapping progress."""
+
+    def map_with_progress(
+        self,
+        record: RawRecord,
+        *,
+        progress_callback: IngestionProgressCallback | None = None,
+    ) -> list[MappedObservation]:
+        """Map a record while emitting detailed progress callbacks."""
+        ...
+
+
+@runtime_checkable
+class MapperRunMetricsProvider(Protocol):
+    """Optional mapper contract exposing metrics from the latest map call."""
+
+    def consume_run_metrics(self) -> JSONObject | None:
+        """Return and clear metrics captured during the most recent map call."""
         ...
 
 
@@ -43,6 +67,9 @@ class Resolver(Protocol):
         anchor: JSONObject,
         entity_type: str,
         research_space_id: str,
+        *,
+        source_record_id: str | None = None,
+        progress_callback: IngestionProgressCallback | None = None,
     ) -> ResolvedEntity:
         """Resolve an entity anchor to a kernel entity."""
         ...

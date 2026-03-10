@@ -25,6 +25,7 @@ export function BrandLogo({
         width={width}
         height={height}
         className={cn('dark:hidden', className)}
+        style={{ height: 'auto' }}
         priority={priority}
         unoptimized
       />
@@ -34,6 +35,7 @@ export function BrandLogo({
         width={width}
         height={height}
         className={cn('hidden dark:block', className)}
+        style={{ height: 'auto' }}
         priority={priority}
         unoptimized
       />

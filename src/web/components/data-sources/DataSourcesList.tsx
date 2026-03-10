@@ -131,6 +131,36 @@ function buildWorkflowSignal(status: SourceWorkflowCardStatus): WorkflowSignal {
   }
 }
 
+function resolvePipelineCurrentStage(
+  status: SourceWorkflowCardStatus | undefined,
+): string | null {
+  if (!status?.artana_progress) {
+    return null
+  }
+  const pipelineStage = status.artana_progress.pipeline
+  if (!pipelineStage || typeof pipelineStage.current_stage !== 'string') {
+    return null
+  }
+  const normalized = pipelineStage.current_stage.trim().toLowerCase()
+  return normalized.length > 0 ? normalized : null
+}
+
+function formatPipelineCurrentStageLabel(stage: string): string {
+  if (stage === 'ingestion') {
+    return 'Starting ingestion'
+  }
+  if (stage === 'enrichment') {
+    return 'Content enrichment'
+  }
+  if (stage === 'extraction') {
+    return 'Knowledge extraction'
+  }
+  if (stage === 'graph') {
+    return 'Graph persistence'
+  }
+  return `Running ${stage}`
+}
+
 function describePipelineStage(status: SourceWorkflowCardStatus | undefined): string {
   if (!status) return 'Connecting to monitor'
   if (status.last_pipeline_status === 'queued') {
@@ -141,6 +171,22 @@ function describePipelineStage(status: SourceWorkflowCardStatus | undefined): st
   }
   if (status.last_pipeline_status === 'failed') {
     return 'Pipeline failed'
+  }
+  if (status.last_pipeline_status === 'running') {
+    const currentStage = resolvePipelineCurrentStage(status)
+    if (currentStage !== null) {
+      return formatPipelineCurrentStageLabel(currentStage)
+    }
+    if (status.pending_paper_count > 0) {
+      return 'Document ingestion and extraction'
+    }
+    if (status.pending_relation_review_count > 0) {
+      return 'Relation review queue'
+    }
+    if (status.graph_edges_delta_last_run > 0) {
+      return 'Graph persistence'
+    }
+    return 'Pipeline startup'
   }
   if (
     status.last_pipeline_status === 'completed' &&
@@ -162,9 +208,6 @@ function describePipelineStage(status: SourceWorkflowCardStatus | undefined): st
   }
   if (status.graph_edges_delta_last_run > 0) {
     return 'Graph persistence'
-  }
-  if (status.last_pipeline_status === 'running') {
-    return 'Finalizing run'
   }
   if (status.last_pipeline_status === 'completed') {
     return 'Completed'
@@ -188,6 +231,13 @@ function describeArtanaStage(status: SourceWorkflowCardStatus | undefined): stri
       stage.status === 'retrying'
     ) {
       const percentLabel = typeof stage.percent === 'number' ? `${stage.percent}%` : '...'
+      if (
+        stageName === 'pipeline' &&
+        typeof stage.current_stage === 'string' &&
+        stage.current_stage.trim().length > 0
+      ) {
+        return `${stage.current_stage.trim().toLowerCase()} ${percentLabel}`
+      }
       return `${stageName} ${percentLabel}`
     }
   }
@@ -202,6 +252,28 @@ function describeArtanaStage(status: SourceWorkflowCardStatus | undefined): stri
     }
   }
   return null
+}
+
+function describeRecentWorkflowEventPlaceholder(
+  status: SourceWorkflowCardStatus | undefined,
+): string {
+  if (!status) {
+    return 'waiting for monitor connection.'
+  }
+  if (status.last_pipeline_status === 'queued') {
+    return 'queued; waiting for worker claim.'
+  }
+  if (status.last_pipeline_status === 'retrying') {
+    return 'retry scheduled; waiting for worker claim.'
+  }
+  if (status.last_pipeline_status === 'running') {
+    const currentStage = resolvePipelineCurrentStage(status)
+    if (currentStage !== null) {
+      return `${currentStage} is starting; waiting for the first persisted event.`
+    }
+    return 'run is active; waiting for the first persisted event.'
+  }
+  return 'waiting for first event.'
 }
 
 function describeWorkflowChange(
@@ -357,7 +429,7 @@ export function DataSourcesList({
     } else if (!(sourceId in lastWorkflowChangeAtBySourceRef.current)) {
       lastWorkflowChangeAtBySourceRef.current[sourceId] = updateAtMs
       lastWorkflowChangeSummaryBySourceRef.current[sourceId] =
-        'Awaiting first progress signal.'
+        'Awaiting first persisted backend event.'
     }
     lastWorkflowSignalBySourceRef.current[sourceId] = signal
     setLiveWorkflowStatusBySource((previous) => ({
@@ -489,7 +561,7 @@ export function DataSourcesList({
               } else if (!(item.sourceId in lastWorkflowChangeAtBySourceRef.current)) {
                 lastWorkflowChangeAtBySourceRef.current[item.sourceId] = polledAtMs
                 lastWorkflowChangeSummaryBySourceRef.current[item.sourceId] =
-                  'Awaiting first progress signal.'
+                  'Awaiting first persisted backend event.'
               }
               lastWorkflowSignalBySourceRef.current[item.sourceId] = signal
               next[item.sourceId] = item.statusResult.data
@@ -774,7 +846,7 @@ export function DataSourcesList({
       lastWorkflowRefreshAtBySourceRef.current[source.id] = runStartMs
       lastWorkflowChangeAtBySourceRef.current[source.id] = runStartMs
       lastWorkflowChangeSummaryBySourceRef.current[source.id] =
-        'Run started. Waiting for first backend update.'
+        'Run queued locally. Waiting for worker claim.'
       setLiveWorkflowEventsBySource((previous) => ({
         ...previous,
         [source.id]: [
@@ -951,7 +1023,7 @@ export function DataSourcesList({
             )
             const lastSignalSummary =
               lastWorkflowChangeSummaryBySourceRef.current[source.id] ??
-              'Awaiting first progress signal.'
+              'Awaiting first persisted backend event.'
             const workflowEventSignals = liveWorkflowEventsBySource[source.id] ?? []
             const recentWorkflowEventSignals = workflowEventSignals.slice(0, 3)
             const lastRunMetric = formatRelativeTime(lastExecutionAt, liveStatusNowMs)
@@ -1251,7 +1323,10 @@ export function DataSourcesList({
                         </p>
                         <div className="mt-1 space-y-1 pl-6 text-xs text-muted-foreground">
                           {recentWorkflowEventSignals.length === 0 ? (
-                            <p>Recent backend events: waiting for first event.</p>
+                            <p>
+                              Recent backend events:{' '}
+                              {describeRecentWorkflowEventPlaceholder(workflowStatus)}
+                            </p>
                           ) : (
                             recentWorkflowEventSignals.map((eventSignal) => {
                               const eventAge = formatElapsedSeconds(

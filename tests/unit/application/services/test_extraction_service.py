@@ -41,6 +41,7 @@ from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from src.domain.agents.contexts.extraction_context import ExtractionContext
+    from src.domain.services.ingestion import IngestionProgressCallback
 
 
 class StubExtractionAgent(ExtractionAgentPort):
@@ -71,10 +72,18 @@ class StubIngestionPipeline:
     result: IngestResult
 
     def __post_init__(self) -> None:
-        self.calls: list[tuple[list[RawRecord], str]] = []
+        self.calls: list[
+            tuple[list[RawRecord], str, IngestionProgressCallback | None]
+        ] = []
 
-    def run(self, records: list[RawRecord], research_space_id: str) -> IngestResult:
-        self.calls.append((records, research_space_id))
+    def run(
+        self,
+        records: list[RawRecord],
+        research_space_id: str,
+        *,
+        progress_callback: IngestionProgressCallback | None = None,
+    ) -> IngestResult:
+        self.calls.append((records, research_space_id, progress_callback))
         return self.result
 
 
@@ -288,6 +297,42 @@ async def test_extract_from_entity_recognition_writes_to_kernel() -> None:
     assert outcome.observations_extracted == 1
     assert outcome.rejected_facts == 1
     assert ingestion.calls
+
+
+@pytest.mark.asyncio
+async def test_extract_from_entity_recognition_forwards_ingestion_progress_callback() -> (
+    None
+):
+    document = _build_document(with_research_space=True)
+    recognition = _build_recognition_contract(str(document.id))
+    extraction = _build_extraction_contract(str(document.id))
+    ingestion = StubIngestionPipeline(
+        IngestResult(success=True, entities_created=1, observations_created=1),
+    )
+    service = ExtractionService(
+        dependencies=ExtractionServiceDependencies(
+            extraction_agent=StubExtractionAgent(extraction),
+            ingestion_pipeline=ingestion,
+            dictionary_service=_build_dictionary_service(),
+            governance_service=_build_governance_service(),
+        ),
+    )
+    callback_updates: list[object] = []
+
+    def progress_callback(update: object) -> None:
+        callback_updates.append(update)
+
+    outcome = await service.extract_from_entity_recognition(
+        document=document,
+        recognition_contract=recognition,
+        research_space_settings={},
+        ingestion_progress_callback=progress_callback,
+    )
+
+    assert outcome.status == "extracted"
+    assert ingestion.calls
+    assert ingestion.calls[0][2] is progress_callback
+    assert callback_updates == []
 
 
 @pytest.mark.asyncio

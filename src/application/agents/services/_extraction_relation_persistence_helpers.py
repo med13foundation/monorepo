@@ -63,6 +63,7 @@ if TYPE_CHECKING:
         RelationConstraintProposal,
         RelationTypeMappingProposal,
     )
+    from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
     from src.domain.entities.kernel.claim_evidence import (
         ClaimEvidenceSentenceConfidence,
         ClaimEvidenceSentenceSource,
@@ -181,6 +182,7 @@ class _ExtractionRelationPersistenceHelpers(
     _entities: KernelEntityRepository | None
     _concepts: ConceptPort | None
     _evidence_sentence_harness: EvidenceSentenceHarnessPort | None
+    _concept_merge_judge: MappingJudgePort | None
     _rollback_on_error: Callable[[], None] | None
 
     async def _persist_extracted_relations(

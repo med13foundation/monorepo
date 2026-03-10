@@ -12,7 +12,7 @@ import type {
 import {
   addSpaceDiscoverySources,
   updateSpaceDiscoverySelection,
-} from '@/app/actions/space-discovery'
+} from '@/components/data-discovery/space-discovery-api'
 import { SourceCatalog } from '@/components/data-discovery/SourceCatalog'
 
 interface DataDiscoveryContentProps {
@@ -85,9 +85,9 @@ export function DataDiscoveryContent({
 
     startTransition(async () => {
       const result = await updateSpaceDiscoverySelection(
+        spaceId,
         state.session.id,
         Array.from(next),
-        `/spaces/${spaceId}/data-sources`,
       )
 
       if (!result.success) {
@@ -112,10 +112,9 @@ export function DataDiscoveryContent({
     setIsAdding(true)
     const idsToPromote = Array.from(selectedIds)
     const result = await addSpaceDiscoverySources(
-      state.session.id,
       spaceId,
+      state.session.id,
       idsToPromote,
-      `/spaces/${spaceId}/data-sources`,
     )
 
     if (!result.success) {

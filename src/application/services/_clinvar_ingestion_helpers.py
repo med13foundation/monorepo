@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -27,6 +27,10 @@ if TYPE_CHECKING:
         ClinVarIngestionService,
     )
     from src.domain.entities import data_source_configs
+    from src.domain.services.ingestion import (
+        IngestionProgressCallback,
+        IngestionProgressUpdate,
+    )
 
 
 @dataclass(frozen=True)
@@ -43,11 +47,30 @@ class _LedgerDedupOutcome:
 class ClinVarIngestionServiceHelpers:
     """Private helpers for ClinVar ingestion orchestration."""
 
+    @staticmethod
+    def _build_pipeline_progress_callback(
+        context: ingestion.IngestionRunContext | None,
+    ) -> IngestionProgressCallback | None:
+        if context is None or context.progress_callback is None:
+            return None
+
+        def _forward(update: IngestionProgressUpdate) -> None:
+            context.progress_callback(
+                replace(
+                    update,
+                    ingestion_job_id=update.ingestion_job_id
+                    or context.ingestion_job_id,
+                ),
+            )
+
+        return _forward
+
     def _build_extraction_targets(
         self: ClinVarIngestionService,
         records: list[type_definitions.common.JSONObject],
         *,
         source_type: user_data_source.SourceType,
+        pipeline_run_id: str | None = None,
     ) -> tuple[ingestion.IngestionExtractionTarget, ...]:
         targets: list[ingestion.IngestionExtractionTarget] = []
         seen_source_record_ids: set[str] = set()
@@ -61,6 +84,8 @@ class ClinVarIngestionServiceHelpers:
                 "source_record_id": source_record_id,
                 "source_type": source_type.value,
             }
+            if isinstance(pipeline_run_id, str) and pipeline_run_id.strip():
+                metadata_payload["pipeline_run_id"] = pipeline_run_id.strip()
             targets.append(
                 ingestion.IngestionExtractionTarget(
                     source_record_id=source_record_id,
@@ -383,6 +408,12 @@ class ClinVarIngestionServiceHelpers:
             metadata_payload: type_definitions.common.JSONObject = {
                 "raw_record": dict(record),
             }
+            if (
+                context is not None
+                and isinstance(context.pipeline_run_id, str)
+                and context.pipeline_run_id.strip()
+            ):
+                metadata_payload["pipeline_run_id"] = context.pipeline_run_id.strip()
             documents.append(
                 source_document.SourceDocument(
                     id=uuid4(),

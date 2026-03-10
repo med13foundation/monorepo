@@ -7,6 +7,7 @@ from .ingestion_scheduler_job_repository import (
     SqlAlchemyIngestionSchedulerJobRepository,
 )
 from .ingestion_source_lock_repository import SqlAlchemyIngestionSourceLockRepository
+from .pipeline_run_event_repository import SqlAlchemyPipelineRunEventRepository
 from .research_space_repository import SqlAlchemyResearchSpaceRepository
 from .source_document_repository import SqlAlchemySourceDocumentRepository
 from .source_record_ledger_repository import SqlAlchemySourceRecordLedgerRepository
@@ -27,6 +28,7 @@ __all__ = [
     "SqlAlchemyIngestionJobRepository",
     "SqlAlchemyIngestionSchedulerJobRepository",
     "SqlAlchemyIngestionSourceLockRepository",
+    "SqlAlchemyPipelineRunEventRepository",
     "SqlAlchemyResearchSpaceRepository",
     "SqlAlchemySourceDocumentRepository",
     "SqlAlchemySourceRecordLedgerRepository",

@@ -777,6 +777,57 @@ class SqlAlchemyDictionaryRepository(
         ).all()
         return [EntityResolutionPolicy.model_validate(model) for model in models]
 
+    def create_resolution_policy(  # noqa: PLR0913
+        self,
+        *,
+        entity_type: str,
+        policy_strategy: str,
+        required_anchors: list[str],
+        auto_merge_threshold: float = 1.0,
+        created_by: str = "seed",
+        source_ref: str | None = None,
+        review_status: ReviewStatus = "ACTIVE",
+    ) -> EntityResolutionPolicy:
+        normalized_entity_type = entity_type.strip().upper()
+        existing_policy = self._session.get(
+            EntityResolutionPolicyModel,
+            normalized_entity_type,
+        )
+        if existing_policy is not None:
+            return EntityResolutionPolicy.model_validate(existing_policy)
+
+        model = EntityResolutionPolicyModel(
+            entity_type=normalized_entity_type,
+            policy_strategy=policy_strategy.strip().upper(),
+            required_anchors=[str(anchor).strip() for anchor in required_anchors],
+            auto_merge_threshold=max(float(auto_merge_threshold), 0.0),
+            created_by=created_by,
+            source_ref=source_ref,
+            review_status=review_status,
+        )
+        try:
+            self._session.add(model)
+            self._session.flush()
+        except IntegrityError:
+            self._session.rollback()
+            existing_after_conflict = self._session.get(
+                EntityResolutionPolicyModel,
+                normalized_entity_type,
+            )
+            if existing_after_conflict is not None:
+                return EntityResolutionPolicy.model_validate(existing_after_conflict)
+            raise
+        self._record_change(
+            table_name=EntityResolutionPolicyModel.__tablename__,
+            record_id=model.entity_type,
+            action="CREATE",
+            before_snapshot=None,
+            after_snapshot=_snapshot_model(model),
+            changed_by=created_by,
+            source_ref=source_ref,
+        )
+        return EntityResolutionPolicy.model_validate(model)
+
     def create_entity_type(  # noqa: PLR0913
         self,
         *,

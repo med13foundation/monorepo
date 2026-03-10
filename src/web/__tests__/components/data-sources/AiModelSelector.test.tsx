@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 
-import { fetchAvailableModelsAction } from '@/app/actions/data-sources'
 import { AiModelSelector } from '@/components/data-sources/AiModelSelector'
+import { fetchAvailableModelsClient } from '@/lib/client/ai-models'
 import { toast } from 'sonner'
 
-jest.mock('@/app/actions/data-sources', () => ({
-  fetchAvailableModelsAction: jest.fn(),
+jest.mock('@/lib/client/ai-models', () => ({
+  fetchAvailableModelsClient: jest.fn(),
 }))
 
 jest.mock('sonner', () => ({
@@ -63,8 +63,8 @@ function deferredPromise<T>() {
 }
 
 describe('AiModelSelector', () => {
-  const mockFetchAvailableModelsAction = fetchAvailableModelsAction as jest.MockedFunction<
-    typeof fetchAvailableModelsAction
+  const mockFetchAvailableModelsClient = fetchAvailableModelsClient as jest.MockedFunction<
+    typeof fetchAvailableModelsClient
   >
   const toastErrorMock = toast.error as jest.MockedFunction<typeof toast.error>
   const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -77,32 +77,29 @@ describe('AiModelSelector', () => {
     jest.clearAllMocks()
   })
 
-  it('loads and renders query-generation models from the server action', async () => {
-    mockFetchAvailableModelsAction.mockResolvedValue({
-      success: true,
-      data: {
-        models: [
-          {
-            model_id: 'gpt-5-mini',
-            display_name: 'GPT-5 Mini',
-            provider: 'openai',
-            capabilities: ['query_generation'],
-            cost_tier: 'low',
-            is_reasoning_model: false,
-            is_default: true,
-          },
-          {
-            model_id: 'extractor-pro',
-            display_name: 'Extractor Pro',
-            provider: 'openai',
-            capabilities: ['evidence_extraction'],
-            cost_tier: 'high',
-            is_reasoning_model: true,
-            is_default: false,
-          },
-        ],
-        default_query_model: 'gpt-5-mini',
-      },
+  it('loads and renders query-generation models from the API client', async () => {
+    mockFetchAvailableModelsClient.mockResolvedValue({
+      models: [
+        {
+          model_id: 'gpt-5-mini',
+          display_name: 'GPT-5 Mini',
+          provider: 'openai',
+          capabilities: ['query_generation'],
+          cost_tier: 'low',
+          is_reasoning_model: false,
+          is_default: true,
+        },
+        {
+          model_id: 'extractor-pro',
+          display_name: 'Extractor Pro',
+          provider: 'openai',
+          capabilities: ['evidence_extraction'],
+          cost_tier: 'high',
+          is_reasoning_model: true,
+          is_default: false,
+        },
+      ],
+      default_query_model: 'gpt-5-mini',
     })
 
     render(<AiModelSelector value={null} onChange={jest.fn()} />)
@@ -117,8 +114,8 @@ describe('AiModelSelector', () => {
   })
 
   it('shows the loading state until the action resolves', async () => {
-    const deferred = deferredPromise<Awaited<ReturnType<typeof fetchAvailableModelsAction>>>()
-    mockFetchAvailableModelsAction.mockReturnValue(deferred.promise)
+    const deferred = deferredPromise<Awaited<ReturnType<typeof fetchAvailableModelsClient>>>()
+    mockFetchAvailableModelsClient.mockReturnValue(deferred.promise)
 
     render(<AiModelSelector value={null} onChange={jest.fn()} />)
 
@@ -126,11 +123,8 @@ describe('AiModelSelector', () => {
     expect(screen.getByText('Loading models...')).toBeInTheDocument()
 
     deferred.resolve({
-      success: true,
-      data: {
-        models: [],
-        default_query_model: 'gpt-5-mini',
-      },
+      models: [],
+      default_query_model: 'gpt-5-mini',
     })
 
     await waitFor(() => {
@@ -140,10 +134,7 @@ describe('AiModelSelector', () => {
   })
 
   it('shows the existing error toast when the action fails', async () => {
-    mockFetchAvailableModelsAction.mockResolvedValue({
-      success: false,
-      error: 'Session expired',
-    })
+    mockFetchAvailableModelsClient.mockRejectedValue(new Error('Session expired'))
 
     render(<AiModelSelector value={null} onChange={jest.fn()} />)
 

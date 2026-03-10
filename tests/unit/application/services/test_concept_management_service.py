@@ -13,6 +13,7 @@ from src.application.services.kernel.concept_management_service import (
 )
 from src.domain.entities.kernel.concepts import (
     ConceptDecision,
+    ConceptDecisionProposal,
     ConceptHarnessCheck,
     ConceptHarnessVerdict,
     ConceptMember,
@@ -137,7 +138,11 @@ class StubConceptHarness(ConceptDecisionHarnessPort):
         self._verdict = verdict
         self.calls = 0
 
-    def evaluate(self, proposal):  # type: ignore[override]
+    def evaluate(
+        self,
+        proposal: ConceptDecisionProposal,
+    ) -> ConceptHarnessVerdict:
+        del proposal
         self.calls += 1
         return self._verdict
 
@@ -149,6 +154,7 @@ def concept_repo() -> Mock:
     repo.find_concept_sets.return_value = [_build_concept_set()]
     repo.create_concept_member.return_value = _build_member()
     repo.create_concept_alias.return_value = Mock()
+    repo.resolve_member_by_alias.return_value = None
     repo.create_concept_policy.return_value = _build_policy()
     repo.get_active_policy.return_value = _build_policy()
     repo.create_decision.return_value = _build_decision(decision_status="PROPOSED")
@@ -426,3 +432,48 @@ def test_propose_decision_non_agent_skips_harness(
     assert decision.decision_status == "PROPOSED"
     assert harness.calls == 0
     concept_repo.set_decision_status.assert_not_called()
+
+
+def test_resolve_member_by_alias_normalizes_lookup_values(
+    concept_repo: Mock,
+) -> None:
+    now = datetime.now(UTC)
+    concept_repo.resolve_member_by_alias.return_value = ConceptMember(
+        id=str(uuid4()),
+        concept_set_id=str(uuid4()),
+        research_space_id=str(uuid4()),
+        domain_context="general",
+        dictionary_dimension="entity_types",
+        dictionary_entry_id="GENE",
+        canonical_label="Mediator kinase module",
+        normalized_label="mediator kinase module",
+        sense_key="PROTEIN_COMPLEX",
+        is_provisional=False,
+        metadata_payload={},
+        created_by="seed",
+        source_ref=None,
+        review_status="ACTIVE",
+        reviewed_by=None,
+        reviewed_at=None,
+        revocation_reason=None,
+        is_active=True,
+        valid_from=now,
+        valid_to=None,
+        superseded_by=None,
+        created_at=now,
+        updated_at=now,
+    )
+    service = ConceptManagementService(concept_repo=concept_repo, concept_harness=None)
+
+    resolved = service.resolve_member_by_alias(
+        research_space_id=f"  {uuid4()}  ",
+        domain_context="  general  ",
+        alias_normalized="  Mediator   kinase module  ",
+    )
+
+    assert resolved is not None
+    call_kwargs = concept_repo.resolve_member_by_alias.call_args.kwargs
+    assert call_kwargs["research_space_id"]
+    assert call_kwargs["domain_context"] == "general"
+    assert call_kwargs["alias_normalized"] == "mediator kinase module"
+    assert call_kwargs["include_inactive"] is False

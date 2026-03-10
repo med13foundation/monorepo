@@ -2,7 +2,24 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from src.infrastructure.llm.config.runtime_policy import load_runtime_policy
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+def test_load_runtime_policy_defaults_to_fork_on_drift_when_missing(
+    tmp_path: Path,
+) -> None:
+    missing_config_path = tmp_path / "missing-artana.toml"
+    load_runtime_policy.cache_clear()
+    policy = load_runtime_policy(str(missing_config_path))
+    load_runtime_policy.cache_clear()
+
+    assert policy.replay_policy == "fork_on_drift"
+    assert policy.extraction_config_version == "v1"
 
 
 def test_load_runtime_policy_reads_context_version_fields(tmp_path) -> None:

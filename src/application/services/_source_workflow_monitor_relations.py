@@ -380,6 +380,16 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
             if selected_run is not None
             else {}
         )
+        selected_cost_summary = (
+            coerce_json_object(selected_run.payload.get("cost_summary"))
+            if selected_run is not None
+            else {}
+        )
+        selected_timing_summary = (
+            coerce_json_object(selected_run.payload.get("timing_summary"))
+            if selected_run is not None
+            else {}
+        )
         return {
             "last_pipeline_status": (
                 normalize_optional_string(selected_run.payload.get("status"))
@@ -398,6 +408,8 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
             "graph_edges_for_source": graph_edges_for_source,
             "graph_edges_delta_last_run": max(relation_edge_delta, 0),
             "stage_counters": stage_counters,
+            "last_run_total_cost_usd": selected_cost_summary.get("total_cost_usd"),
+            "last_run_duration_ms": selected_timing_summary.get("total_duration_ms"),
         }
 
     def _count_pending_documents(self, *, source_id: UUID) -> int:

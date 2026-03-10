@@ -17,6 +17,9 @@ from src.application.services.pipeline_orchestration_service import (
     PipelineOrchestrationService,
     PipelineQueueFullError,
 )
+from src.application.services.pipeline_run_trace_service import (
+    PipelineRunTraceService,
+)
 from src.database.session import get_session
 from src.domain.entities.ingestion_job import IngestionStatus
 from src.domain.entities.user import UserRole
@@ -171,7 +174,10 @@ def get_pipeline_orchestration_service(
     from src.infrastructure.dependency_injection.dependencies import (
         get_legacy_dependency_container,
     )
-    from src.infrastructure.repositories import SqlAlchemyResearchSpaceRepository
+    from src.infrastructure.repositories import (
+        SqlAlchemyPipelineRunEventRepository,
+        SqlAlchemyResearchSpaceRepository,
+    )
 
     container = get_legacy_dependency_container()
     is_admin_user = current_user.role == UserRole.ADMIN
@@ -301,6 +307,10 @@ def get_pipeline_orchestration_service(
             graph_search_service=graph_search_service,
             research_space_repository=SqlAlchemyResearchSpaceRepository(session),
             pipeline_run_repository=scheduling_service.get_job_repository(),
+            pipeline_trace_service=PipelineRunTraceService(
+                session,
+                event_repository=SqlAlchemyPipelineRunEventRepository(session),
+            ),
         ),
     )
 
@@ -360,6 +370,7 @@ def run_unified_pipeline(
         queued_run = orchestration_service.enqueue_run(
             source_id=source_id,
             research_space_id=space_id,
+            triggered_by_user_id=current_user.id,
             run_id=request.run_id,
             resume_from_stage=request.resume_from_stage,
             enrichment_limit=request.enrichment_limit,

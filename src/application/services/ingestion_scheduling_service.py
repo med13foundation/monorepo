@@ -46,7 +46,10 @@ if TYPE_CHECKING:
     from src.domain.repositories import (
         source_sync_state_repository as source_sync_state_repo,
     )
-    from src.domain.services.ingestion import IngestionRunSummary
+    from src.domain.services.ingestion import (
+        IngestionProgressCallback,
+        IngestionRunSummary,
+    )
 
 
 @dataclass(frozen=True)
@@ -216,13 +219,15 @@ class IngestionSchedulingService(
         await self._retry_failed_pdf_downloads()
         self._compact_source_record_ledger()
 
-    async def trigger_ingestion(
+    async def trigger_ingestion(  # noqa: PLR0913
         self,
         source_id: UUID,
         *,
         skip_post_ingestion_hook: bool = False,
         skip_legacy_extraction_queue: bool = False,
         force_recover_lock: bool = False,
+        pipeline_run_id: str | None = None,
+        progress_callback: IngestionProgressCallback | None = None,
     ) -> IngestionRunSummary:
         """Manually trigger ingestion for a source outside scheduler cadence."""
         source = self._get_source(source_id)
@@ -238,4 +243,6 @@ class IngestionSchedulingService(
             skip_post_ingestion_hook=skip_post_ingestion_hook,
             skip_legacy_extraction_queue=skip_legacy_extraction_queue,
             force_recover_lock=force_recover_lock,
+            pipeline_run_id=pipeline_run_id,
+            progress_callback=progress_callback,
         )

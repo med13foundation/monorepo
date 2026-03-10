@@ -26,7 +26,7 @@ from src.infrastructure.llm.prompts.pubmed_relevance import (
     PUBMED_RELEVANCE_SYSTEM_PROMPT,
 )
 from src.infrastructure.llm.state.shared_postgres_store import (
-    get_shared_artana_postgres_store,
+    create_artana_postgres_store,
 )
 
 if TYPE_CHECKING:
@@ -69,17 +69,7 @@ class ArtanaPubMedRelevanceAdapter(PubMedRelevancePort):
         self._runtime_policy = load_runtime_policy()
         self._registry = get_model_registry()
         self._last_run_id: str | None = None
-        timeout_seconds = self._resolve_timeout_seconds(model)
-        self._model_port = OpenAIJSONSchemaModelPort(
-            timeout_seconds=timeout_seconds,
-            schema_name_fallback="pubmed_relevance_contract",
-        )
-        resolved_artana_store = artana_store or self._create_store()
-        self._kernel = ArtanaKernel(
-            store=resolved_artana_store,
-            model_port=self._model_port,
-        )
-        self._client = SingleStepModelClient(kernel=self._kernel)
+        self._artana_store = artana_store
 
     async def classify(
         self,
@@ -105,29 +95,36 @@ class ArtanaPubMedRelevanceAdapter(PubMedRelevancePort):
             budget_usd_limit=max(float(budget_limit), 0.01),
         )
 
-        step_result = await run_single_step_with_policy(
-            self._client,
-            run_id=run_id,
-            tenant=tenant,
-            model=effective_model,
-            prompt=self._build_prompt(context),
-            output_schema=PubMedRelevanceContract,
-            step_key="pubmed.relevance.title_abstract.v1",
-            replay_policy=self._runtime_policy.replay_policy,
-            context_version=self._runtime_policy.to_context_version(),
-        )
-        output = step_result.output
-        contract = (
-            output
-            if isinstance(output, PubMedRelevanceContract)
-            else PubMedRelevanceContract.model_validate(output)
-        )
-        if contract.agent_run_id is None:
-            contract = contract.model_copy(update={"agent_run_id": run_id})
-        return contract
+        kernel, client, model_port = self._create_runtime()
+        try:
+            step_result = await run_single_step_with_policy(
+                client,
+                run_id=run_id,
+                tenant=tenant,
+                model=effective_model,
+                prompt=self._build_prompt(context),
+                output_schema=PubMedRelevanceContract,
+                step_key="pubmed.relevance.title_abstract.v1",
+                replay_policy=self._runtime_policy.replay_policy,
+                context_version=self._runtime_policy.to_context_version(),
+            )
+            output = step_result.output
+            contract = (
+                output
+                if isinstance(output, PubMedRelevanceContract)
+                else PubMedRelevanceContract.model_validate(output)
+            )
+            if contract.agent_run_id is None:
+                contract = contract.model_copy(update={"agent_run_id": run_id})
+            return contract
+        finally:
+            try:
+                await kernel.close()
+            finally:
+                await model_port.aclose()
 
     async def close(self) -> None:
-        await self._model_port.aclose()
+        return
 
     @staticmethod
     def _has_openai_key() -> bool:
@@ -150,7 +147,21 @@ class ArtanaPubMedRelevanceAdapter(PubMedRelevancePort):
 
     @staticmethod
     def _create_store() -> PostgresStore:
-        return get_shared_artana_postgres_store()
+        return create_artana_postgres_store()
+
+    def _create_runtime(
+        self,
+    ) -> tuple[ArtanaKernel, SingleStepModelClient, OpenAIJSONSchemaModelPort]:
+        model_port = OpenAIJSONSchemaModelPort(
+            timeout_seconds=self._resolve_timeout_seconds(self._default_model),
+            schema_name_fallback="pubmed_relevance_contract",
+        )
+        kernel = ArtanaKernel(
+            store=self._artana_store or self._create_store(),
+            model_port=model_port,
+        )
+        client = SingleStepModelClient(kernel=kernel)
+        return kernel, client, model_port
 
     def _resolve_model_id(self, model_id: str | None) -> str:
         if (

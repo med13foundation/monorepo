@@ -134,6 +134,21 @@ class _FakeRelationRowsSession:
         return _FakeRelationRowsExecuteResult(self._rows)
 
 
+class _EmptyScalarResult:
+    def all(self) -> list[object]:
+        return []
+
+
+class _EmptyExecuteResult:
+    def scalars(self) -> _EmptyScalarResult:
+        return _EmptyScalarResult()
+
+
+class _EmptyEventSession:
+    def execute(self, _statement: object) -> _EmptyExecuteResult:
+        return _EmptyExecuteResult()
+
+
 @dataclass(frozen=True)
 class _PipelineJobStatus:
     value: str
@@ -151,9 +166,22 @@ class _PipelineRunRow:
     completed_at: datetime | None
 
 
+@dataclass(frozen=True)
+class _SourceTypeValue:
+    value: str
+
+
+@dataclass(frozen=True)
+class _FakeSource:
+    source_type: _SourceTypeValue
+
+
 class _PrefetchCaptureService(SourceWorkflowMonitorService):
     def __init__(self) -> None:
-        super().__init__(session=Mock(), run_progress=None)
+        super().__init__(
+            session=cast("Session", _EmptyEventSession()),
+            run_progress=None,
+        )
         self.captured_limits: dict[str, int] = {}
         self._record = PipelineRunRecord(
             payload={"run_id": "run-1"},
@@ -169,7 +197,10 @@ class _PrefetchCaptureService(SourceWorkflowMonitorService):
     ) -> UserDataSourceModel:
         del space_id
         del source_id
-        return cast("UserDataSourceModel", object())
+        return cast(
+            "UserDataSourceModel",
+            _FakeSource(source_type=_SourceTypeValue(value="pubmed")),
+        )
 
     def _load_pipeline_runs(
         self,
@@ -253,7 +284,10 @@ class _RunScopedFilterCaptureService(SourceWorkflowMonitorService):
     ) -> UserDataSourceModel:
         del space_id
         del source_id
-        return cast("UserDataSourceModel", object())
+        return cast(
+            "UserDataSourceModel",
+            _FakeSource(source_type=_SourceTypeValue(value="pubmed")),
+        )
 
     def _build_source_snapshot(self, source: UserDataSourceModel) -> JSONObject:
         del source
@@ -601,6 +635,61 @@ def test_get_source_workflow_monitor_passes_space_id_as_artana_tenant() -> None:
     assert run_progress.calls[0] == ("run-match", str(space_id))
 
 
+def test_build_run_paper_candidates_explains_processed_and_dropped_pubmed_rows() -> (
+    None
+):
+    service = SourceWorkflowMonitorService(session=Mock(), run_progress=None)
+
+    paper_candidates = service._build_run_paper_candidates(
+        source_type="pubmed",
+        selected_run_payload={
+            "paper_candidate_summary": {
+                "filtered_out_external_record_ids": ["32553196"],
+                "pre_rescue_filtered_external_record_ids": [
+                    "28659948",
+                    "32553196",
+                ],
+                "full_text_rescued_external_record_ids": ["28659948"],
+            },
+        },
+        documents=[
+            {
+                "id": "doc-1",
+                "external_record_id": "pubmed:pubmed_id:28659948",
+                "enrichment_status": "enriched",
+                "extraction_status": "extracted",
+            },
+        ],
+    )
+
+    assert paper_candidates == [
+        {
+            "external_record_id": "pubmed:pubmed_id:28659948",
+            "paper_outcome": "rescued_and_processed",
+            "paper_reason": (
+                "Retained by full-text rescue after semantic relevance filtering."
+            ),
+            "rescued_by_full_text": True,
+            "pre_rescue_filtered": True,
+            "document_id": "doc-1",
+            "enrichment_status": "enriched",
+            "extraction_status": "extracted",
+        },
+        {
+            "external_record_id": "pubmed:pubmed_id:32553196",
+            "paper_outcome": "dropped",
+            "paper_reason": (
+                "Filtered out by semantic relevance; full-text rescue did not retain it."
+            ),
+            "rescued_by_full_text": False,
+            "pre_rescue_filtered": True,
+            "document_id": None,
+            "enrichment_status": None,
+            "extraction_status": None,
+        },
+    ]
+
+
 def test_load_extraction_queue_filters_rows_to_selected_ingestion_job() -> None:
     now = datetime.now(UTC)
     service = SourceWorkflowMonitorService(
@@ -651,7 +740,7 @@ def test_load_extraction_queue_filters_rows_to_selected_ingestion_job() -> None:
     assert [row["id"] for row in queue_rows] == ["queue-match"]
 
 
-def test_list_workflow_events_caps_prefetch_limits() -> None:
+def test_list_workflow_events_uses_latest_run_when_event_ledger_is_empty() -> None:
     service = _PrefetchCaptureService()
 
     payload = service.list_workflow_events(
@@ -662,12 +751,11 @@ def test_list_workflow_events_caps_prefetch_limits() -> None:
         since=None,
     )
 
-    expected_limit = service._EVENT_PREFETCH_HARD_CAP
-    assert service.captured_limits["pipeline_runs"] == expected_limit
-    assert service.captured_limits["documents"] == expected_limit
-    assert service.captured_limits["queue"] == expected_limit
-    assert service.captured_limits["extractions"] == expected_limit
+    assert service.captured_limits["pipeline_runs"] == 1
+    assert payload["run_id"] == "run-1"
     assert payload["events"] == []
+    assert payload["total"] == 0
+    assert payload["has_more"] is False
 
 
 def test_monitor_run_scope_ignores_pipeline_job_id_for_document_filters() -> None:

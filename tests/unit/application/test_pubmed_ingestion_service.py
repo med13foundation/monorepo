@@ -41,8 +41,14 @@ from src.domain.repositories.source_document_repository import (
 from src.domain.repositories.source_record_ledger_repository import (
     SourceRecordLedgerRepository,
 )
-from src.domain.services.ingestion import IngestionRunContext  # noqa: TC001
-from src.domain.services.pubmed_ingestion import PubMedGateway
+from src.domain.services.ingestion import (  # noqa: TC001
+    IngestionProgressUpdate,
+    IngestionRunContext,
+)
+from src.domain.services.pubmed_ingestion import (
+    PubMedGateway,
+    PubMedQueryValidationResult,
+)
 from src.domain.value_objects.identifiers import PublicationIdentifier
 from src.type_definitions.ingestion import IngestResult
 from src.type_definitions.storage import StorageUseCase
@@ -58,13 +64,30 @@ if TYPE_CHECKING:
 class StubGateway(PubMedGateway):
     """Simple stub gateway returning pre-defined records."""
 
-    def __init__(self, records: list[RawRecord]) -> None:
+    def __init__(
+        self,
+        records: list[RawRecord],
+        *,
+        validation_results: dict[str, PubMedQueryValidationResult] | None = None,
+    ) -> None:
         self.records = records
         self.called_with: list[dict[str, object]] = []
+        self.validated_queries: list[str] = []
+        self._validation_results = validation_results or {}
 
     async def fetch_records(self, config) -> list[RawRecord]:  # type: ignore[override]
         self.called_with.append(config.model_dump())
         return self.records
+
+    async def validate_query(
+        self,
+        config,
+    ) -> PubMedQueryValidationResult:  # type: ignore[override]
+        self.validated_queries.append(config.query)
+        return self._validation_results.get(
+            config.query,
+            PubMedQueryValidationResult(is_valid=True, result_count=len(self.records)),
+        )
 
 
 class StubQueryAgent(QueryAgentPort):
@@ -107,6 +130,55 @@ class StubQueryAgent(QueryAgentPort):
 
     def get_last_run_id(self) -> str | None:
         return self._run_id
+
+
+class SequencedStubQueryAgent(QueryAgentPort):
+    """Query-agent test double that returns queued contracts across retries."""
+
+    def __init__(
+        self,
+        contracts: list[QueryGenerationContract],
+        *,
+        run_ids: list[str | None] | None = None,
+    ) -> None:
+        self._contracts = list(contracts)
+        self._run_ids = list(run_ids or [])
+        self.calls: list[dict[str, object]] = []
+        self._last_run_id: str | None = None
+
+    async def generate_query(  # noqa: PLR0913
+        self,
+        research_space_description: str,
+        user_instructions: str,
+        source_type: str,
+        *,
+        model_id: str | None = None,
+        user_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> QueryGenerationContract:
+        self.calls.append(
+            {
+                "research_space_description": research_space_description,
+                "user_instructions": user_instructions,
+                "source_type": source_type,
+                "model_id": model_id,
+                "user_id": user_id,
+                "correlation_id": correlation_id,
+            },
+        )
+        if not self._contracts:
+            msg = "Missing queued query-generation contract"
+            raise AssertionError(msg)
+        if self._run_ids:
+            self._last_run_id = self._run_ids.pop(0)
+        contract = self._contracts.pop(0)
+        return contract
+
+    async def close(self) -> None:
+        return None
+
+    def get_last_run_id(self) -> str | None:
+        return self._last_run_id
 
 
 class StubPublicationRepository(PublicationRepository):
@@ -287,8 +359,67 @@ class StubPipeline:
         self,
         records: list[PipelineRawRecord],
         research_space_id: str,
+        *,
+        progress_callback=None,
     ) -> IngestResult:
         self.calls.append((records, research_space_id))
+        total_records = len(records)
+        if progress_callback is not None:
+            for index, record in enumerate(records, start=1):
+                progress_callback(
+                    IngestionProgressUpdate(
+                        event_type="kernel_ingestion_record_started",
+                        message=f"Kernel ingestion record {index} started.",
+                        payload={
+                            "record_index": index,
+                            "total_records": total_records,
+                            "source_record_id": record.source_id,
+                        },
+                    ),
+                )
+                progress_callback(
+                    IngestionProgressUpdate(
+                        event_type="kernel_ingestion_mapper_started",
+                        message="Mapper ExactMapper started.",
+                        payload={
+                            "mapper_name": "ExactMapper",
+                            "source_record_id": record.source_id,
+                            "field_count": len(record.data),
+                        },
+                    ),
+                )
+                progress_callback(
+                    IngestionProgressUpdate(
+                        event_type="kernel_ingestion_mapper_finished",
+                        message="Mapper ExactMapper finished.",
+                        payload={
+                            "mapper_name": "ExactMapper",
+                            "source_record_id": record.source_id,
+                            "field_count": len(record.data),
+                            "matched_observations": 1,
+                            "selected": True,
+                            "duration_ms": 5,
+                        },
+                    ),
+                )
+                progress_callback(
+                    IngestionProgressUpdate(
+                        event_type="kernel_ingestion_record_finished",
+                        message=f"Kernel ingestion record {index} finished.",
+                        payload={
+                            "record_index": index,
+                            "total_records": total_records,
+                            "source_record_id": record.source_id,
+                            "duration_ms": 5,
+                            "mapped_observations_count": 1,
+                            "validation_failures": 0,
+                            "entities_created_total": index,
+                            "observations_created_total": index,
+                            "errors_total": 0,
+                            "success": True,
+                        },
+                    ),
+                )
         return IngestResult(success=True, observations_created=len(records))
 
 
@@ -671,3 +802,293 @@ async def test_ingest_exposes_query_generation_fallback_and_downstream_metrics()
     assert summary.query_generation_downstream_processed_records == 2
     assert len(query_agent.calls) == 1
     assert query_agent.calls[0]["source_type"] == "clinvar"
+
+
+@pytest.mark.asyncio
+async def test_ingest_repairs_invalid_ai_generated_query_using_pubmed_feedback() -> (
+    None
+):
+    gateway = StubGateway(
+        records=[{"pmid": "100", "title": "Paper A"}],
+        validation_results={
+            "MED13 AND )": PubMedQueryValidationResult(
+                is_valid=False,
+                api_feedback="quotedphrasesnotfound: Unexpected right parenthesis",
+                translated_query="(MED13)",
+                result_count=0,
+            ),
+            "MED13[Title/Abstract]": PubMedQueryValidationResult(
+                is_valid=True,
+                translated_query="MED13[Title/Abstract]",
+                result_count=12,
+            ),
+        },
+    )
+    pipeline = StubPipeline()
+    query_agent = SequencedStubQueryAgent(
+        contracts=[
+            QueryGenerationContract(
+                decision="generated",
+                confidence_score=0.91,
+                rationale="Generated a candidate query.",
+                evidence=[],
+                query="MED13 AND )",
+                source_type="pubmed",
+                query_complexity="moderate",
+            ),
+            QueryGenerationContract(
+                decision="generated",
+                confidence_score=0.89,
+                rationale="Repaired the query using API feedback.",
+                evidence=[],
+                query="MED13[Title/Abstract]",
+                source_type="pubmed",
+                query_complexity="simple",
+            ),
+        ],
+        run_ids=["query-run-invalid", "query-run-repaired"],
+    )
+    service = PubMedIngestionService(
+        gateway=gateway,
+        pipeline=pipeline,
+        dependencies=PubMedIngestionDependencies(
+            publication_repository=StubPublicationRepository(),
+            query_agent=query_agent,
+        ),
+    )
+    source = _build_source(
+        {
+            "query": "MED13",
+            "agent_config": {
+                "is_ai_managed": True,
+                "query_agent_source_type": "pubmed",
+                "agent_prompt": "Focus on MED13 disease biology.",
+                "model_id": "openai:gpt-5-mini",
+            },
+        },
+    ).model_copy(update={"research_space_id": uuid4()})
+
+    summary = await service.ingest(source)
+
+    assert summary.executed_query == "MED13[Title/Abstract]"
+    assert summary.query_generation_decision == "generated"
+    assert summary.query_generation_run_id == "query-run-repaired"
+    assert len(query_agent.calls) == 2
+    assert query_agent.calls[0]["model_id"] == "openai:gpt-5-mini"
+    assert query_agent.calls[1]["model_id"] == "openai:gpt-5-mini"
+    assert "Malformed query: MED13 AND )" in query_agent.calls[1]["user_instructions"]
+    assert (
+        "PubMed API feedback: quotedphrasesnotfound: Unexpected right parenthesis"
+        in query_agent.calls[1]["user_instructions"]
+    )
+    assert gateway.validated_queries == ["MED13 AND )", "MED13[Title/Abstract]"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_falls_back_to_base_query_when_repair_still_fails_validation() -> (
+    None
+):
+    gateway = StubGateway(
+        records=[{"pmid": "100", "title": "Paper A"}],
+        validation_results={
+            "MED13 AND )": PubMedQueryValidationResult(
+                is_valid=False,
+                api_feedback="error: syntax error in search term",
+            ),
+            "MED13 OR )": PubMedQueryValidationResult(
+                is_valid=False,
+                api_feedback="error: unmatched parenthesis",
+            ),
+            "MED13": PubMedQueryValidationResult(
+                is_valid=True,
+                translated_query="MED13",
+                result_count=25,
+            ),
+        },
+    )
+    pipeline = StubPipeline()
+    query_agent = SequencedStubQueryAgent(
+        contracts=[
+            QueryGenerationContract(
+                decision="generated",
+                confidence_score=0.9,
+                rationale="Generated a candidate query.",
+                evidence=[],
+                query="MED13 AND )",
+                source_type="pubmed",
+                query_complexity="moderate",
+            ),
+            QueryGenerationContract(
+                decision="generated",
+                confidence_score=0.41,
+                rationale="Attempted query repair.",
+                evidence=[],
+                query="MED13 OR )",
+                source_type="pubmed",
+                query_complexity="moderate",
+            ),
+        ],
+        run_ids=["query-run-invalid", "query-run-repair-invalid"],
+    )
+    service = PubMedIngestionService(
+        gateway=gateway,
+        pipeline=pipeline,
+        dependencies=PubMedIngestionDependencies(
+            publication_repository=StubPublicationRepository(),
+            query_agent=query_agent,
+        ),
+    )
+    source = _build_source(
+        {
+            "query": "MED13",
+            "agent_config": {
+                "is_ai_managed": True,
+                "query_agent_source_type": "pubmed",
+                "agent_prompt": "Focus on MED13 disease biology.",
+                "model_id": "openai:gpt-5-mini",
+            },
+        },
+    ).model_copy(update={"research_space_id": uuid4()})
+
+    summary = await service.ingest(source)
+
+    assert summary.executed_query == "MED13"
+    assert summary.query_generation_decision == "fallback"
+    assert (
+        summary.query_generation_fallback_reason == "pubmed_api_query_validation_failed"
+    )
+    assert summary.query_generation_run_id == "query-run-repair-invalid"
+    assert gateway.validated_queries == ["MED13 AND )", "MED13 OR )"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_emits_progress_updates_and_tags_documents_with_pipeline_run_id() -> (
+    None
+):
+    gateway = StubGateway(
+        records=[
+            {"pmid": "100", "title": "Paper A"},
+            {"pmid": "101", "title": "Paper B"},
+        ],
+    )
+    pipeline = StubPipeline()
+    source_document_repository = StubSourceDocumentRepository()
+    progress_updates: list[IngestionProgressUpdate] = []
+    service = PubMedIngestionService(
+        gateway=gateway,
+        pipeline=pipeline,
+        dependencies=PubMedIngestionDependencies(
+            publication_repository=StubPublicationRepository(),
+            source_document_repository=source_document_repository,
+        ),
+    )
+    source = _build_source({"query": "MED13"}).model_copy(
+        update={"research_space_id": uuid4()},
+    )
+    context = IngestionRunContext(
+        ingestion_job_id=uuid4(),
+        source_sync_state=SourceSyncState(
+            source_id=source.id,
+            source_type=SourceType.PUBMED,
+        ),
+        query_signature="pubmed-query-signature",
+        pipeline_run_id="pipeline-run-123",
+        progress_callback=progress_updates.append,
+    )
+
+    summary = await service.ingest(source, context=context)
+
+    assert summary.extraction_targets
+    assert summary.extraction_targets[0].metadata is not None
+    assert (
+        summary.extraction_targets[0].metadata.get("pipeline_run_id")
+        == "pipeline-run-123"
+    )
+
+    saved_document = source_document_repository.get_by_source_external_record(
+        source_id=source.id,
+        external_record_id="pubmed:pmid:100",
+    )
+    assert saved_document is not None
+    assert saved_document.metadata.get("pipeline_run_id") == "pipeline-run-123"
+
+    event_types = [update.event_type for update in progress_updates]
+
+    assert event_types[:4] == [
+        "query_resolved",
+        "records_fetched",
+        "source_documents_upserted",
+        "kernel_ingestion_started",
+    ]
+    assert "kernel_ingestion_record_started" in event_types
+    assert "kernel_ingestion_mapper_started" in event_types
+    assert "kernel_ingestion_mapper_finished" in event_types
+    assert "kernel_ingestion_record_finished" in event_types
+    assert event_types[-1] == "kernel_ingestion_finished"
+    assert progress_updates[0].payload["executed_query"] == "MED13"
+    assert progress_updates[0].payload["query_signature"] == "pubmed-query-signature"
+    assert all(
+        update.ingestion_job_id == context.ingestion_job_id
+        for update in progress_updates
+    )
+    assert progress_updates[-1].payload["observations_created"] == 2
+
+
+@pytest.mark.asyncio
+async def test_ingest_emits_fallback_query_progress_message_when_ai_query_recovers() -> (
+    None
+):
+    gateway = StubGateway(records=[{"pmid": "100", "title": "Paper A"}])
+    pipeline = StubPipeline()
+    progress_updates: list[IngestionProgressUpdate] = []
+    query_agent = StubQueryAgent(
+        QueryGenerationContract(
+            decision="escalate",
+            confidence_score=0.0,
+            rationale="agent requested escalation",
+            evidence=[],
+            query="",
+            source_type="pubmed",
+            query_complexity="simple",
+        ),
+        run_id="query-run-escalated",
+    )
+    service = PubMedIngestionService(
+        gateway=gateway,
+        pipeline=pipeline,
+        dependencies=PubMedIngestionDependencies(
+            publication_repository=StubPublicationRepository(),
+            query_agent=query_agent,
+        ),
+    )
+    source = _build_source(
+        {
+            "query": "MED13",
+            "agent_config": {
+                "is_ai_managed": True,
+                "query_agent_source_type": "pubmed",
+            },
+        },
+    ).model_copy(update={"research_space_id": uuid4()})
+    context = IngestionRunContext(
+        ingestion_job_id=uuid4(),
+        source_sync_state=SourceSyncState(
+            source_id=source.id,
+            source_type=SourceType.PUBMED,
+        ),
+        query_signature="pubmed-query-signature-fallback",
+        pipeline_run_id="pipeline-run-fallback",
+        progress_callback=progress_updates.append,
+    )
+
+    summary = await service.ingest(source, context=context)
+
+    assert summary.executed_query == "MED13"
+    assert progress_updates[0].event_type == "query_resolved"
+    assert (
+        progress_updates[0].message == "Fell back to base PubMed query configuration."
+    )
+    assert (
+        progress_updates[0].payload["query_generation_fallback_reason"]
+        == "agent_requested_escalation"
+    )

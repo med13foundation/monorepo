@@ -15,10 +15,13 @@ from src.models.database.user_data_source import UserDataSourceModel
 
 from ._source_workflow_monitor_shared import (
     PipelineRunRecord,
+    coerce_json_list,
     coerce_json_object,
     normalize_optional_string,
+    parse_uuid_runtime,
     safe_int,
 )
+from .pipeline_run_trace_service import parse_cost_summary, parse_timing_summary
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -161,7 +164,7 @@ class SourceWorkflowMonitorPipelineMixin:
         msg = f"Pipeline run '{normalized}' not found for this source"
         raise ValueError(msg)
 
-    def _build_pipeline_run_payload(
+    def _build_pipeline_run_payload(  # noqa: C901, PLR0912, PLR0915
         self,
         *,
         row: IngestionJobModel,
@@ -172,6 +175,7 @@ class SourceWorkflowMonitorPipelineMixin:
 
         metrics = coerce_json_object(row.metrics)
         metadata = coerce_json_object(row.job_metadata)
+        query_generation = coerce_json_object(metadata.get("query_generation"))
         extraction_queue_meta = coerce_json_object(metadata.get("extraction_queue"))
         extraction_run_meta = coerce_json_object(
             pipeline_payload.get("extraction_run"),
@@ -179,6 +183,27 @@ class SourceWorkflowMonitorPipelineMixin:
         if not extraction_run_meta:
             extraction_run_meta = coerce_json_object(metadata.get("extraction_run"))
         graph_progress = coerce_json_object(pipeline_payload.get("graph_progress"))
+        timing_summary_payload = coerce_json_object(
+            pipeline_payload.get("timing_summary"),
+        )
+        parsed_timing_summary = parse_timing_summary(timing_summary_payload)
+        cost_summary_payload = coerce_json_object(pipeline_payload.get("cost_summary"))
+        parsed_cost_summary = parse_cost_summary(cost_summary_payload)
+        source_row = getattr(row, "source", None)
+        if (
+            parsed_cost_summary is None
+            and hasattr(self, "_pipeline_trace")
+            and self._pipeline_trace is not None
+        ):
+            research_space_id = parse_uuid_runtime(
+                pipeline_payload.get("research_space_id"),
+            ) or parse_uuid_runtime(getattr(source_row, "research_space_id", None))
+            run_id = normalize_optional_string(pipeline_payload.get("run_id"))
+            if research_space_id is not None and run_id is not None:
+                parsed_cost_summary = self._pipeline_trace.resolve_cost_summary(
+                    research_space_id=research_space_id,
+                    pipeline_run_id=run_id,
+                )
         extraction_processed = safe_int(extraction_run_meta.get("processed"))
         extraction_completed = safe_int(extraction_run_meta.get("completed"))
         extraction_failed = safe_int(extraction_run_meta.get("failed"))
@@ -244,12 +269,102 @@ class SourceWorkflowMonitorPipelineMixin:
 
         source_snapshot = coerce_json_object(row.source_config_snapshot)
         source_metadata = coerce_json_object(source_snapshot.get("metadata"))
+        query_progress = coerce_json_object(pipeline_payload.get("query_progress"))
         executed_query = normalize_optional_string(metadata.get("executed_query"))
+        if executed_query is None:
+            executed_query = normalize_optional_string(
+                query_progress.get("executed_query"),
+            )
         if executed_query is None:
             executed_query = normalize_optional_string(source_metadata.get("query"))
         row_status = normalize_optional_string(row.status.value)
         pipeline_status = normalize_optional_string(pipeline_payload.get("status"))
         queue_status = normalize_optional_string(pipeline_payload.get("queue_status"))
+        owner_payload = coerce_json_object(pipeline_payload.get("owner"))
+        run_owner_user_id = normalize_optional_string(
+            owner_payload.get("run_owner_user_id"),
+        )
+        run_owner_source = normalize_optional_string(
+            owner_payload.get("run_owner_source"),
+        )
+        if run_owner_user_id is None:
+            triggered_by = normalize_optional_string(getattr(row, "triggered_by", None))
+            source_owner_id = normalize_optional_string(
+                getattr(source_row, "owner_id", None),
+            )
+            if triggered_by is not None:
+                run_owner_user_id = triggered_by
+                run_owner_source = "triggered_by"
+            elif source_owner_id is not None:
+                run_owner_user_id = source_owner_id
+                run_owner_source = "source_owner"
+            else:
+                run_owner_source = "system"
+
+        total_cost_usd = (
+            parsed_cost_summary.total_cost_usd
+            if parsed_cost_summary is not None
+            else 0.0
+        )
+        extracted_count = max(extraction_completed, 0)
+        persisted_relation_count = max(
+            safe_int(graph_progress.get("persisted_relations")),
+            safe_int(graph_progress.get("graph_stage_persisted_relations")),
+            safe_int(graph_progress.get("extraction_persisted_relations")),
+        )
+        full_text_rescue_attempted = safe_int(
+            idempotency_checkpoint_after.get("full_text_rescue_attempted_count"),
+        )
+        full_text_rescued = safe_int(
+            idempotency_checkpoint_after.get("full_text_rescued_count"),
+        )
+        diagnostic_signals: JSONObject = {
+            "extraction_failure_ratio": (
+                round(extraction_failed / extraction_processed, 6)
+                if extraction_processed > 0
+                else 0.0
+            ),
+            "full_text_rescue_dependence": (
+                round(full_text_rescued / full_text_rescue_attempted, 6)
+                if full_text_rescue_attempted > 0
+                else 0.0
+            ),
+            "cost_per_extracted_document": (
+                round(total_cost_usd / extracted_count, 8)
+                if extracted_count > 0
+                else 0.0
+            ),
+            "cost_per_persisted_relation": (
+                round(total_cost_usd / persisted_relation_count, 8)
+                if persisted_relation_count > 0
+                else 0.0
+            ),
+        }
+        paper_candidate_summary: JSONObject = {
+            "filtered_out_external_record_ids": [
+                str(item)
+                for item in coerce_json_list(
+                    idempotency_checkpoint_after.get("filtered_out_pubmed_ids"),
+                )
+                if normalize_optional_string(item) is not None
+            ],
+            "pre_rescue_filtered_external_record_ids": [
+                str(item)
+                for item in coerce_json_list(
+                    idempotency_checkpoint_after.get(
+                        "pre_rescue_filtered_out_pubmed_ids",
+                    ),
+                )
+                if normalize_optional_string(item) is not None
+            ],
+            "full_text_rescued_external_record_ids": [
+                str(item)
+                for item in coerce_json_list(
+                    idempotency_checkpoint_after.get("full_text_rescued_pubmed_ids"),
+                )
+                if normalize_optional_string(item) is not None
+            ],
+        }
 
         return {
             "job_id": str(row.id),
@@ -283,10 +398,26 @@ class SourceWorkflowMonitorPipelineMixin:
             ),
             "worker_id": normalize_optional_string(pipeline_payload.get("worker_id")),
             "executed_query": executed_query,
+            "query_progress": query_progress,
+            "query_generation": query_generation,
             "stage_statuses": stage_statuses,
             "stage_errors": stage_errors,
             "stage_checkpoints": checkpoints,
             "stage_counters": stage_counters,
+            "timing_summary": (
+                parsed_timing_summary.to_json_object()
+                if parsed_timing_summary is not None
+                else timing_summary_payload
+            ),
+            "cost_summary": (
+                parsed_cost_summary.to_json_object()
+                if parsed_cost_summary is not None
+                else cost_summary_payload
+            ),
+            "run_owner_user_id": run_owner_user_id,
+            "run_owner_source": run_owner_source,
+            "diagnostic_signals": diagnostic_signals,
+            "paper_candidate_summary": paper_candidate_summary,
         }
 
     @staticmethod
@@ -360,6 +491,139 @@ class SourceWorkflowMonitorPipelineMixin:
         linked_job_metadata = coerce_json_object(linked_job_metadata_raw)
         linked_idempotency = coerce_json_object(linked_job_metadata.get("idempotency"))
         return coerce_json_object(linked_idempotency.get("checkpoint_after"))
+
+    @staticmethod
+    def _normalize_paper_external_record_id(
+        *,
+        source_type: str | None,
+        record_id: object,
+    ) -> str | None:
+        normalized = normalize_optional_string(record_id)
+        if normalized is None:
+            return None
+        if source_type == "pubmed" and normalized.isdigit():
+            return f"pubmed:pubmed_id:{normalized}"
+        return normalized
+
+    def _build_run_paper_candidates(
+        self,
+        *,
+        source_type: str | None,
+        selected_run_payload: JSONObject,
+        documents: list[JSONObject],
+    ) -> list[JSONObject]:
+        paper_summary = coerce_json_object(
+            selected_run_payload.get("paper_candidate_summary"),
+        )
+        filtered_out_ids = [
+            normalized
+            for item in coerce_json_list(
+                paper_summary.get("filtered_out_external_record_ids"),
+            )
+            if (
+                normalized := self._normalize_paper_external_record_id(
+                    source_type=source_type,
+                    record_id=item,
+                )
+            )
+            is not None
+        ]
+        pre_rescue_filtered_ids = [
+            normalized
+            for item in coerce_json_list(
+                paper_summary.get("pre_rescue_filtered_external_record_ids"),
+            )
+            if (
+                normalized := self._normalize_paper_external_record_id(
+                    source_type=source_type,
+                    record_id=item,
+                )
+            )
+            is not None
+        ]
+        rescued_ids = [
+            normalized
+            for item in coerce_json_list(
+                paper_summary.get("full_text_rescued_external_record_ids"),
+            )
+            if (
+                normalized := self._normalize_paper_external_record_id(
+                    source_type=source_type,
+                    record_id=item,
+                )
+            )
+            is not None
+        ]
+
+        document_by_external_id: dict[str, JSONObject] = {}
+        for document in documents:
+            external_record_id = normalize_optional_string(
+                document.get("external_record_id"),
+            )
+            if external_record_id is None:
+                continue
+            document_by_external_id[external_record_id] = document
+
+        ordered_external_ids: list[str] = []
+        for candidate_id in (
+            list(document_by_external_id.keys())
+            + pre_rescue_filtered_ids
+            + filtered_out_ids
+            + rescued_ids
+        ):
+            if candidate_id not in ordered_external_ids:
+                ordered_external_ids.append(candidate_id)
+
+        filtered_out_set = set(filtered_out_ids)
+        pre_rescue_filtered_set = set(pre_rescue_filtered_ids)
+        rescued_set = set(rescued_ids)
+
+        paper_candidates: list[JSONObject] = []
+        for external_record_id in ordered_external_ids:
+            document = coerce_json_object(
+                document_by_external_id.get(external_record_id),
+            )
+            is_rescued = external_record_id in rescued_set
+            is_final_filtered = external_record_id in filtered_out_set
+            was_pre_rescue_filtered = external_record_id in pre_rescue_filtered_set
+            document_id = normalize_optional_string(document.get("id"))
+            enrichment_status = normalize_optional_string(
+                document.get("enrichment_status"),
+            )
+            extraction_status = normalize_optional_string(
+                document.get("extraction_status"),
+            )
+
+            outcome = "processed"
+            reason = "Retained after ingestion filtering and document upsert."
+            if document_id is not None and is_rescued:
+                outcome = "rescued_and_processed"
+                reason = (
+                    "Retained by full-text rescue after semantic relevance filtering."
+                )
+            elif document_id is None and is_final_filtered:
+                outcome = "dropped"
+                if was_pre_rescue_filtered:
+                    reason = "Filtered out by semantic relevance; full-text rescue did not retain it."
+                else:
+                    reason = "Filtered out before source document creation."
+            elif document_id is None and was_pre_rescue_filtered:
+                outcome = "dropped"
+                reason = "Filtered out before source document creation."
+
+            paper_candidates.append(
+                {
+                    "external_record_id": external_record_id,
+                    "paper_outcome": outcome,
+                    "paper_reason": reason,
+                    "rescued_by_full_text": is_rescued,
+                    "pre_rescue_filtered": was_pre_rescue_filtered,
+                    "document_id": document_id,
+                    "enrichment_status": enrichment_status,
+                    "extraction_status": extraction_status,
+                },
+            )
+        return paper_candidates
 
     def _load_source_documents(
         self,
