@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from src.application.services.kernel.kernel_claim_participant_service import (
         KernelClaimParticipantService,
     )
+    from src.application.services.kernel.kernel_reasoning_path_service import (
+        KernelReasoningPathService,
+    )
     from src.application.services.kernel.kernel_relation_claim_service import (
         KernelRelationClaimService,
     )
@@ -32,6 +35,7 @@ if TYPE_CHECKING:
 
 _SCORE_THRESHOLD = 0.45
 _GRAPH_ORIGIN = "graph_agent"
+_PATH_ORIGIN = "reasoning_path"
 _DEFAULT_SEED_LIMIT = 40
 _SEED_CLAIM_CONFIDENCE_THRESHOLD = 0.7
 
@@ -46,6 +50,7 @@ class HypothesisGenerationServiceDependencies:
     entity_repository: KernelEntityRepository
     relation_repository: KernelRelationRepository
     dictionary_service: DictionaryPort
+    reasoning_path_service: KernelReasoningPathService | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,21 @@ class _ScoredCandidate:
     score: float
 
 
+@dataclass(frozen=True)
+class _PathCandidate:
+    reasoning_path_id: str
+    start_entity_id: str
+    end_entity_id: str
+    source_type: str
+    target_type: str
+    relation_type: str
+    source_label: str | None
+    target_label: str | None
+    confidence: float
+    path_length: int
+    supporting_claim_ids: tuple[str, ...]
+
+
 class HypothesisGenerationService:
     """Generate hypothesis relation claims from graph-agent exploration."""
 
@@ -104,8 +124,9 @@ class HypothesisGenerationService:
         self._entities = dependencies.entity_repository
         self._relations = dependencies.relation_repository
         self._dictionary = dependencies.dictionary_service
+        self._reasoning_paths = dependencies.reasoning_path_service
 
-    async def generate_hypotheses(  # noqa: PLR0912, PLR0913, C901
+    async def generate_hypotheses(  # noqa: PLR0912, PLR0913, PLR0915, C901
         self,
         *,
         research_space_id: str,
@@ -145,7 +166,16 @@ class HypothesisGenerationService:
         )
 
         raw_candidates: list[_RawCandidate] = []
+        path_candidates: list[_PathCandidate] = []
         errors: list[str] = []
+
+        if self._reasoning_paths is not None:
+            path_candidates, path_errors = self._load_reasoning_path_candidates(
+                research_space_id=research_space_id,
+                seed_entity_ids=resolved_seed_ids,
+                max_hypotheses=max_hypotheses,
+            )
+            errors.extend(path_errors)
 
         for seed_entity_id in resolved_seed_ids:
             try:
@@ -193,14 +223,41 @@ class HypothesisGenerationService:
         created: list[KernelRelationClaim] = []
         deduped_count = 0
         emitted_fingerprints: set[str] = set()
-        for candidate in eligible_candidates:
+        for path_candidate in path_candidates:
             if len(created) >= max_hypotheses:
                 break
 
             fingerprint = _build_fingerprint(
-                source_entity_id=candidate.raw.source_entity_id,
-                relation_type=candidate.raw.relation_type,
-                target_entity_id=candidate.raw.target_entity_id,
+                source_entity_id=path_candidate.start_entity_id,
+                relation_type=path_candidate.relation_type,
+                target_entity_id=path_candidate.end_entity_id,
+                origin=f"{_PATH_ORIGIN}:{path_candidate.reasoning_path_id}",
+            )
+            if (
+                fingerprint in active_fingerprints
+                or fingerprint in emitted_fingerprints
+            ):
+                deduped_count += 1
+                continue
+
+            claim = self._create_claim_from_path_candidate(
+                candidate=path_candidate,
+                research_space_id=research_space_id,
+                run_id=run_id,
+                fingerprint=fingerprint,
+            )
+            created.append(claim)
+            emitted_fingerprints.add(fingerprint)
+            active_fingerprints.add(fingerprint)
+
+        for scored_candidate in eligible_candidates:
+            if len(created) >= max_hypotheses:
+                break
+
+            fingerprint = _build_fingerprint(
+                source_entity_id=scored_candidate.raw.source_entity_id,
+                relation_type=scored_candidate.raw.relation_type,
+                target_entity_id=scored_candidate.raw.target_entity_id,
                 origin=_GRAPH_ORIGIN,
             )
             if (
@@ -211,11 +268,11 @@ class HypothesisGenerationService:
                 continue
 
             claim = self._create_claim_from_candidate(
-                candidate=candidate,
+                candidate=scored_candidate,
                 research_space_id=research_space_id,
                 run_id=run_id,
                 fingerprint=fingerprint,
-                seed_entity_id=candidate.raw.seed_entity_id,
+                seed_entity_id=scored_candidate.raw.seed_entity_id,
             )
             created.append(claim)
             emitted_fingerprints.add(fingerprint)
@@ -477,6 +534,83 @@ class HypothesisGenerationService:
             )
         return scored
 
+    def _load_reasoning_path_candidates(
+        self,
+        *,
+        research_space_id: str,
+        seed_entity_ids: list[str],
+        max_hypotheses: int,
+    ) -> tuple[list[_PathCandidate], list[str]]:
+        if self._reasoning_paths is None:
+            return [], []
+        candidates: list[_PathCandidate] = []
+        errors: list[str] = []
+        seen_path_ids: set[str] = set()
+        for seed_entity_id in seed_entity_ids:
+            path_list = self._reasoning_paths.list_paths(
+                research_space_id=research_space_id,
+                start_entity_id=seed_entity_id,
+                status="ACTIVE",
+                path_kind="MECHANISM",
+                limit=max(5, max_hypotheses * 3),
+                offset=0,
+            )
+            for path in path_list.paths:
+                path_id = str(path.id)
+                if path_id in seen_path_ids:
+                    continue
+                seen_path_ids.add(path_id)
+                path_detail = self._reasoning_paths.get_path(
+                    path_id,
+                    research_space_id,
+                )
+                if path_detail is None:
+                    errors.append(f"path_missing:{path_id}")
+                    continue
+                start_entity = self._entities.get_by_id(str(path.start_entity_id))
+                end_entity = self._entities.get_by_id(str(path.end_entity_id))
+                if start_entity is None or end_entity is None:
+                    errors.append(f"path_endpoint_unresolved:{path_id}")
+                    continue
+                metadata_payload = path.metadata_payload
+                terminal_relation_type = _normalize_metadata_relation_type(
+                    metadata_payload.get("terminal_relation_type"),
+                )
+                if not terminal_relation_type:
+                    terminal_relation_type = "ASSOCIATED_WITH"
+                supporting_claim_ids = _normalize_metadata_string_tuple(
+                    metadata_payload.get("supporting_claim_ids"),
+                )
+                if not supporting_claim_ids:
+                    supporting_claim_ids = tuple(
+                        str(claim.id) for claim in path_detail.claims
+                    )
+                candidates.append(
+                    _PathCandidate(
+                        reasoning_path_id=path_id,
+                        start_entity_id=str(path.start_entity_id),
+                        end_entity_id=str(path.end_entity_id),
+                        source_type=start_entity.entity_type.strip().upper(),
+                        target_type=end_entity.entity_type.strip().upper(),
+                        relation_type=terminal_relation_type,
+                        source_label=_normalize_optional_text(
+                            start_entity.display_label,
+                        ),
+                        target_label=_normalize_optional_text(end_entity.display_label),
+                        confidence=max(0.0, min(1.0, float(path.confidence))),
+                        path_length=int(path.path_length),
+                        supporting_claim_ids=supporting_claim_ids,
+                    ),
+                )
+        candidates.sort(
+            key=lambda item: (
+                -item.confidence,
+                item.path_length,
+                item.reasoning_path_id,
+            ),
+        )
+        return candidates, errors
+
     def _create_claim_from_candidate(
         self,
         *,
@@ -554,6 +688,68 @@ class HypothesisGenerationService:
         )
         return claim
 
+    def _create_claim_from_path_candidate(
+        self,
+        *,
+        candidate: _PathCandidate,
+        research_space_id: str,
+        run_id: str,
+        fingerprint: str,
+    ) -> KernelRelationClaim:
+        source_label = candidate.source_label or candidate.start_entity_id
+        target_label = candidate.target_label or candidate.end_entity_id
+        claim_text = (
+            f"{source_label} {candidate.relation_type.lower().replace('_', ' ')} "
+            f"{target_label}"
+        )
+        metadata: JSONObject = {
+            "origin": _PATH_ORIGIN,
+            "run_id": run_id,
+            "reasoning_path_id": candidate.reasoning_path_id,
+            "fingerprint": fingerprint,
+            "start_entity_id": candidate.start_entity_id,
+            "end_entity_id": candidate.end_entity_id,
+            "supporting_claim_ids": list(candidate.supporting_claim_ids),
+            "path_confidence": round(candidate.confidence, 6),
+            "path_length": candidate.path_length,
+        }
+        claim = self._claims.create_hypothesis_claim(
+            research_space_id=research_space_id,
+            source_document_id=None,
+            agent_run_id=run_id,
+            source_type=candidate.source_type,
+            relation_type=candidate.relation_type,
+            target_type=candidate.target_type,
+            source_label=candidate.source_label,
+            target_label=candidate.target_label,
+            confidence=candidate.confidence,
+            validation_state="ALLOWED",
+            validation_reason="derived_from_reasoning_path",
+            persistability="NON_PERSISTABLE",
+            claim_text=claim_text,
+            metadata=metadata,
+            claim_status="OPEN",
+        )
+        self._participants.create_participant(
+            claim_id=str(claim.id),
+            research_space_id=research_space_id,
+            role="SUBJECT",
+            label=candidate.source_label,
+            entity_id=candidate.start_entity_id,
+            position=0,
+            qualifiers=None,
+        )
+        self._participants.create_participant(
+            claim_id=str(claim.id),
+            research_space_id=research_space_id,
+            role="OBJECT",
+            label=candidate.target_label,
+            entity_id=candidate.end_entity_id,
+            position=1,
+            qualifiers=None,
+        )
+        return claim
+
     def _resolve_novelty(
         self,
         *,
@@ -617,6 +813,19 @@ def _normalize_optional_text(value: object) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _normalize_metadata_relation_type(value: object) -> str | None:
+    normalized = _normalize_optional_text(value)
+    if normalized is None:
+        return None
+    return normalize_relation_type(normalized)
+
+
+def _normalize_metadata_string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(_normalize_string_iterable(value))
 
 
 def _resolve_evidence_density(

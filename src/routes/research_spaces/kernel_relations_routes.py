@@ -1066,7 +1066,7 @@ def list_relation_conflicts(
     response_model=KernelRelationClaimResponse,
     summary="Update relation-claim triage status",
 )
-def update_relation_claim_status(  # noqa: PLR0912
+def update_relation_claim_status(  # noqa: PLR0912, PLR0915
     space_id: UUID,
     claim_id: UUID,
     request: KernelRelationClaimTriageRequest,
@@ -1080,6 +1080,7 @@ def update_relation_claim_status(  # noqa: PLR0912
     relation_projection_materialization_service = (
         triage_dependencies.relation_projection_materialization_service
     )
+    reasoning_path_service = triage_dependencies.reasoning_path_service
     dictionary_service = triage_dependencies.dictionary_service
     session = triage_dependencies.session
 
@@ -1160,6 +1161,10 @@ def update_relation_claim_status(  # noqa: PLR0912
             updated = relation_claim_service.clear_claim_relation_link(
                 str(updated.id),
             )
+        reasoning_path_service.mark_stale_for_claim_ids(
+            [str(updated.id)],
+            str(space_id),
+        )
         session.commit()
         return KernelRelationClaimResponse.from_model(updated)
     except ValueError as exc:

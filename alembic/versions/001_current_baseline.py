@@ -35,6 +35,9 @@ _CLAIM_EVIDENCE_TABLE = "claim_evidence"
 _PROJECTION_DIAGNOSTIC_FUNCTION = "find_orphan_relations_without_projection"
 _PROJECTION_TRIGGER_FUNCTION = "enforce_relation_projection_lineage"
 _PROJECTION_TRIGGER_NAME = "trg_enforce_relation_projection_lineage"
+_EXCLUDED_FROM_BASELINE: frozenset[str] = frozenset(
+    {"reasoning_paths", "reasoning_path_steps"},
+)
 
 _BYPASS_RLS = (
     "COALESCE(NULLIF(current_setting('app.bypass_rls', true), '')::boolean, false)"
@@ -54,7 +57,7 @@ def upgrade() -> None:
         op.execute("CREATE EXTENSION IF NOT EXISTS vector")
         op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 
-    Base.metadata.create_all(bind=bind)
+    _baseline_metadata_tables().create_all(bind=bind)
 
     if bind.dialect.name != "postgresql":
         return
@@ -86,7 +89,20 @@ def downgrade() -> None:
         ):
             _drop_policy_and_disable_rls(table_name)
 
-    Base.metadata.drop_all(bind=bind)
+    _baseline_metadata_tables().drop_all(bind=bind)
+
+
+def _baseline_metadata_tables() -> sa.MetaData:
+    metadata = Base.metadata
+    include_tables = [
+        table
+        for table_name, table in metadata.tables.items()
+        if table_name not in _EXCLUDED_FROM_BASELINE
+    ]
+    baseline_metadata = sa.MetaData(naming_convention=metadata.naming_convention)
+    for table in include_tables:
+        table.to_metadata(baseline_metadata)
+    return baseline_metadata
 
 
 def _create_policy(table_name: str, condition: str) -> None:

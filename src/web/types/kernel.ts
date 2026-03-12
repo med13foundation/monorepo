@@ -271,6 +271,10 @@ export interface HypothesisResponse {
   origin: string
   seed_entity_ids: string[]
   supporting_provenance_ids: string[]
+  reasoning_path_id?: string | null
+  supporting_claim_ids: string[]
+  path_confidence?: number | null
+  path_length?: number | null
   created_at: string
   metadata: JSONObject
 }

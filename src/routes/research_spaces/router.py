@@ -44,6 +44,7 @@ from . import (  # noqa: E402,F401
     kernel_ingestion_routes,
     kernel_observations_routes,
     kernel_provenance_routes,
+    kernel_reasoning_path_routes,
     kernel_relations_routes,
     knowledge_extraction_routes,
     membership_routes,

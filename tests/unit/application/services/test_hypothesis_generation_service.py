@@ -14,12 +14,23 @@ from src.application.agents.services.hypothesis_generation_service import (
     HypothesisGenerationServiceDependencies,
 )
 from src.application.services.claim_first_metrics import reset_metric_counters_for_tests
+from src.application.services.kernel.kernel_reasoning_path_service import (
+    KernelReasoningPathDetail,
+    ReasoningPathListResult,
+)
 from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.graph_connection import (
     GraphConnectionContract,
     ProposedRelation,
 )
+from src.domain.entities.kernel.claim_evidence import KernelClaimEvidence
+from src.domain.entities.kernel.claim_participants import KernelClaimParticipant
+from src.domain.entities.kernel.claim_relations import KernelClaimRelation
 from src.domain.entities.kernel.entities import KernelEntity
+from src.domain.entities.kernel.reasoning_paths import (
+    KernelReasoningPath,
+    KernelReasoningPathStep,
+)
 from src.domain.entities.kernel.relation_claims import KernelRelationClaim
 from src.domain.entities.kernel.relations import KernelRelation
 
@@ -205,6 +216,42 @@ class StubDictionaryService:
         return self.allow_all
 
 
+@dataclass
+class StubReasoningPathService:
+    paths_by_start_entity: dict[str, list[KernelReasoningPath]]
+    details_by_id: dict[str, KernelReasoningPathDetail]
+
+    def list_paths(  # noqa: PLR0913
+        self,
+        *,
+        research_space_id: str,
+        start_entity_id: str | None = None,
+        end_entity_id: str | None = None,
+        status: str | None = None,
+        path_kind: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ReasoningPathListResult:
+        del research_space_id, end_entity_id, status, path_kind, offset
+        paths = list(self.paths_by_start_entity.get(start_entity_id or "", []))
+        return ReasoningPathListResult(
+            paths=tuple(paths[:limit]),
+            total=len(paths),
+            offset=0,
+            limit=limit,
+        )
+
+    def get_path(
+        self,
+        path_id: str,
+        research_space_id: str,
+    ) -> KernelReasoningPathDetail | None:
+        detail = self.details_by_id.get(path_id)
+        if detail is None or str(detail.path.research_space_id) != research_space_id:
+            return None
+        return detail
+
+
 def _build_entity(
     *,
     entity_id: UUID,
@@ -248,6 +295,98 @@ def _build_relation(
         reviewed_at=None,
         created_at=now,
         updated_at=now,
+    )
+
+
+def _build_reasoning_path(
+    *,
+    path_id: UUID,
+    research_space_id: UUID,
+    start_entity_id: UUID,
+    end_entity_id: UUID,
+    root_claim_id: UUID,
+    path_length: int,
+    confidence: float,
+    metadata_payload: dict[str, object],
+) -> KernelReasoningPath:
+    now = datetime.now(UTC)
+    return KernelReasoningPath(
+        id=path_id,
+        research_space_id=research_space_id,
+        path_kind="MECHANISM",
+        status="ACTIVE",
+        start_entity_id=start_entity_id,
+        end_entity_id=end_entity_id,
+        root_claim_id=root_claim_id,
+        path_length=path_length,
+        confidence=confidence,
+        path_signature_hash=f"path:{path_id}",
+        generated_by="test",
+        generated_at=now,
+        metadata_payload=metadata_payload,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _build_path_step(
+    *,
+    path_id: UUID,
+    source_claim_id: UUID,
+    target_claim_id: UUID,
+    claim_relation_id: UUID,
+    step_index: int = 0,
+) -> KernelReasoningPathStep:
+    return KernelReasoningPathStep(
+        id=uuid4(),
+        path_id=path_id,
+        step_index=step_index,
+        source_claim_id=source_claim_id,
+        target_claim_id=target_claim_id,
+        claim_relation_id=claim_relation_id,
+        canonical_relation_id=None,
+        metadata_payload={},
+        created_at=datetime.now(UTC),
+    )
+
+
+def _build_claim_participant(
+    *,
+    claim_id: UUID,
+    research_space_id: UUID,
+    role: str,
+    entity_id: UUID,
+    position: int,
+) -> KernelClaimParticipant:
+    return KernelClaimParticipant(
+        id=uuid4(),
+        claim_id=claim_id,
+        research_space_id=research_space_id,
+        label=None,
+        entity_id=entity_id,
+        role=role,  # type: ignore[arg-type]
+        position=position,
+        qualifiers={},
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+
+def _build_claim_evidence(*, claim_id: UUID) -> KernelClaimEvidence:
+    return KernelClaimEvidence(
+        id=uuid4(),
+        claim_id=claim_id,
+        source_document_id=None,
+        agent_run_id=None,
+        sentence="evidence",
+        sentence_source="verbatim_span",
+        sentence_confidence="high",
+        sentence_rationale=None,
+        figure_reference=None,
+        table_reference=None,
+        confidence=0.8,
+        metadata_payload={},
+        created_at=datetime.now(UTC),
     )
 
 
@@ -421,6 +560,7 @@ async def test_generate_hypotheses_uses_claim_seed_fallback() -> None:
                 canonical_by_source={},
             ),
             dictionary_service=StubDictionaryService(allow_all=True),
+            reasoning_path_service=None,
         ),
     )
 
@@ -488,6 +628,7 @@ async def test_generate_hypotheses_scores_and_maps_claim_payload() -> None:
                 canonical_by_source={},
             ),
             dictionary_service=StubDictionaryService(allow_all=True),
+            reasoning_path_service=None,
         ),
     )
 
@@ -592,6 +733,7 @@ async def test_generate_hypotheses_dedupes_existing_fingerprint() -> None:
                 canonical_by_source={},
             ),
             dictionary_service=StubDictionaryService(allow_all=True),
+            reasoning_path_service=None,
         ),
     )
 
@@ -608,3 +750,173 @@ async def test_generate_hypotheses_dedupes_existing_fingerprint() -> None:
     assert result.created_count == 0
     assert result.deduped_count == 1
     assert claim_service.created_payloads == []
+
+
+@pytest.mark.asyncio
+async def test_generate_hypotheses_prefers_active_reasoning_paths() -> None:
+    reset_metric_counters_for_tests()
+    research_space_id = uuid4()
+    start_entity_id = uuid4()
+    end_entity_id = uuid4()
+    root_claim_id = uuid4()
+    final_claim_id = uuid4()
+    claim_relation_id = uuid4()
+    path_id = uuid4()
+
+    start_entity = _build_entity(
+        entity_id=start_entity_id,
+        research_space_id=research_space_id,
+        entity_type="GENE",
+        display_label="MED13",
+    )
+    end_entity = _build_entity(
+        entity_id=end_entity_id,
+        research_space_id=research_space_id,
+        entity_type="PHENOTYPE",
+        display_label="Speech delay",
+    )
+    root_claim = _build_claim(
+        claim_id=root_claim_id,
+        research_space_id=research_space_id,
+        source_type="GENE",
+        relation_type="PART_OF",
+        target_type="COMPLEX",
+        source_label="MED13",
+        target_label="Mediator complex",
+        confidence=0.8,
+        validation_state="ALLOWED",
+        persistability="PERSISTABLE",
+        claim_status="RESOLVED",
+        claim_text="Root claim",
+        metadata_payload={},
+    ).model_copy(update={"polarity": "SUPPORT"})
+    final_claim = _build_claim(
+        claim_id=final_claim_id,
+        research_space_id=research_space_id,
+        source_type="PROCESS",
+        relation_type="ASSOCIATED_WITH",
+        target_type="PHENOTYPE",
+        source_label="Transcription dysregulation",
+        target_label="Speech delay",
+        confidence=0.82,
+        validation_state="ALLOWED",
+        persistability="PERSISTABLE",
+        claim_status="RESOLVED",
+        claim_text="Final claim",
+        metadata_payload={},
+    ).model_copy(update={"polarity": "SUPPORT"})
+
+    path = _build_reasoning_path(
+        path_id=path_id,
+        research_space_id=research_space_id,
+        start_entity_id=start_entity_id,
+        end_entity_id=end_entity_id,
+        root_claim_id=root_claim_id,
+        path_length=1,
+        confidence=0.74,
+        metadata_payload={
+            "terminal_relation_type": "ASSOCIATED_WITH",
+            "supporting_claim_ids": [str(root_claim_id), str(final_claim_id)],
+        },
+    )
+    path_detail = KernelReasoningPathDetail(
+        path=path,
+        steps=(
+            _build_path_step(
+                path_id=path_id,
+                source_claim_id=root_claim_id,
+                target_claim_id=final_claim_id,
+                claim_relation_id=claim_relation_id,
+            ),
+        ),
+        claims=(root_claim, final_claim),
+        claim_relations=(
+            KernelClaimRelation(
+                id=claim_relation_id,
+                research_space_id=research_space_id,
+                source_claim_id=root_claim_id,
+                target_claim_id=final_claim_id,
+                relation_type="CAUSES",
+                agent_run_id=None,
+                source_document_id=None,
+                confidence=0.74,
+                review_status="ACCEPTED",
+                evidence_summary=None,
+                metadata_payload={},
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            ),
+        ),
+        canonical_relations=(),
+        participants=(
+            _build_claim_participant(
+                claim_id=root_claim_id,
+                research_space_id=research_space_id,
+                role="SUBJECT",
+                entity_id=start_entity_id,
+                position=0,
+            ),
+            _build_claim_participant(
+                claim_id=final_claim_id,
+                research_space_id=research_space_id,
+                role="OBJECT",
+                entity_id=end_entity_id,
+                position=1,
+            ),
+        ),
+        evidence=(
+            _build_claim_evidence(claim_id=root_claim_id),
+            _build_claim_evidence(claim_id=final_claim_id),
+        ),
+    )
+
+    claim_service = StubRelationClaimService(
+        discovery_seed_claims=[],
+        existing_hypothesis_claims=[],
+    )
+    participant_service = StubClaimParticipantService()
+    service = HypothesisGenerationService(
+        dependencies=HypothesisGenerationServiceDependencies(
+            graph_connection_agent=StubGraphConnectionAgent({}),
+            relation_claim_service=claim_service,
+            claim_participant_service=participant_service,
+            entity_repository=StubEntityRepository(
+                entities={
+                    str(start_entity_id): start_entity,
+                    str(end_entity_id): end_entity,
+                },
+                fallback_entities=[start_entity],
+            ),
+            relation_repository=StubRelationRepository(
+                connected_relations=[],
+                canonical_by_source={},
+            ),
+            dictionary_service=StubDictionaryService(allow_all=True),
+            reasoning_path_service=StubReasoningPathService(
+                paths_by_start_entity={str(start_entity_id): [path]},
+                details_by_id={str(path_id): path_detail},
+            ),
+        ),
+    )
+
+    result = await service.generate_hypotheses(
+        research_space_id=str(research_space_id),
+        seed_entity_ids=[str(start_entity_id)],
+        source_type="pubmed",
+        relation_types=None,
+        max_depth=2,
+        max_hypotheses=5,
+        model_id=None,
+    )
+
+    assert result.created_count == 1
+    metadata = claim_service.created_payloads[0]["metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["origin"] == "reasoning_path"
+    assert metadata["reasoning_path_id"] == str(path_id)
+    assert metadata["supporting_claim_ids"] == [
+        str(root_claim_id),
+        str(final_claim_id),
+    ]
+    assert metadata["path_length"] == 1
+    assert len(participant_service.created_payloads) == 2

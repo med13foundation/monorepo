@@ -37,6 +37,12 @@ from .kernel_graph_view_service import (
     KernelGraphViewValidationError,
 )
 from .kernel_observation_service import KernelObservationService
+from .kernel_reasoning_path_service import (
+    KernelReasoningPathDetail,
+    KernelReasoningPathService,
+    ReasoningPathListResult,
+    ReasoningPathRebuildSummary,
+)
 from .kernel_relation_claim_service import KernelRelationClaimService
 from .kernel_relation_projection_invariant_service import (
     KernelRelationProjectionInvariantService,
@@ -86,7 +92,11 @@ __all__ = [
     "RelationProjectionMaterializationError",
     "RelationProjectionMaterializationResult",
     "KernelRelationProjectionSourceService",
+    "KernelReasoningPathDetail",
+    "KernelReasoningPathService",
     "KernelRelationSuggestionService",
     "KernelRelationService",
     "ProvenanceService",
+    "ReasoningPathListResult",
+    "ReasoningPathRebuildSummary",
 ]

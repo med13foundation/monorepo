@@ -60,6 +60,13 @@ function HypothesisItem({
         {hypothesis.claim_text ? (
           <p className="text-sm text-muted-foreground">{hypothesis.claim_text}</p>
         ) : null}
+        {hypothesis.reasoning_path_id ? (
+          <p className="text-xs text-muted-foreground">
+            Mechanism path {hypothesis.path_length ?? '?'} step
+            {hypothesis.path_length === 1 ? '' : 's'} • confidence{' '}
+            {confidencePercent(hypothesis.path_confidence ?? hypothesis.confidence)}%
+          </p>
+        ) : null}
 
         <p className="font-mono text-xs text-muted-foreground">
           Claim {hypothesis.claim_id.slice(0, 8)}... • Created{' '}

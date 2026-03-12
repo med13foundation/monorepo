@@ -17,6 +17,7 @@ from .kernel_entity_embedding_repository import SqlAlchemyEntityEmbeddingReposit
 from .kernel_entity_repository import SqlAlchemyKernelEntityRepository
 from .kernel_observation_repository import SqlAlchemyKernelObservationRepository
 from .kernel_provenance_repository import SqlAlchemyProvenanceRepository
+from .kernel_reasoning_path_repository import SqlAlchemyKernelReasoningPathRepository
 from .kernel_relation_claim_repository import SqlAlchemyKernelRelationClaimRepository
 from .kernel_relation_projection_source_repository import (
     SqlAlchemyKernelRelationProjectionSourceRepository,
@@ -36,5 +37,6 @@ __all__ = [
     "SqlAlchemyKernelRelationClaimRepository",
     "SqlAlchemyKernelRelationProjectionSourceRepository",
     "SqlAlchemyKernelRelationRepository",
+    "SqlAlchemyKernelReasoningPathRepository",
     "SqlAlchemyProvenanceRepository",
 ]

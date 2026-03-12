@@ -54,6 +54,10 @@ class HypothesisResponse(BaseModel):
     origin: str
     seed_entity_ids: list[str]
     supporting_provenance_ids: list[str]
+    reasoning_path_id: UUID | None
+    supporting_claim_ids: list[str]
+    path_confidence: float | None
+    path_length: int | None
     created_at: datetime
     metadata: JSONObject
 
@@ -66,6 +70,13 @@ class HypothesisResponse(BaseModel):
         supporting_provenance_ids = _resolve_supporting_provenance_ids(
             metadata_payload,
         )
+        reasoning_path_id = _resolve_optional_uuid(
+            metadata_payload.get("reasoning_path_id"),
+        )
+        path_confidence = _resolve_optional_float(
+            metadata_payload.get("path_confidence"),
+        )
+        path_length = _resolve_optional_int(metadata_payload.get("path_length"))
         return cls(
             claim_id=_to_uuid(claim.id),
             polarity=str(claim.polarity),
@@ -85,6 +96,12 @@ class HypothesisResponse(BaseModel):
             origin=_resolve_origin(metadata_payload),
             seed_entity_ids=seed_entity_ids,
             supporting_provenance_ids=supporting_provenance_ids,
+            reasoning_path_id=reasoning_path_id,
+            supporting_claim_ids=_resolve_string_list(
+                metadata_payload.get("supporting_claim_ids"),
+            ),
+            path_confidence=path_confidence,
+            path_length=path_length,
             created_at=claim.created_at,
             metadata=dict(metadata_payload),
         )
@@ -153,6 +170,46 @@ def _resolve_string_list(value: object) -> list[str]:
             continue
         normalized.append(trimmed)
     return normalized
+
+
+def _resolve_optional_uuid(value: object) -> UUID | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    try:
+        return UUID(trimmed)
+    except ValueError:
+        return None
+
+
+def _resolve_optional_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _resolve_optional_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
 
 
 __all__ = [

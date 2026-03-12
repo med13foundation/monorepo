@@ -14,6 +14,7 @@ from src.routes.research_spaces.kernel_dependencies import (
     get_kernel_claim_evidence_service,
     get_kernel_claim_participant_service,
     get_kernel_entity_service,
+    get_kernel_reasoning_path_service,
     get_kernel_relation_claim_service,
     get_kernel_relation_projection_materialization_service,
 )
@@ -27,6 +28,9 @@ if TYPE_CHECKING:
     )
     from src.application.services.kernel.kernel_entity_service import (
         KernelEntityService,
+    )
+    from src.application.services.kernel.kernel_reasoning_path_service import (
+        KernelReasoningPathService,
     )
     from src.application.services.kernel.kernel_relation_claim_service import (
         KernelRelationClaimService,
@@ -46,6 +50,7 @@ class RelationClaimTriageDependencies(NamedTuple):
     relation_projection_materialization_service: (
         KernelRelationProjectionMaterializationService
     )
+    reasoning_path_service: KernelReasoningPathService
     dictionary_service: DictionaryPort
     session: Session
 
@@ -58,6 +63,9 @@ def get_relation_claim_triage_dependencies(
     relation_projection_materialization_service: KernelRelationProjectionMaterializationService = Depends(
         get_kernel_relation_projection_materialization_service,
     ),
+    reasoning_path_service: KernelReasoningPathService = Depends(
+        get_kernel_reasoning_path_service,
+    ),
     dictionary_service: DictionaryPort = Depends(get_dictionary_service),
     session: Session = Depends(get_session),
 ) -> RelationClaimTriageDependencies:
@@ -67,6 +75,7 @@ def get_relation_claim_triage_dependencies(
         relation_projection_materialization_service=(
             relation_projection_materialization_service
         ),
+        reasoning_path_service=reasoning_path_service,
         dictionary_service=dictionary_service,
         session=session,
     )

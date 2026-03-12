@@ -168,3 +168,56 @@ Typical response contents:
 - structured participants for those claims
 - claim evidence rows from that paper
 - any claim-backed canonical relations materialized from those claims
+
+## 9. Persisted reasoning path example
+
+```text
+Claim A: MED13 is part of the mediator complex
+   CAUSES
+Claim B: Mediator dysfunction is associated with speech delay
+```
+
+Derived path:
+
+```text
+reasoning_paths
+  -> start_entity = MED13
+  -> end_entity = Speech delay
+  -> path_kind = MECHANISM
+  -> status = ACTIVE
+  -> confidence = 0.73
+
+reasoning_path_steps
+  -> step 0
+  -> source_claim_id = Claim A
+  -> target_claim_id = Claim B
+  -> claim_relation_id = edge-1
+```
+
+Interpretation:
+
+- the path is derived from reviewed claim-space edges
+- it is reusable for search, explanation, and hypothesis suggestion
+- it is not canonical truth
+
+## 10. Path-backed hypothesis example
+
+Generated hypothesis metadata can now look like:
+
+```json
+{
+  "origin": "reasoning_path",
+  "reasoning_path_id": "path-123",
+  "start_entity_id": "entity-med13",
+  "end_entity_id": "entity-speech-delay",
+  "supporting_claim_ids": ["claim-a", "claim-b"],
+  "path_confidence": 0.73,
+  "path_length": 1
+}
+```
+
+Interpretation:
+
+- the hypothesis is still a `relation_claim`
+- the supporting path is explicit
+- the reasoning artifact remains rebuildable from claims

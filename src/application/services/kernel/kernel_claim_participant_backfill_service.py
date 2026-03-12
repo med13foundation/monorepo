@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from src.application.services.kernel.kernel_claim_participant_service import (
         KernelClaimParticipantService,
     )
+    from src.application.services.kernel.kernel_reasoning_path_service import (
+        KernelReasoningPathService,
+    )
     from src.application.services.kernel.kernel_relation_claim_service import (
         KernelRelationClaimService,
     )
@@ -40,14 +43,16 @@ class KernelClaimParticipantBackfillService:
         claim_participant_service: KernelClaimParticipantService,
         entity_repository: KernelEntityRepository,
         concept_service: ConceptPort,
+        reasoning_path_service: KernelReasoningPathService | None = None,
     ) -> None:
         self._session = session
         self._claims = relation_claim_service
         self._participants = claim_participant_service
         self._entities = entity_repository
         self._concepts = concept_service
+        self._reasoning_paths = reasoning_path_service
 
-    def backfill_for_space(
+    def backfill_for_space(  # noqa: C901
         self,
         *,
         research_space_id: str,
@@ -64,6 +69,7 @@ class KernelClaimParticipantBackfillService:
         created_participants = 0
         skipped_existing = 0
         unresolved_endpoints = 0
+        touched_claim_ids: list[str] = []
 
         for claim in claims:
             existing = self._participants.list_participants_for_claim(str(claim.id))
@@ -97,6 +103,7 @@ class KernelClaimParticipantBackfillService:
                         position=0,
                         qualifiers={"origin": "participant_backfill_v1"},
                     )
+                    touched_claim_ids.append(str(claim.id))
                 created_participants += 1
 
             if "OBJECT" in existing_roles:
@@ -114,7 +121,14 @@ class KernelClaimParticipantBackfillService:
                         position=1,
                         qualifiers={"origin": "participant_backfill_v1"},
                     )
+                    touched_claim_ids.append(str(claim.id))
                 created_participants += 1
+
+        if not dry_run and touched_claim_ids and self._reasoning_paths is not None:
+            self._reasoning_paths.mark_stale_for_claim_ids(
+                touched_claim_ids,
+                research_space_id,
+            )
 
         if created_participants > 0:
             increment_metric(
@@ -137,7 +151,7 @@ class KernelClaimParticipantBackfillService:
             dry_run=dry_run,
         )
 
-    def backfill_globally(
+    def backfill_globally(  # noqa: PLR0912, C901
         self,
         *,
         dry_run: bool,
@@ -154,6 +168,7 @@ class KernelClaimParticipantBackfillService:
         skipped_existing = 0
         unresolved_endpoints = 0
         research_space_ids: set[str] = set()
+        touched_claim_ids_by_space: dict[str, list[str]] = {}
 
         for claim in claims:
             research_space_id = str(claim.research_space_id)
@@ -189,6 +204,10 @@ class KernelClaimParticipantBackfillService:
                         position=0,
                         qualifiers={"origin": "participant_backfill_global_v1"},
                     )
+                    touched_claim_ids_by_space.setdefault(
+                        research_space_id,
+                        [],
+                    ).append(str(claim.id))
                 created_participants += 1
 
             if "OBJECT" in existing_roles:
@@ -206,7 +225,18 @@ class KernelClaimParticipantBackfillService:
                         position=1,
                         qualifiers={"origin": "participant_backfill_global_v1"},
                     )
+                    touched_claim_ids_by_space.setdefault(
+                        research_space_id,
+                        [],
+                    ).append(str(claim.id))
                 created_participants += 1
+
+        if not dry_run and self._reasoning_paths is not None:
+            for research_space_id, claim_ids in touched_claim_ids_by_space.items():
+                self._reasoning_paths.mark_stale_for_claim_ids(
+                    claim_ids,
+                    research_space_id,
+                )
 
         if created_participants > 0:
             increment_metric(

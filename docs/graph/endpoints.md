@@ -129,6 +129,31 @@ Update claim relation review status.
 
 Traverse a claim-rooted mechanism-style chain using reviewed `claim_relations`.
 
+### `GET /graph/reasoning-paths`
+
+List persisted derived reasoning paths.
+
+Supported filters:
+
+- `start_entity_id`
+- `end_entity_id`
+- `status`
+- `path_kind`
+
+### `GET /graph/reasoning-paths/{path_id}`
+
+Get one fully expanded reasoning path.
+
+The response includes:
+
+- the path row
+- ordered path steps
+- linked claims
+- claim-to-claim edges
+- participants
+- claim evidence
+- any linked canonical relations
+
 ## Graph rendering and export
 
 ### `GET /graph/export`
@@ -201,4 +226,13 @@ Audit global claim-backed projection readiness.
 ### `make graph-readiness`
 
 Run the operational readiness check through the configured local Postgres
+environment.
+
+### `scripts/rebuild_reasoning_paths.py`
+
+Rebuild persisted reasoning paths for one space or globally.
+
+### `make graph-reasoning-rebuild`
+
+Run the reasoning-path rebuild through the configured local Postgres
 environment.

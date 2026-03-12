@@ -191,3 +191,42 @@ Flow:
 Outcome:
 
 - mechanism exploration stays claim-backed, reviewable, and evidence-linked
+
+## 11. Persist reusable mechanism paths
+
+Actors:
+
+- operator or scheduled job
+- reasoning path service
+
+Flow:
+
+1. Run the reasoning-path rebuild for one research space or globally.
+2. The service scans grounded support claims and accepted claim relations.
+3. Simple mechanism paths are persisted as derived read models.
+4. Path rows remain explainable by ordered claims and claim relations.
+
+Outcome:
+
+- mechanism exploration becomes reusable
+- AI agents do not have to rediscover the same grounded chain every time
+
+## 12. Generate a hypothesis from a stored path
+
+Actors:
+
+- researcher or AI agent
+- hypothesis generation service
+
+Flow:
+
+1. The user requests hypothesis generation.
+2. Active reasoning paths are checked first.
+3. The service creates `relation_claims` with `polarity=HYPOTHESIS`.
+4. Structured participants use the path start and end entities.
+5. Hypothesis metadata records the source reasoning path and supporting claim IDs.
+
+Outcome:
+
+- suggestion stays claim-first
+- the path remains a derived reasoning artifact, not new truth

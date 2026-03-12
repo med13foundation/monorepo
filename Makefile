@@ -131,7 +131,7 @@ define ensure_frontdoor_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit
+.PHONY: help venv venv-check install install-dev test test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit graph-readiness graph-reasoning-rebuild
 
 PY_CHECK_PATHS := src tests scripts alembic
 PY_STRICT_CHECK_PATHS := src
@@ -245,6 +245,11 @@ graph-readiness: ## Audit global claim-backed projection readiness
 	$(call check_venv)
 	@$(MAKE) -s postgres-wait
 	$(call run_with_postgres_env,$(USE_PYTHON) scripts/check_claim_projection_readiness.py)
+
+graph-reasoning-rebuild: ## Rebuild derived reasoning paths from grounded claim chains
+	$(call check_venv)
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,$(USE_PYTHON) scripts/rebuild_reasoning_paths.py)
 
 test-watch: ## Run tests in watch mode
 	$(call check_venv)

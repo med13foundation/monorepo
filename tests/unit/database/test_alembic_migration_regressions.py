@@ -10,7 +10,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-CURRENT_HEAD_REVISION = "001_current_baseline"
+CURRENT_HEAD_REVISION = "002_reasoning_paths"
 _ALEMBIC_SUBPROCESS_TEMPLATE = """
 import os
 import sys
@@ -69,6 +69,8 @@ def test_upgrade_head_creates_current_baseline_schema(tmp_path: Path) -> None:
         "claim_participants",
         "claim_evidence",
         "relation_projection_sources",
+        "reasoning_paths",
+        "reasoning_path_steps",
         "entity_embeddings",
         "pipeline_run_events",
     }.issubset(table_names)
@@ -79,6 +81,9 @@ def test_upgrade_head_creates_current_baseline_schema(tmp_path: Path) -> None:
     projection_columns = {
         column["name"]
         for column in inspector.get_columns("relation_projection_sources")
+    }
+    path_columns = {
+        column["name"] for column in inspector.get_columns("reasoning_paths")
     }
 
     assert {
@@ -91,6 +96,7 @@ def test_upgrade_head_creates_current_baseline_schema(tmp_path: Path) -> None:
     assert {"projection_origin", "research_space_id", "claim_id"}.issubset(
         projection_columns,
     )
+    assert {"path_kind", "status", "path_signature_hash"}.issubset(path_columns)
 
     with engine.connect() as connection:
         versions = (
@@ -113,6 +119,7 @@ def test_upgrade_head_and_downgrade_base_round_trip(tmp_path: Path) -> None:
     assert "relations" not in table_names
     assert "relation_claims" not in table_names
     assert "relation_projection_sources" not in table_names
+    assert "reasoning_paths" not in table_names
 
 
 def test_fresh_upgrade_head_is_repeatable_from_clean_database(tmp_path: Path) -> None:

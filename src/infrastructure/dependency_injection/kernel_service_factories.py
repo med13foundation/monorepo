@@ -23,6 +23,7 @@ from src.application.services.kernel import (
     KernelEntitySimilarityService,
     KernelGraphViewService,
     KernelObservationService,
+    KernelReasoningPathService,
     KernelRelationClaimService,
     KernelRelationProjectionInvariantService,
     KernelRelationProjectionMaterializationService,
@@ -54,6 +55,7 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelClaimRelationRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
+    SqlAlchemyKernelReasoningPathRepository,
     SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
@@ -259,6 +261,22 @@ class KernelServiceFactoryMixin:
             ),
         )
 
+    def create_kernel_reasoning_path_service(
+        self,
+        session: Session,
+    ) -> KernelReasoningPathService:
+        return KernelReasoningPathService(
+            reasoning_path_repo=SqlAlchemyKernelReasoningPathRepository(session),
+            relation_claim_service=self.create_kernel_relation_claim_service(session),
+            claim_participant_service=self.create_kernel_claim_participant_service(
+                session,
+            ),
+            claim_evidence_service=self.create_kernel_claim_evidence_service(session),
+            claim_relation_service=self.create_kernel_claim_relation_service(session),
+            relation_service=self.create_kernel_relation_service(session),
+            session=session,
+        )
+
     def create_kernel_claim_participant_backfill_service(
         self,
         session: Session,
@@ -271,6 +289,7 @@ class KernelServiceFactoryMixin:
             ),
             entity_repository=self._build_entity_repository(session),
             concept_service=self.create_concept_management_service(session),
+            reasoning_path_service=self.create_kernel_reasoning_path_service(session),
         )
 
     def create_kernel_claim_projection_readiness_service(
@@ -353,5 +372,8 @@ class KernelServiceFactoryMixin:
                 entity_repository=self._build_entity_repository(session),
                 relation_repository=relation_repository,
                 dictionary_service=dictionary_service,
+                reasoning_path_service=self.create_kernel_reasoning_path_service(
+                    session,
+                ),
             ),
         )

@@ -35,6 +35,7 @@ from .dictionary import (
 from .entities import EntityEmbeddingModel, EntityIdentifierModel, EntityModel
 from .observations import ObservationModel
 from .provenance import ProvenanceModel
+from .reasoning_paths import ReasoningPathModel, ReasoningPathStepModel
 from .relation_claims import RelationClaimModel
 from .relation_projection_sources import RelationProjectionSourceModel
 from .relations import RelationEvidenceModel, RelationModel
@@ -76,4 +77,6 @@ __all__ = [
     "RelationProjectionSourceModel",
     "RelationModel",
     "ProvenanceModel",
+    "ReasoningPathModel",
+    "ReasoningPathStepModel",
 ]

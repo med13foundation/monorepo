@@ -7,7 +7,7 @@ The kernel graph stores explainable, research-space-scoped knowledge.
 Its implemented contract is:
 
 ```text
-evidence -> claims -> projections -> canonical graph
+evidence -> claims -> projections -> canonical graph -> reasoning artifacts
 ```
 
 Claims are the authoritative ledger.
@@ -104,6 +104,19 @@ refinement, mechanism, or support chains between claims.
 
 They do not replace canonical `relations`; they enrich claim-space navigation.
 
+### Reasoning paths
+
+`reasoning_paths` and `reasoning_path_steps` are derived reasoning artifacts.
+
+They are:
+
+- rebuilt from grounded support claims
+- explainable by ordered claim IDs and claim-relation IDs
+- marked `STALE` when underlying claim material changes
+- non-authoritative read models
+
+They are not a second truth store.
+
 ## Write architecture
 
 ### Observation write path
@@ -196,6 +209,47 @@ This means mechanism exploration remains:
 - evidence-linked
 - separate from canonical truth projection
 
+## Persisted reasoning artifacts
+
+The repo now also persists grounded mechanism paths as a read model.
+
+Eligibility rules:
+
+- claim polarity must be `SUPPORT`
+- claim status must be `RESOLVED`
+- claim persistability must be `PERSISTABLE`
+- structured `SUBJECT` and `OBJECT` participants must resolve to entities
+- claim evidence must exist
+- claim-to-claim edges must be `ACCEPTED`
+
+The first persisted artifact kind is `MECHANISM`.
+
+Reasoning paths are rebuilt on demand and only marked stale on writes.
+
+This keeps the kernel contract stable:
+
+```text
+claims remain authoritative
+reasoning paths remain derived
+```
+
+## Hypothesis generation from reasoning paths
+
+Hypotheses still live in `relation_claims` with `polarity=HYPOTHESIS`.
+
+There is no separate `hypotheses` truth table.
+
+When active reasoning paths are available, hypothesis generation can use them to
+create path-backed hypothesis claims with metadata such as:
+
+- `reasoning_path_id`
+- `supporting_claim_ids`
+- `path_confidence`
+- `path_length`
+
+This makes mechanism-backed suggestion faster while preserving claim-first
+traceability.
+
 ## Main application services
 
 ### Canonical read and curation
@@ -234,6 +288,7 @@ The implemented system enforces:
 3. Canonical graph responses are projection-backed by default.
 4. Graph-document explainability prefers projection lineage over `linked_relation_id`.
 5. Readiness can be checked globally through the operational script and `make graph-readiness`.
+6. Derived reasoning paths can be rebuilt operationally through `make graph-reasoning-rebuild`.
 
 ## Compatibility surfaces
 

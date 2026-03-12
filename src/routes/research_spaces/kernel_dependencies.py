@@ -19,6 +19,7 @@ from src.application.services.kernel import (
     KernelEntitySimilarityService,
     KernelGraphViewService,
     KernelObservationService,
+    KernelReasoningPathService,
     KernelRelationClaimService,
     KernelRelationProjectionInvariantService,
     KernelRelationProjectionMaterializationService,
@@ -55,6 +56,7 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelClaimRelationRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
+    SqlAlchemyKernelReasoningPathRepository,
     SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
@@ -253,6 +255,7 @@ def get_kernel_claim_participant_backfill_service(
         claim_participant_service=get_kernel_claim_participant_service(session),
         entity_repository=_build_entity_repository(session),
         concept_service=get_concept_service(session),
+        reasoning_path_service=get_kernel_reasoning_path_service(session),
     )
 
 
@@ -288,6 +291,21 @@ def get_kernel_graph_view_service(
             claim_evidence_service=get_kernel_claim_evidence_service(session),
             source_document_repository=SqlAlchemySourceDocumentRepository(session),
         ),
+    )
+
+
+def get_kernel_reasoning_path_service(
+    session: Session = Depends(get_session),
+) -> KernelReasoningPathService:
+    """Derived reasoning-path service for grounded mechanism chains."""
+    return KernelReasoningPathService(
+        reasoning_path_repo=SqlAlchemyKernelReasoningPathRepository(session),
+        relation_claim_service=get_kernel_relation_claim_service(session),
+        claim_participant_service=get_kernel_claim_participant_service(session),
+        claim_evidence_service=get_kernel_claim_evidence_service(session),
+        claim_relation_service=get_kernel_claim_relation_service(session),
+        relation_service=get_kernel_relation_service(session),
+        session=session,
     )
 
 
@@ -327,6 +345,7 @@ __all__ = [
     "get_kernel_relation_projection_source_service",
     "get_kernel_relation_projection_invariant_service",
     "get_kernel_observation_service",
+    "get_kernel_reasoning_path_service",
     "get_kernel_relation_service",
     "get_kernel_relation_suggestion_service",
     "get_kernel_relation_claim_service",
