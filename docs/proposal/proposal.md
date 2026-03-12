@@ -59,7 +59,7 @@ Result: entity-centered retrieval, mechanistic path traversal, and durable contr
 1. Replacing canonical `relations` as the curated convenience graph.
 2. Breaking existing `relation_claims` writes.
 3. Introducing a full ontology-governed relation-type system for claim-to-claim links in V1.
-4. Automating claim promotion to canonical relations without curator action.
+4. Reintroducing public canonical relation writes outside claim-backed projection materialization.
 
 ---
 
@@ -73,7 +73,7 @@ Result: entity-centered retrieval, mechanistic path traversal, and durable contr
 | `relations` | Canonical binary edges | `source_id`, `relation_type`, `target_id`, `research_space_id` |
 | `relation_claims` | Claim-first ledger | `source_label`, `target_label`, `polarity`, `claim_text`, `metadata_payload` |
 | `claim_evidence` | Evidence per claim | `claim_id`, `sentence`, `sentence_source`, `confidence` |
-| `relation_evidence` | Evidence per canonical edge | `relation_id`, `evidence_sentence`, `evidence_tier` |
+| `relation_evidence` | Derived cache per canonical edge from support-claim evidence | `relation_id`, `evidence_sentence`, `evidence_tier` |
 | `provenance` | Ingestion lineage | `source_type`, `source_ref`, `extraction_run_id` |
 
 ### 4.2 Existing API prefix
@@ -484,7 +484,7 @@ Yes, graph view should change to reflect the overlay model while keeping canonic
    - Show relation edge metadata (`relation_type`, `confidence`, `review_status`, provenance)
 4. Cross-linking behavior:
    - Selecting a canonical relation shows linked supporting/refuting claims
-   - Selecting a claim can highlight linked canonical relation when `linked_relation_id` exists
+   - Selecting a claim can highlight a linked canonical relation when `linked_relation_id` exists, but canonical explainability must come from `relation_projection_sources`, not that pointer
 5. Empty state behavior:
    - If no `claim_relations` exist, show explicit empty state with CTA to create/review links
 6. Safety:
@@ -622,13 +622,13 @@ Each phase is gated. The next phase does not start until the current gate passes
 
 1. Existing `relation_claims` reads/writes remain valid.
 2. Existing metadata (`concept_refs`) remains intact for audit continuity.
-3. Canonical relation promotion flow (`linked_relation_id`) remains unchanged.
-4. No automated canonical relation writes are introduced by this RFC.
+3. `linked_relation_id` remains as a compatibility/read-model pointer for navigation and UI joins, not as authoritative projection lineage.
+4. Public canonical relation creation is deprecated; internal `POST /relations` remains a temporary admin/system compatibility path that still creates a manual support claim and materializes through the projection service.
 
 ---
 
 ## 16. Open Questions
 
 1. Should `claim_relations.relation_type` move to dictionary governance in V2, or remain enum-constrained until scale demands flexibility?
-2. Should we add a future `claim_relation_evidence` table if per-edge evidence becomes multi-row and high-volume?
+2. When global readiness remains clean, should the internal compatibility `POST /relations` route be removed entirely or retained as a break-glass admin workflow?
 3. Which review queue UX best balances throughput vs precision for `PROPOSED` claim-to-claim links?

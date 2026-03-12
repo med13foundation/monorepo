@@ -241,6 +241,11 @@ test-cov: ## Run tests with coverage report
 	@$(MAKE) -s postgres-wait
 	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py --cov=src --cov-report=html --cov-report=term-missing)
 
+graph-readiness: ## Audit global claim-backed projection readiness
+	$(call check_venv)
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,$(USE_PYTHON) scripts/check_claim_projection_readiness.py)
+
 test-watch: ## Run tests in watch mode
 	$(call check_venv)
 	@$(MAKE) -s postgres-wait

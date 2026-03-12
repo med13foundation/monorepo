@@ -15,7 +15,7 @@ from src.application.services.claim_first_metrics import (
     increment_metric,
 )
 from src.database.session import get_session
-from src.domain.entities.user import User
+from src.domain.entities.user import User, UserRole
 from src.models.database.source_document import SourceDocumentModel
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces._claim_evidence_paper_links import (
@@ -31,7 +31,6 @@ from src.routes.research_spaces._kernel_relation_route_support import (
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
     require_curator_role,
-    require_researcher_role,
     verify_space_membership,
 )
 from src.routes.research_spaces.kernel_dependencies import (
@@ -69,6 +68,7 @@ from ._kernel_relation_subgraph_helpers import (
 from .router import (
     HTTP_201_CREATED,
     HTTP_400_BAD_REQUEST,
+    HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
     HTTP_500_INTERNAL_SERVER_ERROR,
@@ -447,7 +447,7 @@ def list_kernel_relations(
 @research_spaces_router.post(
     "/{space_id}/relations",
     response_model=KernelRelationResponse,
-    summary="Create kernel relation",
+    summary="Create kernel relation (internal compatibility endpoint)",
     status_code=HTTP_201_CREATED,
 )
 def create_kernel_relation(
@@ -458,13 +458,21 @@ def create_kernel_relation(
         get_create_relation_dependencies,
     ),
 ) -> KernelRelationResponse:
-    require_researcher_role(
+    verify_space_membership(
         space_id,
         current_user.id,
         dependencies.membership_service,
         dependencies.session,
         current_user.role,
     )
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=HTTP_403_FORBIDDEN,
+            detail=(
+                "POST /relations is internal-only. Create or resolve claims to "
+                "materialize canonical relations."
+            ),
+        )
 
     try:
         source_entity = dependencies.write_services.entity_service.get_entity(

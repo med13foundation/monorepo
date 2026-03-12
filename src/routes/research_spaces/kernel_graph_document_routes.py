@@ -77,6 +77,9 @@ def get_kernel_graph_document(
             entity_service=dependencies.entity_service,
             relation_service=dependencies.relation_service,
             relation_claim_service=dependencies.relation_claim_service,
+            relation_projection_source_service=(
+                dependencies.relation_projection_source_service
+            ),
             claim_participant_service=dependencies.claim_participant_service,
             claim_evidence_service=dependencies.claim_evidence_service,
             session=dependencies.session,

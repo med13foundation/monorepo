@@ -9,6 +9,7 @@ from src.application.services.kernel import (
     KernelClaimParticipantService,
     KernelEntityService,
     KernelRelationClaimService,
+    KernelRelationProjectionSourceService,
     KernelRelationService,
 )
 from src.domain.entities.kernel.claim_evidence import KernelClaimEvidence
@@ -56,6 +57,7 @@ def build_kernel_graph_document(  # noqa: PLR0912, PLR0913, PLR0915
     entity_service: KernelEntityService,
     relation_service: KernelRelationService,
     relation_claim_service: KernelRelationClaimService,
+    relation_projection_source_service: KernelRelationProjectionSourceService,
     claim_participant_service: KernelClaimParticipantService,
     claim_evidence_service: KernelClaimEvidenceService,
     session: Session,
@@ -123,14 +125,27 @@ def build_kernel_graph_document(  # noqa: PLR0912, PLR0913, PLR0915
     relation_by_id = {str(relation.id): relation for relation in final_relations}
 
     linked_claims_all: list[KernelRelationClaim] = []
+    projection_claims_all: list[KernelRelationClaim] = []
     if request.include_claims and final_relations:
         linked_claims_all = relation_claim_service.list_by_linked_relation_ids(
             research_space_id=space_id,
             linked_relation_ids=[str(relation.id) for relation in final_relations],
         )
+        projection_claim_ids: list[str] = []
+        for relation in final_relations:
+            for projection_row in relation_projection_source_service.list_for_relation(
+                str(relation.id),
+            ):
+                claim_id = str(projection_row.claim_id)
+                if claim_id not in projection_claim_ids:
+                    projection_claim_ids.append(claim_id)
+        if projection_claim_ids:
+            projection_claims_all = relation_claim_service.list_claims_by_ids(
+                projection_claim_ids,
+            )
 
     selected_claims = (
-        select_claims(linked_claims_all, max_claims=request.max_claims)
+        select_claims(projection_claims_all, max_claims=request.max_claims)
         if request.include_claims
         else []
     )
@@ -165,12 +180,27 @@ def build_kernel_graph_document(  # noqa: PLR0912, PLR0913, PLR0915
             continue
         relation_id = str(claim.linked_relation_id)
         claims_by_relation_id.setdefault(relation_id, []).append(claim)
+    projection_claims_by_relation_id: dict[str, list[KernelRelationClaim]] = {}
+    if projection_claims_all:
+        projection_claims_by_id = {
+            str(claim.id): claim for claim in projection_claims_all
+        }
+        for relation in final_relations:
+            relation_id = str(relation.id)
+            projection_claims_by_relation_id[relation_id] = [
+                projection_claims_by_id[str(row.claim_id)]
+                for row in relation_projection_source_service.list_for_relation(
+                    relation_id,
+                )
+                if str(row.claim_id) in projection_claims_by_id
+            ]
 
     edges: list[KernelGraphDocumentEdge] = []
     for relation in final_relations:
         relation_id = str(relation.id)
         linked_claims = claims_by_relation_id.get(relation_id, [])
-        support_count = sum(1 for claim in linked_claims if claim.polarity == "SUPPORT")
+        projection_claims = projection_claims_by_relation_id.get(relation_id, [])
+        support_count = len(projection_claims)
         refute_count = sum(1 for claim in linked_claims if claim.polarity == "REFUTE")
         edges.append(
             KernelGraphDocumentEdge(
@@ -192,7 +222,11 @@ def build_kernel_graph_document(  # noqa: PLR0912, PLR0913, PLR0915
                     "support_claim_count": support_count,
                     "refute_claim_count": refute_count,
                     "has_conflict": support_count > 0 and refute_count > 0,
+                    "projection_claim_ids": [
+                        str(claim.id) for claim in projection_claims
+                    ],
                     "linked_claim_ids": [str(claim.id) for claim in linked_claims],
+                    "explainable_by_projection": support_count > 0,
                 },
                 created_at=relation.created_at,
                 updated_at=relation.updated_at,

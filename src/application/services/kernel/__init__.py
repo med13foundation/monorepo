@@ -9,11 +9,19 @@ from .concept_management_service import ConceptManagementService
 from .dictionary_management_service import DictionaryManagementService
 from .kernel_claim_evidence_service import KernelClaimEvidenceService
 from .kernel_claim_participant_backfill_service import (
+    ClaimParticipantBackfillGlobalSummary,
     ClaimParticipantBackfillSummary,
     ClaimParticipantCoverageSummary,
     KernelClaimParticipantBackfillService,
 )
 from .kernel_claim_participant_service import KernelClaimParticipantService
+from .kernel_claim_projection_readiness_service import (
+    ClaimProjectionReadinessIssue,
+    ClaimProjectionReadinessReport,
+    ClaimProjectionReadinessSample,
+    ClaimProjectionRepairSummary,
+    KernelClaimProjectionReadinessService,
+)
 from .kernel_claim_relation_service import KernelClaimRelationService
 from .kernel_entity_service import KernelEntityService
 from .kernel_entity_similarity_service import (
@@ -45,6 +53,12 @@ __all__ = [
     "KernelClaimParticipantBackfillService",
     "ClaimParticipantBackfillSummary",
     "ClaimParticipantCoverageSummary",
+    "ClaimParticipantBackfillGlobalSummary",
+    "KernelClaimProjectionReadinessService",
+    "ClaimProjectionReadinessIssue",
+    "ClaimProjectionReadinessReport",
+    "ClaimProjectionReadinessSample",
+    "ClaimProjectionRepairSummary",
     "KernelClaimParticipantService",
     "KernelClaimRelationService",
     "KernelEntityService",

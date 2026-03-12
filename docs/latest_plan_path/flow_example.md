@@ -193,21 +193,24 @@ For each approved output, the pipeline delegates to the Intelligence Layers:
   to kernel entities (GENE MED13, VARIANT c.1366C>T, etc.).
 - **Semantic Layer** (`DictionaryManagementService.validate_observation`) validates
   observations against variable constraints.
-- **Truth Layer** (`EvidenceAggregationService.upsert_relation_evidence`) performs
-  **canonical upserts** on relations:
+- **Truth Layer** creates claim-backed projections through the relation
+  materialization flow. Claims and claim evidence are written first; canonical
+  relations are then rebuilt as projections and `relation_evidence` is refreshed
+  as a derived cache from support-claim evidence:
 
 **Relation 1** (variant CAUSES DCM):
 
-- Check: does `(variant_c1366CT, CAUSES, phenotype_dcm, space_123)` exist? **No.**
-- Create canonical edge: `aggregate_confidence = 0.88`, `source_count = 1`
-- Create `relation_evidence` row: confidence 0.88, tier `LITERATURE`, PMID 39012345
-- Status: `DRAFT` (only 1 source, not enough for auto-promotion)
+- Create support claim + `claim_evidence` from Paper A.
+- Materializer checks whether `(variant_c1366CT, CAUSES, phenotype_dcm, space_123)` already has a projected canonical relation. **No.**
+- Create canonical edge plus one `relation_projection_sources` row back to the claim.
+- Rebuild derived `relation_evidence` cache from the claim evidence.
+- Status: `DRAFT` (only 1 supporting claim/document, not enough for auto-promotion)
 
 **Relation 3** (MED13 ASSOCIATED_WITH DCM):
 
-- Check: does `(gene_med13, ASSOCIATED_WITH, phenotype_dcm, space_123)` exist? **No.**
-- Create canonical edge: `aggregate_confidence = 0.91`, `source_count = 1`
-- Create `relation_evidence` row: confidence 0.91, tier `LITERATURE`, PMID 39012345
+- Create support claim + `claim_evidence` from Paper A.
+- Materializer creates the first canonical projected relation for `(gene_med13, ASSOCIATED_WITH, phenotype_dcm, space_123)`.
+- `relation_evidence` now contains one derived cache row copied from the support claim evidence.
 - Status: `DRAFT`
 
 ---
@@ -250,15 +253,17 @@ Extracts:
 
 ---
 
-### Kernel Pipeline — Evidence Accumulation (via Truth Layer)
+### Kernel Pipeline — Projection Rebuild and Derived Evidence (via Truth Layer)
 
-The **Truth Layer** (`EvidenceAggregationService`) handles all evidence
-accumulation and auto-promotion logic:
+The **Truth Layer** handles claim-backed projection rebuilds and derived
+evidence-cache refreshes:
 
 **Relation 1** (MED13 ASSOCIATED_WITH DCM):
 
 - Check: does `(gene_med13, ASSOCIATED_WITH, phenotype_dcm, space_123)` exist? **Yes** (from Paper A).
-- **Upsert** via `EvidenceAggregationService.upsert_relation_evidence`: add `relation_evidence` row #2: confidence 0.93, tier `LITERATURE`, PMID 39098765
+- Create a second support claim + `claim_evidence` for the same triple.
+- Materializer reuses the existing canonical relation via projection lineage.
+- Rebuild derived `relation_evidence` cache from both support claims, producing cache row #2 from PMID 39098765.
 - Recompute: `aggregate_confidence = 1 - (1-0.91)(1-0.93) = 1 - 0.0063 = 0.9937`
 - Update: `source_count = 2`, `highest_evidence_tier = LITERATURE`
 
@@ -269,7 +274,7 @@ The MED13 → DCM connection is now `APPROVED` — no curator intervention neede
 
 **Relation 2** (MED13 ASSOCIATED_WITH arrhythmia):
 
-- New canonical edge: `aggregate_confidence = 0.87`, `source_count = 1`
+- New support claim materializes a new canonical projected relation with one derived evidence row.
 - Status: `DRAFT` (only 1 source)
 
 ---

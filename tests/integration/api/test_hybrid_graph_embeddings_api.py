@@ -87,9 +87,26 @@ def _create_relation(
     source_id: UUID,
     target_id: UUID,
 ) -> UUID:
+    write_headers = headers
+    if headers.get("X-TEST-USER-ROLE") != UserRole.ADMIN.value:
+        with session_module.SessionLocal() as session:
+            suffix = uuid4().hex
+            admin_user = UserModel(
+                email=f"hybrid-rel-admin-{suffix}@example.com",
+                username=f"hybrid-rel-admin-{suffix}",
+                full_name="Hybrid Relation Admin",
+                hashed_password="hashed_password",
+                role=UserRole.ADMIN,
+                status="active",
+            )
+            session.add(admin_user)
+            session.commit()
+            session.refresh(admin_user)
+            session.expunge(admin_user)
+        write_headers = _auth_headers(admin_user)
     response = test_client.post(
         f"/research-spaces/{space_id}/relations",
-        headers=headers,
+        headers=write_headers,
         json={
             "source_id": str(source_id),
             "relation_type": "ASSOCIATED_WITH",

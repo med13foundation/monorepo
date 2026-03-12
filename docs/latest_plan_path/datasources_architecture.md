@@ -300,7 +300,10 @@ entities that may need resolution).
 **Port:** `EvidenceAggregationPort` (domain layer)
 
 Centralizes the logic for computing aggregate confidence, evidence tiering, and
-auto-promotion of relations from `DRAFT` to `APPROVED`.
+auto-promotion over claim-backed projected relations. Canonical relation writes
+flow through projection materialization, and `relation_evidence` is maintained
+as a derived cache from support-claim evidence rather than an independent truth
+store.
 
 **Deterministic core (no agent overlay — pure computation):**
 
@@ -310,8 +313,9 @@ auto-promotion of relations from `DRAFT` to `APPROVED`.
   `EXPERT_CURATED > CLINICAL > EXPERIMENTAL > LITERATURE > COMPUTATIONAL`.
 - `should_auto_promote(relation)` — evaluate configurable thresholds
   (e.g. `source_count >= 3` AND `aggregate_confidence >= 0.95`).
-- `upsert_relation_evidence(relation_id, evidence)` — add evidence, recompute
-  aggregate, and trigger auto-promotion if thresholds are met.
+- `rebuild_projected_relation_evidence(relation_id)` — rebuild derived
+  `relation_evidence` from linked support-claim evidence, recompute aggregate,
+  and trigger auto-promotion if thresholds are met.
 
 **Consumers:** Kernel Pipeline (Persist stage — relation upserts), Graph
 Connection Agent (when proposing new relations), Admin UI (displaying evidence
@@ -831,15 +835,13 @@ It does not create Dictionary entries itself — that responsibility belongs
 exclusively to the Entity Recognition Agent.  Every extracted fact must
 reference a valid Dictionary entry.
 
-**Relation upsert semantics:** When the Extraction Agent outputs a relation
+**Relation projection semantics:** When the Extraction Agent outputs a relation
 (e.g. `GENE → ASSOCIATED_WITH → PHENOTYPE` or `PLAYER → PLAYS_FOR → TEAM`),
-the kernel pipeline performs a
-**canonical upsert**: if an edge with the same `(source_id, relation_type,
-target_id, research_space_id)` already exists, a new `relation_evidence` row
-is added and the `aggregate_confidence` is recomputed.  If no edge exists, a
-new canonical edge is created with its first evidence item.  This means the
-same relation found across multiple documents strengthens the signal
-automatically — no duplicate edges, just accumulated evidence.
+the kernel pipeline writes a claim first. Resolved `SUPPORT` claims then
+materialize or rebuild one canonical projected edge per
+`(source_id, relation_type, target_id, research_space_id)` triple. Multiple
+support claims strengthen the same projection by adding lineage rows and
+rebuilding the derived `relation_evidence` cache.
 
 #### 3. Governance Gate (provided by the Governance Layer)
 
@@ -993,7 +995,7 @@ RawRecord → Map → Normalize → Resolve → Validate → Persist
 | **Normalize** | `CompositeNormalizer` → `UnitConverter` + `ValueCaster` | **Semantic Layer** (`DictionaryManagementService.lookup_transform`) | Convert units via `transform_registry`; cast values to target `data_type` |
 | **Resolve** | `EntityResolver` | **Identity Layer** (`EntityResolutionService.resolve`) | Match subject anchors to existing entities via `entity_resolution_policies`; create new entities when allowed |
 | **Validate** | `ObservationValidator` + `TripleValidator` | **Semantic Layer** (`DictionaryManagementService.validate_observation` / `.validate_triple`) | Check values against variable `constraints`; check triples against `relation_constraints` |
-| **Persist** | `KernelObservationService` + `ProvenanceTracker` | **Truth Layer** (`EvidenceAggregationService.upsert_relation_evidence`) + **Governance Layer** (`GovernanceService.record_provenance`) | Write `observations`, `entities`, `relations` to Postgres; aggregate evidence on relation upserts; record full provenance |
+| **Persist** | `KernelObservationService` + `ProvenanceTracker` | **Truth Layer** (claim-backed projection materialization + derived evidence rebuild) + **Governance Layer** (`GovernanceService.record_provenance`) | Write `observations`, `entities`, `relation_claims`, and projected `relations` to Postgres; rebuild derived evidence on relation projections; record full provenance |
 
 ### Interfaces (Protocol classes)
 
@@ -1509,14 +1511,15 @@ specific variable on a specific entity at a point in time.
 **Indexes:** `(subject_id)`, `(research_space_id, variable_id)`,
 `(subject_id, observed_at)`, `(provenance_id)`.
 
-### `relations` — canonical graph edges with evidence accumulation
+### `relations` — canonical graph edges as claim-backed projections
 
-Each row represents **one logical connection** between two entities.  There is
-exactly one row per unique `(source_id, relation_type, target_id,
-research_space_id)` combination — a **canonical edge**.  When the same
-relationship is found by multiple sources, the edge is not duplicated; instead,
-a new evidence item is added to the child `relation_evidence` table and the
-aggregate confidence is recomputed.
+Each row represents **one projected logical connection** between two entities.
+There is exactly one row per unique `(source_id, relation_type, target_id,
+research_space_id)` combination, but a canonical edge is visible only when it
+has support-claim lineage in `relation_projection_sources`. When the same
+relationship is supported by multiple claims, the edge is not duplicated;
+instead, multiple support claims project into the same canonical edge and the
+derived evidence cache is rebuilt.
 
 | Column | Type | Purpose |
 |---|---|---|
@@ -1540,10 +1543,11 @@ ensures one canonical edge per logical connection.
 **Indexes:** `(source_id)`, `(target_id)`, `(research_space_id, relation_type)`,
 `(curation_status)`, `(aggregate_confidence)`.
 
-### `relation_evidence` — supporting evidence for each edge
+### `relation_evidence` — derived evidence cache for each edge
 
-Each row is one piece of evidence supporting a canonical relation.  Evidence
-accumulates over time as more sources confirm the same connection.
+Each row is one cached evidence item derived from support-claim evidence for a
+canonical relation. It is maintained for read performance and response
+stability; claim-side evidence remains the authoritative ledger.
 
 | Column | Type | Purpose |
 |---|---|---|
@@ -1559,7 +1563,7 @@ accumulates over time as more sources confirm the same connection.
 
 **Indexes:** `(relation_id)`, `(provenance_id)`, `(evidence_tier)`.
 
-### Evidence accumulation lifecycle
+### Projection and derived-evidence lifecycle
 
 Evidence accumulation works identically across all domains — the same
 canonical upsert pattern applies whether the source is a biomedical paper,
@@ -1569,16 +1573,20 @@ a sports statistics file, or a CS benchmark result.
 
 ```
 First paper finds "MED13 → ASSOCIATED_WITH → Cardiomyopathy":
+  → support claim row created
+  → projection row created in relation_projection_sources
   → relations row created:     aggregate_confidence = 0.88, source_count = 1
-  → relation_evidence row 1:   confidence 0.88, tier LITERATURE, PMID 123
+  → relation_evidence row 1:   derived from claim_evidence, PMID 123
 
 Second paper confirms the same connection:
-  → relations row UPSERTED:    aggregate_confidence = 0.985, source_count = 2
-  → relation_evidence row 2:   confidence 0.92, tier LITERATURE, PMID 456
+  → second support claim row created
+  → same canonical relation rebuilt from two projection sources
+  → relation_evidence row 2:   derived from claim_evidence, PMID 456
 
 Graph Connection Agent discovers cross-document support:
-  → relations row UPSERTED:    aggregate_confidence = 0.996, source_count = 3
-  → relation_evidence row 3:   confidence 0.75, tier COMPUTATIONAL, agent run XYZ
+  → support claim row created by graph connection flow
+  → same canonical relation rebuilt from three projection sources
+  → relation_evidence row 3:   derived from claim_evidence, agent run XYZ
 ```
 
 **Example (sports domain):**
@@ -1610,11 +1618,12 @@ edges that cross evidence thresholds (configurable per research space).
 Curators focus on weak-signal edges (low `source_count`, low confidence, single
 evidence tier) rather than reviewing every connection.
 
-**Upsert semantics:** When the Extraction Agent or Graph Connection Agent
-creates a relation, the kernel pipeline checks for an existing canonical edge
-with the same `(source_id, relation_type, target_id, research_space_id)`.
-If found, it adds a `relation_evidence` row and recomputes the aggregate.
-If not found, it creates the canonical edge and its first evidence row.
+**Projection semantics:** When the Extraction Agent or Graph Connection Agent
+creates a support claim, the kernel pipeline checks for an existing canonical
+projected edge with the same `(source_id, relation_type, target_id,
+research_space_id)`. If found, it reuses that relation, adds lineage in
+`relation_projection_sources`, and rebuilds derived evidence. If not found, it
+creates the canonical relation from the claim and its first claim-evidence row.
 
 ### `provenance` — how every fact entered the system
 
@@ -1758,15 +1767,13 @@ evidence upserts:
 - `graph_query_observations(entity_id, variable_ids)` — **Graph Query Port** ·
   return observations for an entity, filtered by variable types.
 - `graph_query_relation_evidence(relation_id)` — **Graph Query Port** · return
-  all evidence items for a canonical relation, with provenance chains and
-  evidence tiers.
-- `upsert_relation(source_id, relation_type, target_id, confidence,
-  evidence_summary, evidence_tier, provenance_ids)` — **Truth Layer**
-  (`EvidenceAggregationService.upsert_relation_evidence`) · **canonical
-  upsert**: if the edge already exists, add a `relation_evidence` row and
-  recompute `aggregate_confidence` and `source_count`.  If new, create the
-  canonical edge with `curation_status = DRAFT` and
-  `evidence_tier = COMPUTATIONAL`.
+  all derived evidence cache items for a canonical relation, with provenance
+  chains and evidence tiers.
+- `materialize_support_claim(claim_id, research_space_id, ...)` — **Truth
+  Layer** (`KernelRelationProjectionMaterializationService`) · claim-backed
+  projection materialization: if the edge already exists, reuse it and rebuild
+  `relation_evidence` from claim evidence; if new, create the canonical edge
+  with `curation_status = DRAFT`.
 - `validate_triple(source_type, relation_type, target_type)` — **Semantic
   Layer** · check against `relation_constraints` before creating.
 
@@ -1783,15 +1790,15 @@ The Graph Connection Agent runs:
 
 #### Governance and curation (via the Governance Layer)
 
-All agent-proposed relations follow the **canonical upsert** pattern and are
-routed through the **same Governance Layer** (`GovernanceService`) as Tier 3
+All agent-proposed relations follow the **claim-first projection** pattern and
+are routed through the **same Governance Layer** (`GovernanceService`) as Tier 3
 extractions:
 
 - If the edge already exists (from a previous extraction or agent run), the
-  Graph Connection Agent's evidence is added as a new `relation_evidence` row
-  with `evidence_tier = COMPUTATIONAL`.  The **Truth Layer** recomputes
-  `aggregate_confidence` and `source_count` — strengthening the signal.
-- If the edge is new, it is created with `curation_status = DRAFT`.
+  Graph Connection Agent creates another support claim and the **Truth Layer**
+  rebuilds the same canonical projection from the expanded claim set.
+- If the edge is new, the support claim materializes a new projected relation
+  with `curation_status = DRAFT`.
 - All edges pass through `GovernanceService.evaluate()` — the same
   confidence-based routing as Tier 3 extractions.
 - Edges that accumulate enough evidence (configurable: e.g. `source_count >= 3`
@@ -2610,7 +2617,7 @@ by the Semantic Layer; agents and the Kernel Pipeline consume them through the
 | `validate_triple(...)` | **Semantic Layer** | Implemented | Validates source_type → relation_type → target_type against `relation_constraints`.  Used by Extraction Agent, Graph Connection Agent, and Kernel Pipeline. |
 | `revoke(id, reason)` | **Semantic Layer** | Implemented (typed revoke methods per dictionary dimension) | Deactivates Dictionary entries and flags downstream data for re-extraction.  Used by Admin UI curators. |
 | `resolve(anchor, entity_type, space_id)` | **Identity Layer** | Implemented (`EntityResolver`) | Match subject anchors to existing entities via policies; create new entities when allowed.  Used by Kernel Pipeline and agents. |
-| `upsert_relation_evidence(...)` | **Truth Layer** | Implemented (canonical relation/evidence upsert in kernel relation repository with auto-promotion policy) | Adds evidence, recomputes aggregate confidence/source counts, and evaluates threshold-based `DRAFT` → `APPROVED` promotion with policy overrides and decision logging.  Used by Kernel Pipeline and Graph Connection Agent. |
+| `materialize_support_claim(...)` | **Truth Layer** | Implemented (`KernelRelationProjectionMaterializationService`) | Materializes or rebuilds canonical relations only from resolved support claims, refreshes derived `relation_evidence`, and evaluates threshold-based `DRAFT` → `APPROVED` promotion with policy overrides and decision logging. Used by Kernel Pipeline and Graph Connection Agent. |
 | `evaluate(contract)` | **Governance Layer** | Implemented (`GovernanceService.evaluate`) | Confidence-based routing + centralized review behavior + provenance integration across agents. |
 
 ---

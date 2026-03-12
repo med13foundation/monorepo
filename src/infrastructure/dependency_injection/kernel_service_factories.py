@@ -15,7 +15,9 @@ from src.application.services.kernel import (
     ConceptManagementService,
     DictionaryManagementService,
     KernelClaimEvidenceService,
+    KernelClaimParticipantBackfillService,
     KernelClaimParticipantService,
+    KernelClaimProjectionReadinessService,
     KernelClaimRelationService,
     KernelEntityService,
     KernelEntitySimilarityService,
@@ -225,6 +227,37 @@ class KernelServiceFactoryMixin:
     ) -> KernelClaimEvidenceService:
         claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(session)
         return KernelClaimEvidenceService(claim_evidence_repo=claim_evidence_repo)
+
+    def create_kernel_claim_participant_backfill_service(
+        self,
+        session: Session,
+    ) -> KernelClaimParticipantBackfillService:
+        return KernelClaimParticipantBackfillService(
+            session=session,
+            relation_claim_service=self.create_kernel_relation_claim_service(session),
+            claim_participant_service=self.create_kernel_claim_participant_service(
+                session,
+            ),
+            entity_repository=self._build_entity_repository(session),
+            concept_service=self.create_concept_management_service(session),
+        )
+
+    def create_kernel_claim_projection_readiness_service(
+        self,
+        session: Session,
+    ) -> KernelClaimProjectionReadinessService:
+        return KernelClaimProjectionReadinessService(
+            session=session,
+            relation_projection_invariant_service=(
+                self.create_kernel_relation_projection_invariant_service(session)
+            ),
+            relation_projection_materialization_service=(
+                self.create_kernel_relation_projection_materialization_service(session)
+            ),
+            claim_participant_backfill_service=(
+                self.create_kernel_claim_participant_backfill_service(session)
+            ),
+        )
 
     def create_dictionary_management_service(
         self,

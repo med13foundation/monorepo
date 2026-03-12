@@ -122,9 +122,26 @@ def _create_kernel_relation_for_space(
     evidence_sentence: str | None = None,
     evidence_tier: str = "LITERATURE",
 ) -> UUID:
+    write_headers = headers
+    if headers.get("X-TEST-USER-ROLE") != UserRole.ADMIN.value:
+        with session_module.SessionLocal() as session:
+            suffix = uuid4().hex
+            admin_user = UserModel(
+                email=f"rel-admin-{suffix}@example.com",
+                username=f"rel-admin-{suffix}",
+                full_name="Relation Admin",
+                hashed_password="hashed_password",
+                role=UserRole.ADMIN,
+                status="active",
+            )
+            session.add(admin_user)
+            session.commit()
+            session.refresh(admin_user)
+            session.expunge(admin_user)
+        write_headers = _auth_headers(admin_user)
     response = test_client.post(
         f"/research-spaces/{space_id}/relations",
-        headers=headers,
+        headers=write_headers,
         json={
             "source_id": str(source_id),
             "relation_type": relation_type,
@@ -252,9 +269,10 @@ def test_kernel_entity_observation_relation_flow(  # noqa: PLR0915
     space,
 ):
     # 1) Create a minimal variable definition (admin)
+    admin_headers = _auth_headers(admin_user)
     resp = test_client.post(
         "/admin/dictionary/variables",
-        headers=_auth_headers(admin_user),
+        headers=admin_headers,
         json={
             "id": "VAR_TEST_NOTE",
             "canonical_name": "test_note",
@@ -338,7 +356,7 @@ def test_kernel_entity_observation_relation_flow(  # noqa: PLR0915
     # 5) Create a relation
     rel_resp = test_client.post(
         f"/research-spaces/{space.id}/relations",
-        headers=headers,
+        headers=admin_headers,
         json={
             "source_id": str(gene_id),
             "relation_type": "ASSOCIATED_WITH",
@@ -1369,18 +1387,21 @@ def test_graph_document_returns_canonical_claim_and_evidence_elements(
     payload = response.json()
 
     assert payload["meta"]["counts"]["canonical_edges"] == 1
-    assert payload["meta"]["counts"]["claim_nodes"] == 2
-    assert payload["meta"]["counts"]["evidence_nodes"] == 2
-    assert payload["meta"]["counts"]["claim_participant_edges"] == 4
-    assert payload["meta"]["counts"]["claim_evidence_edges"] == 2
+    assert payload["meta"]["counts"]["claim_nodes"] == 1
+    assert payload["meta"]["counts"]["evidence_nodes"] == 1
+    assert payload["meta"]["counts"]["claim_participant_edges"] == 2
+    assert payload["meta"]["counts"]["claim_evidence_edges"] == 1
 
     canonical_edges = [
         edge for edge in payload["edges"] if edge["kind"] == "CANONICAL_RELATION"
     ]
     assert len(canonical_edges) == 1
     assert canonical_edges[0]["canonical_relation_id"] == str(relation_id)
-    assert canonical_edges[0]["metadata"]["support_claim_count"] == 2
+    assert canonical_edges[0]["metadata"]["support_claim_count"] == 1
     assert canonical_edges[0]["metadata"]["refute_claim_count"] == 0
+    assert canonical_edges[0]["metadata"]["explainable_by_projection"] is True
+    assert len(canonical_edges[0]["metadata"]["projection_claim_ids"]) == 1
+    assert str(claim_id) not in canonical_edges[0]["metadata"]["projection_claim_ids"]
     assert str(claim_id) in canonical_edges[0]["metadata"]["linked_claim_ids"]
     assert len(canonical_edges[0]["metadata"]["linked_claim_ids"]) == 2
 
@@ -1389,7 +1410,7 @@ def test_graph_document_returns_canonical_claim_and_evidence_elements(
         for node in payload["nodes"]
         if node["kind"] == "CLAIM" and node["resource_id"] == str(claim_id)
     ]
-    assert len(claim_nodes) == 1
+    assert len(claim_nodes) == 0
 
 
 def test_postgres_commit_rejects_orphan_canonical_relation(
@@ -1566,11 +1587,13 @@ def test_create_relation_persists_evidence_sentence(
     postgres_required,
     test_client,
     db_session,
+    admin_user,
     researcher_user,
     space,
 ):
     assert postgres_required is None
     headers = _auth_headers(researcher_user)
+    admin_headers = _auth_headers(admin_user)
 
     with _session_for_api(db_session) as session:
         seed_entity_resolution_policies(session)
@@ -1597,7 +1620,7 @@ def test_create_relation_persists_evidence_sentence(
 
     relation_response = test_client.post(
         f"/research-spaces/{space.id}/relations",
-        headers=headers,
+        headers=admin_headers,
         json={
             "source_id": str(source_id),
             "relation_type": "ASSOCIATED_WITH",
@@ -1659,6 +1682,55 @@ def test_create_relation_persists_evidence_sentence(
         evidence_rows[0].evidence_sentence_rationale
         == "No direct span was found; sentence generated from extraction context."
     )
+
+
+def test_create_relation_rejects_non_admin_users(
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    response = test_client.post(
+        f"/research-spaces/{space.id}/relations",
+        headers=headers,
+        json={
+            "source_id": str(source_id),
+            "relation_type": "ASSOCIATED_WITH",
+            "target_id": str(target_id),
+            "confidence": 0.82,
+            "evidence_summary": "Curated relation from deterministic test.",
+            "evidence_tier": "LITERATURE",
+            "provenance_id": None,
+        },
+    )
+
+    assert response.status_code == 403, response.text
+    assert "internal-only" in response.json()["detail"]
 
 
 def test_relation_claim_resolution_persists_evidence_sentence_from_claim_evidence(

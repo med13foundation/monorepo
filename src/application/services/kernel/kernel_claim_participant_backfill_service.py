@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from src.application.services.claim_first_metrics import increment_metric
+from src.application.services.kernel._kernel_claim_participant_backfill_support import (
+    ClaimParticipantBackfillGlobalSummary,
+    ClaimParticipantBackfillSummary,
+    ClaimParticipantCoverageSummary,
+    _Anchor,
+    list_projection_relevant_claim_models,
+)
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from src.application.services.kernel.kernel_claim_participant_service import (
         KernelClaimParticipantService,
     )
@@ -21,40 +29,19 @@ if TYPE_CHECKING:
     from src.type_definitions.common import JSONObject
 
 
-@dataclass(frozen=True)
-class ClaimParticipantBackfillSummary:
-    """Backfill result summary for one research space."""
-
-    scanned_claims: int
-    created_participants: int
-    skipped_existing: int
-    unresolved_endpoints: int
-    dry_run: bool
-
-
-@dataclass(frozen=True)
-class ClaimParticipantCoverageSummary:
-    """Coverage summary for claim participant anchors in one research space."""
-
-    total_claims: int
-    claims_with_any_participants: int
-    claims_with_subject: int
-    claims_with_object: int
-    unresolved_subject_endpoints: int
-    unresolved_object_endpoints: int
-
-
 class KernelClaimParticipantBackfillService:
     """Populate and audit claim participants for existing relation claims."""
 
     def __init__(  # noqa: PLR0913
         self,
         *,
+        session: Session,
         relation_claim_service: KernelRelationClaimService,
         claim_participant_service: KernelClaimParticipantService,
         entity_repository: KernelEntityRepository,
         concept_service: ConceptPort,
     ) -> None:
+        self._session = session
         self._claims = relation_claim_service
         self._participants = claim_participant_service
         self._entities = entity_repository
@@ -147,6 +134,99 @@ class KernelClaimParticipantBackfillService:
             created_participants=created_participants,
             skipped_existing=skipped_existing,
             unresolved_endpoints=unresolved_endpoints,
+            dry_run=dry_run,
+        )
+
+    def backfill_globally(
+        self,
+        *,
+        dry_run: bool,
+        limit: int,
+        offset: int,
+    ) -> ClaimParticipantBackfillGlobalSummary:
+        claims = list_projection_relevant_claim_models(
+            self._session,
+            limit=max(1, min(limit, 10000)),
+            offset=max(0, offset),
+        )
+
+        created_participants = 0
+        skipped_existing = 0
+        unresolved_endpoints = 0
+        research_space_ids: set[str] = set()
+
+        for claim in claims:
+            research_space_id = str(claim.research_space_id)
+            research_space_ids.add(research_space_id)
+            existing = self._participants.list_participants_for_claim(str(claim.id))
+            existing_roles = {participant.role for participant in existing}
+
+            source_anchor = self._resolve_claim_anchor(
+                research_space_id=research_space_id,
+                claim_metadata=claim.metadata_payload,
+                endpoint="source",
+                fallback_label=claim.source_label,
+            )
+            target_anchor = self._resolve_claim_anchor(
+                research_space_id=research_space_id,
+                claim_metadata=claim.metadata_payload,
+                endpoint="target",
+                fallback_label=claim.target_label,
+            )
+
+            if "SUBJECT" in existing_roles:
+                skipped_existing += 1
+            elif source_anchor is None or source_anchor.entity_id is None:
+                unresolved_endpoints += 1
+            else:
+                if not dry_run:
+                    self._participants.create_participant(
+                        claim_id=str(claim.id),
+                        research_space_id=research_space_id,
+                        role="SUBJECT",
+                        label=source_anchor.label,
+                        entity_id=source_anchor.entity_id,
+                        position=0,
+                        qualifiers={"origin": "participant_backfill_global_v1"},
+                    )
+                created_participants += 1
+
+            if "OBJECT" in existing_roles:
+                skipped_existing += 1
+            elif target_anchor is None or target_anchor.entity_id is None:
+                unresolved_endpoints += 1
+            else:
+                if not dry_run:
+                    self._participants.create_participant(
+                        claim_id=str(claim.id),
+                        research_space_id=research_space_id,
+                        role="OBJECT",
+                        label=target_anchor.label,
+                        entity_id=target_anchor.entity_id,
+                        position=1,
+                        qualifiers={"origin": "participant_backfill_global_v1"},
+                    )
+                created_participants += 1
+
+        if created_participants > 0:
+            increment_metric(
+                "claim_participants_backfilled_total",
+                delta=created_participants,
+                tags={"scope": "global_projection_repair"},
+            )
+        if unresolved_endpoints > 0:
+            increment_metric(
+                "claim_participants_backfill_unresolved_total",
+                delta=unresolved_endpoints,
+                tags={"scope": "global_projection_repair"},
+            )
+
+        return ClaimParticipantBackfillGlobalSummary(
+            scanned_claims=len(claims),
+            created_participants=created_participants,
+            skipped_existing=skipped_existing,
+            unresolved_endpoints=unresolved_endpoints,
+            research_spaces=len(research_space_ids),
             dry_run=dry_run,
         )
 
@@ -397,14 +477,9 @@ class KernelClaimParticipantBackfillService:
         return canonical
 
 
-@dataclass(frozen=True)
-class _Anchor:
-    entity_id: str | None
-    label: str | None
-
-
 __all__ = [
     "ClaimParticipantBackfillSummary",
     "ClaimParticipantCoverageSummary",
+    "ClaimParticipantBackfillGlobalSummary",
     "KernelClaimParticipantBackfillService",
 ]

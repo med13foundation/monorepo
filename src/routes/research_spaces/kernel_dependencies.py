@@ -241,6 +241,7 @@ def get_kernel_claim_participant_backfill_service(
 ) -> KernelClaimParticipantBackfillService:
     """Backfill/coverage service for structured claim participants."""
     return KernelClaimParticipantBackfillService(
+        session=session,
         relation_claim_service=get_kernel_relation_claim_service(session),
         claim_participant_service=get_kernel_claim_participant_service(session),
         entity_repository=_build_entity_repository(session),

@@ -16,7 +16,8 @@ All memory is scoped to a research space.
 
 Claim-first baseline:
 - Every extracted triplet candidate is captured in the relation-claim ledger.
-- Persistable candidates are written to canonical graph relations as `DRAFT`.
+- Canonical graph relations are materialized projections of resolved support claims only.
+- Persistable support candidates can materialize canonical graph relations as `DRAFT`; non-support claims never create canonical relations.
 - Non-persistable candidates remain triage-only claims (not graph edges).
 
 ## Separation of concerns (who is responsible for what)
@@ -82,7 +83,7 @@ flowchart LR
 - Validation states classify each candidate:
   - `ALLOWED`, `FORBIDDEN`, `UNDEFINED`, `INVALID_COMPONENTS`, `ENDPOINT_UNRESOLVED`, `SELF_LOOP`.
 - Persistability decides graph write behavior:
-  - `PERSISTABLE`: write canonical relation as `DRAFT` (even when `FORBIDDEN`/`UNDEFINED`).
+  - `PERSISTABLE`: resolved `SUPPORT` claims can materialize a canonical relation as `DRAFT`.
   - `NON_PERSISTABLE`: keep as claim only (no edge write).
 - Curators triage claim rows with `OPEN`, `NEEDS_MAPPING`, `REJECTED`, `RESOLVED`.
 
@@ -98,12 +99,13 @@ flowchart LR
 
 Conflict detection is claim-driven and relation-scoped:
 
-- Canonical relation key: `linked_relation_id`
+- Canonical explainability key: `relation_projection_sources`
+- Compatibility pointer: `linked_relation_id`
 - Conflict condition (v1): at least one `SUPPORT` claim and one `REFUTE` claim linked to the same canonical relation
 - Exposed API: `GET /research-spaces/{space_id}/relations/conflicts`
 - Returned summary includes counts and claim IDs by polarity for curation triage
 
-This keeps the canonical graph (`relations` + `relation_evidence`) stable while allowing richer scientific disagreement modeling in claim space.
+This keeps the canonical graph stable as a projection while allowing richer scientific disagreement modeling in claim space. `relation_evidence` is a derived cache built from linked support-claim evidence, not a separate truth store.
 
 ## What changes with `FULL_AUTO`
 
@@ -132,6 +134,7 @@ What does not change:
 3. Dictionary access must go through the unified dictionary API/harness.
 4. Relation persistence must always consult dictionary constraints.
 5. Governance mode can change automation level, but not core safety checks.
+6. Public/manual graph creation should enter through claims; `POST /relations` is internal-only compatibility behavior.
 
 ## Practical mental model
 
