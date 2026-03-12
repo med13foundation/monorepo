@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { apiClient, authHeaders } from '@/lib/api/client'
 import { authOptions } from '@/lib/auth'
+import { buildPlaywrightSession, isPlaywrightE2EMode } from '@/lib/e2e/playwright-auth'
+import { getPlaywrightDataDiscoveryPageData } from '@/lib/e2e/playwright-fixtures'
 import { fetchSessionState } from '@/app/actions/data-discovery'
 import type {
   DataDiscoverySessionResponse,
@@ -37,6 +39,11 @@ async function fetchCatalog(token: string): Promise<SourceCatalogEntry[]> {
 }
 
 export default async function DataDiscoveryPage() {
+  if (isPlaywrightE2EMode()) {
+    const { orchestratedState, catalog } = getPlaywrightDataDiscoveryPageData()
+    return <DataDiscoveryClient orchestratedState={orchestratedState} catalog={catalog} />
+  }
+
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
 

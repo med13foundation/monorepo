@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
-import type { Session } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { buildPlaywrightSession, isPlaywrightE2EMode } from '@/lib/e2e/playwright-auth'
+import { getPlaywrightSystemSettingsPageData } from '@/lib/e2e/playwright-fixtures'
 import SystemSettingsClient from './system-settings-client'
 import {
   fetchUsers,
@@ -23,33 +24,9 @@ import type { MaintenanceModeResponse } from '@/types/system-status'
 import type { SourceCatalogEntry } from '@/lib/types/data-discovery'
 import type { ResearchSpace } from '@/types/research-space'
 
-type AdminSession = Session & {
-  user?: Session['user'] & {
-    role?: string
-    access_token?: string
-  }
-}
-
 export default async function SystemSettingsPage() {
-  const isE2ETestMode = process.env.E2E_TEST_MODE === 'playwright'
-  let session = (await getServerSession(authOptions)) as AdminSession | null
-
-  if (isE2ETestMode) {
-    session = {
-      user: {
-        id: 'playwright-admin',
-        role: 'admin',
-        email: 'playwright@med13.dev',
-        username: 'playwright-admin',
-        full_name: 'Playwright Admin',
-        email_verified: true,
-        name: 'Playwright Admin',
-        access_token: ['playwright', 'token'].join('-'),
-        expires_at: Math.floor(Date.now() / 1000) + 3600,
-      },
-      expires: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-    }
-  }
+  const isPlaywrightMode = isPlaywrightE2EMode()
+  const session = isPlaywrightMode ? buildPlaywrightSession() : await getServerSession(authOptions)
 
   if (!session) {
     redirect('/auth/login?error=SessionExpired')
@@ -72,90 +49,102 @@ export default async function SystemSettingsPage() {
   let catalogEntries: SourceCatalogEntry[] = []
   let availabilitySummaries: DataSourceAvailability[] = []
   let spaces: ResearchSpace[] = []
-  const [
-    usersResult,
-    userStatsResult,
-    storageConfigurationsResult,
-    storageOverviewResult,
-    maintenanceStateResult,
-    catalogEntriesResult,
-    availabilitySummariesResult,
-    researchSpacesResult,
-  ] = await Promise.allSettled([
-    fetchUsers(INITIAL_USER_PARAMS, token),
-    fetchUserStatistics(token),
-    fetchStorageConfigurations(
-      { page: 1, per_page: 100, include_disabled: true },
-      token,
-    ),
-    fetchStorageOverview(token),
-    fetchMaintenanceState(token),
-    fetchAdminCatalogEntries(token),
-    fetchCatalogAvailabilitySummaries(token),
-    fetchResearchSpaces({ limit: 100 }, token),
-  ])
-
-  if (usersResult.status === 'fulfilled') {
-    users = usersResult.value
+  if (isPlaywrightMode) {
+    const fixtureData = getPlaywrightSystemSettingsPageData()
+    users = fixtureData.users
+    userStats = fixtureData.userStats
+    storageConfigurations = fixtureData.storageConfigurations
+    storageOverview = fixtureData.storageOverview
+    maintenanceState = fixtureData.maintenanceState
+    catalogEntries = fixtureData.catalogEntries
+    availabilitySummaries = fixtureData.availabilitySummaries
+    spaces = fixtureData.spaces
   } else {
-    console.error('[SystemSettingsPage] Failed to fetch users:', usersResult.reason)
-  }
+    const [
+      usersResult,
+      userStatsResult,
+      storageConfigurationsResult,
+      storageOverviewResult,
+      maintenanceStateResult,
+      catalogEntriesResult,
+      availabilitySummariesResult,
+      researchSpacesResult,
+    ] = await Promise.allSettled([
+      fetchUsers(INITIAL_USER_PARAMS, token),
+      fetchUserStatistics(token),
+      fetchStorageConfigurations(
+        { page: 1, per_page: 100, include_disabled: true },
+        token,
+      ),
+      fetchStorageOverview(token),
+      fetchMaintenanceState(token),
+      fetchAdminCatalogEntries(token),
+      fetchCatalogAvailabilitySummaries(token),
+      fetchResearchSpaces({ limit: 100 }, token),
+    ])
 
-  if (userStatsResult.status === 'fulfilled') {
-    userStats = userStatsResult.value
-  } else {
-    console.error('[SystemSettingsPage] Failed to fetch user stats:', userStatsResult.reason)
-  }
+    if (usersResult.status === 'fulfilled') {
+      users = usersResult.value
+    } else {
+      console.error('[SystemSettingsPage] Failed to fetch users:', usersResult.reason)
+    }
 
-  if (storageConfigurationsResult.status === 'fulfilled') {
-    storageConfigurations = storageConfigurationsResult.value
-  } else {
-    console.error(
-      '[SystemSettingsPage] Failed to fetch storage configurations:',
-      storageConfigurationsResult.reason,
-    )
-  }
+    if (userStatsResult.status === 'fulfilled') {
+      userStats = userStatsResult.value
+    } else {
+      console.error('[SystemSettingsPage] Failed to fetch user stats:', userStatsResult.reason)
+    }
 
-  if (storageOverviewResult.status === 'fulfilled') {
-    storageOverview = storageOverviewResult.value
-  } else {
-    console.error('[SystemSettingsPage] Failed to fetch storage overview:', storageOverviewResult.reason)
-  }
+    if (storageConfigurationsResult.status === 'fulfilled') {
+      storageConfigurations = storageConfigurationsResult.value
+    } else {
+      console.error(
+        '[SystemSettingsPage] Failed to fetch storage configurations:',
+        storageConfigurationsResult.reason,
+      )
+    }
 
-  if (maintenanceStateResult.status === 'fulfilled') {
-    maintenanceState = maintenanceStateResult.value
-  } else {
-    console.error(
-      '[SystemSettingsPage] Failed to fetch maintenance state:',
-      maintenanceStateResult.reason,
-    )
-  }
+    if (storageOverviewResult.status === 'fulfilled') {
+      storageOverview = storageOverviewResult.value
+    } else {
+      console.error('[SystemSettingsPage] Failed to fetch storage overview:', storageOverviewResult.reason)
+    }
 
-  if (catalogEntriesResult.status === 'fulfilled') {
-    catalogEntries = catalogEntriesResult.value
-  } else {
-    console.error(
-      '[SystemSettingsPage] Failed to fetch catalog entries:',
-      catalogEntriesResult.reason,
-    )
-  }
+    if (maintenanceStateResult.status === 'fulfilled') {
+      maintenanceState = maintenanceStateResult.value
+    } else {
+      console.error(
+        '[SystemSettingsPage] Failed to fetch maintenance state:',
+        maintenanceStateResult.reason,
+      )
+    }
 
-  if (availabilitySummariesResult.status === 'fulfilled') {
-    availabilitySummaries = availabilitySummariesResult.value
-  } else {
-    console.error(
-      '[SystemSettingsPage] Failed to fetch catalog availability:',
-      availabilitySummariesResult.reason,
-    )
-  }
+    if (catalogEntriesResult.status === 'fulfilled') {
+      catalogEntries = catalogEntriesResult.value
+    } else {
+      console.error(
+        '[SystemSettingsPage] Failed to fetch catalog entries:',
+        catalogEntriesResult.reason,
+      )
+    }
 
-  if (researchSpacesResult.status === 'fulfilled') {
-    spaces = researchSpacesResult.value.spaces
-  } else {
-    console.error(
-      '[SystemSettingsPage] Failed to fetch research spaces:',
-      researchSpacesResult.reason,
-    )
+    if (availabilitySummariesResult.status === 'fulfilled') {
+      availabilitySummaries = availabilitySummariesResult.value
+    } else {
+      console.error(
+        '[SystemSettingsPage] Failed to fetch catalog availability:',
+        availabilitySummariesResult.reason,
+      )
+    }
+
+    if (researchSpacesResult.status === 'fulfilled') {
+      spaces = researchSpacesResult.value.spaces
+    } else {
+      console.error(
+        '[SystemSettingsPage] Failed to fetch research spaces:',
+        researchSpacesResult.reason,
+      )
+    }
   }
 
   return (

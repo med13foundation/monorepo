@@ -16,13 +16,13 @@ import {
   nodeVisualForEntityType,
 } from '@/lib/graph/style'
 import { cn } from '@/lib/utils'
-import type { KernelGraphSubgraphMeta } from '@/types/kernel'
+import type { KernelGraphDocumentMeta } from '@/types/kernel'
 import type { ClaimEvidencePreview } from './use-knowledge-graph-controller'
 
 interface KnowledgeGraphVisualizationProps {
   filteredGraph: GraphModel
   renderGraph: GraphModel
-  subgraphMeta: KernelGraphSubgraphMeta | null
+  subgraphMeta: KernelGraphDocumentMeta | null
   truncationNotice: boolean | undefined
   preCapNodeCount: number
   preCapEdgeCount: number

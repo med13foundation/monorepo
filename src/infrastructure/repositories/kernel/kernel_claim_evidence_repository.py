@@ -98,6 +98,47 @@ class SqlAlchemyKernelClaimEvidenceRepository(KernelClaimEvidenceRepository):
             for model in self._session.scalars(stmt).all()
         ]
 
+    def find_by_claim_ids(
+        self,
+        claim_ids: list[str],
+    ) -> dict[str, list[KernelClaimEvidence]]:
+        normalized_ids: list[str] = []
+        claim_uuids: list[UUID] = []
+        seen: set[str] = set()
+        for claim_id in claim_ids:
+            normalized_uuid = _try_as_uuid(claim_id)
+            if normalized_uuid is None:
+                continue
+            normalized_id = str(normalized_uuid)
+            if normalized_id in seen:
+                continue
+            seen.add(normalized_id)
+            normalized_ids.append(normalized_id)
+            claim_uuids.append(normalized_uuid)
+
+        if not claim_uuids:
+            return {}
+
+        stmt = (
+            select(ClaimEvidenceModel)
+            .where(ClaimEvidenceModel.claim_id.in_(claim_uuids))
+            .order_by(
+                ClaimEvidenceModel.claim_id.asc(),
+                ClaimEvidenceModel.created_at.desc(),
+            )
+        )
+        grouped: dict[str, list[KernelClaimEvidence]] = {}
+        for model in self._session.scalars(stmt).all():
+            claim_id = str(model.claim_id)
+            grouped.setdefault(claim_id, []).append(
+                KernelClaimEvidence.model_validate(model),
+            )
+        return {
+            claim_id: grouped[claim_id]
+            for claim_id in normalized_ids
+            if claim_id in grouped
+        }
+
     def get_preferred_for_claim(self, claim_id: str) -> KernelClaimEvidence | None:
         sentence_rank = case(
             (ClaimEvidenceModel.sentence.is_not(None), 0),

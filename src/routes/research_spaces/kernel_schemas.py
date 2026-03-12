@@ -722,3 +722,108 @@ class KernelGraphSubgraphResponse(BaseModel):
     nodes: list[KernelEntityResponse]
     edges: list[KernelRelationResponse]
     meta: KernelGraphSubgraphMeta
+
+
+class KernelGraphDocumentRequest(BaseModel):
+    """Request payload for unified graph documents with claim/evidence overlays."""
+
+    # Incoming JSON provides UUIDs as strings.
+    model_config = ConfigDict(strict=False)
+
+    mode: Literal["starter", "seeded"]
+    seed_entity_ids: list[UUID] = Field(default_factory=list)
+    depth: int = Field(default=2, ge=1, le=4)
+    top_k: int = Field(default=25, ge=1, le=100)
+    relation_types: list[str] | None = None
+    curation_statuses: list[str] | None = None
+    max_nodes: int = Field(default=180, ge=20, le=500)
+    max_edges: int = Field(default=260, ge=20, le=1000)
+    include_claims: bool = True
+    include_evidence: bool = True
+    max_claims: int = Field(default=250, ge=1, le=1000)
+    evidence_limit_per_claim: int = Field(default=3, ge=1, le=10)
+
+
+class KernelGraphDocumentNode(BaseModel):
+    """One typed graph node in the unified graph document."""
+
+    model_config = ConfigDict(strict=True)
+
+    id: str = Field(min_length=1, max_length=255)
+    resource_id: str = Field(min_length=1, max_length=255)
+    kind: Literal["ENTITY", "CLAIM", "EVIDENCE"]
+    type_label: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=512)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    curation_status: str | None = Field(default=None, max_length=32)
+    claim_status: str | None = Field(default=None, max_length=32)
+    polarity: str | None = Field(default=None, max_length=32)
+    canonical_relation_id: UUID | None = None
+    metadata: JSONObject = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class KernelGraphDocumentEdge(BaseModel):
+    """One typed graph edge in the unified graph document."""
+
+    model_config = ConfigDict(strict=True)
+
+    id: str = Field(min_length=1, max_length=255)
+    resource_id: str | None = Field(default=None, max_length=255)
+    kind: Literal["CANONICAL_RELATION", "CLAIM_PARTICIPANT", "CLAIM_EVIDENCE"]
+    source_id: str = Field(min_length=1, max_length=255)
+    target_id: str = Field(min_length=1, max_length=255)
+    type_label: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=512)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    curation_status: str | None = Field(default=None, max_length=32)
+    claim_id: UUID | None = None
+    canonical_relation_id: UUID | None = None
+    evidence_id: UUID | None = None
+    metadata: JSONObject = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class KernelGraphDocumentCounts(BaseModel):
+    """Per-kind counts returned with a unified graph document."""
+
+    model_config = ConfigDict(strict=True)
+
+    entity_nodes: int = Field(ge=0)
+    claim_nodes: int = Field(ge=0)
+    evidence_nodes: int = Field(ge=0)
+    canonical_edges: int = Field(ge=0)
+    claim_participant_edges: int = Field(ge=0)
+    claim_evidence_edges: int = Field(ge=0)
+
+
+class KernelGraphDocumentMeta(BaseModel):
+    """Metadata describing graph-document scope and included overlays."""
+
+    model_config = ConfigDict(strict=True)
+
+    mode: Literal["starter", "seeded"]
+    seed_entity_ids: list[UUID]
+    requested_depth: int
+    requested_top_k: int
+    pre_cap_entity_node_count: int
+    pre_cap_canonical_edge_count: int
+    truncated_entity_nodes: bool
+    truncated_canonical_edges: bool
+    included_claims: bool
+    included_evidence: bool
+    max_claims: int
+    evidence_limit_per_claim: int
+    counts: KernelGraphDocumentCounts
+
+
+class KernelGraphDocumentResponse(BaseModel):
+    """Unified graph document containing canonical, claim, and evidence elements."""
+
+    model_config = ConfigDict(strict=True)
+
+    nodes: list[KernelGraphDocumentNode]
+    edges: list[KernelGraphDocumentEdge]
+    meta: KernelGraphDocumentMeta

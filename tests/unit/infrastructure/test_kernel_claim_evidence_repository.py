@@ -123,3 +123,62 @@ def test_claim_evidence_repository_create_list_and_preferred(db_session) -> None
     assert preferred is not None
     assert str(preferred.id) == str(first.id)
     assert preferred.sentence == "Older sentence"
+
+
+def test_claim_evidence_repository_find_by_claim_ids(db_session) -> None:
+    space_id, claim_id = _create_space_and_claim(db_session)
+    repository = SqlAlchemyKernelClaimEvidenceRepository(db_session)
+    claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
+    second_claim = claim_repo.create(
+        research_space_id=space_id,
+        source_document_id=None,
+        agent_run_id="run-claim-evidence-2",
+        source_type="pubmed",
+        relation_type="ASSOCIATED_WITH",
+        target_type="DISEASE",
+        source_label="MED13",
+        target_label="Arrhythmia",
+        confidence=0.51,
+        validation_state="ALLOWED",
+        validation_reason=None,
+        persistability="PERSISTABLE",
+        claim_status="OPEN",
+        polarity="SUPPORT",
+        claim_text="Second claim",
+        claim_section=None,
+        linked_relation_id=None,
+        metadata={},
+    )
+
+    first_row = repository.create(
+        claim_id=claim_id,
+        source_document_id=None,
+        agent_run_id="run-batch-1",
+        sentence="Claim one evidence",
+        sentence_source="verbatim_span",
+        sentence_confidence="high",
+        sentence_rationale=None,
+        figure_reference=None,
+        table_reference=None,
+        confidence=0.8,
+        metadata={},
+    )
+    second_row = repository.create(
+        claim_id=str(second_claim.id),
+        source_document_id=None,
+        agent_run_id="run-batch-2",
+        sentence="Claim two evidence",
+        sentence_source="verbatim_span",
+        sentence_confidence="medium",
+        sentence_rationale=None,
+        figure_reference=None,
+        table_reference=None,
+        confidence=0.6,
+        metadata={},
+    )
+
+    grouped = repository.find_by_claim_ids([str(second_claim.id), claim_id])
+
+    assert list(grouped.keys()) == [str(second_claim.id), claim_id]
+    assert str(grouped[claim_id][0].id) == str(first_row.id)
+    assert str(grouped[str(second_claim.id)][0].id) == str(second_row.id)

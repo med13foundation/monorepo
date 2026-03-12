@@ -3,6 +3,7 @@
 import { getActionErrorMessage, getActionErrorStatus, requireAccessToken } from '@/app/actions/action-utils'
 import {
   fetchClaimParticipants,
+  fetchKernelGraphDocument,
   fetchKernelGraphExport,
   fetchKernelNeighborhood,
   fetchKernelSubgraph,
@@ -18,6 +19,8 @@ import type {
   ClaimParticipantListResponse,
   GraphSearchRequest,
   GraphSearchResponse,
+  KernelGraphDocumentRequest,
+  KernelGraphDocumentResponse,
   KernelGraphExportResponse,
   KernelGraphSubgraphRequest,
   KernelGraphSubgraphResponse,
@@ -44,6 +47,26 @@ export async function fetchKernelSubgraphAction(
     return {
       success: false,
       error: getActionErrorMessage(error, 'Failed to load graph subgraph'),
+      status: getActionErrorStatus(error),
+    }
+  }
+}
+
+export async function fetchKernelGraphDocumentAction(
+  spaceId: string,
+  payload: KernelGraphDocumentRequest,
+): Promise<QueryActionResult<KernelGraphDocumentResponse>> {
+  try {
+    const token = await requireAccessToken()
+    const response = await fetchKernelGraphDocument(spaceId, payload, token)
+    return { success: true, data: response }
+  } catch (error: unknown) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('[ServerAction] fetchKernelGraphDocumentAction failed:', error)
+    }
+    return {
+      success: false,
+      error: getActionErrorMessage(error, 'Failed to load graph document'),
       status: getActionErrorStatus(error),
     }
   }

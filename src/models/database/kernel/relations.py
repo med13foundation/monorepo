@@ -156,6 +156,11 @@ class RelationModel(Base):
         Index("idx_relations_provenance", "provenance_id"),
         Index("idx_relations_aggregate_confidence", "aggregate_confidence"),
         UniqueConstraint(
+            "id",
+            "research_space_id",
+            name="uq_relations_id_space",
+        ),
+        UniqueConstraint(
             "source_id",
             "relation_type",
             "target_id",

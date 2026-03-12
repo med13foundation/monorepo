@@ -55,6 +55,15 @@ class KernelRelationClaimRepository(ABC):
         """Fetch multiple claims by IDs."""
 
     @abstractmethod
+    def find_by_linked_relation_ids(
+        self,
+        *,
+        research_space_id: str,
+        linked_relation_ids: list[str],
+    ) -> list[KernelRelationClaim]:
+        """List claims linked to one or more canonical relations."""
+
+    @abstractmethod
     def find_by_research_space(  # noqa: PLR0913
         self,
         research_space_id: str,

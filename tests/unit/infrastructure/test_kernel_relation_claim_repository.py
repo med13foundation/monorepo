@@ -187,3 +187,79 @@ def test_relation_claim_repository_conflict_detection(db_session) -> None:
     assert len(conflict.support_claim_ids) == 1
     assert len(conflict.refute_claim_ids) == 1
     assert repository.count_conflicts_by_research_space(str(space.id)) == 1
+
+
+def test_relation_claim_repository_find_by_linked_relation_ids(db_session) -> None:
+    _, space = _create_space_and_user(db_session)
+    repository = SqlAlchemyKernelRelationClaimRepository(db_session)
+    relation_id_a = str(uuid4())
+    relation_id_b = str(uuid4())
+
+    claim_a = repository.create(
+        research_space_id=str(space.id),
+        source_document_id=None,
+        agent_run_id="run-a",
+        source_type="pubmed",
+        relation_type="ASSOCIATED_WITH",
+        target_type="DISEASE",
+        source_label="MED13",
+        target_label="Cardiomyopathy",
+        confidence=0.88,
+        validation_state="ALLOWED",
+        validation_reason=None,
+        persistability="PERSISTABLE",
+        claim_status="OPEN",
+        polarity="SUPPORT",
+        claim_text="Support claim",
+        claim_section=None,
+        linked_relation_id=relation_id_a,
+        metadata={},
+    )
+    claim_b = repository.create(
+        research_space_id=str(space.id),
+        source_document_id=None,
+        agent_run_id="run-b",
+        source_type="pubmed",
+        relation_type="ASSOCIATED_WITH",
+        target_type="DISEASE",
+        source_label="MED13",
+        target_label="Arrhythmia",
+        confidence=0.77,
+        validation_state="ALLOWED",
+        validation_reason=None,
+        persistability="PERSISTABLE",
+        claim_status="OPEN",
+        polarity="REFUTE",
+        claim_text="Refute claim",
+        claim_section=None,
+        linked_relation_id=relation_id_b,
+        metadata={},
+    )
+    _ = repository.create(
+        research_space_id=str(space.id),
+        source_document_id=None,
+        agent_run_id="run-c",
+        source_type="pubmed",
+        relation_type="CAUSES",
+        target_type="DISEASE",
+        source_label="MED13",
+        target_label="Other",
+        confidence=0.61,
+        validation_state="ALLOWED",
+        validation_reason=None,
+        persistability="PERSISTABLE",
+        claim_status="OPEN",
+        polarity="SUPPORT",
+        claim_text="Unlinked elsewhere",
+        claim_section=None,
+        linked_relation_id=str(uuid4()),
+        metadata={},
+    )
+
+    rows = repository.find_by_linked_relation_ids(
+        research_space_id=str(space.id),
+        linked_relation_ids=[relation_id_b, relation_id_a],
+    )
+
+    returned_ids = {str(row.id) for row in rows}
+    assert returned_ids == {str(claim_a.id), str(claim_b.id)}

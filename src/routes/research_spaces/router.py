@@ -38,6 +38,7 @@ from . import (  # noqa: E402,F401
     graph_connection_routes,
     hypothesis_routes,
     kernel_entities_routes,
+    kernel_graph_document_routes,
     kernel_graph_search_routes,
     kernel_ingestion_routes,
     kernel_observations_routes,

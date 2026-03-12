@@ -23,8 +23,12 @@ from src.infrastructure.security.jwt_provider import JWTProvider
 from src.main import create_app
 from src.models.database.base import Base
 from src.models.database.kernel.claim_evidence import ClaimEvidenceModel
+from src.models.database.kernel.claim_participants import ClaimParticipantModel
 from src.models.database.kernel.dictionary import TransformRegistryModel
 from src.models.database.kernel.relation_claims import RelationClaimModel
+from src.models.database.kernel.relation_projection_sources import (
+    RelationProjectionSourceModel,
+)
 from src.models.database.kernel.relations import RelationEvidenceModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.source_document import SourceDocumentModel
@@ -234,7 +238,7 @@ def test_admin_dictionary_requires_admin_role(test_client, admin_user, researche
     assert resp.status_code == 200
 
 
-def test_kernel_entity_observation_relation_flow(
+def test_kernel_entity_observation_relation_flow(  # noqa: PLR0915
     test_client,
     db_session,
     admin_user,
@@ -353,6 +357,27 @@ def test_kernel_entity_observation_relation_flow(
     assert relation_row["evidence_summary"] == "Test evidence"
     assert relation_row["evidence_sentence"] is None
     assert relation_row["paper_links"] == []
+    with _session_for_api(db_session) as session:
+        manual_claims = session.scalars(
+            select(RelationClaimModel).where(
+                RelationClaimModel.linked_relation_id == relation_id,
+            ),
+        ).all()
+        assert len(manual_claims) == 1
+        assert manual_claims[0].claim_status == "RESOLVED"
+        participants = session.scalars(
+            select(ClaimParticipantModel).where(
+                ClaimParticipantModel.claim_id == manual_claims[0].id,
+            ),
+        ).all()
+        assert len(participants) == 2
+        projection_rows = session.scalars(
+            select(RelationProjectionSourceModel).where(
+                RelationProjectionSourceModel.relation_id == relation_id,
+            ),
+        ).all()
+        assert len(projection_rows) == 1
+        assert projection_rows[0].projection_origin == "MANUAL_RELATION"
 
     # 6) Graph export includes nodes + edge
     graph = test_client.get(
@@ -1165,6 +1190,214 @@ def test_relation_claim_evidence_and_conflict_endpoints(
     assert conflict_payload["total"] >= 1
     relation_ids = {row["relation_id"] for row in conflict_payload["conflicts"]}
     assert str(relation_id) in relation_ids
+
+
+def test_graph_document_returns_canonical_claim_and_evidence_elements(
+    postgres_required,
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    assert postgres_required is None
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+    relation_id = _create_kernel_relation_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        source_id=source_id,
+        target_id=target_id,
+    )
+
+    claim_id: UUID
+    with _session_for_api(db_session) as session:
+        source = UserDataSourceModel(
+            id=str(uuid4()),
+            owner_id=str(researcher_user.id),
+            research_space_id=str(space.id),
+            name="Unified graph source",
+            description="",
+            source_type=SourceTypeEnum.PUBMED,
+            template_id=None,
+            configuration={},
+            status=SourceStatusEnum.ACTIVE,
+            ingestion_schedule={},
+            quality_metrics={},
+            last_ingested_at=None,
+            tags=[],
+            version="1.0",
+        )
+        session.add(source)
+        session.flush()
+        source_document_id = str(uuid4())
+        session.add(
+            SourceDocumentModel(
+                id=source_document_id,
+                research_space_id=str(space.id),
+                source_id=source.id,
+                ingestion_job_id=None,
+                external_record_id="40214304",
+                source_type="pubmed",
+                document_format="json",
+                raw_storage_key=None,
+                enriched_storage_key=None,
+                content_hash=None,
+                content_length_chars=None,
+                enrichment_status="pending",
+                enrichment_method=None,
+                enrichment_agent_run_id=None,
+                extraction_status="pending",
+                extraction_agent_run_id=None,
+                metadata_payload={},
+            ),
+        )
+        claim = RelationClaimModel(
+            research_space_id=space.id,
+            source_document_id=None,
+            agent_run_id="run-graph-document",
+            source_type="GENE",
+            relation_type="ASSOCIATED_WITH",
+            target_type="PHENOTYPE",
+            source_label="MED13",
+            target_label="Cardiomyopathy",
+            confidence=0.86,
+            validation_state="ALLOWED",
+            validation_reason=None,
+            persistability="PERSISTABLE",
+            claim_status="OPEN",
+            polarity="SUPPORT",
+            claim_text="MED13 variants are associated with cardiomyopathy.",
+            claim_section="results",
+            linked_relation_id=relation_id,
+            metadata_payload={},
+            triaged_by=None,
+            triaged_at=None,
+        )
+        session.add(claim)
+        session.commit()
+        session.refresh(claim)
+        claim_id = claim.id
+
+        session.add(
+            ClaimParticipantModel(
+                claim_id=claim.id,
+                research_space_id=space.id,
+                label="MED13",
+                entity_id=source_id,
+                role="SUBJECT",
+                position=1,
+                qualifiers={},
+            ),
+        )
+        session.add(
+            ClaimParticipantModel(
+                claim_id=claim.id,
+                research_space_id=space.id,
+                label="Cardiomyopathy",
+                entity_id=target_id,
+                role="OBJECT",
+                position=2,
+                qualifiers={},
+            ),
+        )
+        session.add(
+            ClaimEvidenceModel(
+                claim_id=claim.id,
+                source_document_id=source_document_id,
+                agent_run_id="run-graph-document",
+                sentence=(
+                    "MED13 variants were associated with cardiomyopathy "
+                    "in a curated cohort analysis."
+                ),
+                sentence_source="verbatim_span",
+                sentence_confidence="high",
+                sentence_rationale=None,
+                figure_reference="Figure 2",
+                table_reference=None,
+                confidence=0.86,
+                metadata_payload={},
+            ),
+        )
+        session.commit()
+
+    response = test_client.post(
+        f"/research-spaces/{space.id}/graph/document",
+        headers=headers,
+        json={
+            "mode": "seeded",
+            "seed_entity_ids": [str(source_id)],
+            "depth": 1,
+            "top_k": 25,
+            "max_nodes": 20,
+            "max_edges": 20,
+            "include_claims": True,
+            "include_evidence": True,
+            "max_claims": 10,
+            "evidence_limit_per_claim": 2,
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["meta"]["counts"]["canonical_edges"] == 1
+    assert payload["meta"]["counts"]["claim_nodes"] == 2
+    assert payload["meta"]["counts"]["evidence_nodes"] == 1
+    assert payload["meta"]["counts"]["claim_participant_edges"] == 4
+    assert payload["meta"]["counts"]["claim_evidence_edges"] == 1
+
+    canonical_edges = [
+        edge for edge in payload["edges"] if edge["kind"] == "CANONICAL_RELATION"
+    ]
+    assert len(canonical_edges) == 1
+    assert canonical_edges[0]["canonical_relation_id"] == str(relation_id)
+    assert canonical_edges[0]["metadata"]["support_claim_count"] == 2
+    assert canonical_edges[0]["metadata"]["refute_claim_count"] == 0
+    assert str(claim_id) in canonical_edges[0]["metadata"]["linked_claim_ids"]
+    assert len(canonical_edges[0]["metadata"]["linked_claim_ids"]) == 2
+
+    claim_nodes = [
+        node
+        for node in payload["nodes"]
+        if node["kind"] == "CLAIM" and node["resource_id"] == str(claim_id)
+    ]
+    assert len(claim_nodes) == 1
+    assert claim_nodes[0]["claim_status"] == "OPEN"
+    assert claim_nodes[0]["polarity"] == "SUPPORT"
+    assert claim_nodes[0]["canonical_relation_id"] == str(relation_id)
+
+    evidence_nodes = [node for node in payload["nodes"] if node["kind"] == "EVIDENCE"]
+    assert len(evidence_nodes) == 1
+    assert evidence_nodes[0]["type_label"] == "PAPER_EVIDENCE"
+    assert evidence_nodes[0]["metadata"]["paper_links"] == [
+        {
+            "label": "PubMed",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/40214304/",
+            "source": "external_record_id",
+        },
+    ]
 
 
 def test_create_relation_persists_evidence_sentence(

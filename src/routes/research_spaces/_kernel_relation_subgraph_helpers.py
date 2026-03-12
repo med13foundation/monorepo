@@ -13,6 +13,7 @@ from src.application.services.kernel.kernel_relation_service import (
 from src.domain.entities.kernel.relations import KernelRelation
 from src.routes.research_spaces.kernel_schemas import (
     KernelEntityResponse,
+    KernelGraphDocumentRequest,
     KernelGraphSubgraphRequest,
 )
 
@@ -24,6 +25,7 @@ _CURATION_STATUS_PRIORITY: dict[str, int] = {
     "RETRACTED": 1,
 }
 _STARTER_FETCH_MULTIPLIER = 6
+GraphRelationRequest = KernelGraphSubgraphRequest | KernelGraphDocumentRequest
 
 
 def _status_priority(status: str) -> int:
@@ -161,7 +163,7 @@ def collect_candidate_relations(
     *,
     mode: Literal["starter", "seeded"],
     space_id: str,
-    request: KernelGraphSubgraphRequest,
+    request: GraphRelationRequest,
     relation_service: KernelRelationService,
     relation_types: set[str] | None,
     curation_statuses: set[str] | None,

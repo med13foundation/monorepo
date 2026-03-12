@@ -67,6 +67,10 @@ from .relation_claims import (
     RelationClaimStatus,
     RelationClaimValidationState,
 )
+from .relation_projection_sources import (
+    KernelRelationProjectionSource,
+    RelationProjectionOrigin,
+)
 from .relations import (
     EvidenceSentenceConfidence,
     EvidenceSentenceGenerationRequest,
@@ -97,6 +101,8 @@ __all__ = [
     "KernelProvenanceRecord",
     "KernelRelationClaim",
     "KernelRelationConflictSummary",
+    "KernelRelationProjectionSource",
+    "RelationProjectionOrigin",
     "KernelClaimEvidence",
     "KernelClaimParticipant",
     "ClaimParticipantRole",

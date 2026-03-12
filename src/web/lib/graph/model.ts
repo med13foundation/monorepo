@@ -238,7 +238,7 @@ function ensureNodeRecord(
   return record[nodeId]
 }
 
-function buildGraphModelFromNormalized(
+export function buildGraphModelFromNormalized(
   normalizedNodes: readonly GraphNode[],
   normalizedEdges: readonly GraphEdge[],
 ): GraphModel {
@@ -1285,11 +1285,29 @@ export function projectGraphByDisplayMode(
   model: GraphModel,
   mode: GraphDisplayMode,
 ): GraphModel {
-  if (mode === 'CLAIMS' || mode === 'EVIDENCE') {
+  if (mode === 'EVIDENCE') {
     return model
   }
-  const canonicalEdges = model.edges.filter((edge) => edge.origin === 'canonical')
-  return buildGraphModelFromNormalized(model.nodes, canonicalEdges)
+
+  const visibleEdges = model.edges.filter((edge) => {
+    if (mode === 'RELATIONS_ONLY') {
+      return edge.origin === 'canonical'
+    }
+    return edge.origin === 'canonical' || edge.origin === 'claim'
+  })
+
+  if (visibleEdges.length === 0) {
+    return buildGraphModelFromNormalized([], [])
+  }
+
+  const referencedNodeIds = new Set<string>()
+  for (const edge of visibleEdges) {
+    referencedNodeIds.add(edge.sourceId)
+    referencedNodeIds.add(edge.targetId)
+  }
+
+  const visibleNodes = model.nodes.filter((node) => referencedNodeIds.has(node.id))
+  return buildGraphModelFromNormalized(visibleNodes, visibleEdges)
 }
 
 export function pruneGraphModelForRender(

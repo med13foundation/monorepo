@@ -47,6 +47,9 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.relation_claim_repository import (
         KernelRelationClaimRepository,
     )
+    from src.domain.repositories.kernel.relation_projection_source_repository import (
+        KernelRelationProjectionSourceRepository,
+    )
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
@@ -64,6 +67,9 @@ class ExtractionServiceDependencies:
     concept_merge_judge: MappingJudgePort | None = None
     relation_repository: KernelRelationRepository | None = None
     relation_claim_repository: KernelRelationClaimRepository | None = None
+    relation_projection_source_repository: (
+        KernelRelationProjectionSourceRepository | None
+    ) = None
     claim_participant_repository: KernelClaimParticipantRepository | None = None
     claim_evidence_repository: KernelClaimEvidenceRepository | None = None
     entity_repository: KernelEntityRepository | None = None

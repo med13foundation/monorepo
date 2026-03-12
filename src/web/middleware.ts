@@ -1,5 +1,6 @@
 import { withAuth } from "next-auth/middleware"
 import type { JWT } from "next-auth/jwt"
+import { isPlaywrightE2EMode } from "@/lib/e2e/playwright-auth"
 
 function hasValidTokenExpiry(token: JWT): boolean {
   const now = Date.now()
@@ -19,7 +20,8 @@ export default withAuth(
   },
   {
     callbacks: {
-      authorized: ({ token }) => (token ? hasValidTokenExpiry(token) : false),
+      authorized: ({ token }) =>
+        isPlaywrightE2EMode() || (token ? hasValidTokenExpiry(token) : false),
     },
   }
 )

@@ -22,6 +22,9 @@ from .kernel_entity_similarity_service import (
 )
 from .kernel_observation_service import KernelObservationService
 from .kernel_relation_claim_service import KernelRelationClaimService
+from .kernel_relation_projection_source_service import (
+    KernelRelationProjectionSourceService,
+)
 from .kernel_relation_service import KernelRelationService
 from .kernel_relation_suggestion_service import KernelRelationSuggestionService
 from .provenance_service import ProvenanceService
@@ -40,6 +43,7 @@ __all__ = [
     "EntityEmbeddingRefreshSummary",
     "KernelObservationService",
     "KernelRelationClaimService",
+    "KernelRelationProjectionSourceService",
     "KernelRelationSuggestionService",
     "KernelRelationService",
     "ProvenanceService",

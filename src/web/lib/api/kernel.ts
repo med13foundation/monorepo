@@ -8,6 +8,8 @@ import type {
   KernelEntitySimilarityListResponse,
   KernelEntityUpdateRequest,
   KernelEntityUpsertResponse,
+  KernelGraphDocumentRequest,
+  KernelGraphDocumentResponse,
   KernelGraphExportResponse,
   KernelGraphSubgraphRequest,
   KernelGraphSubgraphResponse,
@@ -669,6 +671,21 @@ export async function fetchKernelSubgraph(
   }
   return apiPost<KernelGraphSubgraphResponse>(
     `/research-spaces/${spaceId}/graph/subgraph`,
+    payload,
+    { token },
+  )
+}
+
+export async function fetchKernelGraphDocument(
+  spaceId: string,
+  payload: KernelGraphDocumentRequest,
+  token?: string,
+): Promise<KernelGraphDocumentResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for fetchKernelGraphDocument')
+  }
+  return apiPost<KernelGraphDocumentResponse>(
+    `/research-spaces/${spaceId}/graph/document`,
     payload,
     { token },
   )

@@ -38,6 +38,13 @@ class KernelClaimEvidenceRepository(ABC):
         """List evidence rows for a claim ordered by recency."""
 
     @abstractmethod
+    def find_by_claim_ids(
+        self,
+        claim_ids: list[str],
+    ) -> dict[str, list[KernelClaimEvidence]]:
+        """List evidence rows for multiple claims keyed by claim ID."""
+
+    @abstractmethod
     def get_preferred_for_claim(self, claim_id: str) -> KernelClaimEvidence | None:
         """Return preferred evidence row for claim resolution usage."""
 

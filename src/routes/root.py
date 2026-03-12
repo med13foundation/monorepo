@@ -28,6 +28,7 @@ def root() -> JSONObject:
             "ingest": "/research-spaces/{space_id}/ingest",
             "graph_export": "/research-spaces/{space_id}/graph/export",
             "graph_subgraph": "/research-spaces/{space_id}/graph/subgraph",
+            "graph_document": "/research-spaces/{space_id}/graph/document",
             "graph_search": "/research-spaces/{space_id}/graph/search",
             "graph_connections_discover": (
                 "/research-spaces/{space_id}/graph/connections/discover"

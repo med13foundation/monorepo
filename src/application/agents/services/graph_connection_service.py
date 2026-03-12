@@ -29,6 +29,18 @@ if TYPE_CHECKING:
         ProposedRelation,
     )
     from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
+    from src.domain.repositories.kernel.claim_participant_repository import (
+        KernelClaimParticipantRepository,
+    )
+    from src.domain.repositories.kernel.entity_repository import (
+        KernelEntityRepository,
+    )
+    from src.domain.repositories.kernel.relation_claim_repository import (
+        KernelRelationClaimRepository,
+    )
+    from src.domain.repositories.kernel.relation_projection_source_repository import (
+        KernelRelationProjectionSourceRepository,
+    )
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
@@ -46,6 +58,12 @@ class GraphConnectionServiceDependencies:
 
     graph_connection_agent: GraphConnectionPort
     relation_repository: KernelRelationRepository
+    entity_repository: KernelEntityRepository | None = None
+    relation_claim_repository: KernelRelationClaimRepository | None = None
+    claim_participant_repository: KernelClaimParticipantRepository | None = None
+    relation_projection_source_repository: (
+        KernelRelationProjectionSourceRepository | None
+    ) = None
     governance_service: GovernanceService | None = None
     research_space_repository: ResearchSpaceRepository | None = None
     review_queue_submitter: Callable[[str, str, str | None, str], None] | None = None
@@ -75,6 +93,12 @@ class GraphConnectionService:
     def __init__(self, dependencies: GraphConnectionServiceDependencies) -> None:
         self._agent = dependencies.graph_connection_agent
         self._relations = dependencies.relation_repository
+        self._entities = dependencies.entity_repository
+        self._relation_claims = dependencies.relation_claim_repository
+        self._claim_participants = dependencies.claim_participant_repository
+        self._relation_projection_sources = (
+            dependencies.relation_projection_source_repository
+        )
         self._governance = dependencies.governance_service or GovernanceService()
         self._research_spaces = dependencies.research_space_repository
         self._review_queue_submitter = dependencies.review_queue_submitter
@@ -246,6 +270,12 @@ class GraphConnectionService:
                 persisted_count += 1
                 relation_id = getattr(created_relation, "id", None)
                 if relation_id is not None:
+                    self._record_claim_backed_projection(
+                        research_space_id=resolved_research_space_id,
+                        relation_id=str(relation_id),
+                        relation=relation,
+                        run_id=run_id,
+                    )
                     self._enqueue_relation_review_item(
                         relation_id=str(relation_id),
                         research_space_id=resolved_research_space_id,
@@ -304,6 +334,80 @@ class GraphConnectionService:
             review_required=review_required,
             persisted_relations_count=persisted_count,
             errors=tuple(persistence_errors),
+        )
+
+    def _record_claim_backed_projection(
+        self,
+        *,
+        research_space_id: str,
+        relation_id: str,
+        relation: ProposedRelation,
+        run_id: str | None,
+    ) -> None:
+        if (
+            self._entities is None
+            or self._relation_claims is None
+            or self._claim_participants is None
+            or self._relation_projection_sources is None
+        ):
+            return
+        source_entity = self._entities.get_by_id(relation.source_id)
+        target_entity = self._entities.get_by_id(relation.target_id)
+        if source_entity is None or target_entity is None:
+            return
+        claim = self._relation_claims.create(
+            research_space_id=research_space_id,
+            source_document_id=None,
+            agent_run_id=run_id,
+            source_type=source_entity.entity_type,
+            relation_type=relation.relation_type,
+            target_type=target_entity.entity_type,
+            source_label=source_entity.display_label,
+            target_label=target_entity.display_label,
+            confidence=relation.confidence,
+            validation_state="ALLOWED",
+            validation_reason="Created via graph connection projection",
+            persistability="PERSISTABLE",
+            claim_status="RESOLVED",
+            polarity="SUPPORT",
+            claim_text=relation.evidence_summary,
+            claim_section=None,
+            linked_relation_id=relation_id,
+            metadata={
+                "origin": "graph_connection",
+                "reasoning": relation.reasoning,
+                "supporting_provenance_ids": relation.supporting_provenance_ids,
+                "supporting_document_count": relation.supporting_document_count,
+                "source_entity_id": relation.source_id,
+                "target_entity_id": relation.target_id,
+            },
+        )
+        self._claim_participants.create(
+            claim_id=str(claim.id),
+            research_space_id=research_space_id,
+            role="SUBJECT",
+            label=source_entity.display_label,
+            entity_id=str(source_entity.id),
+            position=0,
+            qualifiers={"origin": "graph_connection"},
+        )
+        self._claim_participants.create(
+            claim_id=str(claim.id),
+            research_space_id=research_space_id,
+            role="OBJECT",
+            label=target_entity.display_label,
+            entity_id=str(target_entity.id),
+            position=1,
+            qualifiers={"origin": "graph_connection"},
+        )
+        self._relation_projection_sources.create(
+            research_space_id=research_space_id,
+            relation_id=relation_id,
+            claim_id=str(claim.id),
+            projection_origin="GRAPH_CONNECTION",
+            source_document_id=None,
+            agent_run_id=run_id,
+            metadata={"origin": "graph_connection"},
         )
 
     async def close(self) -> None:

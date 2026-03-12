@@ -33,6 +33,13 @@ class KernelClaimParticipantRepository(ABC):
         """List participants for one claim."""
 
     @abstractmethod
+    def find_by_claim_ids(
+        self,
+        claim_ids: list[str],
+    ) -> dict[str, list[KernelClaimParticipant]]:
+        """List participants for multiple claims keyed by claim ID."""
+
+    @abstractmethod
     def find_by_entity(
         self,
         *,

@@ -6,6 +6,8 @@ import { SidebarWrapper } from '@/components/navigation/sidebar/SidebarWrapper'
 import { getServerSession } from 'next-auth'
 import axios from 'axios'
 import { authOptions } from '@/lib/auth'
+import { buildPlaywrightSession, isPlaywrightE2EMode, isSessionExpired } from '@/lib/e2e/playwright-auth'
+import { getPlaywrightMembership, getPlaywrightResearchSpaces } from '@/lib/e2e/playwright-fixtures'
 import { SpaceContextProvider } from '@/components/space-context-provider'
 import { SessionProvider } from '@/components/session-provider'
 import { fetchMyMembership, fetchResearchSpaces } from '@/lib/api/research-spaces'
@@ -59,15 +61,15 @@ function extractAxiosErrorMessage(error: unknown): string {
 }
 
 export default async function DashboardLayout({ children, params }: DashboardLayoutProps) {
+  const isPlaywrightMode = isPlaywrightE2EMode()
   const resolvedParams = params ? await params : undefined
   const spaceIdFromParams =
     typeof resolvedParams?.spaceId === 'string' && isValidUuid(resolvedParams.spaceId)
       ? resolvedParams.spaceId
       : null
-  const session = await getServerSession(authOptions)
+  const session = isPlaywrightMode ? buildPlaywrightSession() : await getServerSession(authOptions)
   const token = session?.user?.access_token
-  const expiresAt = session?.user?.expires_at
-  const isExpired = typeof expiresAt !== 'number' || Date.now() >= expiresAt
+  const isExpired = isSessionExpired(session)
 
   if (!session || !token || isExpired) {
     redirect('/auth/login?error=SessionExpired')
@@ -78,7 +80,12 @@ export default async function DashboardLayout({ children, params }: DashboardLay
   let initialSpaceId: string | null = spaceIdFromParams
   let currentMembership: ResearchSpaceMembership | null = null
 
-  if (token) {
+  if (isPlaywrightMode) {
+    initialSpaces = getPlaywrightResearchSpaces()
+    initialTotal = initialSpaces.length
+    initialSpaceId = initialSpaceId ?? initialSpaces[0]?.id ?? null
+    currentMembership = spaceIdFromParams ? getPlaywrightMembership(spaceIdFromParams) : null
+  } else if (token) {
     const [spacesResult, membershipResult] = await Promise.allSettled([
       fetchResearchSpaces(undefined, token),
       spaceIdFromParams ? fetchMyMembership(spaceIdFromParams, token) : Promise.resolve(null),

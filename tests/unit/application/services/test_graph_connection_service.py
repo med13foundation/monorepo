@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -62,7 +63,7 @@ class StubRelationRepository:
 
     def create(self, **kwargs: object) -> object:
         self.calls.append(kwargs)
-        return object()
+        return SimpleNamespace(id=str(uuid4()))
 
     def find_neighborhood(
         self,
@@ -89,6 +90,41 @@ class FailingRelationRepository(StubRelationRepository):
                 "allowed by ACTIVE relation constraints",
             ),
         )
+
+
+@dataclass
+class StubEntityRepository:
+    entities: dict[str, object]
+
+    def get_by_id(self, entity_id: str) -> object | None:
+        return self.entities.get(entity_id)
+
+
+@dataclass
+class StubRelationClaimRepository:
+    calls: list[dict[str, object]]
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        return SimpleNamespace(id=str(uuid4()))
+
+
+@dataclass
+class StubClaimParticipantRepository:
+    calls: list[dict[str, object]]
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        return SimpleNamespace(id=str(uuid4()))
+
+
+@dataclass
+class StubRelationProjectionSourceRepository:
+    calls: list[dict[str, object]]
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        return SimpleNamespace(id=str(uuid4()))
 
 
 @dataclass(frozen=True)
@@ -224,6 +260,62 @@ async def test_discover_connections_for_seed_writes_relations() -> None:
     assert outcome.wrote_to_graph is True
     assert outcome.persisted_relations_count == 1
     assert len(relation_repository.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_connections_for_seed_records_claim_backed_projection() -> None:
+    contract = _build_contract()
+    proposed_relation = contract.proposed_relations[0]
+    relation_repository = StubRelationRepository()
+    relation_claim_repository = StubRelationClaimRepository(calls=[])
+    claim_participant_repository = StubClaimParticipantRepository(calls=[])
+    projection_repository = StubRelationProjectionSourceRepository(calls=[])
+    entity_repository = StubEntityRepository(
+        entities={
+            proposed_relation.source_id: SimpleNamespace(
+                id=proposed_relation.source_id,
+                entity_type="GENE",
+                display_label="MED13",
+            ),
+            proposed_relation.target_id: SimpleNamespace(
+                id=proposed_relation.target_id,
+                entity_type="DISEASE",
+                display_label="Cardiomyopathy",
+            ),
+        },
+    )
+    service = GraphConnectionService(
+        dependencies=GraphConnectionServiceDependencies(
+            graph_connection_agent=StubGraphConnectionAgent(contract),
+            relation_repository=relation_repository,
+            entity_repository=entity_repository,
+            relation_claim_repository=relation_claim_repository,
+            claim_participant_repository=claim_participant_repository,
+            relation_projection_source_repository=projection_repository,
+            governance_service=_build_governance_service(),
+        ),
+    )
+
+    outcome = await service.discover_connections_for_seed(
+        research_space_id=contract.research_space_id,
+        seed_entity_id=contract.seed_entity_id,
+        source_type="clinvar",
+        research_space_settings={},
+        shadow_mode=False,
+    )
+
+    assert outcome.status == "discovered"
+    assert outcome.wrote_to_graph is True
+    assert len(relation_claim_repository.calls) == 1
+    assert relation_claim_repository.calls[0]["claim_status"] == "RESOLVED"
+    assert relation_claim_repository.calls[0]["linked_relation_id"]
+    assert len(claim_participant_repository.calls) == 2
+    assert {call["role"] for call in claim_participant_repository.calls} == {
+        "SUBJECT",
+        "OBJECT",
+    }
+    assert len(projection_repository.calls) == 1
+    assert projection_repository.calls[0]["projection_origin"] == "GRAPH_CONNECTION"
 
 
 @pytest.mark.asyncio
@@ -372,14 +464,14 @@ async def test_discover_connections_for_seed_enqueues_review_item() -> None:
     )
 
     assert outcome.review_required is True
-    assert queued_items == [
-        (
-            "graph_connection_seed",
-            contract.seed_entity_id,
-            contract.research_space_id,
-            "medium",
-        ),
-    ]
+    assert queued_items[0] == (
+        "graph_connection_seed",
+        contract.seed_entity_id,
+        contract.research_space_id,
+        "medium",
+    )
+    assert queued_items[1][0] == "relation"
+    assert queued_items[1][2] == contract.research_space_id
 
 
 @pytest.mark.asyncio
@@ -420,14 +512,14 @@ async def test_discover_connections_for_seed_promotes_rejected_candidates() -> N
     assert outcome.review_required is True
     assert len(relation_repository.calls) == 1
     assert relation_repository.calls[0]["relation_type"] == "ASSOCIATES_WITH"
-    assert queued_items == [
-        (
-            "graph_connection_seed",
-            contract.seed_entity_id,
-            contract.research_space_id,
-            "medium",
-        ),
-    ]
+    assert queued_items[0] == (
+        "graph_connection_seed",
+        contract.seed_entity_id,
+        contract.research_space_id,
+        "medium",
+    )
+    assert queued_items[1][0] == "relation"
+    assert queued_items[1][2] == contract.research_space_id
 
 
 @pytest.mark.asyncio
@@ -477,11 +569,11 @@ async def test_discover_connections_for_seed_uses_neighbourhood_fallback() -> No
     assert outcome.review_required is True
     assert len(relation_repository.calls) == 1
     assert relation_repository.calls[0]["relation_type"] == "ASSOCIATED_WITH"
-    assert queued_items == [
-        (
-            "graph_connection_seed",
-            contract.seed_entity_id,
-            contract.research_space_id,
-            "medium",
-        ),
-    ]
+    assert queued_items[0] == (
+        "graph_connection_seed",
+        contract.seed_entity_id,
+        contract.research_space_id,
+        "medium",
+    )
+    assert queued_items[1][0] == "relation"
+    assert queued_items[1][2] == contract.research_space_id

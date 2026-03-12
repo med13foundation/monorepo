@@ -15,6 +15,9 @@ from .entity_repository import KernelEntityRepository
 from .observation_repository import KernelObservationRepository
 from .provenance_repository import ProvenanceRepository
 from .relation_claim_repository import KernelRelationClaimRepository
+from .relation_projection_source_repository import (
+    KernelRelationProjectionSourceRepository,
+)
 from .relation_repository import KernelRelationRepository
 
 __all__ = [
@@ -27,6 +30,7 @@ __all__ = [
     "KernelEntityRepository",
     "KernelObservationRepository",
     "KernelRelationClaimRepository",
+    "KernelRelationProjectionSourceRepository",
     "KernelRelationRepository",
     "ProvenanceRepository",
 ]

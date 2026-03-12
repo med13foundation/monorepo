@@ -1,5 +1,6 @@
 import type { AxiosError } from 'axios'
 import { getServerSession } from 'next-auth'
+import { buildPlaywrightSession, isPlaywrightE2EMode, isSessionExpired } from '@/lib/e2e/playwright-auth'
 import { authOptions } from '@/lib/auth'
 
 type IssueObject = {
@@ -76,10 +77,11 @@ export function getActionErrorStatus(error: unknown): number | undefined {
 }
 
 export async function requireAccessToken(): Promise<string> {
-  const session = await getServerSession(authOptions)
+  const session = isPlaywrightE2EMode()
+    ? buildPlaywrightSession()
+    : await getServerSession(authOptions)
   const token = session?.user?.access_token
-  const expiresAt = session?.user?.expires_at
-  const isExpired = typeof expiresAt !== 'number' || Date.now() >= expiresAt
+  const isExpired = isSessionExpired(session)
   if (!token || isExpired) {
     throw new Error('Session expired')
   }

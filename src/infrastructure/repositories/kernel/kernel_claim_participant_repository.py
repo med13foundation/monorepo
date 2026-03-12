@@ -88,6 +88,48 @@ class SqlAlchemyKernelClaimParticipantRepository(KernelClaimParticipantRepositor
             for model in self._session.scalars(stmt).all()
         ]
 
+    def find_by_claim_ids(
+        self,
+        claim_ids: list[str],
+    ) -> dict[str, list[KernelClaimParticipant]]:
+        normalized_ids: list[str] = []
+        claim_uuids: list[UUID] = []
+        seen: set[str] = set()
+        for claim_id in claim_ids:
+            normalized_uuid = _try_as_uuid(claim_id)
+            if normalized_uuid is None:
+                continue
+            normalized_id = str(normalized_uuid)
+            if normalized_id in seen:
+                continue
+            seen.add(normalized_id)
+            normalized_ids.append(normalized_id)
+            claim_uuids.append(normalized_uuid)
+
+        if not claim_uuids:
+            return {}
+
+        stmt = (
+            select(ClaimParticipantModel)
+            .where(ClaimParticipantModel.claim_id.in_(claim_uuids))
+            .order_by(
+                ClaimParticipantModel.claim_id.asc(),
+                ClaimParticipantModel.position.asc().nulls_last(),
+                ClaimParticipantModel.created_at.asc(),
+            )
+        )
+        grouped: dict[str, list[KernelClaimParticipant]] = {}
+        for model in self._session.scalars(stmt).all():
+            claim_id = str(model.claim_id)
+            grouped.setdefault(claim_id, []).append(
+                KernelClaimParticipant.model_validate(model),
+            )
+        return {
+            claim_id: grouped[claim_id]
+            for claim_id in normalized_ids
+            if claim_id in grouped
+        }
+
     def find_by_entity(
         self,
         *,

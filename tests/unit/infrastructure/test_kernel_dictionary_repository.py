@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from src.domain.entities.user import UserRole, UserStatus
+from src.infrastructure.repositories.kernel.dictionary_search import _cosine_similarity
 from src.infrastructure.repositories.kernel.kernel_dictionary_repository import (
     SqlAlchemyDictionaryRepository,
 )
@@ -201,6 +202,12 @@ def test_create_variable_rejects_unknown_domain_context(db_session: Session) -> 
             created_by="manual:test",
             source_ref="test:repository",
         )
+
+
+def test_cosine_similarity_clamps_rounding_error() -> None:
+    value = _cosine_similarity([1.0, 1e-12], [1.0, 0.0])
+
+    assert value == pytest.approx(1.0)
 
 
 def test_set_variable_review_status_updates_validity_fields(

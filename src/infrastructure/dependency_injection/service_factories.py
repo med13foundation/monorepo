@@ -58,6 +58,7 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelClaimParticipantRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelRelationClaimRepository,
+    SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
 )
 
@@ -243,6 +244,9 @@ class ApplicationServiceFactoryMixin(
                 relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
                     session,
                 ),
+                relation_projection_source_repository=(
+                    SqlAlchemyKernelRelationProjectionSourceRepository(session)
+                ),
                 claim_participant_repository=(
                     SqlAlchemyKernelClaimParticipantRepository(session)
                 ),
@@ -304,6 +308,9 @@ class ApplicationServiceFactoryMixin(
                 relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
                     session,
                 ),
+                relation_projection_source_repository=(
+                    SqlAlchemyKernelRelationProjectionSourceRepository(session)
+                ),
                 claim_participant_repository=(
                     SqlAlchemyKernelClaimParticipantRepository(session)
                 ),
@@ -359,6 +366,16 @@ class ApplicationServiceFactoryMixin(
             dependencies=GraphConnectionServiceDependencies(
                 graph_connection_agent=graph_connection_agent,
                 relation_repository=relation_repository,
+                entity_repository=SqlAlchemyKernelEntityRepository(session),
+                relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
+                    session,
+                ),
+                claim_participant_repository=(
+                    SqlAlchemyKernelClaimParticipantRepository(session)
+                ),
+                relation_projection_source_repository=(
+                    SqlAlchemyKernelRelationProjectionSourceRepository(session)
+                ),
                 governance_service=GovernanceService(),
                 research_space_repository=SqlAlchemyResearchSpaceRepository(session),
                 review_queue_submitter=self._build_review_queue_submitter(session),

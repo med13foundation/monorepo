@@ -19,6 +19,7 @@ from src.application.services.kernel import (
     KernelEntitySimilarityService,
     KernelObservationService,
     KernelRelationClaimService,
+    KernelRelationProjectionSourceService,
     KernelRelationService,
     KernelRelationSuggestionService,
     ProvenanceService,
@@ -49,6 +50,7 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
     SqlAlchemyKernelRelationClaimRepository,
+    SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
     SqlAlchemyProvenanceRepository,
 )
@@ -187,6 +189,16 @@ def get_kernel_relation_claim_service(
     return KernelRelationClaimService(relation_claim_repo=relation_claim_repo)
 
 
+def get_kernel_relation_projection_source_service(
+    session: Session = Depends(get_session),
+) -> KernelRelationProjectionSourceService:
+    """Kernel relation projection service (claim-backed canonical lineage)."""
+    projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(session)
+    return KernelRelationProjectionSourceService(
+        relation_projection_repo=projection_repo,
+    )
+
+
 def get_kernel_claim_participant_service(
     session: Session = Depends(get_session),
 ) -> KernelClaimParticipantService:
@@ -259,6 +271,7 @@ __all__ = [
     "get_kernel_claim_participant_backfill_service",
     "get_kernel_claim_relation_service",
     "get_kernel_claim_evidence_service",
+    "get_kernel_relation_projection_source_service",
     "get_kernel_observation_service",
     "get_kernel_relation_service",
     "get_kernel_relation_suggestion_service",

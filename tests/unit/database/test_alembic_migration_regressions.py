@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_HEAD_REVISION = "024_claim_first_orchestration"
-CURRENT_HEAD_REVISION = "038_pipeline_event_audit"
+CURRENT_HEAD_REVISION = "039_relation_projection_lineage"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"
@@ -1064,3 +1064,116 @@ def test_032_033_034_claim_overlay_schema_and_downgrade(tmp_path: Path) -> None:
         for constraint in downgraded_inspector.get_unique_constraints("relation_claims")
     }
     assert "uq_relation_claims_id_space" not in relation_claims_unique_constraints
+
+
+def test_039_relation_projection_lineage_schema_and_downgrade(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'relation_projection_lineage.db'}"
+    engine = create_engine(database_url, future=True)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "038_pipeline_event_audit"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE research_spaces ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "owner_id VARCHAR(36)"
+                ")",
+            ),
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relations ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "research_space_id VARCHAR(36) NOT NULL"
+                ")",
+            ),
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relation_claims ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "research_space_id VARCHAR(36) NOT NULL"
+                ")",
+            ),
+        )
+        connection.execute(
+            text("CREATE TABLE source_documents (id VARCHAR(36) PRIMARY KEY)"),
+        )
+
+    _run_alembic_upgrade(database_url=database_url, revision=CURRENT_HEAD_REVISION)
+
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    assert "relation_projection_sources" in table_names
+
+    relation_columns = {
+        column["name"]
+        for column in inspector.get_columns("relation_projection_sources")
+    }
+    assert {
+        "id",
+        "research_space_id",
+        "relation_id",
+        "claim_id",
+        "projection_origin",
+        "source_document_id",
+        "agent_run_id",
+        "metadata_payload",
+        "created_at",
+        "updated_at",
+    }.issubset(relation_columns)
+
+    relation_unique_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints(
+            "relation_projection_sources",
+        )
+    }
+    assert "uq_relation_projection_sources_edge_claim" in relation_unique_constraints
+
+    relation_projection_checks = inspector.get_check_constraints(
+        "relation_projection_sources",
+    )
+    relation_projection_check_names = {
+        (constraint.get("name") or "").strip()
+        for constraint in relation_projection_checks
+    }
+    relation_projection_check_sql = " ".join(
+        str(constraint.get("sqltext") or "")
+        for constraint in relation_projection_checks
+    ).upper()
+    assert (
+        "ck_relation_projection_sources_origin" in relation_projection_check_names
+        or "PROJECTION_ORIGIN IN ('EXTRACTION','CLAIM_RESOLUTION','MANUAL_RELATION','GRAPH_CONNECTION')"
+        in relation_projection_check_sql
+    )
+
+    relations_unique_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("relations")
+    }
+    assert "uq_relations_id_space" in relations_unique_constraints
+
+    _run_alembic_downgrade(
+        database_url=database_url,
+        revision="038_pipeline_event_audit",
+    )
+
+    downgraded_inspector = inspect(engine)
+    downgraded_table_names = set(downgraded_inspector.get_table_names())
+    assert "relation_projection_sources" not in downgraded_table_names
+
+    downgraded_relations_unique_constraints = {
+        constraint["name"]
+        for constraint in downgraded_inspector.get_unique_constraints("relations")
+    }
+    assert "uq_relations_id_space" not in downgraded_relations_unique_constraints

@@ -68,7 +68,10 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 
     if left_norm <= 0.0 or right_norm <= 0.0:
         return 0.0
-    return dot / math.sqrt(left_norm * right_norm)
+    # Floating-point error can push a mathematically valid cosine slightly outside
+    # the closed interval enforced by the public result schema.
+    similarity = dot / math.sqrt(left_norm * right_norm)
+    return max(0.0, min(similarity, 1.0))
 
 
 def _fuzzy_similarity(term: str, candidate: str) -> float:

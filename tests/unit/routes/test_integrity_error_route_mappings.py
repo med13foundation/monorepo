@@ -12,7 +12,13 @@ from src.routes.admin_routes import dictionary as dictionary_routes
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces import research_spaces_router
 from src.routes.research_spaces.dependencies import get_membership_service
-from src.routes.research_spaces.kernel_dependencies import get_kernel_relation_service
+from src.routes.research_spaces.kernel_dependencies import (
+    get_kernel_claim_participant_service,
+    get_kernel_entity_service,
+    get_kernel_relation_claim_service,
+    get_kernel_relation_projection_source_service,
+    get_kernel_relation_service,
+)
 
 
 class _SessionStub:
@@ -39,6 +45,38 @@ class _DictionaryServiceStub:
 
 class _RelationServiceStub:
     def create_relation(self, *_args, **_kwargs) -> object:
+        return type(
+            "_Relation",
+            (),
+            {"id": uuid4(), "relation_type": "ASSOCIATED_WITH"},
+        )()
+
+
+class _EntityServiceStub:
+    def get_entity(self, entity_id: str) -> object:
+        return type(
+            "_Entity",
+            (),
+            {
+                "id": entity_id,
+                "entity_type": "GENE",
+                "display_label": "Entity",
+            },
+        )()
+
+
+class _RelationClaimServiceStub:
+    def create_claim(self, *_args, **_kwargs) -> object:
+        return type("_Claim", (), {"id": uuid4()})()
+
+
+class _ClaimParticipantServiceStub:
+    def create_participant(self, *_args, **_kwargs) -> object:
+        return object()
+
+
+class _RelationProjectionSourceServiceStub:
+    def create_projection_source(self, *_args, **_kwargs) -> object:
         return object()
 
 
@@ -107,6 +145,10 @@ def test_relation_type_review_status_maps_integrity_error_to_conflict() -> None:
 
 def test_create_relation_maps_integrity_error_to_conflict() -> None:
     relation_service = _RelationServiceStub()
+    entity_service = _EntityServiceStub()
+    claim_service = _RelationClaimServiceStub()
+    participant_service = _ClaimParticipantServiceStub()
+    projection_service = _RelationProjectionSourceServiceStub()
     session = _SessionStub(
         commit_error=IntegrityError(
             "INSERT INTO relations",
@@ -119,6 +161,14 @@ def test_create_relation_maps_integrity_error_to_conflict() -> None:
     app.dependency_overrides[get_current_active_user] = _admin_user
     app.dependency_overrides[get_membership_service] = lambda: object()
     app.dependency_overrides[get_kernel_relation_service] = lambda: relation_service
+    app.dependency_overrides[get_kernel_entity_service] = lambda: entity_service
+    app.dependency_overrides[get_kernel_relation_claim_service] = lambda: claim_service
+    app.dependency_overrides[get_kernel_claim_participant_service] = (
+        lambda: participant_service
+    )
+    app.dependency_overrides[get_kernel_relation_projection_source_service] = (
+        lambda: projection_service
+    )
     app.dependency_overrides[get_session] = lambda: session
     client = TestClient(app)
 

@@ -1,13 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import KnowledgeGraphClient from '@/app/(dashboard)/spaces/[spaceId]/knowledge-graph-client'
 import {
-  fetchClaimParticipantsAction,
-  fetchKernelSubgraphAction,
-  fetchRelationClaimsAction,
-  fetchRelationConflictsAction,
+  fetchKernelGraphDocumentAction,
   searchKernelGraphAction,
 } from '@/app/actions/kernel-graph'
-import type { GraphSearchResponse, KernelGraphSubgraphResponse } from '@/types/kernel'
+import type {
+  GraphSearchResponse,
+  KernelGraphDocumentResponse,
+} from '@/types/kernel'
 
 const routerReplaceMock = jest.fn()
 
@@ -20,14 +20,8 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('@/app/actions/kernel-graph', () => ({
-  fetchKernelSubgraphAction: jest.fn(),
-  fetchRelationClaimsAction: jest.fn(),
-  fetchRelationConflictsAction: jest.fn(),
-  fetchClaimParticipantsAction: jest.fn(),
+  fetchKernelGraphDocumentAction: jest.fn(),
   searchKernelGraphAction: jest.fn(),
-  fetchKernelGraphExportAction: jest.fn(),
-  fetchKernelNeighborhoodAction: jest.fn(),
-  fetchRelationClaimEvidenceAction: jest.fn(),
 }))
 
 jest.mock('@/components/knowledge-graph/KnowledgeGraphCanvas', () => ({
@@ -65,34 +59,52 @@ Object.defineProperty(window, 'ResizeObserver', {
   value: ResizeObserverMock,
 })
 
-function buildSubgraphResponse(
-  overrides: Partial<KernelGraphSubgraphResponse> = {},
-): KernelGraphSubgraphResponse {
+function buildDocumentResponse(
+  overrides: Partial<KernelGraphDocumentResponse> = {},
+): KernelGraphDocumentResponse {
   return {
     nodes: [
       {
         id: 'n1',
-        research_space_id: 'space-1',
-        entity_type: 'GENE',
-        display_label: 'MED13',
+        resource_id: 'n1',
+        kind: 'ENTITY',
+        type_label: 'GENE',
+        label: 'MED13',
+        confidence: null,
+        curation_status: null,
+        claim_status: null,
+        polarity: null,
+        canonical_relation_id: null,
         metadata: {},
         created_at: '2026-02-20T00:00:00Z',
         updated_at: '2026-02-20T00:00:00Z',
       },
       {
         id: 'n2',
-        research_space_id: 'space-1',
-        entity_type: 'PHENOTYPE',
-        display_label: 'Cardiomyopathy',
+        resource_id: 'n2',
+        kind: 'ENTITY',
+        type_label: 'PHENOTYPE',
+        label: 'Cardiomyopathy',
+        confidence: null,
+        curation_status: null,
+        claim_status: null,
+        polarity: null,
+        canonical_relation_id: null,
         metadata: {},
         created_at: '2026-02-21T00:00:00Z',
         updated_at: '2026-02-21T00:00:00Z',
       },
       {
         id: 'n3',
-        research_space_id: 'space-1',
-        entity_type: 'PHENOTYPE',
-        display_label: 'Arrhythmia',
+        resource_id: 'n3',
+        kind: 'ENTITY',
+        type_label: 'PHENOTYPE',
+        label: 'Arrhythmia',
+        confidence: null,
+        curation_status: null,
+        claim_status: null,
+        polarity: null,
+        canonical_relation_id: null,
         metadata: {},
         created_at: '2026-02-22T00:00:00Z',
         updated_at: '2026-02-22T00:00:00Z',
@@ -101,33 +113,49 @@ function buildSubgraphResponse(
     edges: [
       {
         id: 'e1',
-        research_space_id: 'space-1',
+        resource_id: 'e1',
+        kind: 'CANONICAL_RELATION',
         source_id: 'n1',
-        relation_type: 'ASSOCIATED_WITH',
         target_id: 'n2',
-        aggregate_confidence: 0.91,
-        source_count: 2,
-        highest_evidence_tier: 'LITERATURE',
+        type_label: 'ASSOCIATED_WITH',
+        label: 'ASSOCIATED_WITH',
+        confidence: 0.91,
         curation_status: 'APPROVED',
-        provenance_id: null,
-        reviewed_by: null,
-        reviewed_at: null,
+        claim_id: null,
+        canonical_relation_id: 'e1',
+        evidence_id: null,
+        metadata: {
+          source_count: 2,
+          highest_evidence_tier: 'LITERATURE',
+          support_claim_count: 0,
+          refute_claim_count: 0,
+          has_conflict: false,
+          linked_claim_ids: [],
+        },
         created_at: '2026-02-22T00:00:00Z',
         updated_at: '2026-02-22T00:00:00Z',
       },
       {
         id: 'e2',
-        research_space_id: 'space-1',
+        resource_id: 'e2',
+        kind: 'CANONICAL_RELATION',
         source_id: 'n1',
-        relation_type: 'CO_OCCURS_WITH',
         target_id: 'n3',
-        aggregate_confidence: 0.55,
-        source_count: 1,
-        highest_evidence_tier: 'COMPUTATIONAL',
+        type_label: 'CO_OCCURS_WITH',
+        label: 'CO_OCCURS_WITH',
+        confidence: 0.55,
         curation_status: 'DRAFT',
-        provenance_id: null,
-        reviewed_by: null,
-        reviewed_at: null,
+        claim_id: null,
+        canonical_relation_id: 'e2',
+        evidence_id: null,
+        metadata: {
+          source_count: 1,
+          highest_evidence_tier: 'COMPUTATIONAL',
+          support_claim_count: 0,
+          refute_claim_count: 0,
+          has_conflict: false,
+          linked_claim_ids: [],
+        },
         created_at: '2026-02-21T00:00:00Z',
         updated_at: '2026-02-21T00:00:00Z',
       },
@@ -137,10 +165,22 @@ function buildSubgraphResponse(
       seed_entity_ids: [],
       requested_depth: 2,
       requested_top_k: 25,
-      pre_cap_node_count: 3,
-      pre_cap_edge_count: 2,
-      truncated_nodes: false,
-      truncated_edges: false,
+      pre_cap_entity_node_count: 3,
+      pre_cap_canonical_edge_count: 2,
+      truncated_entity_nodes: false,
+      truncated_canonical_edges: false,
+      included_claims: true,
+      included_evidence: true,
+      max_claims: 250,
+      evidence_limit_per_claim: 3,
+      counts: {
+        entity_nodes: 3,
+        claim_nodes: 0,
+        evidence_nodes: 0,
+        canonical_edges: 2,
+        claim_participant_edges: 0,
+        claim_evidence_edges: 0,
+      },
     },
     ...overrides,
   }
@@ -172,17 +212,8 @@ function buildSearchResponse(): GraphSearchResponse {
 }
 
 describe('KnowledgeGraphClient', () => {
-  const mockFetchKernelSubgraph = fetchKernelSubgraphAction as jest.MockedFunction<
-    typeof fetchKernelSubgraphAction
-  >
-  const mockFetchRelationClaims = fetchRelationClaimsAction as jest.MockedFunction<
-    typeof fetchRelationClaimsAction
-  >
-  const mockFetchClaimParticipants = fetchClaimParticipantsAction as jest.MockedFunction<
-    typeof fetchClaimParticipantsAction
-  >
-  const mockFetchRelationConflicts = fetchRelationConflictsAction as jest.MockedFunction<
-    typeof fetchRelationConflictsAction
+  const mockFetchKernelGraphDocument = fetchKernelGraphDocumentAction as jest.MockedFunction<
+    typeof fetchKernelGraphDocumentAction
   >
   const mockSearchKernelGraph = searchKernelGraphAction as jest.MockedFunction<
     typeof searchKernelGraphAction
@@ -190,70 +221,43 @@ describe('KnowledgeGraphClient', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
-    mockFetchRelationClaims.mockResolvedValue({
-      success: true,
-      data: {
-        claims: [],
-        total: 0,
-        offset: 0,
-        limit: 200,
-      },
-    })
-    mockFetchClaimParticipants.mockResolvedValue({
-      success: true,
-      data: {
-        claim_id: 'claim-1',
-        participants: [],
-        total: 0,
-      },
-    })
-    mockFetchRelationConflicts.mockResolvedValue({
-      success: true,
-      data: {
-        conflicts: [],
-        total: 0,
-        offset: 0,
-        limit: 200,
-      },
-    })
   })
 
-  it('auto-loads starter subgraph on first render when no query exists', async () => {
-    mockFetchKernelSubgraph.mockResolvedValue({
+  it('auto-loads the unified graph document on first render when no query exists', async () => {
+    mockFetchKernelGraphDocument.mockResolvedValue({
       success: true,
-      data: buildSubgraphResponse(),
+      data: buildDocumentResponse(),
     })
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
     await waitFor(() => {
-      expect(mockFetchKernelSubgraph).toHaveBeenCalledWith(
+      expect(mockFetchKernelGraphDocument).toHaveBeenCalledWith(
         'space-1',
         expect.objectContaining({
           mode: 'starter',
           seed_entity_ids: [],
+          include_claims: true,
+          include_evidence: true,
         }),
       )
     })
   })
 
-  it('uses top 5 search results as seeds for seeded subgraph retrieval', async () => {
+  it('uses the top 5 search results as seeds for unified graph retrieval', async () => {
     mockSearchKernelGraph.mockResolvedValue({
       success: true,
       data: buildSearchResponse(),
     })
-    mockFetchKernelSubgraph.mockResolvedValue({
+    mockFetchKernelGraphDocument.mockResolvedValue({
       success: true,
-      data: buildSubgraphResponse({
+      data: buildDocumentResponse({
         meta: {
+          ...buildDocumentResponse().meta,
           mode: 'seeded',
           seed_entity_ids: ['n1', 'n2', 'n3', 'n4', 'n5'],
-          requested_depth: 2,
-          requested_top_k: 25,
-          pre_cap_node_count: 5,
-          pre_cap_edge_count: 4,
-          truncated_nodes: false,
-          truncated_edges: false,
+          pre_cap_entity_node_count: 5,
+          pre_cap_canonical_edge_count: 4,
         },
       }),
     })
@@ -269,10 +273,10 @@ describe('KnowledgeGraphClient', () => {
 
     await waitFor(() => {
       expect(mockSearchKernelGraph).toHaveBeenCalled()
-      expect(mockFetchKernelSubgraph).toHaveBeenCalled()
+      expect(mockFetchKernelGraphDocument).toHaveBeenCalled()
     })
 
-    const payload = mockFetchKernelSubgraph.mock.calls[0]?.[1]
+    const payload = mockFetchKernelGraphDocument.mock.calls[0]?.[1]
     expect(payload).toEqual(
       expect.objectContaining({
         mode: 'seeded',
@@ -282,59 +286,69 @@ describe('KnowledgeGraphClient', () => {
   })
 
   it('expands from node click and merges without duplicating edges', async () => {
-    mockFetchKernelSubgraph
-      .mockResolvedValueOnce(
-        {
-          success: true,
-          data: buildSubgraphResponse({
-            nodes: buildSubgraphResponse().nodes.slice(0, 2),
-            edges: buildSubgraphResponse().edges.slice(0, 1),
-          }),
-        },
-      )
-      .mockResolvedValueOnce(
-        {
-          success: true,
-          data: buildSubgraphResponse({
-            nodes: buildSubgraphResponse().nodes,
-            edges: [
-              buildSubgraphResponse().edges[0],
-              {
-                ...buildSubgraphResponse().edges[0],
-                id: 'e3',
-                target_id: 'n3',
-                relation_type: 'ASSOCIATED_WITH',
-              },
-            ],
-          }),
-        },
-      )
+    mockFetchKernelGraphDocument
+      .mockResolvedValueOnce({
+        success: true,
+        data: buildDocumentResponse({
+          nodes: buildDocumentResponse().nodes.slice(0, 2),
+          edges: buildDocumentResponse().edges.slice(0, 1),
+          meta: {
+            ...buildDocumentResponse().meta,
+            pre_cap_entity_node_count: 2,
+            pre_cap_canonical_edge_count: 1,
+            counts: {
+              ...buildDocumentResponse().meta.counts,
+              entity_nodes: 2,
+              canonical_edges: 1,
+            },
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: buildDocumentResponse({
+          edges: [
+            buildDocumentResponse().edges[0],
+            {
+              ...buildDocumentResponse().edges[0],
+              id: 'e3',
+              resource_id: 'e3',
+              target_id: 'n3',
+              canonical_relation_id: 'e3',
+            },
+          ],
+          meta: {
+            ...buildDocumentResponse().meta,
+            mode: 'seeded',
+          },
+        }),
+      })
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
     await waitFor(() => {
-      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(mockFetchKernelGraphDocument).toHaveBeenCalledTimes(1)
       expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('1')
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'expand-n1' }))
 
     await waitFor(() => {
-      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(2)
+      expect(mockFetchKernelGraphDocument).toHaveBeenCalledTimes(2)
       expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
     })
   })
 
-  it('applies relation filter and updates visible graph edges', async () => {
-    mockFetchKernelSubgraph.mockResolvedValue({
+  it('applies relation filters and updates visible graph edges', async () => {
+    mockFetchKernelGraphDocument.mockResolvedValue({
       success: true,
-      data: buildSubgraphResponse(),
+      data: buildDocumentResponse(),
     })
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
     await waitFor(() => {
-      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
+      expect(mockFetchKernelGraphDocument).toHaveBeenCalledTimes(1)
       expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
     })
 
@@ -356,22 +370,22 @@ describe('KnowledgeGraphClient', () => {
     })
   })
 
-  it('uses trust preset as backend curation_statuses filter', async () => {
-    mockFetchKernelSubgraph
+  it('passes trust preset curation filters through the graph document request', async () => {
+    mockFetchKernelGraphDocument
       .mockResolvedValueOnce({
         success: true,
-        data: buildSubgraphResponse(),
+        data: buildDocumentResponse(),
       })
       .mockResolvedValueOnce({
         success: true,
-        data: buildSubgraphResponse(),
+        data: buildDocumentResponse(),
       })
 
     render(<KnowledgeGraphClient spaceId="space-1" />)
 
     await waitFor(() => {
-      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
-      expect(mockFetchKernelSubgraph.mock.calls[0]?.[1]).toEqual(
+      expect(mockFetchKernelGraphDocument).toHaveBeenCalledTimes(1)
+      expect(mockFetchKernelGraphDocument.mock.calls[0]?.[1]).toEqual(
         expect.objectContaining({
           curation_statuses: null,
         }),
@@ -382,72 +396,12 @@ describe('KnowledgeGraphClient', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approved only' }))
 
     await waitFor(() => {
-      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(2)
-      expect(mockFetchKernelSubgraph.mock.calls[1]?.[1]).toEqual(
+      expect(mockFetchKernelGraphDocument).toHaveBeenCalledTimes(2)
+      expect(mockFetchKernelGraphDocument.mock.calls[1]?.[1]).toEqual(
         expect.objectContaining({
           curation_statuses: ['APPROVED'],
         }),
       )
-    })
-  })
-
-  it('renders graph when relation conflict endpoint returns 405', async () => {
-    mockFetchKernelSubgraph.mockResolvedValue({
-      success: true,
-      data: buildSubgraphResponse(),
-    })
-    mockFetchRelationConflicts.mockResolvedValueOnce({
-      success: false,
-      error: 'Method not allowed',
-      status: 405,
-    })
-
-    render(<KnowledgeGraphClient spaceId="space-1" />)
-
-    await waitFor(() => {
-      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
-      expect(screen.getByTestId('mock-graph-node-count')).toHaveTextContent('3')
-      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
-    })
-  })
-
-  it('renders graph when relation conflict endpoint returns 500', async () => {
-    mockFetchKernelSubgraph.mockResolvedValue({
-      success: true,
-      data: buildSubgraphResponse(),
-    })
-    mockFetchRelationConflicts.mockResolvedValueOnce({
-      success: false,
-      error: 'Internal server error',
-      status: 500,
-    })
-
-    render(<KnowledgeGraphClient spaceId="space-1" />)
-
-    await waitFor(() => {
-      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
-      expect(screen.getByTestId('mock-graph-node-count')).toHaveTextContent('3')
-      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
-    })
-  })
-
-  it('renders graph when relation claims overlay endpoint returns 500', async () => {
-    mockFetchKernelSubgraph.mockResolvedValue({
-      success: true,
-      data: buildSubgraphResponse(),
-    })
-    mockFetchRelationClaims.mockResolvedValueOnce({
-      success: false,
-      error: 'Internal server error',
-      status: 500,
-    })
-
-    render(<KnowledgeGraphClient spaceId="space-1" />)
-
-    await waitFor(() => {
-      expect(mockFetchKernelSubgraph).toHaveBeenCalledTimes(1)
-      expect(screen.getByTestId('mock-graph-node-count')).toHaveTextContent('3')
-      expect(screen.getByTestId('mock-graph-edge-count')).toHaveTextContent('2')
     })
   })
 })

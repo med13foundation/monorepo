@@ -50,6 +50,9 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         self._ingestion_pipeline = dependencies.ingestion_pipeline
         self._relations = dependencies.relation_repository
         self._relation_claims = dependencies.relation_claim_repository
+        self._relation_projection_sources = (
+            dependencies.relation_projection_source_repository
+        )
         self._claim_participants = dependencies.claim_participant_repository
         self._claim_evidences = dependencies.claim_evidence_repository
         self._entities = dependencies.entity_repository

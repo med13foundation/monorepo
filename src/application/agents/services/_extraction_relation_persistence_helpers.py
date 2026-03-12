@@ -83,6 +83,9 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.relation_claim_repository import (
         KernelRelationClaimRepository,
     )
+    from src.domain.repositories.kernel.relation_projection_source_repository import (
+        KernelRelationProjectionSourceRepository,
+    )
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
@@ -177,6 +180,7 @@ class _ExtractionRelationPersistenceHelpers(
 ):
     _relations: KernelRelationRepository | None
     _relation_claims: KernelRelationClaimRepository | None
+    _relation_projection_sources: KernelRelationProjectionSourceRepository | None
     _claim_participants: KernelClaimParticipantRepository | None
     _claim_evidences: KernelClaimEvidenceRepository | None
     _entities: KernelEntityRepository | None
@@ -1001,7 +1005,7 @@ class _ExtractionRelationPersistenceHelpers(
             return (f"claim_evidence_create_failed:{error_code}",)
         return ()
 
-    def _persist_candidate_relation(  # noqa: C901, PLR0912, PLR0913
+    def _persist_candidate_relation(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self,
         *,
         document: SourceDocument,
@@ -1058,6 +1062,19 @@ class _ExtractionRelationPersistenceHelpers(
                 agent_run_id=run_id,
             )
             if claim_id is not None and self._relation_claims is not None:
+                if self._relation_projection_sources is not None:
+                    self._relation_projection_sources.create(
+                        research_space_id=research_space_id,
+                        relation_id=str(created_relation.id),
+                        claim_id=claim_id,
+                        projection_origin="EXTRACTION",
+                        source_document_id=str(document.id),
+                        agent_run_id=run_id,
+                        metadata={
+                            "candidate_signature": list(candidate_signature),
+                            "relation_governance_mode": relation_governance_mode,
+                        },
+                    )
                 with_context_errors = self._link_claim_to_relation(
                     claim_id=claim_id,
                     relation_id=str(created_relation.id),

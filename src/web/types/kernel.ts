@@ -492,6 +492,92 @@ export interface KernelGraphSubgraphResponse {
   meta: KernelGraphSubgraphMeta
 }
 
+export type KernelGraphDocumentNodeKind = 'ENTITY' | 'CLAIM' | 'EVIDENCE'
+export type KernelGraphDocumentEdgeKind =
+  | 'CANONICAL_RELATION'
+  | 'CLAIM_PARTICIPANT'
+  | 'CLAIM_EVIDENCE'
+
+export interface KernelGraphDocumentRequest {
+  mode: KernelGraphSubgraphMode
+  seed_entity_ids: string[]
+  depth?: number
+  top_k?: number
+  relation_types?: string[] | null
+  curation_statuses?: string[] | null
+  max_nodes?: number
+  max_edges?: number
+  include_claims?: boolean
+  include_evidence?: boolean
+  max_claims?: number
+  evidence_limit_per_claim?: number
+}
+
+export interface KernelGraphDocumentNode {
+  id: string
+  resource_id: string
+  kind: KernelGraphDocumentNodeKind
+  type_label: string
+  label: string
+  confidence: number | null
+  curation_status: string | null
+  claim_status: string | null
+  polarity: string | null
+  canonical_relation_id: string | null
+  metadata: JSONObject
+  created_at: string
+  updated_at: string
+}
+
+export interface KernelGraphDocumentEdge {
+  id: string
+  resource_id: string | null
+  kind: KernelGraphDocumentEdgeKind
+  source_id: string
+  target_id: string
+  type_label: string
+  label: string
+  confidence: number | null
+  curation_status: string | null
+  claim_id: string | null
+  canonical_relation_id: string | null
+  evidence_id: string | null
+  metadata: JSONObject
+  created_at: string
+  updated_at: string
+}
+
+export interface KernelGraphDocumentCounts {
+  entity_nodes: number
+  claim_nodes: number
+  evidence_nodes: number
+  canonical_edges: number
+  claim_participant_edges: number
+  claim_evidence_edges: number
+}
+
+export interface KernelGraphDocumentMeta {
+  mode: KernelGraphSubgraphMode
+  seed_entity_ids: string[]
+  requested_depth: number
+  requested_top_k: number
+  pre_cap_entity_node_count: number
+  pre_cap_canonical_edge_count: number
+  truncated_entity_nodes: boolean
+  truncated_canonical_edges: boolean
+  included_claims: boolean
+  included_evidence: boolean
+  max_claims: number
+  evidence_limit_per_claim: number
+  counts: KernelGraphDocumentCounts
+}
+
+export interface KernelGraphDocumentResponse {
+  nodes: KernelGraphDocumentNode[]
+  edges: KernelGraphDocumentEdge[]
+  meta: KernelGraphDocumentMeta
+}
+
 export interface PipelineRunRequest {
   source_id: string
   run_id?: string | null

@@ -34,6 +34,18 @@ class KernelRelationClaimService:
         """Fetch multiple relation claims by IDs."""
         return self._claims.list_by_ids(claim_ids)
 
+    def list_by_linked_relation_ids(
+        self,
+        *,
+        research_space_id: str,
+        linked_relation_ids: list[str],
+    ) -> list[KernelRelationClaim]:
+        """List claims linked to one or more canonical relations."""
+        return self._claims.find_by_linked_relation_ids(
+            research_space_id=research_space_id,
+            linked_relation_ids=linked_relation_ids,
+        )
+
     def list_by_research_space(  # noqa: PLR0913
         self,
         research_space_id: str,
@@ -144,6 +156,50 @@ class KernelRelationClaimService:
         return self._claims.set_system_status(
             claim_id,
             claim_status=claim_status,
+        )
+
+    def create_claim(  # noqa: PLR0913
+        self,
+        *,
+        research_space_id: str,
+        source_document_id: str | None,
+        agent_run_id: str | None,
+        source_type: str,
+        relation_type: str,
+        target_type: str,
+        source_label: str | None,
+        target_label: str | None,
+        confidence: float,
+        validation_state: RelationClaimValidationState,
+        validation_reason: str | None,
+        persistability: RelationClaimPersistability,
+        claim_status: RelationClaimStatus,
+        polarity: RelationClaimPolarity,
+        claim_text: str | None,
+        claim_section: str | None,
+        linked_relation_id: str | None = None,
+        metadata: JSONObject | None = None,
+    ) -> KernelRelationClaim:
+        """Create one generic relation claim row."""
+        return self._claims.create(
+            research_space_id=research_space_id,
+            source_document_id=source_document_id,
+            agent_run_id=agent_run_id,
+            source_type=source_type,
+            relation_type=relation_type,
+            target_type=target_type,
+            source_label=source_label,
+            target_label=target_label,
+            confidence=confidence,
+            validation_state=validation_state,
+            validation_reason=validation_reason,
+            persistability=persistability,
+            claim_status=claim_status,
+            polarity=polarity,
+            claim_text=claim_text,
+            claim_section=claim_section,
+            linked_relation_id=linked_relation_id,
+            metadata=metadata,
         )
 
     def create_hypothesis_claim(  # noqa: PLR0913

@@ -10,9 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.application.services._source_workflow_monitor_paper_links import (
-    resolve_paper_links,
-)
 from src.application.services.claim_first_metrics import (
     emit_graph_filter_preset_usage,
     increment_metric,
@@ -21,6 +18,9 @@ from src.database.session import get_session
 from src.domain.entities.user import User
 from src.models.database.source_document import SourceDocumentModel
 from src.routes.auth import get_current_active_user
+from src.routes.research_spaces._claim_evidence_paper_links import (
+    resolve_claim_evidence_paper_links,
+)
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
     require_curator_role,
@@ -30,8 +30,10 @@ from src.routes.research_spaces.dependencies import (
 from src.routes.research_spaces.kernel_dependencies import (
     get_dictionary_service,
     get_kernel_claim_evidence_service,
+    get_kernel_claim_participant_service,
     get_kernel_entity_service,
     get_kernel_relation_claim_service,
+    get_kernel_relation_projection_source_service,
     get_kernel_relation_service,
 )
 from src.routes.research_spaces.kernel_schemas import (
@@ -50,10 +52,8 @@ from src.routes.research_spaces.kernel_schemas import (
     KernelRelationCreateRequest,
     KernelRelationCurationUpdateRequest,
     KernelRelationListResponse,
-    KernelRelationPaperLinkResponse,
     KernelRelationResponse,
 )
-from src.type_definitions.common import JSONObject  # noqa: TC001
 
 from ._kernel_relation_evidence_presenter import load_relation_evidence_presentation
 from ._kernel_relation_subgraph_helpers import (
@@ -75,11 +75,17 @@ if TYPE_CHECKING:
     from src.application.services.kernel.kernel_claim_evidence_service import (
         KernelClaimEvidenceService,
     )
+    from src.application.services.kernel.kernel_claim_participant_service import (
+        KernelClaimParticipantService,
+    )
     from src.application.services.kernel.kernel_entity_service import (
         KernelEntityService,
     )
     from src.application.services.kernel.kernel_relation_claim_service import (
         KernelRelationClaimService,
+    )
+    from src.application.services.kernel.kernel_relation_projection_source_service import (
+        KernelRelationProjectionSourceService,
     )
     from src.application.services.kernel.kernel_relation_service import (
         KernelRelationService,
@@ -132,6 +138,7 @@ _CLAIM_VALIDATION_STATE_MAP: dict[str, _ClaimValidationState] = {
 class _RelationClaimTriageDependencies(NamedTuple):
     membership_service: MembershipManagementService
     relation_claim_service: KernelRelationClaimService
+    relation_projection_service: KernelRelationProjectionSourceService
     relation_service: KernelRelationService
     dictionary_service: DictionaryPort
     session: Session
@@ -142,6 +149,9 @@ def _get_relation_claim_triage_dependencies(
     relation_claim_service: KernelRelationClaimService = Depends(
         get_kernel_relation_claim_service,
     ),
+    relation_projection_service: KernelRelationProjectionSourceService = Depends(
+        get_kernel_relation_projection_source_service,
+    ),
     relation_service: KernelRelationService = Depends(get_kernel_relation_service),
     dictionary_service: DictionaryPort = Depends(get_dictionary_service),
     session: Session = Depends(get_session),
@@ -149,6 +159,7 @@ def _get_relation_claim_triage_dependencies(
     return _RelationClaimTriageDependencies(
         membership_service=membership_service,
         relation_claim_service=relation_claim_service,
+        relation_projection_service=relation_projection_service,
         relation_service=relation_service,
         dictionary_service=dictionary_service,
         session=session,
@@ -191,52 +202,27 @@ def _claim_resolution_evidence_summary(claim: object) -> str:
     return f"Promoted from resolved extraction claim ({claim_id})."
 
 
-def _resolve_claim_evidence_paper_links(
+def _manual_relation_claim_text(
     *,
-    source_document: SourceDocumentModel | None,
-    evidence_metadata: JSONObject,
-) -> list[KernelRelationPaperLinkResponse]:
-    combined_links: list[JSONObject] = []
-    metadata_links = resolve_paper_links(
-        source_type=None,
-        external_record_id=None,
-        metadata=evidence_metadata,
-    )
-    combined_links.extend(metadata_links)
-
-    if source_document is not None:
-        source_document_metadata_payload = source_document.metadata_payload
-        source_document_metadata: JSONObject = (
-            source_document_metadata_payload
-            if isinstance(source_document_metadata_payload, dict)
-            else {}
-        )
-        source_document_links = resolve_paper_links(
-            source_type=source_document.source_type,
-            external_record_id=source_document.external_record_id,
-            metadata=source_document_metadata,
-        )
-        combined_links.extend(source_document_links)
-
-    normalized_links: list[KernelRelationPaperLinkResponse] = []
-    seen_urls: set[str] = set()
-    for link in combined_links:
-        label = _normalize_optional_text(link.get("label"))
-        url = _normalize_optional_text(link.get("url"))
-        source = _normalize_optional_text(link.get("source"))
-        if label is None or url is None or source is None:
-            continue
-        if url in seen_urls:
-            continue
-        seen_urls.add(url)
-        normalized_links.append(
-            KernelRelationPaperLinkResponse(
-                label=label,
-                url=url,
-                source=source,
-            ),
-        )
-    return normalized_links
+    evidence_summary: str | None,
+    evidence_sentence: str | None,
+    relation_type: str,
+    source_label: str | None,
+    target_label: str | None,
+) -> str:
+    if evidence_sentence is not None and evidence_sentence.strip():
+        return evidence_sentence.strip()[:2000]
+    if evidence_summary is not None and evidence_summary.strip():
+        return evidence_summary.strip()[:2000]
+    source_text = source_label.strip() if source_label is not None else ""
+    target_text = target_label.strip() if target_label is not None else ""
+    if source_text and target_text:
+        return f"{source_text} {relation_type} {target_text}"
+    if source_text:
+        return f"{source_text} {relation_type}"
+    if target_text:
+        return f"{relation_type} {target_text}"
+    return relation_type
 
 
 def _resolve_claim_resolution_evidence(
@@ -557,6 +543,16 @@ def create_kernel_relation(
     current_user: User = Depends(get_current_active_user),
     membership_service: MembershipManagementService = Depends(get_membership_service),
     relation_service: KernelRelationService = Depends(get_kernel_relation_service),
+    entity_service: KernelEntityService = Depends(get_kernel_entity_service),
+    relation_claim_service: KernelRelationClaimService = Depends(
+        get_kernel_relation_claim_service,
+    ),
+    claim_participant_service: KernelClaimParticipantService = Depends(
+        get_kernel_claim_participant_service,
+    ),
+    relation_projection_service: KernelRelationProjectionSourceService = Depends(
+        get_kernel_relation_projection_source_service,
+    ),
     session: Session = Depends(get_session),
 ) -> KernelRelationResponse:
     require_researcher_role(
@@ -581,6 +577,68 @@ def create_kernel_relation(
             evidence_sentence_rationale=request.evidence_sentence_rationale,
             evidence_tier=request.evidence_tier,
             provenance_id=str(request.provenance_id) if request.provenance_id else None,
+        )
+        source_entity = entity_service.get_entity(str(request.source_id))
+        target_entity = entity_service.get_entity(str(request.target_id))
+        if source_entity is None or target_entity is None:
+            msg = "Source or target entity not found after relation creation"
+            raise ValueError(msg)
+        manual_claim = relation_claim_service.create_claim(
+            research_space_id=str(space_id),
+            source_document_id=None,
+            agent_run_id=None,
+            source_type=source_entity.entity_type,
+            relation_type=relation.relation_type,
+            target_type=target_entity.entity_type,
+            source_label=source_entity.display_label,
+            target_label=target_entity.display_label,
+            confidence=request.confidence,
+            validation_state="ALLOWED",
+            validation_reason="Created via canonical relation API",
+            persistability="PERSISTABLE",
+            claim_status="RESOLVED",
+            polarity="SUPPORT",
+            claim_text=_manual_relation_claim_text(
+                evidence_summary=request.evidence_summary,
+                evidence_sentence=request.evidence_sentence,
+                relation_type=relation.relation_type,
+                source_label=source_entity.display_label,
+                target_label=target_entity.display_label,
+            ),
+            claim_section=None,
+            linked_relation_id=str(relation.id),
+            metadata={
+                "origin": "manual_relation_api",
+                "source_entity_id": str(request.source_id),
+                "target_entity_id": str(request.target_id),
+            },
+        )
+        claim_participant_service.create_participant(
+            claim_id=str(manual_claim.id),
+            research_space_id=str(space_id),
+            role="SUBJECT",
+            label=source_entity.display_label,
+            entity_id=str(source_entity.id),
+            position=0,
+            qualifiers={"origin": "manual_relation_api"},
+        )
+        claim_participant_service.create_participant(
+            claim_id=str(manual_claim.id),
+            research_space_id=str(space_id),
+            role="OBJECT",
+            label=target_entity.display_label,
+            entity_id=str(target_entity.id),
+            position=1,
+            qualifiers={"origin": "manual_relation_api"},
+        )
+        relation_projection_service.create_projection_source(
+            research_space_id=str(space_id),
+            relation_id=str(relation.id),
+            claim_id=str(manual_claim.id),
+            projection_origin="MANUAL_RELATION",
+            source_document_id=None,
+            agent_run_id=None,
+            metadata={"origin": "manual_relation_api"},
         )
         session.commit()
         return KernelRelationResponse.from_model(relation)
@@ -1006,7 +1064,7 @@ def list_relation_claim_evidence(
         response_rows.append(
             KernelClaimEvidenceResponse.from_model(
                 evidence_row,
-                paper_links=_resolve_claim_evidence_paper_links(
+                paper_links=resolve_claim_evidence_paper_links(
                     source_document=source_document,
                     evidence_metadata=evidence_row.metadata_payload,
                 ),
@@ -1084,6 +1142,7 @@ def update_relation_claim_status(
 ) -> KernelRelationClaimResponse:
     membership_service = triage_dependencies.membership_service
     relation_claim_service = triage_dependencies.relation_claim_service
+    relation_projection_service = triage_dependencies.relation_projection_service
     relation_service = triage_dependencies.relation_service
     dictionary_service = triage_dependencies.dictionary_service
     session = triage_dependencies.session
@@ -1173,6 +1232,19 @@ def update_relation_claim_status(
             relation_claim_service.link_claim_to_relation(
                 str(claim_id),
                 linked_relation_id=str(promoted_relation.id),
+            )
+            relation_projection_service.create_projection_source(
+                research_space_id=str(space_id),
+                relation_id=str(promoted_relation.id),
+                claim_id=str(claim_id),
+                projection_origin="CLAIM_RESOLUTION",
+                source_document_id=(
+                    str(existing.source_document_id)
+                    if existing.source_document_id is not None
+                    else None
+                ),
+                agent_run_id=existing.agent_run_id,
+                metadata={"origin": "claim_resolution"},
             )
 
         updated = relation_claim_service.update_claim_status(

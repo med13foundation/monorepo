@@ -53,6 +53,13 @@ class KernelClaimParticipantService:
         """List participants for one claim."""
         return self._participants.find_by_claim_id(claim_id)
 
+    def list_for_claim_ids(
+        self,
+        claim_ids: list[str],
+    ) -> dict[str, list[KernelClaimParticipant]]:
+        """List participants for multiple claims keyed by claim ID."""
+        return self._participants.find_by_claim_ids(claim_ids)
+
     def list_claim_ids_by_entity(
         self,
         *,

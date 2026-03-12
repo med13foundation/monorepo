@@ -36,6 +36,7 @@ from .entities import EntityEmbeddingModel, EntityIdentifierModel, EntityModel
 from .observations import ObservationModel
 from .provenance import ProvenanceModel
 from .relation_claims import RelationClaimModel
+from .relation_projection_sources import RelationProjectionSourceModel
 from .relations import RelationEvidenceModel, RelationModel
 
 __all__ = [
@@ -72,6 +73,7 @@ __all__ = [
     "ObservationModel",
     "RelationEvidenceModel",
     "RelationClaimModel",
+    "RelationProjectionSourceModel",
     "RelationModel",
     "ProvenanceModel",
 ]

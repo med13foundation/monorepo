@@ -21,6 +21,7 @@ from src.application.services.kernel import (
     KernelEntitySimilarityService,
     KernelObservationService,
     KernelRelationClaimService,
+    KernelRelationProjectionSourceService,
     KernelRelationService,
     KernelRelationSuggestionService,
     ProvenanceService,
@@ -46,6 +47,7 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelObservationRepository,
     SqlAlchemyKernelRelationClaimRepository,
+    SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
     SqlAlchemyProvenanceRepository,
 )
@@ -166,6 +168,15 @@ class KernelServiceFactoryMixin:
     ) -> KernelRelationClaimService:
         relation_claim_repo = SqlAlchemyKernelRelationClaimRepository(session)
         return KernelRelationClaimService(relation_claim_repo=relation_claim_repo)
+
+    def create_kernel_relation_projection_source_service(
+        self,
+        session: Session,
+    ) -> KernelRelationProjectionSourceService:
+        projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(session)
+        return KernelRelationProjectionSourceService(
+            relation_projection_repo=projection_repo,
+        )
 
     def create_kernel_claim_participant_service(
         self,

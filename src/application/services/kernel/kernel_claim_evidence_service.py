@@ -21,6 +21,13 @@ class KernelClaimEvidenceService:
         """List evidence rows for one claim by recency."""
         return self._claim_evidence.find_by_claim_id(claim_id)
 
+    def list_for_claim_ids(
+        self,
+        claim_ids: list[str],
+    ) -> dict[str, list[KernelClaimEvidence]]:
+        """List evidence rows for multiple claims keyed by claim ID."""
+        return self._claim_evidence.find_by_claim_ids(claim_ids)
+
     def get_preferred_for_claim(self, claim_id: str) -> KernelClaimEvidence | None:
         """Return preferred evidence row for claim-to-relation resolution."""
         return self._claim_evidence.get_preferred_for_claim(claim_id)

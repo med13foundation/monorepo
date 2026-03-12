@@ -151,7 +151,7 @@ def emit_claim_first_extraction_metrics(  # noqa: PLR0913
 
 def emit_graph_filter_preset_usage(
     *,
-    endpoint: Literal["subgraph", "graph_search"],
+    endpoint: Literal["subgraph", "graph_search", "graph_document"],
     curation_statuses: list[str] | None,
 ) -> None:
     """Emit graph trust-preset usage counter from backend requests."""
