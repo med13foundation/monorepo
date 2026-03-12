@@ -7,7 +7,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.application.services.kernel import KernelReasoningPathDetail
+from src.application.services.kernel.kernel_reasoning_path_service import (
+    KernelReasoningPathDetail,
+)
 from src.domain.entities.kernel.reasoning_paths import (
     KernelReasoningPath,
     KernelReasoningPathStep,

@@ -233,7 +233,7 @@ claims remain authoritative
 reasoning paths remain derived
 ```
 
-## Hypothesis generation from reasoning paths
+## Hypothesis generation from reasoning paths and nearby biology
 
 Hypotheses still live in `relation_claims` with `polarity=HYPOTHESIS`.
 
@@ -247,8 +247,21 @@ create path-backed hypothesis claims with metadata such as:
 - `path_confidence`
 - `path_length`
 
+The generator can also transfer support from nearby claim-backed biology when:
+
+- the seed entity has active mechanism paths
+- neighboring entities are connected through the canonical graph
+- nearby support claims show compatible mechanism or phenotype patterns
+
+Transferred support is stored only as hypothesis metadata, for example:
+
+- `transferred_from_entities`
+- `transferred_supporting_claim_ids`
+- `transfer_basis`
+- `contradiction_claim_ids`
+
 This makes mechanism-backed suggestion faster while preserving claim-first
-traceability.
+traceability and keeping transferred reasoning non-authoritative.
 
 ## Main application services
 

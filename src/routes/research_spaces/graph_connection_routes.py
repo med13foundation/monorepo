@@ -14,10 +14,12 @@ from src.application.agents.services.graph_connection_service import (
     GraphConnectionOutcome,
     GraphConnectionService,
 )
-from src.application.services.kernel import KernelRelationSuggestionService
 from src.application.services.kernel.hybrid_graph_errors import (
     ConstraintConfigMissingError,
     EmbeddingNotReadyError,
+)
+from src.application.services.kernel.kernel_relation_suggestion_service import (
+    KernelRelationSuggestionService,
 )
 from src.database.session import get_session
 from src.domain.entities.user import User

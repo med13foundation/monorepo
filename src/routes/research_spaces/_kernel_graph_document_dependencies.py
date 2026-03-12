@@ -19,12 +19,22 @@ from src.routes.research_spaces.kernel_dependencies import (
 )
 
 if TYPE_CHECKING:
-    from src.application.services.kernel import (
+    from src.application.services.kernel.kernel_claim_evidence_service import (
         KernelClaimEvidenceService,
+    )
+    from src.application.services.kernel.kernel_claim_participant_service import (
         KernelClaimParticipantService,
+    )
+    from src.application.services.kernel.kernel_entity_service import (
         KernelEntityService,
+    )
+    from src.application.services.kernel.kernel_relation_claim_service import (
         KernelRelationClaimService,
+    )
+    from src.application.services.kernel.kernel_relation_projection_source_service import (
         KernelRelationProjectionSourceService,
+    )
+    from src.application.services.kernel.kernel_relation_service import (
         KernelRelationService,
     )
     from src.application.services.membership_management_service import (

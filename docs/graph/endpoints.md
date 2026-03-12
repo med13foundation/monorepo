@@ -215,6 +215,36 @@ Discover graph connections for one entity.
 
 Suggest constrained missing relations using hybrid graph plus embeddings.
 
+## Hypotheses
+
+### `GET /hypotheses`
+
+List hypothesis claims in a research space.
+
+### `POST /hypotheses/manual`
+
+Create one manual hypothesis claim.
+
+### `POST /hypotheses/generate`
+
+Generate reviewable `HYPOTHESIS` claims from graph exploration.
+
+The generator can use:
+
+- direct graph-agent candidates
+- active reasoning paths
+- transfer-backed nearby biology when the path and neighboring evidence align
+
+Transfer-backed hypotheses remain claim-only and expose metadata such as:
+
+- `reasoning_path_id`
+- `direct_supporting_claim_ids`
+- `transferred_supporting_claim_ids`
+- `transferred_from_entities`
+- `transfer_basis`
+- `contradiction_claim_ids`
+- `explanation`
+
 ## Operational graph tooling
 
 These are not public API endpoints.

@@ -2,41 +2,25 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 
-from src.application.services.kernel import (
-    KernelClaimParticipantBackfillService,
-    KernelClaimParticipantService,
-    KernelClaimRelationService,
-    KernelReasoningPathService,
-    KernelRelationClaimService,
-)
-from src.application.services.membership_management_service import (
-    MembershipManagementService,
-)
 from src.database.session import get_session
-from src.domain.entities.kernel.claim_relations import (
-    ClaimRelationReviewStatus,
-    ClaimRelationType,
-)
 from src.domain.entities.user import User
 from src.domain.repositories.kernel.claim_relation_repository import (
     ClaimRelationConstraintError,
 )
 from src.routes.auth import get_current_active_user
-from src.routes.research_spaces.claim_graph_schemas import (
-    ClaimParticipantBackfillRequest,
-    ClaimParticipantBackfillResponse,
-    ClaimParticipantCoverageResponse,
-    ClaimParticipantListResponse,
-    ClaimParticipantResponse,
-    ClaimRelationCreateRequest,
-    ClaimRelationListResponse,
-    ClaimRelationResponse,
-    ClaimRelationReviewUpdateRequest,
+from src.routes.research_spaces import claim_graph_schemas, kernel_schemas
+from src.routes.research_spaces._claim_graph_route_support import (
+    ClaimRelationReviewDependencies,
+    ClaimRelationWriteDependencies,
+    get_claim_relation_review_dependencies,
+    get_claim_relation_write_dependencies,
+    normalize_relation_type,
+    normalize_review_status,
 )
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
@@ -48,12 +32,7 @@ from src.routes.research_spaces.kernel_dependencies import (
     get_kernel_claim_participant_backfill_service,
     get_kernel_claim_participant_service,
     get_kernel_claim_relation_service,
-    get_kernel_reasoning_path_service,
     get_kernel_relation_claim_service,
-)
-from src.routes.research_spaces.kernel_schemas import (
-    KernelRelationClaimListResponse,
-    KernelRelationClaimResponse,
 )
 
 from .router import (
@@ -63,46 +42,29 @@ from .router import (
     research_spaces_router,
 )
 
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
-def _normalize_relation_type(value: str) -> ClaimRelationType:  # noqa: PLR0911
-    normalized = value.strip().upper()
-    if normalized == "SUPPORTS":
-        return "SUPPORTS"
-    if normalized == "CONTRADICTS":
-        return "CONTRADICTS"
-    if normalized == "REFINES":
-        return "REFINES"
-    if normalized == "CAUSES":
-        return "CAUSES"
-    if normalized == "UPSTREAM_OF":
-        return "UPSTREAM_OF"
-    if normalized == "DOWNSTREAM_OF":
-        return "DOWNSTREAM_OF"
-    if normalized == "SAME_AS":
-        return "SAME_AS"
-    if normalized == "GENERALIZES":
-        return "GENERALIZES"
-    if normalized == "INSTANCE_OF":
-        return "INSTANCE_OF"
-    msg = f"Unsupported relation_type '{value}'"
-    raise ValueError(msg)
-
-
-def _normalize_review_status(value: str) -> ClaimRelationReviewStatus:
-    normalized = value.strip().upper()
-    if normalized == "PROPOSED":
-        return "PROPOSED"
-    if normalized == "ACCEPTED":
-        return "ACCEPTED"
-    if normalized == "REJECTED":
-        return "REJECTED"
-    msg = f"Unsupported review_status '{value}'"
-    raise ValueError(msg)
+    from src.application.services.kernel.kernel_claim_participant_backfill_service import (
+        KernelClaimParticipantBackfillService,
+    )
+    from src.application.services.kernel.kernel_claim_participant_service import (
+        KernelClaimParticipantService,
+    )
+    from src.application.services.kernel.kernel_claim_relation_service import (
+        KernelClaimRelationService,
+    )
+    from src.application.services.kernel.kernel_relation_claim_service import (
+        KernelRelationClaimService,
+    )
+    from src.application.services.membership_management_service import (
+        MembershipManagementService,
+    )
 
 
 @research_spaces_router.get(
     "/{space_id}/claims/by-entity/{entity_id}",
-    response_model=KernelRelationClaimListResponse,
+    response_model=kernel_schemas.KernelRelationClaimListResponse,
     summary="List relation claims linked to an entity via structured participants",
 )
 def list_claims_by_entity(
@@ -120,7 +82,7 @@ def list_claims_by_entity(
         get_kernel_relation_claim_service,
     ),
     session: Session = Depends(get_session),
-) -> KernelRelationClaimListResponse:
+) -> kernel_schemas.KernelRelationClaimListResponse:
     verify_space_membership(
         space_id,
         current_user.id,
@@ -146,8 +108,11 @@ def list_claims_by_entity(
         if str(claim.research_space_id) == str(space_id)
     ]
 
-    return KernelRelationClaimListResponse(
-        claims=[KernelRelationClaimResponse.from_model(item) for item in claims],
+    return kernel_schemas.KernelRelationClaimListResponse(
+        claims=[
+            kernel_schemas.KernelRelationClaimResponse.from_model(item)
+            for item in claims
+        ],
         total=total,
         offset=offset,
         limit=limit,
@@ -156,7 +121,7 @@ def list_claims_by_entity(
 
 @research_spaces_router.get(
     "/{space_id}/claims/{claim_id}/participants",
-    response_model=ClaimParticipantListResponse,
+    response_model=claim_graph_schemas.ClaimParticipantListResponse,
     summary="List structured participants for one claim",
 )
 def list_claim_participants(
@@ -172,7 +137,7 @@ def list_claim_participants(
         get_kernel_relation_claim_service,
     ),
     session: Session = Depends(get_session),
-) -> ClaimParticipantListResponse:
+) -> claim_graph_schemas.ClaimParticipantListResponse:
     verify_space_membership(
         space_id,
         current_user.id,
@@ -189,10 +154,10 @@ def list_claim_participants(
         )
 
     participants = claim_participant_service.list_participants_for_claim(str(claim_id))
-    return ClaimParticipantListResponse(
+    return claim_graph_schemas.ClaimParticipantListResponse(
         claim_id=claim_id,
         participants=[
-            ClaimParticipantResponse.from_model(participant)
+            claim_graph_schemas.ClaimParticipantResponse.from_model(participant)
             for participant in participants
         ],
         total=len(participants),
@@ -201,19 +166,19 @@ def list_claim_participants(
 
 @research_spaces_router.post(
     "/{space_id}/claim-participants/backfill",
-    response_model=ClaimParticipantBackfillResponse,
+    response_model=claim_graph_schemas.ClaimParticipantBackfillResponse,
     summary="Backfill structured participants for existing relation claims",
 )
 def backfill_claim_participants(
     space_id: UUID,
-    request: ClaimParticipantBackfillRequest,
+    request: claim_graph_schemas.ClaimParticipantBackfillRequest,
     current_user: User = Depends(get_current_active_user),
     membership_service: MembershipManagementService = Depends(get_membership_service),
     backfill_service: KernelClaimParticipantBackfillService = Depends(
         get_kernel_claim_participant_backfill_service,
     ),
     session: Session = Depends(get_session),
-) -> ClaimParticipantBackfillResponse:
+) -> claim_graph_schemas.ClaimParticipantBackfillResponse:
     require_researcher_role(
         space_id,
         current_user.id,
@@ -232,7 +197,7 @@ def backfill_claim_participants(
         session.rollback()
     else:
         session.commit()
-    return ClaimParticipantBackfillResponse(
+    return claim_graph_schemas.ClaimParticipantBackfillResponse(
         scanned_claims=summary.scanned_claims,
         created_participants=summary.created_participants,
         skipped_existing=summary.skipped_existing,
@@ -243,7 +208,7 @@ def backfill_claim_participants(
 
 @research_spaces_router.get(
     "/{space_id}/claim-participants/coverage",
-    response_model=ClaimParticipantCoverageResponse,
+    response_model=claim_graph_schemas.ClaimParticipantCoverageResponse,
     summary="Get participant coverage summary for relation claims",
 )
 def get_claim_participant_coverage(
@@ -257,7 +222,7 @@ def get_claim_participant_coverage(
         get_kernel_claim_participant_backfill_service,
     ),
     session: Session = Depends(get_session),
-) -> ClaimParticipantCoverageResponse:
+) -> claim_graph_schemas.ClaimParticipantCoverageResponse:
     verify_space_membership(
         space_id,
         current_user.id,
@@ -276,7 +241,7 @@ def get_claim_participant_coverage(
         coverage.unresolved_subject_endpoints + coverage.unresolved_object_endpoints
     )
     unresolved_rate = float(unresolved_total) / float(denominator)
-    return ClaimParticipantCoverageResponse(
+    return claim_graph_schemas.ClaimParticipantCoverageResponse(
         total_claims=coverage.total_claims,
         claims_with_any_participants=coverage.claims_with_any_participants,
         claims_with_subject=coverage.claims_with_subject,
@@ -289,7 +254,7 @@ def get_claim_participant_coverage(
 
 @research_spaces_router.get(
     "/{space_id}/claim-relations",
-    response_model=ClaimRelationListResponse,
+    response_model=claim_graph_schemas.ClaimRelationListResponse,
     summary="List claim-to-claim relation edges",
 )
 def list_claim_relations(
@@ -308,7 +273,7 @@ def list_claim_relations(
         get_kernel_claim_relation_service,
     ),
     session: Session = Depends(get_session),
-) -> ClaimRelationListResponse:
+) -> claim_graph_schemas.ClaimRelationListResponse:
     verify_space_membership(
         space_id,
         current_user.id,
@@ -318,12 +283,12 @@ def list_claim_relations(
     )
 
     normalized_relation_type = (
-        _normalize_relation_type(relation_type)
+        normalize_relation_type(relation_type)
         if relation_type is not None and relation_type.strip()
         else None
     )
     normalized_review_status = (
-        _normalize_review_status(review_status)
+        normalize_review_status(review_status)
         if review_status is not None and review_status.strip()
         else None
     )
@@ -347,9 +312,10 @@ def list_claim_relations(
         claim_id=str(claim_id) if claim_id is not None else None,
     )
 
-    return ClaimRelationListResponse(
+    return claim_graph_schemas.ClaimRelationListResponse(
         claim_relations=[
-            ClaimRelationResponse.from_model(item) for item in claim_relations
+            claim_graph_schemas.ClaimRelationResponse.from_model(item)
+            for item in claim_relations
         ],
         total=total,
         offset=offset,
@@ -359,35 +325,31 @@ def list_claim_relations(
 
 @research_spaces_router.post(
     "/{space_id}/claim-relations",
-    response_model=ClaimRelationResponse,
+    response_model=claim_graph_schemas.ClaimRelationResponse,
     summary="Create one claim-to-claim relation edge",
 )
 def create_claim_relation(
     space_id: UUID,
-    request: ClaimRelationCreateRequest,
+    request: claim_graph_schemas.ClaimRelationCreateRequest,
     current_user: User = Depends(get_current_active_user),
-    membership_service: MembershipManagementService = Depends(get_membership_service),
-    relation_claim_service: KernelRelationClaimService = Depends(
-        get_kernel_relation_claim_service,
+    dependencies: ClaimRelationWriteDependencies = Depends(
+        get_claim_relation_write_dependencies,
     ),
-    claim_relation_service: KernelClaimRelationService = Depends(
-        get_kernel_claim_relation_service,
-    ),
-    reasoning_path_service: KernelReasoningPathService = Depends(
-        get_kernel_reasoning_path_service,
-    ),
-    session: Session = Depends(get_session),
-) -> ClaimRelationResponse:
+) -> claim_graph_schemas.ClaimRelationResponse:
     require_researcher_role(
         space_id,
         current_user.id,
-        membership_service,
-        session,
+        dependencies.membership_service,
+        dependencies.session,
         current_user.role,
     )
 
-    source_claim = relation_claim_service.get_claim(str(request.source_claim_id))
-    target_claim = relation_claim_service.get_claim(str(request.target_claim_id))
+    source_claim = dependencies.relation_claim_service.get_claim(
+        str(request.source_claim_id),
+    )
+    target_claim = dependencies.relation_claim_service.get_claim(
+        str(request.target_claim_id),
+    )
     if source_claim is None or str(source_claim.research_space_id) != str(space_id):
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,
@@ -400,11 +362,11 @@ def create_claim_relation(
         )
 
     try:
-        relation = claim_relation_service.create_claim_relation(
+        relation = dependencies.claim_relation_service.create_claim_relation(
             research_space_id=str(space_id),
             source_claim_id=str(request.source_claim_id),
             target_claim_id=str(request.target_claim_id),
-            relation_type=_normalize_relation_type(request.relation_type),
+            relation_type=normalize_relation_type(request.relation_type),
             agent_run_id=request.agent_run_id,
             source_document_id=(
                 str(request.source_document_id)
@@ -412,24 +374,24 @@ def create_claim_relation(
                 else None
             ),
             confidence=request.confidence,
-            review_status=_normalize_review_status(request.review_status),
+            review_status=normalize_review_status(request.review_status),
             evidence_summary=request.evidence_summary,
             metadata=request.metadata,
         )
-        reasoning_path_service.mark_stale_for_claim_relation_ids(
+        dependencies.reasoning_path_service.mark_stale_for_claim_relation_ids(
             [str(relation.id)],
             str(space_id),
         )
-        session.commit()
-        return ClaimRelationResponse.from_model(relation)
+        dependencies.session.commit()
+        return claim_graph_schemas.ClaimRelationResponse.from_model(relation)
     except ValueError as exc:
-        session.rollback()
+        dependencies.session.rollback()
         raise HTTPException(
             status_code=HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
     except ClaimRelationConstraintError as exc:
-        session.rollback()
+        dependencies.session.rollback()
         raise HTTPException(
             status_code=HTTP_409_CONFLICT,
             detail="Duplicate or invalid claim relation edge",
@@ -438,32 +400,27 @@ def create_claim_relation(
 
 @research_spaces_router.patch(
     "/{space_id}/claim-relations/{relation_id}",
-    response_model=ClaimRelationResponse,
+    response_model=claim_graph_schemas.ClaimRelationResponse,
     summary="Update one claim relation review status",
 )
 def update_claim_relation_review_status(
     space_id: UUID,
     relation_id: UUID,
-    request: ClaimRelationReviewUpdateRequest,
+    request: claim_graph_schemas.ClaimRelationReviewUpdateRequest,
     current_user: User = Depends(get_current_active_user),
-    membership_service: MembershipManagementService = Depends(get_membership_service),
-    claim_relation_service: KernelClaimRelationService = Depends(
-        get_kernel_claim_relation_service,
+    dependencies: ClaimRelationReviewDependencies = Depends(
+        get_claim_relation_review_dependencies,
     ),
-    reasoning_path_service: KernelReasoningPathService = Depends(
-        get_kernel_reasoning_path_service,
-    ),
-    session: Session = Depends(get_session),
-) -> ClaimRelationResponse:
+) -> claim_graph_schemas.ClaimRelationResponse:
     require_curator_role(
         space_id,
         current_user.id,
-        membership_service,
-        session,
+        dependencies.membership_service,
+        dependencies.session,
         current_user.role,
     )
 
-    existing = claim_relation_service.get_claim_relation(str(relation_id))
+    existing = dependencies.claim_relation_service.get_claim_relation(str(relation_id))
     if existing is None or str(existing.research_space_id) != str(space_id):
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,
@@ -471,18 +428,18 @@ def update_claim_relation_review_status(
         )
 
     try:
-        updated = claim_relation_service.update_review_status(
+        updated = dependencies.claim_relation_service.update_review_status(
             str(relation_id),
-            review_status=_normalize_review_status(request.review_status),
+            review_status=normalize_review_status(request.review_status),
         )
-        reasoning_path_service.mark_stale_for_claim_relation_ids(
+        dependencies.reasoning_path_service.mark_stale_for_claim_relation_ids(
             [str(updated.id)],
             str(space_id),
         )
-        session.commit()
-        return ClaimRelationResponse.from_model(updated)
+        dependencies.session.commit()
+        return claim_graph_schemas.ClaimRelationResponse.from_model(updated)
     except ValueError as exc:
-        session.rollback()
+        dependencies.session.rollback()
         raise HTTPException(
             status_code=HTTP_400_BAD_REQUEST,
             detail=str(exc),

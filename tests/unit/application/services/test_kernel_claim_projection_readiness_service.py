@@ -6,12 +6,22 @@ from uuid import uuid4
 
 from sqlalchemy import delete
 
-from src.application.services.kernel import (
+from src.application.services.kernel.kernel_claim_participant_backfill_service import (
     KernelClaimParticipantBackfillService,
+)
+from src.application.services.kernel.kernel_claim_participant_service import (
     KernelClaimParticipantService,
+)
+from src.application.services.kernel.kernel_claim_projection_readiness_service import (
     KernelClaimProjectionReadinessService,
+)
+from src.application.services.kernel.kernel_relation_claim_service import (
     KernelRelationClaimService,
+)
+from src.application.services.kernel.kernel_relation_projection_invariant_service import (
     KernelRelationProjectionInvariantService,
+)
+from src.application.services.kernel.kernel_relation_projection_materialization_service import (
     KernelRelationProjectionMaterializationService,
 )
 from src.database.seeds.seeder import seed_relation_constraints

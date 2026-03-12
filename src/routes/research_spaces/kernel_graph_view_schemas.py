@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from src.application.services.kernel import (
+from src.application.services.kernel.kernel_graph_view_service import (
     KernelClaimMechanismChain,
     KernelGraphDomainView,
 )

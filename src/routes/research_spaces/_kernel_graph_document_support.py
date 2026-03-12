@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.application.services.kernel import KernelEntityService
+from src.application.services.kernel.kernel_entity_service import KernelEntityService
 from src.domain.entities.kernel.claim_evidence import KernelClaimEvidence
 from src.domain.entities.kernel.claim_participants import KernelClaimParticipant
 from src.domain.entities.kernel.relation_claims import KernelRelationClaim

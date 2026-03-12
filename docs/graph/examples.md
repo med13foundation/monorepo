@@ -221,3 +221,36 @@ Interpretation:
 - the hypothesis is still a `relation_claim`
 - the supporting path is explicit
 - the reasoning artifact remains rebuildable from claims
+
+## 11. Transfer-backed mechanism hypothesis example
+
+Generated hypothesis metadata can also combine direct seed support with nearby
+biology:
+
+```json
+{
+  "origin": "mechanism_transfer",
+  "reasoning_path_id": "path-med13-speech-delay",
+  "start_entity_id": "entity-med13",
+  "end_entity_id": "entity-speech-delay",
+  "direct_supporting_claim_ids": ["claim-med13-a", "claim-med13-b"],
+  "transferred_supporting_claim_ids": ["claim-med12-1", "claim-med16-4"],
+  "transferred_from_entities": ["entity-med12", "entity-med16"],
+  "transfer_basis": [
+    "neighbor_via_part_of",
+    "relation_family_overlap",
+    "shared_end_entity"
+  ],
+  "contradiction_claim_ids": [],
+  "path_confidence": 0.74,
+  "candidate_score": 0.81,
+  "explanation": "MED13 may connect to Speech delay based on direct reasoning-path claims and nearby Mediator-gene support."
+}
+```
+
+Interpretation:
+
+- the hypothesis is still a `relation_claim`
+- direct MED13 support and transferred nearby support stay separate
+- contradiction signals remain visible in metadata
+- no canonical relation is created automatically from the transfer

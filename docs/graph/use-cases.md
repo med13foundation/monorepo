@@ -230,3 +230,27 @@ Outcome:
 
 - suggestion stays claim-first
 - the path remains a derived reasoning artifact, not new truth
+
+## 13. Transfer a mechanism from nearby biology into a reviewable hypothesis
+
+Actors:
+
+- researcher or AI agent
+- hypothesis generation service
+- reasoning path service
+- claim ledger
+
+Flow:
+
+1. The user requests hypothesis generation for a focal entity such as `MED13`.
+2. The service loads direct active reasoning paths from that entity.
+3. The service loads nearby canonical neighbors such as related genes or pathways.
+4. Nearby support claims with usable evidence are compared for compatible mechanism or phenotype patterns.
+5. Contradictory nearby `REFUTE` or `UNCERTAIN` claims reduce the transfer score.
+6. If the score is strong enough, the system creates one `HYPOTHESIS` claim with explicit transfer metadata.
+
+Outcome:
+
+- nearby biology helps generate a candidate mechanism hypothesis
+- direct support and transferred support remain separated in metadata
+- the result stays claim-only and reviewable

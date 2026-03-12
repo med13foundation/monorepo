@@ -7,7 +7,9 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from src.application.services.kernel import KernelReasoningPathService
+from src.application.services.kernel.kernel_reasoning_path_service import (
+    KernelReasoningPathService,
+)
 from src.application.services.membership_management_service import (
     MembershipManagementService,
 )

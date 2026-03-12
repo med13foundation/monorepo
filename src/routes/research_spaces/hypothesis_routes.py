@@ -47,8 +47,10 @@ from .router import (
 )
 
 if TYPE_CHECKING:
-    from src.application.services.kernel import (
+    from src.application.services.kernel.kernel_entity_service import (
         KernelEntityService,
+    )
+    from src.application.services.kernel.kernel_relation_claim_service import (
         KernelRelationClaimService,
     )
     from src.application.services.membership_management_service import (

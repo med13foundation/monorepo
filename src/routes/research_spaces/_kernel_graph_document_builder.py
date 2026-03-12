@@ -4,12 +4,20 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from src.application.services.kernel import (
+from src.application.services.kernel.kernel_claim_evidence_service import (
     KernelClaimEvidenceService,
+)
+from src.application.services.kernel.kernel_claim_participant_service import (
     KernelClaimParticipantService,
-    KernelEntityService,
+)
+from src.application.services.kernel.kernel_entity_service import KernelEntityService
+from src.application.services.kernel.kernel_relation_claim_service import (
     KernelRelationClaimService,
+)
+from src.application.services.kernel.kernel_relation_projection_source_service import (
     KernelRelationProjectionSourceService,
+)
+from src.application.services.kernel.kernel_relation_service import (
     KernelRelationService,
 )
 from src.domain.entities.kernel.claim_evidence import KernelClaimEvidence

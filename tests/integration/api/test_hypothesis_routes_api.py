@@ -331,6 +331,12 @@ def _build_hypothesis_claim(
             "origin": "graph_agent",
             "seed_entity_id": str(uuid4()),
             "supporting_provenance_ids": [str(uuid4())],
+            "transferred_from_entities": [str(uuid4())],
+            "transfer_basis": ["neighbor_via_part_of", "phenotype_overlap"],
+            "direct_supporting_claim_ids": [str(uuid4())],
+            "transferred_supporting_claim_ids": [str(uuid4())],
+            "contradiction_claim_ids": [],
+            "explanation": "Transfer-backed hypothesis explanation.",
         },
         triaged_by=None,
         triaged_at=None,
@@ -375,6 +381,11 @@ def test_generate_hypotheses_with_stub_has_no_canonical_relation_writes(
     payload = response.json()
     assert payload["created_count"] == 1
     assert payload["hypotheses"][0]["origin"] == "graph_agent"
+    assert len(payload["hypotheses"][0]["transferred_from_entities"]) == 1
+    assert (
+        payload["hypotheses"][0]["explanation"]
+        == "Transfer-backed hypothesis explanation."
+    )
     assert service.calls
 
     with _session_for_api(db_session) as session:

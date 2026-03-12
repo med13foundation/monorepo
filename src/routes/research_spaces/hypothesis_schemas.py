@@ -56,6 +56,12 @@ class HypothesisResponse(BaseModel):
     supporting_provenance_ids: list[str]
     reasoning_path_id: UUID | None
     supporting_claim_ids: list[str]
+    direct_supporting_claim_ids: list[str]
+    transferred_supporting_claim_ids: list[str]
+    transferred_from_entities: list[str]
+    transfer_basis: list[str]
+    contradiction_claim_ids: list[str]
+    explanation: str | None
     path_confidence: float | None
     path_length: int | None
     created_at: datetime
@@ -100,6 +106,22 @@ class HypothesisResponse(BaseModel):
             supporting_claim_ids=_resolve_string_list(
                 metadata_payload.get("supporting_claim_ids"),
             ),
+            direct_supporting_claim_ids=_resolve_string_list(
+                metadata_payload.get("direct_supporting_claim_ids"),
+            ),
+            transferred_supporting_claim_ids=_resolve_string_list(
+                metadata_payload.get("transferred_supporting_claim_ids"),
+            ),
+            transferred_from_entities=_resolve_string_list(
+                metadata_payload.get("transferred_from_entities"),
+            ),
+            transfer_basis=_resolve_string_list(
+                metadata_payload.get("transfer_basis"),
+            ),
+            contradiction_claim_ids=_resolve_string_list(
+                metadata_payload.get("contradiction_claim_ids"),
+            ),
+            explanation=_resolve_optional_text(metadata_payload.get("explanation")),
             path_confidence=path_confidence,
             path_length=path_length,
             created_at=claim.created_at,
@@ -156,6 +178,13 @@ def _resolve_seed_entity_ids(metadata_payload: JSONObject) -> list[str]:
 
 def _resolve_supporting_provenance_ids(metadata_payload: JSONObject) -> list[str]:
     return _resolve_string_list(metadata_payload.get("supporting_provenance_ids"))
+
+
+def _resolve_optional_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _resolve_string_list(value: object) -> list[str]:

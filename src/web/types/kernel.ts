@@ -273,6 +273,12 @@ export interface HypothesisResponse {
   supporting_provenance_ids: string[]
   reasoning_path_id?: string | null
   supporting_claim_ids: string[]
+  direct_supporting_claim_ids?: string[]
+  transferred_supporting_claim_ids?: string[]
+  transferred_from_entities?: string[]
+  transfer_basis?: string[]
+  contradiction_claim_ids?: string[]
+  explanation?: string | null
   path_confidence?: number | null
   path_length?: number | null
   created_at: string

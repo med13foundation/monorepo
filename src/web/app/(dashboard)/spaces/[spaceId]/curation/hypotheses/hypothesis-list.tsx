@@ -39,6 +39,9 @@ function HypothesisItem({
   const certainty = confidenceBand(hypothesis.confidence)
   const confidence = confidencePercent(hypothesis.confidence)
   const isPending = pendingClaimId === hypothesis.claim_id
+  const transferredEntityCount = hypothesis.transferred_from_entities?.length ?? 0
+  const transferredClaimCount =
+    hypothesis.transferred_supporting_claim_ids?.length ?? 0
   const relationView =
     `${hypothesis.source_label ?? 'Unknown source'} -> ${hypothesis.relation_type} -> ` +
     `${hypothesis.target_label ?? 'Unknown target'}`
@@ -66,6 +69,16 @@ function HypothesisItem({
             {hypothesis.path_length === 1 ? '' : 's'} • confidence{' '}
             {confidencePercent(hypothesis.path_confidence ?? hypothesis.confidence)}%
           </p>
+        ) : null}
+        {transferredEntityCount > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            Transfer-backed • {transferredEntityCount} nearby
+            entit{transferredEntityCount === 1 ? 'y' : 'ies'} • {transferredClaimCount}{' '}
+            transferred claim{transferredClaimCount === 1 ? '' : 's'}
+          </p>
+        ) : null}
+        {hypothesis.explanation ? (
+          <p className="text-xs text-muted-foreground">{hypothesis.explanation}</p>
         ) : null}
 
         <p className="font-mono text-xs text-muted-foreground">

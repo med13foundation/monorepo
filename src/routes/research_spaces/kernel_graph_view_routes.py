@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from src.application.services.kernel import (
+from src.application.services.kernel.kernel_graph_view_service import (
     GraphDomainViewType,
     KernelGraphViewNotFoundError,
     KernelGraphViewService,
