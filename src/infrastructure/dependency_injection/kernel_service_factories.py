@@ -21,6 +21,7 @@ from src.application.services.kernel import (
     KernelEntitySimilarityService,
     KernelObservationService,
     KernelRelationClaimService,
+    KernelRelationProjectionInvariantService,
     KernelRelationProjectionSourceService,
     KernelRelationService,
     KernelRelationSuggestionService,
@@ -175,6 +176,15 @@ class KernelServiceFactoryMixin:
     ) -> KernelRelationProjectionSourceService:
         projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(session)
         return KernelRelationProjectionSourceService(
+            relation_projection_repo=projection_repo,
+        )
+
+    def create_kernel_relation_projection_invariant_service(
+        self,
+        session: Session,
+    ) -> KernelRelationProjectionInvariantService:
+        projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(session)
+        return KernelRelationProjectionInvariantService(
             relation_projection_repo=projection_repo,
         )
 

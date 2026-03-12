@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query
@@ -21,6 +21,16 @@ from src.routes.auth import get_current_active_user
 from src.routes.research_spaces._claim_evidence_paper_links import (
     resolve_claim_evidence_paper_links,
 )
+from src.routes.research_spaces._kernel_relation_route_support import (
+    CreateRelationDependencies,
+    RelationClaimTriageDependencies,
+    claim_endpoint_entity_ids,
+    claim_resolution_evidence_summary,
+    get_create_relation_dependencies,
+    get_relation_claim_triage_dependencies,
+    manual_relation_claim_text,
+    normalize_optional_text,
+)
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
     require_curator_role,
@@ -28,12 +38,9 @@ from src.routes.research_spaces.dependencies import (
     verify_space_membership,
 )
 from src.routes.research_spaces.kernel_dependencies import (
-    get_dictionary_service,
     get_kernel_claim_evidence_service,
-    get_kernel_claim_participant_service,
     get_kernel_entity_service,
     get_kernel_relation_claim_service,
-    get_kernel_relation_projection_source_service,
     get_kernel_relation_service,
 )
 from src.routes.research_spaces.kernel_schemas import (
@@ -75,17 +82,11 @@ if TYPE_CHECKING:
     from src.application.services.kernel.kernel_claim_evidence_service import (
         KernelClaimEvidenceService,
     )
-    from src.application.services.kernel.kernel_claim_participant_service import (
-        KernelClaimParticipantService,
-    )
     from src.application.services.kernel.kernel_entity_service import (
         KernelEntityService,
     )
     from src.application.services.kernel.kernel_relation_claim_service import (
         KernelRelationClaimService,
-    )
-    from src.application.services.kernel.kernel_relation_projection_source_service import (
-        KernelRelationProjectionSourceService,
     )
     from src.application.services.kernel.kernel_relation_service import (
         KernelRelationService,
@@ -135,96 +136,6 @@ _CLAIM_VALIDATION_STATE_MAP: dict[str, _ClaimValidationState] = {
 }
 
 
-class _RelationClaimTriageDependencies(NamedTuple):
-    membership_service: MembershipManagementService
-    relation_claim_service: KernelRelationClaimService
-    relation_projection_service: KernelRelationProjectionSourceService
-    relation_service: KernelRelationService
-    dictionary_service: DictionaryPort
-    session: Session
-
-
-def _get_relation_claim_triage_dependencies(
-    membership_service: MembershipManagementService = Depends(get_membership_service),
-    relation_claim_service: KernelRelationClaimService = Depends(
-        get_kernel_relation_claim_service,
-    ),
-    relation_projection_service: KernelRelationProjectionSourceService = Depends(
-        get_kernel_relation_projection_source_service,
-    ),
-    relation_service: KernelRelationService = Depends(get_kernel_relation_service),
-    dictionary_service: DictionaryPort = Depends(get_dictionary_service),
-    session: Session = Depends(get_session),
-) -> _RelationClaimTriageDependencies:
-    return _RelationClaimTriageDependencies(
-        membership_service=membership_service,
-        relation_claim_service=relation_claim_service,
-        relation_projection_service=relation_projection_service,
-        relation_service=relation_service,
-        dictionary_service=dictionary_service,
-        session=session,
-    )
-
-
-def _normalize_optional_text(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    return normalized or None
-
-
-def _claim_endpoint_entity_ids(
-    claim: object,
-) -> tuple[str | None, str | None]:
-    metadata_payload = getattr(claim, "metadata_payload", None)
-    if not isinstance(metadata_payload, dict):
-        return None, None
-    source_entity_id = _normalize_optional_text(
-        metadata_payload.get("source_entity_id"),
-    )
-    target_entity_id = _normalize_optional_text(
-        metadata_payload.get("target_entity_id"),
-    )
-    return source_entity_id, target_entity_id
-
-
-def _claim_resolution_evidence_summary(claim: object) -> str:
-    validation_reason = _normalize_optional_text(
-        getattr(claim, "validation_reason", None),
-    )
-    claim_id = _normalize_optional_text(str(getattr(claim, "id", "")))
-    if validation_reason is not None:
-        if claim_id is None:
-            return validation_reason
-        return f"{validation_reason} (claim_id={claim_id})"
-    if claim_id is None:
-        return "Promoted from resolved extraction claim."
-    return f"Promoted from resolved extraction claim ({claim_id})."
-
-
-def _manual_relation_claim_text(
-    *,
-    evidence_summary: str | None,
-    evidence_sentence: str | None,
-    relation_type: str,
-    source_label: str | None,
-    target_label: str | None,
-) -> str:
-    if evidence_sentence is not None and evidence_sentence.strip():
-        return evidence_sentence.strip()[:2000]
-    if evidence_summary is not None and evidence_summary.strip():
-        return evidence_summary.strip()[:2000]
-    source_text = source_label.strip() if source_label is not None else ""
-    target_text = target_label.strip() if target_label is not None else ""
-    if source_text and target_text:
-        return f"{source_text} {relation_type} {target_text}"
-    if source_text:
-        return f"{source_text} {relation_type}"
-    if target_text:
-        return f"{relation_type} {target_text}"
-    return relation_type
-
-
 def _resolve_claim_resolution_evidence(
     *,
     claim_id: str,
@@ -233,12 +144,12 @@ def _resolve_claim_resolution_evidence(
     evidence = claim_evidence_service.get_preferred_for_claim(claim_id)
     if evidence is None:
         return None, None, None, None
-    sentence = _normalize_optional_text(evidence.sentence)
+    sentence = normalize_optional_text(evidence.sentence)
     if sentence is None:
         return None, None, None, None
-    sentence_source = _normalize_optional_text(evidence.sentence_source)
-    sentence_confidence = _normalize_optional_text(evidence.sentence_confidence)
-    sentence_rationale = _normalize_optional_text(evidence.sentence_rationale)
+    sentence_source = normalize_optional_text(evidence.sentence_source)
+    sentence_confidence = normalize_optional_text(evidence.sentence_confidence)
+    sentence_rationale = normalize_optional_text(evidence.sentence_rationale)
     return sentence[:2000], sentence_source, sentence_confidence, sentence_rationale
 
 
@@ -541,30 +452,20 @@ def create_kernel_relation(
     space_id: UUID,
     request: KernelRelationCreateRequest,
     current_user: User = Depends(get_current_active_user),
-    membership_service: MembershipManagementService = Depends(get_membership_service),
-    relation_service: KernelRelationService = Depends(get_kernel_relation_service),
-    entity_service: KernelEntityService = Depends(get_kernel_entity_service),
-    relation_claim_service: KernelRelationClaimService = Depends(
-        get_kernel_relation_claim_service,
+    dependencies: CreateRelationDependencies = Depends(
+        get_create_relation_dependencies,
     ),
-    claim_participant_service: KernelClaimParticipantService = Depends(
-        get_kernel_claim_participant_service,
-    ),
-    relation_projection_service: KernelRelationProjectionSourceService = Depends(
-        get_kernel_relation_projection_source_service,
-    ),
-    session: Session = Depends(get_session),
 ) -> KernelRelationResponse:
     require_researcher_role(
         space_id,
         current_user.id,
-        membership_service,
-        session,
+        dependencies.membership_service,
+        dependencies.session,
         current_user.role,
     )
 
     try:
-        relation = relation_service.create_relation(
+        relation = dependencies.write_services.relation_service.create_relation(
             research_space_id=str(space_id),
             source_id=str(request.source_id),
             relation_type=request.relation_type,
@@ -578,12 +479,16 @@ def create_kernel_relation(
             evidence_tier=request.evidence_tier,
             provenance_id=str(request.provenance_id) if request.provenance_id else None,
         )
-        source_entity = entity_service.get_entity(str(request.source_id))
-        target_entity = entity_service.get_entity(str(request.target_id))
+        source_entity = dependencies.write_services.entity_service.get_entity(
+            str(request.source_id),
+        )
+        target_entity = dependencies.write_services.entity_service.get_entity(
+            str(request.target_id),
+        )
         if source_entity is None or target_entity is None:
             msg = "Source or target entity not found after relation creation"
             raise ValueError(msg)
-        manual_claim = relation_claim_service.create_claim(
+        manual_claim = dependencies.write_services.relation_claim_service.create_claim(
             research_space_id=str(space_id),
             source_document_id=None,
             agent_run_id=None,
@@ -598,7 +503,7 @@ def create_kernel_relation(
             persistability="PERSISTABLE",
             claim_status="RESOLVED",
             polarity="SUPPORT",
-            claim_text=_manual_relation_claim_text(
+            claim_text=manual_relation_claim_text(
                 evidence_summary=request.evidence_summary,
                 evidence_sentence=request.evidence_sentence,
                 relation_type=relation.relation_type,
@@ -613,7 +518,7 @@ def create_kernel_relation(
                 "target_entity_id": str(request.target_id),
             },
         )
-        claim_participant_service.create_participant(
+        dependencies.write_services.claim_participant_service.create_participant(
             claim_id=str(manual_claim.id),
             research_space_id=str(space_id),
             role="SUBJECT",
@@ -622,7 +527,7 @@ def create_kernel_relation(
             position=0,
             qualifiers={"origin": "manual_relation_api"},
         )
-        claim_participant_service.create_participant(
+        dependencies.write_services.claim_participant_service.create_participant(
             claim_id=str(manual_claim.id),
             research_space_id=str(space_id),
             role="OBJECT",
@@ -631,7 +536,7 @@ def create_kernel_relation(
             position=1,
             qualifiers={"origin": "manual_relation_api"},
         )
-        relation_projection_service.create_projection_source(
+        dependencies.write_services.relation_projection_service.create_projection_source(
             research_space_id=str(space_id),
             relation_id=str(relation.id),
             claim_id=str(manual_claim.id),
@@ -640,10 +545,14 @@ def create_kernel_relation(
             agent_run_id=None,
             metadata={"origin": "manual_relation_api"},
         )
-        session.commit()
+        dependencies.write_services.relation_projection_invariant_service.assert_no_orphan_relations_for_write(
+            relation_id=str(relation.id),
+            research_space_id=str(space_id),
+        )
+        dependencies.session.commit()
         return KernelRelationResponse.from_model(relation)
     except IntegrityError as e:
-        session.rollback()
+        dependencies.session.rollback()
         raise HTTPException(
             status_code=HTTP_409_CONFLICT,
             detail=(
@@ -652,13 +561,13 @@ def create_kernel_relation(
             ),
         ) from e
     except ValueError as e:
-        session.rollback()
+        dependencies.session.rollback()
         raise HTTPException(
             status_code=HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
     except Exception as e:
-        session.rollback()
+        dependencies.session.rollback()
         raise HTTPException(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create relation: {e!s}",
@@ -1133,8 +1042,8 @@ def update_relation_claim_status(
     claim_id: UUID,
     request: KernelRelationClaimTriageRequest,
     current_user: User = Depends(get_current_active_user),
-    triage_dependencies: _RelationClaimTriageDependencies = Depends(
-        _get_relation_claim_triage_dependencies,
+    triage_dependencies: RelationClaimTriageDependencies = Depends(
+        get_relation_claim_triage_dependencies,
     ),
     claim_evidence_service: KernelClaimEvidenceService = Depends(
         get_kernel_claim_evidence_service,
@@ -1142,6 +1051,9 @@ def update_relation_claim_status(
 ) -> KernelRelationClaimResponse:
     membership_service = triage_dependencies.membership_service
     relation_claim_service = triage_dependencies.relation_claim_service
+    relation_projection_invariant_service = (
+        triage_dependencies.relation_projection_invariant_service
+    )
     relation_projection_service = triage_dependencies.relation_projection_service
     relation_service = triage_dependencies.relation_service
     dictionary_service = triage_dependencies.dictionary_service
@@ -1174,7 +1086,7 @@ def update_relation_claim_status(
                 )
                 raise ValueError(msg)
 
-            source_entity_id, target_entity_id = _claim_endpoint_entity_ids(existing)
+            source_entity_id, target_entity_id = claim_endpoint_entity_ids(existing)
             if source_entity_id is None or target_entity_id is None:
                 msg = (
                     "Claim cannot be resolved yet because source/target entity "
@@ -1208,7 +1120,7 @@ def update_relation_claim_status(
                     relation_type=existing.relation_type,
                     target_id=target_entity_id,
                     confidence=float(existing.confidence),
-                    evidence_summary=_claim_resolution_evidence_summary(existing),
+                    evidence_summary=claim_resolution_evidence_summary(existing),
                     evidence_sentence=evidence_sentence,
                     evidence_sentence_source=evidence_sentence_source,
                     evidence_sentence_confidence=evidence_sentence_confidence,
@@ -1245,6 +1157,10 @@ def update_relation_claim_status(
                 ),
                 agent_run_id=existing.agent_run_id,
                 metadata={"origin": "claim_resolution"},
+            )
+            relation_projection_invariant_service.assert_no_orphan_relations_for_write(
+                relation_id=str(promoted_relation.id),
+                research_space_id=str(space_id),
             )
 
         updated = relation_claim_service.update_claim_status(

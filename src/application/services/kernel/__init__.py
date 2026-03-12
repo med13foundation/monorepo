@@ -22,6 +22,10 @@ from .kernel_entity_similarity_service import (
 )
 from .kernel_observation_service import KernelObservationService
 from .kernel_relation_claim_service import KernelRelationClaimService
+from .kernel_relation_projection_invariant_service import (
+    KernelRelationProjectionInvariantService,
+    OrphanCanonicalRelationError,
+)
 from .kernel_relation_projection_source_service import (
     KernelRelationProjectionSourceService,
 )
@@ -43,6 +47,8 @@ __all__ = [
     "EntityEmbeddingRefreshSummary",
     "KernelObservationService",
     "KernelRelationClaimService",
+    "KernelRelationProjectionInvariantService",
+    "OrphanCanonicalRelationError",
     "KernelRelationProjectionSourceService",
     "KernelRelationSuggestionService",
     "KernelRelationService",

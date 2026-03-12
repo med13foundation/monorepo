@@ -127,6 +127,16 @@ class StubRelationProjectionSourceRepository:
         return SimpleNamespace(id=str(uuid4()))
 
 
+@dataclass
+class FailingRelationProjectionSourceRepository:
+    calls: list[dict[str, object]]
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        msg = "projection lineage write failed"
+        raise ValueError(msg)
+
+
 @dataclass(frozen=True)
 class _StubNeighbourhoodRelation:
     source_id: str
@@ -236,15 +246,42 @@ def _build_empty_contract() -> GraphConnectionContract:
     )
 
 
+def _build_claim_backed_projection_dependencies(
+    contract: GraphConnectionContract,
+) -> dict[str, object]:
+    entity_map: dict[str, object] = {}
+    for relation in contract.proposed_relations:
+        entity_map[relation.source_id] = SimpleNamespace(
+            id=relation.source_id,
+            entity_type="GENE",
+            display_label="Source Entity",
+        )
+        entity_map[relation.target_id] = SimpleNamespace(
+            id=relation.target_id,
+            entity_type="DISEASE",
+            display_label="Target Entity",
+        )
+    return {
+        "entity_repository": StubEntityRepository(entities=entity_map),
+        "relation_claim_repository": StubRelationClaimRepository(calls=[]),
+        "claim_participant_repository": StubClaimParticipantRepository(calls=[]),
+        "relation_projection_source_repository": (
+            StubRelationProjectionSourceRepository(calls=[])
+        ),
+    }
+
+
 @pytest.mark.asyncio
 async def test_discover_connections_for_seed_writes_relations() -> None:
     contract = _build_contract()
     relation_repository = StubRelationRepository()
+    projection_dependencies = _build_claim_backed_projection_dependencies(contract)
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
+            **projection_dependencies,
         ),
     )
 
@@ -319,6 +356,58 @@ async def test_discover_connections_for_seed_records_claim_backed_projection() -
 
 
 @pytest.mark.asyncio
+async def test_discover_connections_for_seed_rolls_back_on_projection_failure() -> None:
+    contract = _build_contract()
+    proposed_relation = contract.proposed_relations[0]
+    relation_repository = StubRelationRepository()
+    relation_claim_repository = StubRelationClaimRepository(calls=[])
+    claim_participant_repository = StubClaimParticipantRepository(calls=[])
+    projection_repository = FailingRelationProjectionSourceRepository(calls=[])
+    entity_repository = StubEntityRepository(
+        entities={
+            proposed_relation.source_id: SimpleNamespace(
+                id=proposed_relation.source_id,
+                entity_type="GENE",
+                display_label="MED13",
+            ),
+            proposed_relation.target_id: SimpleNamespace(
+                id=proposed_relation.target_id,
+                entity_type="DISEASE",
+                display_label="Cardiomyopathy",
+            ),
+        },
+    )
+    rollback_calls: list[str] = []
+    service = GraphConnectionService(
+        dependencies=GraphConnectionServiceDependencies(
+            graph_connection_agent=StubGraphConnectionAgent(contract),
+            relation_repository=relation_repository,
+            entity_repository=entity_repository,
+            relation_claim_repository=relation_claim_repository,
+            claim_participant_repository=claim_participant_repository,
+            relation_projection_source_repository=projection_repository,
+            governance_service=_build_governance_service(),
+            rollback_on_error=lambda: rollback_calls.append("rollback"),
+        ),
+    )
+
+    outcome = await service.discover_connections_for_seed(
+        research_space_id=contract.research_space_id,
+        seed_entity_id=contract.seed_entity_id,
+        source_type="clinvar",
+        research_space_settings={},
+        shadow_mode=False,
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.wrote_to_graph is False
+    assert outcome.persisted_relations_count == 0
+    assert outcome.reason == "relation_persistence_failed"
+    assert outcome.errors == ("relation_payload_invalid",)
+    assert rollback_calls == ["rollback"]
+
+
+@pytest.mark.asyncio
 async def test_discover_connections_for_seed_maps_integrity_errors_to_codes() -> None:
     contract = _build_contract()
     relation_repository = FailingRelationRepository()
@@ -376,11 +465,13 @@ async def test_discover_connections_for_seed_requires_review_on_low_confidence()
 ):
     contract = _build_contract(confidence_score=0.4)
     relation_repository = StubRelationRepository()
+    projection_dependencies = _build_claim_backed_projection_dependencies(contract)
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
+            **projection_dependencies,
         ),
     )
 
@@ -403,11 +494,13 @@ async def test_discover_connections_for_seed_requires_review_on_low_confidence()
 async def test_discover_connections_for_seed_uses_relation_type_thresholds() -> None:
     contract = _build_contract(confidence_score=0.86, relation_type="CAUSES")
     relation_repository = StubRelationRepository()
+    projection_dependencies = _build_claim_backed_projection_dependencies(contract)
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
+            **projection_dependencies,
         ),
     )
 
@@ -433,6 +526,7 @@ async def test_discover_connections_for_seed_uses_relation_type_thresholds() -> 
 async def test_discover_connections_for_seed_enqueues_review_item() -> None:
     contract = _build_contract(confidence_score=0.86, relation_type="CAUSES")
     relation_repository = StubRelationRepository()
+    projection_dependencies = _build_claim_backed_projection_dependencies(contract)
     queued_items: list[tuple[str, str, str | None, str]] = []
 
     def submit_review_item(
@@ -449,6 +543,7 @@ async def test_discover_connections_for_seed_enqueues_review_item() -> None:
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             review_queue_submitter=submit_review_item,
+            **projection_dependencies,
         ),
     )
 
@@ -478,6 +573,28 @@ async def test_discover_connections_for_seed_enqueues_review_item() -> None:
 async def test_discover_connections_for_seed_promotes_rejected_candidates() -> None:
     contract = _build_contract_with_rejected_candidate()
     relation_repository = StubRelationRepository()
+    rejected_candidate = contract.rejected_candidates[0]
+    projection_dependencies = {
+        "entity_repository": StubEntityRepository(
+            entities={
+                rejected_candidate.source_id: SimpleNamespace(
+                    id=rejected_candidate.source_id,
+                    entity_type="GENE",
+                    display_label="Source Entity",
+                ),
+                rejected_candidate.target_id: SimpleNamespace(
+                    id=rejected_candidate.target_id,
+                    entity_type="DISEASE",
+                    display_label="Target Entity",
+                ),
+            },
+        ),
+        "relation_claim_repository": StubRelationClaimRepository(calls=[]),
+        "claim_participant_repository": StubClaimParticipantRepository(calls=[]),
+        "relation_projection_source_repository": (
+            StubRelationProjectionSourceRepository(calls=[])
+        ),
+    }
     queued_items: list[tuple[str, str, str | None, str]] = []
 
     def submit_review_item(
@@ -494,6 +611,7 @@ async def test_discover_connections_for_seed_promotes_rejected_candidates() -> N
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             review_queue_submitter=submit_review_item,
+            **projection_dependencies,
         ),
     )
 
@@ -535,6 +653,36 @@ async def test_discover_connections_for_seed_uses_neighbourhood_fallback() -> No
             provenance_id=str(uuid4()),
         ),
     ]
+    fallback_contract = GraphConnectionContract.model_validate(
+        contract.model_copy(
+            update={
+                "proposed_relations": [
+                    ProposedRelation(
+                        source_id=relation_repository.neighbourhood[0].source_id,
+                        relation_type=relation_repository.neighbourhood[
+                            0
+                        ].relation_type,
+                        target_id=relation_repository.neighbourhood[0].target_id,
+                        confidence=relation_repository.neighbourhood[
+                            0
+                        ].aggregate_confidence,
+                        evidence_summary="Neighbourhood fallback relation",
+                        evidence_tier="COMPUTATIONAL",
+                        supporting_provenance_ids=(
+                            [relation_repository.neighbourhood[0].provenance_id]
+                            if relation_repository.neighbourhood[0].provenance_id
+                            else []
+                        ),
+                        supporting_document_count=1,
+                        reasoning="Neighbourhood fallback",
+                    ),
+                ],
+            },
+        ),
+    )
+    projection_dependencies = _build_claim_backed_projection_dependencies(
+        fallback_contract,
+    )
     queued_items: list[tuple[str, str, str | None, str]] = []
 
     def submit_review_item(
@@ -551,6 +699,7 @@ async def test_discover_connections_for_seed_uses_neighbourhood_fallback() -> No
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             review_queue_submitter=submit_review_item,
+            **projection_dependencies,
         ),
     )
 

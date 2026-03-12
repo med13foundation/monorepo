@@ -5,37 +5,21 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import Depends, HTTPException
-from sqlalchemy.orm import Session
 
 from src.application.services.claim_first_metrics import (
     emit_graph_filter_preset_usage,
 )
-from src.application.services.kernel import (
-    KernelClaimEvidenceService,
-    KernelClaimParticipantService,
-    KernelEntityService,
-    KernelRelationClaimService,
-    KernelRelationService,
-)
-from src.application.services.membership_management_service import (
-    MembershipManagementService,
-)
-from src.database.session import get_session
 from src.domain.entities.user import User
 from src.routes.auth import get_current_active_user
 from src.routes.research_spaces._kernel_graph_document_builder import (
     build_kernel_graph_document,
 )
-from src.routes.research_spaces.dependencies import (
-    get_membership_service,
-    verify_space_membership,
+from src.routes.research_spaces._kernel_graph_document_dependencies import (
+    KernelGraphDocumentDependencies,
+    get_kernel_graph_document_dependencies,
 )
-from src.routes.research_spaces.kernel_dependencies import (
-    get_kernel_claim_evidence_service,
-    get_kernel_claim_participant_service,
-    get_kernel_entity_service,
-    get_kernel_relation_claim_service,
-    get_kernel_relation_service,
+from src.routes.research_spaces.dependencies import (
+    verify_space_membership,
 )
 from src.routes.research_spaces.kernel_schemas import (
     KernelGraphDocumentRequest,
@@ -58,26 +42,16 @@ def get_kernel_graph_document(
     space_id: UUID,
     request: KernelGraphDocumentRequest,
     current_user: User = Depends(get_current_active_user),
-    membership_service: MembershipManagementService = Depends(get_membership_service),
-    entity_service: KernelEntityService = Depends(get_kernel_entity_service),
-    relation_service: KernelRelationService = Depends(get_kernel_relation_service),
-    relation_claim_service: KernelRelationClaimService = Depends(
-        get_kernel_relation_claim_service,
+    dependencies: KernelGraphDocumentDependencies = Depends(
+        get_kernel_graph_document_dependencies,
     ),
-    claim_participant_service: KernelClaimParticipantService = Depends(
-        get_kernel_claim_participant_service,
-    ),
-    claim_evidence_service: KernelClaimEvidenceService = Depends(
-        get_kernel_claim_evidence_service,
-    ),
-    session: Session = Depends(get_session),
 ) -> KernelGraphDocumentResponse:
     """Return a single graph document that already contains claim/evidence overlays."""
     verify_space_membership(
         space_id,
         current_user.id,
-        membership_service,
-        session,
+        dependencies.membership_service,
+        dependencies.session,
         current_user.role,
     )
     emit_graph_filter_preset_usage(
@@ -100,12 +74,12 @@ def get_kernel_graph_document(
         return build_kernel_graph_document(
             space_id=str(space_id),
             request=request,
-            entity_service=entity_service,
-            relation_service=relation_service,
-            relation_claim_service=relation_claim_service,
-            claim_participant_service=claim_participant_service,
-            claim_evidence_service=claim_evidence_service,
-            session=session,
+            entity_service=dependencies.entity_service,
+            relation_service=dependencies.relation_service,
+            relation_claim_service=dependencies.relation_claim_service,
+            claim_participant_service=dependencies.claim_participant_service,
+            claim_evidence_service=dependencies.claim_evidence_service,
+            session=dependencies.session,
         )
     except ValueError as exc:
         raise HTTPException(

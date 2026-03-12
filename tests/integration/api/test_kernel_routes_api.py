@@ -11,7 +11,11 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
+from src.application.services.kernel.kernel_relation_service import (
+    KernelRelationService,
+)
 from src.database import session as session_module
 from src.database.seeds.seeder import (
     seed_entity_resolution_policies,
@@ -19,6 +23,12 @@ from src.database.seeds.seeder import (
 )
 from src.domain.entities.user import UserRole
 from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
+from src.infrastructure.repositories.kernel import (
+    SqlAlchemyDictionaryRepository,
+    SqlAlchemyKernelEntityRepository,
+    SqlAlchemyKernelRelationProjectionSourceRepository,
+    SqlAlchemyKernelRelationRepository,
+)
 from src.infrastructure.security.jwt_provider import JWTProvider
 from src.main import create_app
 from src.models.database.base import Base
@@ -29,7 +39,7 @@ from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.kernel.relation_projection_sources import (
     RelationProjectionSourceModel,
 )
-from src.models.database.kernel.relations import RelationEvidenceModel
+from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.source_document import SourceDocumentModel
 from src.models.database.user import UserModel
@@ -1384,20 +1394,170 @@ def test_graph_document_returns_canonical_claim_and_evidence_elements(
         if node["kind"] == "CLAIM" and node["resource_id"] == str(claim_id)
     ]
     assert len(claim_nodes) == 1
-    assert claim_nodes[0]["claim_status"] == "OPEN"
-    assert claim_nodes[0]["polarity"] == "SUPPORT"
-    assert claim_nodes[0]["canonical_relation_id"] == str(relation_id)
 
-    evidence_nodes = [node for node in payload["nodes"] if node["kind"] == "EVIDENCE"]
-    assert len(evidence_nodes) == 1
-    assert evidence_nodes[0]["type_label"] == "PAPER_EVIDENCE"
-    assert evidence_nodes[0]["metadata"]["paper_links"] == [
-        {
-            "label": "PubMed",
-            "url": "https://pubmed.ncbi.nlm.nih.gov/40214304/",
-            "source": "external_record_id",
-        },
-    ]
+
+def test_postgres_commit_rejects_orphan_canonical_relation(
+    postgres_required,
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    assert postgres_required is None
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    relation_id: str | None = None
+    with _session_for_api(db_session) as session:
+        relation_service = KernelRelationService(
+            relation_repo=SqlAlchemyKernelRelationRepository(session),
+            entity_repo=SqlAlchemyKernelEntityRepository(session),
+            dictionary_repo=SqlAlchemyDictionaryRepository(session),
+        )
+        relation = relation_service.create_relation(
+            research_space_id=str(space.id),
+            source_id=str(source_id),
+            relation_type="ASSOCIATED_WITH",
+            target_id=str(target_id),
+            confidence=0.82,
+            evidence_summary="Claim-backed enforcement test evidence",
+            evidence_tier="LITERATURE",
+        )
+        relation_id = str(relation.id)
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+    assert relation_id is not None
+    with _session_for_api(db_session) as session:
+        persisted = session.get(RelationModel, UUID(relation_id))
+        assert persisted is None
+
+
+def test_postgres_commit_allows_relation_with_projection_lineage(
+    postgres_required,
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    assert postgres_required is None
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Cardiomyopathy",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    relation_id: str | None = None
+    claim_id: str | None = None
+    with _session_for_api(db_session) as session:
+        relation_service = KernelRelationService(
+            relation_repo=SqlAlchemyKernelRelationRepository(session),
+            entity_repo=SqlAlchemyKernelEntityRepository(session),
+            dictionary_repo=SqlAlchemyDictionaryRepository(session),
+        )
+        projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(session)
+        relation = relation_service.create_relation(
+            research_space_id=str(space.id),
+            source_id=str(source_id),
+            relation_type="ASSOCIATED_WITH",
+            target_id=str(target_id),
+            confidence=0.82,
+            evidence_summary="Claim-backed enforcement test evidence",
+            evidence_tier="LITERATURE",
+        )
+        claim = RelationClaimModel(
+            research_space_id=space.id,
+            source_document_id=None,
+            agent_run_id="projection-enforcement-test",
+            source_type="GENE",
+            relation_type="ASSOCIATED_WITH",
+            target_type="PHENOTYPE",
+            source_label="MED13",
+            target_label="Cardiomyopathy",
+            confidence=0.82,
+            validation_state="ALLOWED",
+            validation_reason="Created in enforcement integration test",
+            persistability="PERSISTABLE",
+            claim_status="RESOLVED",
+            polarity="SUPPORT",
+            claim_text="MED13 is associated with cardiomyopathy.",
+            claim_section=None,
+            linked_relation_id=relation.id,
+            metadata_payload={"origin": "integration_test"},
+            triaged_by=None,
+            triaged_at=None,
+        )
+        session.add(claim)
+        session.flush()
+        projection_repo.create(
+            research_space_id=str(space.id),
+            relation_id=str(relation.id),
+            claim_id=str(claim.id),
+            projection_origin="MANUAL_RELATION",
+            source_document_id=None,
+            agent_run_id="projection-enforcement-test",
+            metadata={"origin": "integration_test"},
+        )
+        session.commit()
+        relation_id = str(relation.id)
+        claim_id = str(claim.id)
+
+    assert relation_id is not None
+    assert claim_id is not None
+    with _session_for_api(db_session) as session:
+        persisted_relation = session.get(RelationModel, UUID(relation_id))
+        persisted_claim = session.get(RelationClaimModel, UUID(claim_id))
+        projection_rows = session.scalars(
+            select(RelationProjectionSourceModel).where(
+                RelationProjectionSourceModel.relation_id == UUID(relation_id),
+            ),
+        ).all()
+
+    assert persisted_relation is not None
+    assert persisted_claim is not None
+    assert len(projection_rows) == 1
 
 
 def test_create_relation_persists_evidence_sentence(

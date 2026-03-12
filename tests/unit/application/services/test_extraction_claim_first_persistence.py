@@ -57,6 +57,7 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelClaimParticipantRepository,
     SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelRelationClaimRepository,
+    SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
 )
 from src.models.database.kernel.claim_evidence import ClaimEvidenceModel
@@ -175,6 +176,15 @@ class _RaisingEvidenceSentenceHarness(EvidenceSentenceHarnessPort):
     ) -> EvidenceSentenceGenerationResult:
         del request, model_id
         raise self._error
+
+
+class _FailingRelationProjectionSourceRepository:
+    """Projection repository stub that fails after canonical relation creation."""
+
+    def create(self, **kwargs: object) -> object:
+        del kwargs
+        msg = "projection lineage write failed"
+        raise ValueError(msg)
 
 
 class _NoopIngestionPipeline:
@@ -412,6 +422,9 @@ def _build_optional_missing_span_harness_fixture(
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            relation_projection_source_repository=(
+                SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
+            ),
             claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
@@ -646,6 +659,9 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            relation_projection_source_repository=(
+                SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
+            ),
             claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
@@ -926,6 +942,9 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            relation_projection_source_repository=(
+                SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
+            ),
             claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
@@ -1169,6 +1188,51 @@ async def test_optional_missing_span_persists_fail_open_when_harness_errors(
 
 @pytest.mark.database
 @pytest.mark.asyncio
+async def test_projection_lineage_failure_rolls_back_canonical_relation(
+    db_session: Session,
+) -> None:
+    service, relation_repo, claim_repo, source, space = (
+        _build_optional_missing_span_harness_fixture(
+            db_session=db_session,
+            harness=None,
+        )
+    )
+    service._relation_projection_sources = _FailingRelationProjectionSourceRepository()
+    service._rollback_on_error = db_session.rollback
+
+    document = _build_document(
+        source_id=str(source.id),
+        research_space_id=str(space.id),
+    )
+    recognition_contract = _build_recognition_contract(str(document.id))
+
+    outcome = await service.extract_from_entity_recognition(
+        document=document,
+        recognition_contract=recognition_contract,
+        research_space_settings={"relation_governance_mode": "HUMAN_IN_LOOP"},
+    )
+    db_session.commit()
+
+    persisted_relations = relation_repo.find_by_research_space(
+        str(space.id),
+        limit=10,
+        offset=0,
+    )
+    restored_claims = claim_repo.find_by_research_space(
+        str(space.id),
+        limit=10,
+        offset=0,
+    )
+
+    assert outcome.persisted_relations_count == 0
+    assert outcome.errors
+    assert any(error.startswith("relation_") for error in outcome.errors)
+    assert persisted_relations == []
+    assert len(restored_claims) == 1
+
+
+@pytest.mark.database
+@pytest.mark.asyncio
 async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0915
     db_session: Session,
 ) -> None:
@@ -1324,6 +1388,9 @@ async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0
             ingestion_pipeline=_NoopIngestionPipeline(),
             relation_repository=relation_repo,
             relation_claim_repository=claim_repo,
+            relation_projection_source_repository=(
+                SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
+            ),
             claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,

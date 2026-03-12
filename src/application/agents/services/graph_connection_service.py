@@ -67,6 +67,7 @@ class GraphConnectionServiceDependencies:
     governance_service: GovernanceService | None = None
     research_space_repository: ResearchSpaceRepository | None = None
     review_queue_submitter: Callable[[str, str, str | None, str], None] | None = None
+    rollback_on_error: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,7 @@ class GraphConnectionService:
         self._governance = dependencies.governance_service or GovernanceService()
         self._research_spaces = dependencies.research_space_repository
         self._review_queue_submitter = dependencies.review_queue_submitter
+        self._rollback_on_error = dependencies.rollback_on_error
 
     async def discover_connections_for_seed(  # noqa: PLR0913, C901, PLR0912, PLR0915
         self,
@@ -267,7 +269,6 @@ class GraphConnectionService:
                     ),
                     agent_run_id=run_id,
                 )
-                persisted_count += 1
                 relation_id = getattr(created_relation, "id", None)
                 if relation_id is not None:
                     self._record_claim_backed_projection(
@@ -281,6 +282,7 @@ class GraphConnectionService:
                         research_space_id=resolved_research_space_id,
                         fallback_requires_pending_review=fallback_requires_pending_review,
                     )
+                persisted_count += 1
                 logger.info(
                     "Graph relation persisted from connection discovery",
                     extra={
@@ -293,7 +295,8 @@ class GraphConnectionService:
                         "relation_target_id": relation.target_id,
                     },
                 )
-            except (TypeError, ValueError, IntegrityError) as exc:
+            except Exception as exc:  # noqa: BLE001
+                self._rollback_relation_write(context="graph_connection_persist")
                 persistence_errors.append(
                     self._map_relation_persistence_error_code(exc),
                 )
@@ -350,11 +353,16 @@ class GraphConnectionService:
             or self._claim_participants is None
             or self._relation_projection_sources is None
         ):
-            return
+            msg = (
+                "Graph connection persistence requires claim-backed projection "
+                "dependencies"
+            )
+            raise ValueError(msg)
         source_entity = self._entities.get_by_id(relation.source_id)
         target_entity = self._entities.get_by_id(relation.target_id)
         if source_entity is None or target_entity is None:
-            return
+            msg = "Graph connection relation endpoints must exist before projection"
+            raise ValueError(msg)
         claim = self._relation_claims.create(
             research_space_id=research_space_id,
             source_document_id=None,
@@ -409,6 +417,19 @@ class GraphConnectionService:
             agent_run_id=run_id,
             metadata={"origin": "graph_connection"},
         )
+
+    def _rollback_relation_write(self, *, context: str) -> None:
+        rollback = self._rollback_on_error
+        if rollback is None:
+            return
+        try:
+            rollback()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Graph connection rollback failed (context=%s): %s",
+                context,
+                exc,
+            )
 
     async def close(self) -> None:
         """Release resources held by the underlying graph-connection adapter."""

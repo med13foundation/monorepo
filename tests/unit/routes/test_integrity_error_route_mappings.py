@@ -16,6 +16,7 @@ from src.routes.research_spaces.kernel_dependencies import (
     get_kernel_claim_participant_service,
     get_kernel_entity_service,
     get_kernel_relation_claim_service,
+    get_kernel_relation_projection_invariant_service,
     get_kernel_relation_projection_source_service,
     get_kernel_relation_service,
 )
@@ -78,6 +79,17 @@ class _ClaimParticipantServiceStub:
 class _RelationProjectionSourceServiceStub:
     def create_projection_source(self, *_args, **_kwargs) -> object:
         return object()
+
+
+class _FailingRelationProjectionSourceServiceStub:
+    def create_projection_source(self, *_args, **_kwargs) -> object:
+        msg = "projection lineage write failed"
+        raise RuntimeError(msg)
+
+
+class _RelationProjectionInvariantServiceStub:
+    def assert_no_orphan_relations_for_write(self, *_args, **_kwargs) -> None:
+        return None
 
 
 def _admin_user() -> User:
@@ -149,6 +161,7 @@ def test_create_relation_maps_integrity_error_to_conflict() -> None:
     claim_service = _RelationClaimServiceStub()
     participant_service = _ClaimParticipantServiceStub()
     projection_service = _RelationProjectionSourceServiceStub()
+    invariant_service = _RelationProjectionInvariantServiceStub()
     session = _SessionStub(
         commit_error=IntegrityError(
             "INSERT INTO relations",
@@ -165,6 +178,9 @@ def test_create_relation_maps_integrity_error_to_conflict() -> None:
     app.dependency_overrides[get_kernel_relation_claim_service] = lambda: claim_service
     app.dependency_overrides[get_kernel_claim_participant_service] = (
         lambda: participant_service
+    )
+    app.dependency_overrides[get_kernel_relation_projection_invariant_service] = (
+        lambda: invariant_service
     )
     app.dependency_overrides[get_kernel_relation_projection_source_service] = (
         lambda: projection_service
@@ -187,4 +203,49 @@ def test_create_relation_maps_integrity_error_to_conflict() -> None:
 
     assert response.status_code == 409
     assert "Relation write conflicts" in response.json()["detail"]
+    assert session.rollback_called is True
+
+
+def test_create_relation_projection_failure_rolls_back_and_returns_500() -> None:
+    relation_service = _RelationServiceStub()
+    entity_service = _EntityServiceStub()
+    claim_service = _RelationClaimServiceStub()
+    participant_service = _ClaimParticipantServiceStub()
+    projection_service = _FailingRelationProjectionSourceServiceStub()
+    invariant_service = _RelationProjectionInvariantServiceStub()
+    session = _SessionStub()
+    app = FastAPI()
+    app.include_router(research_spaces_router)
+    app.dependency_overrides[get_current_active_user] = _admin_user
+    app.dependency_overrides[get_membership_service] = lambda: object()
+    app.dependency_overrides[get_kernel_relation_service] = lambda: relation_service
+    app.dependency_overrides[get_kernel_entity_service] = lambda: entity_service
+    app.dependency_overrides[get_kernel_relation_claim_service] = lambda: claim_service
+    app.dependency_overrides[get_kernel_claim_participant_service] = (
+        lambda: participant_service
+    )
+    app.dependency_overrides[get_kernel_relation_projection_invariant_service] = (
+        lambda: invariant_service
+    )
+    app.dependency_overrides[get_kernel_relation_projection_source_service] = (
+        lambda: projection_service
+    )
+    app.dependency_overrides[get_session] = lambda: session
+    client = TestClient(app)
+
+    response = client.post(
+        f"/research-spaces/{uuid4()}/relations",
+        json={
+            "source_id": str(uuid4()),
+            "relation_type": "ASSOCIATED_WITH",
+            "target_id": str(uuid4()),
+            "confidence": 0.9,
+            "evidence_summary": "evidence",
+            "evidence_tier": "LITERATURE",
+            "provenance_id": None,
+        },
+    )
+
+    assert response.status_code == 500
+    assert "Failed to create relation" in response.json()["detail"]
     assert session.rollback_called is True

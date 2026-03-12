@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EXPECTED_HEAD_REVISION = "024_claim_first_orchestration"
-CURRENT_HEAD_REVISION = "039_relation_projection_lineage"
+CURRENT_HEAD_REVISION = "040_relation_projection_enforce"
 PRE_VERSIONING_REVISION = "013_dictionary_embeddings"
 PRE_TRANSFORM_UPGRADE_REVISION = "014_dict_version_validity"
 PRE_RLS_REVISION = "015_dict_transforms_upgrade"
@@ -1172,8 +1172,55 @@ def test_039_relation_projection_lineage_schema_and_downgrade(tmp_path: Path) ->
     downgraded_table_names = set(downgraded_inspector.get_table_names())
     assert "relation_projection_sources" not in downgraded_table_names
 
-    downgraded_relations_unique_constraints = {
-        constraint["name"]
-        for constraint in downgraded_inspector.get_unique_constraints("relations")
-    }
-    assert "uq_relations_id_space" not in downgraded_relations_unique_constraints
+
+def test_040_relation_projection_enforcement_upgrade_and_downgrade(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'relation_projection_enforcement.db'}"
+    engine = create_engine(database_url, future=True)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)",
+            ),
+        )
+        connection.execute(
+            text(
+                "INSERT INTO alembic_version (version_num) VALUES (:version_num)",
+            ),
+            {"version_num": "039_relation_projection_lineage"},
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relations ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "research_space_id VARCHAR(36) NOT NULL, "
+                "created_at DATETIME"
+                ")",
+            ),
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE relation_projection_sources ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "research_space_id VARCHAR(36) NOT NULL, "
+                "relation_id VARCHAR(36) NOT NULL"
+                ")",
+            ),
+        )
+
+    _run_alembic_upgrade(
+        database_url=database_url,
+        revision="040_relation_projection_enforce",
+    )
+    versions = inspect(engine).get_table_names()
+    assert "relations" in versions
+    assert "relation_projection_sources" in versions
+
+    _run_alembic_downgrade(
+        database_url=database_url,
+        revision="039_relation_projection_lineage",
+    )
+    downgraded_versions = inspect(engine).get_table_names()
+    assert "relations" in downgraded_versions
+    assert "relation_projection_sources" in downgraded_versions

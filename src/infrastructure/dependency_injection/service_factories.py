@@ -379,6 +379,7 @@ class ApplicationServiceFactoryMixin(
                 governance_service=GovernanceService(),
                 research_space_repository=SqlAlchemyResearchSpaceRepository(session),
                 review_queue_submitter=self._build_review_queue_submitter(session),
+                rollback_on_error=session.rollback,
             ),
         )
 

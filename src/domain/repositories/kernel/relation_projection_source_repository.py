@@ -8,6 +8,7 @@ from src.domain.entities.kernel.relation_projection_sources import (  # noqa: TC
     KernelRelationProjectionSource,
     RelationProjectionOrigin,
 )
+from src.domain.entities.kernel.relations import KernelRelation  # noqa: TC001
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
 
@@ -47,6 +48,33 @@ class KernelRelationProjectionSourceRepository(ABC):
         relation_ids: list[str],
     ) -> dict[str, int]:
         """Count projection-lineage rows per relation for one space."""
+
+    @abstractmethod
+    def has_projection_for_relation(
+        self,
+        *,
+        research_space_id: str,
+        relation_id: str,
+    ) -> bool:
+        """Return whether one canonical relation has at least one lineage row."""
+
+    @abstractmethod
+    def list_orphan_relations(
+        self,
+        *,
+        research_space_id: str | None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[KernelRelation]:
+        """List canonical relations that have no projection-lineage row."""
+
+    @abstractmethod
+    def count_orphan_relations(
+        self,
+        *,
+        research_space_id: str | None,
+    ) -> int:
+        """Count canonical relations that have no projection-lineage row."""
 
 
 __all__ = [

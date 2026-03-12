@@ -21,6 +21,10 @@ from src.models.database.kernel.dictionary import (
     RelationConstraintModel,
 )
 from src.models.database.kernel.entities import EntityModel
+from src.models.database.kernel.relation_claims import RelationClaimModel
+from src.models.database.kernel.relation_projection_sources import (
+    RelationProjectionSourceModel,
+)
 from src.models.database.kernel.relations import RelationModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
@@ -256,15 +260,54 @@ def _insert_relation_and_commit(
     source_id: UUID,
     relation_type: str,
     target_id: UUID,
+    source_type: str = "GENE",
+    target_type: str = "PHENOTYPE",
+    claim_backed: bool = False,
 ) -> None:
-    session.add(
-        RelationModel(
-            research_space_id=research_space_id,
-            source_id=source_id,
-            relation_type=relation_type,
-            target_id=target_id,
-        ),
+    relation = RelationModel(
+        research_space_id=research_space_id,
+        source_id=source_id,
+        relation_type=relation_type,
+        target_id=target_id,
     )
+    session.add(relation)
+    session.flush()
+    if claim_backed:
+        claim = RelationClaimModel(
+            research_space_id=research_space_id,
+            source_document_id=None,
+            agent_run_id="hard-guarantee-test",
+            source_type=source_type,
+            relation_type=relation_type.strip().upper(),
+            target_type=target_type,
+            source_label=None,
+            target_label=None,
+            confidence=0.5,
+            validation_state="ALLOWED",
+            validation_reason="Hard guarantee integration test",
+            persistability="PERSISTABLE",
+            claim_status="RESOLVED",
+            polarity="SUPPORT",
+            claim_text="Hard guarantee integration test projection",
+            claim_section=None,
+            linked_relation_id=relation.id,
+            metadata_payload={"origin": "hard_guarantee_test"},
+            triaged_by=None,
+            triaged_at=None,
+        )
+        session.add(claim)
+        session.flush()
+        session.add(
+            RelationProjectionSourceModel(
+                research_space_id=research_space_id,
+                relation_id=relation.id,
+                claim_id=claim.id,
+                projection_origin="MANUAL_RELATION",
+                source_document_id=None,
+                agent_run_id="hard-guarantee-test",
+                metadata_payload={"origin": "hard_guarantee_test"},
+            ),
+        )
     session.commit()
 
 
@@ -345,6 +388,7 @@ def test_invalid_and_revoked_relation_type_rejected() -> None:
                 source_id=source_entity.id,
                 relation_type="CAUSES",
                 target_id=target_entity.id,
+                claim_backed=True,
             )
         session.rollback()
         assert "active dictionary_relation_type" in str(exc_info.value).lower()
@@ -398,6 +442,42 @@ def test_alias_relation_type_is_canonicalized_on_write() -> None:
             target_id=target_entity.id,
         )
         session.add(relation)
+        session.flush()
+        claim = RelationClaimModel(
+            research_space_id=space.id,
+            source_document_id=None,
+            agent_run_id="hard-alias-test",
+            source_type="GENE",
+            relation_type="CAUSES",
+            target_type="PHENOTYPE",
+            source_label="MED13",
+            target_label="Cardiomyopathy",
+            confidence=0.5,
+            validation_state="ALLOWED",
+            validation_reason="Alias hard guarantee integration test",
+            persistability="PERSISTABLE",
+            claim_status="RESOLVED",
+            polarity="SUPPORT",
+            claim_text="MED13 drives cardiomyopathy.",
+            claim_section=None,
+            linked_relation_id=relation.id,
+            metadata_payload={"origin": "hard_guarantee_test"},
+            triaged_by=None,
+            triaged_at=None,
+        )
+        session.add(claim)
+        session.flush()
+        session.add(
+            RelationProjectionSourceModel(
+                research_space_id=space.id,
+                relation_id=relation.id,
+                claim_id=claim.id,
+                projection_origin="MANUAL_RELATION",
+                source_document_id=None,
+                agent_run_id="hard-alias-test",
+                metadata_payload={"origin": "hard_guarantee_test"},
+            ),
+        )
         session.commit()
         session.refresh(relation)
 
@@ -443,6 +523,7 @@ def test_disallowed_triple_is_rejected() -> None:
                 source_id=source_entity.id,
                 relation_type="CAUSES",
                 target_id=target_entity.id,
+                claim_backed=True,
             )
         session.rollback()
         assert (
@@ -538,6 +619,7 @@ def test_requires_evidence_constraint_is_enforced_at_commit() -> None:
                 source_id=source_entity.id,
                 relation_type="CAUSES",
                 target_id=target_entity.id,
+                claim_backed=True,
             )
         session.rollback()
         assert (

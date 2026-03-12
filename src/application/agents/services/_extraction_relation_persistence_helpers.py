@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -126,6 +126,11 @@ def _normalize_claim_evidence_sentence_confidence(
     if confidence == "high":
         return "high"
     return None
+
+
+def _raise_missing_projection_lineage_support() -> NoReturn:
+    msg = "Claim-backed extraction persistence requires projection lineage support"
+    raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -1062,19 +1067,21 @@ class _ExtractionRelationPersistenceHelpers(
                 agent_run_id=run_id,
             )
             if claim_id is not None and self._relation_claims is not None:
-                if self._relation_projection_sources is not None:
-                    self._relation_projection_sources.create(
-                        research_space_id=research_space_id,
-                        relation_id=str(created_relation.id),
-                        claim_id=claim_id,
-                        projection_origin="EXTRACTION",
-                        source_document_id=str(document.id),
-                        agent_run_id=run_id,
-                        metadata={
-                            "candidate_signature": list(candidate_signature),
-                            "relation_governance_mode": relation_governance_mode,
-                        },
-                    )
+                projection_sources = self._relation_projection_sources
+                if projection_sources is None:
+                    _raise_missing_projection_lineage_support()
+                projection_sources.create(
+                    research_space_id=research_space_id,
+                    relation_id=str(created_relation.id),
+                    claim_id=claim_id,
+                    projection_origin="EXTRACTION",
+                    source_document_id=str(document.id),
+                    agent_run_id=run_id,
+                    metadata={
+                        "candidate_signature": list(candidate_signature),
+                        "relation_governance_mode": relation_governance_mode,
+                    },
+                )
                 with_context_errors = self._link_claim_to_relation(
                     claim_id=claim_id,
                     relation_id=str(created_relation.id),
