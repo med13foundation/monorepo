@@ -17,6 +17,7 @@ from src.application.services.kernel import (
     KernelClaimRelationService,
     KernelEntityService,
     KernelEntitySimilarityService,
+    KernelGraphViewService,
     KernelObservationService,
     KernelRelationClaimService,
     KernelRelationProjectionInvariantService,
@@ -25,6 +26,9 @@ from src.application.services.kernel import (
     KernelRelationService,
     KernelRelationSuggestionService,
     ProvenanceService,
+)
+from src.application.services.kernel._kernel_graph_view_support import (
+    KernelGraphViewServiceDependencies,
 )
 from src.database.session import get_session
 from src.domain.ports import ConceptPort, DictionaryPort
@@ -55,6 +59,9 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
     SqlAlchemyProvenanceRepository,
+)
+from src.infrastructure.repositories.source_document_repository import (
+    SqlAlchemySourceDocumentRepository,
 )
 from src.infrastructure.security.phi_encryption import (
     build_phi_encryption_service_from_env,
@@ -267,6 +274,23 @@ def get_kernel_claim_evidence_service(
     return KernelClaimEvidenceService(claim_evidence_repo=claim_evidence_repo)
 
 
+def get_kernel_graph_view_service(
+    session: Session = Depends(get_session),
+) -> KernelGraphViewService:
+    """Kernel graph view service for domain views and mechanism chains."""
+    return KernelGraphViewService(
+        KernelGraphViewServiceDependencies(
+            entity_service=get_kernel_entity_service(session),
+            relation_service=get_kernel_relation_service(session),
+            relation_claim_service=get_kernel_relation_claim_service(session),
+            claim_participant_service=get_kernel_claim_participant_service(session),
+            claim_relation_service=get_kernel_claim_relation_service(session),
+            claim_evidence_service=get_kernel_claim_evidence_service(session),
+            source_document_repository=SqlAlchemySourceDocumentRepository(session),
+        ),
+    )
+
+
 def get_provenance_service(
     session: Session = Depends(get_session),
 ) -> ProvenanceService:
@@ -299,6 +323,7 @@ __all__ = [
     "get_kernel_claim_participant_backfill_service",
     "get_kernel_claim_relation_service",
     "get_kernel_claim_evidence_service",
+    "get_kernel_graph_view_service",
     "get_kernel_relation_projection_source_service",
     "get_kernel_relation_projection_invariant_service",
     "get_kernel_observation_service",

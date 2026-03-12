@@ -41,6 +41,16 @@ class KernelClaimRelationRepository(ABC):
         """Fetch one claim relation by ID."""
 
     @abstractmethod
+    def find_by_claim_ids(
+        self,
+        research_space_id: str,
+        claim_ids: list[str],
+        *,
+        limit: int | None = None,
+    ) -> list[KernelClaimRelation]:
+        """List claim relations touching any of the provided claim IDs."""
+
+    @abstractmethod
     def find_by_research_space(  # noqa: PLR0913
         self,
         research_space_id: str,

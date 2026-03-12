@@ -22,6 +22,7 @@ This directory is organized to reflect the current implementation path.
 16. `docs/extraction_agents/pubmed.md` - Paper extraction template (Postgres-first; TypeDB conversion optional).
 17. `docs/latest_plan_path/pubmed_to_graph_memory_orchestration.md` - PubMed→Dictionary→Graph "memory" flow with clear separation of concerns.
 18. `docs/source_workflow_monitor_and_pipeline_trace.md` - Detailed guide for the source workflow monitor, append-only pipeline trace ledger, startup visibility, stage timing breakdowns, cost, diagnostics, SSE, and API usage.
+19. `docs/graph/README.md` - Consolidated kernel graph docs index, with architecture, endpoints, use cases, and examples.
 
 ## Future/optional plans
 

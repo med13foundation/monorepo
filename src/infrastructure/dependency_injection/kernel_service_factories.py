@@ -21,6 +21,7 @@ from src.application.services.kernel import (
     KernelClaimRelationService,
     KernelEntityService,
     KernelEntitySimilarityService,
+    KernelGraphViewService,
     KernelObservationService,
     KernelRelationClaimService,
     KernelRelationProjectionInvariantService,
@@ -29,6 +30,9 @@ from src.application.services.kernel import (
     KernelRelationService,
     KernelRelationSuggestionService,
     ProvenanceService,
+)
+from src.application.services.kernel._kernel_graph_view_support import (
+    KernelGraphViewServiceDependencies,
 )
 from src.domain.agents.models import ModelCapability
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
@@ -54,6 +58,9 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
     SqlAlchemyProvenanceRepository,
+)
+from src.infrastructure.repositories.source_document_repository import (
+    SqlAlchemySourceDocumentRepository,
 )
 from src.infrastructure.security.phi_encryption import (
     build_phi_encryption_service_from_env,
@@ -227,6 +234,30 @@ class KernelServiceFactoryMixin:
     ) -> KernelClaimEvidenceService:
         claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(session)
         return KernelClaimEvidenceService(claim_evidence_repo=claim_evidence_repo)
+
+    def create_kernel_graph_view_service(
+        self,
+        session: Session,
+    ) -> KernelGraphViewService:
+        return KernelGraphViewService(
+            KernelGraphViewServiceDependencies(
+                entity_service=self.create_kernel_entity_service(session),
+                relation_service=self.create_kernel_relation_service(session),
+                relation_claim_service=self.create_kernel_relation_claim_service(
+                    session,
+                ),
+                claim_participant_service=self.create_kernel_claim_participant_service(
+                    session,
+                ),
+                claim_relation_service=self.create_kernel_claim_relation_service(
+                    session,
+                ),
+                claim_evidence_service=self.create_kernel_claim_evidence_service(
+                    session,
+                ),
+                source_document_repository=SqlAlchemySourceDocumentRepository(session),
+            ),
+        )
 
     def create_kernel_claim_participant_backfill_service(
         self,

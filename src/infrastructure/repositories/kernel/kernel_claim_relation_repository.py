@@ -94,6 +94,46 @@ class SqlAlchemyKernelClaimRelationRepository(KernelClaimRelationRepository):
             return None
         return KernelClaimRelation.model_validate(model)
 
+    def find_by_claim_ids(
+        self,
+        research_space_id: str,
+        claim_ids: list[str],
+        *,
+        limit: int | None = None,
+    ) -> list[KernelClaimRelation]:
+        normalized_ids: list[UUID] = []
+        seen: set[str] = set()
+        for claim_id in claim_ids:
+            claim_uuid = _try_as_uuid(claim_id)
+            if claim_uuid is None:
+                continue
+            normalized = str(claim_uuid)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            normalized_ids.append(claim_uuid)
+
+        if not normalized_ids:
+            return []
+
+        stmt = (
+            select(ClaimRelationModel)
+            .where(
+                ClaimRelationModel.research_space_id == _as_uuid(research_space_id),
+                or_(
+                    ClaimRelationModel.source_claim_id.in_(normalized_ids),
+                    ClaimRelationModel.target_claim_id.in_(normalized_ids),
+                ),
+            )
+            .order_by(ClaimRelationModel.created_at.desc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return [
+            KernelClaimRelation.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
+
     def find_by_research_space(  # noqa: PLR0913
         self,
         research_space_id: str,

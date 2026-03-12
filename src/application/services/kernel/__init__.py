@@ -28,6 +28,14 @@ from .kernel_entity_similarity_service import (
     EntityEmbeddingRefreshSummary,
     KernelEntitySimilarityService,
 )
+from .kernel_graph_view_service import (
+    GraphDomainViewType,
+    KernelClaimMechanismChain,
+    KernelGraphDomainView,
+    KernelGraphViewNotFoundError,
+    KernelGraphViewService,
+    KernelGraphViewValidationError,
+)
 from .kernel_observation_service import KernelObservationService
 from .kernel_relation_claim_service import KernelRelationClaimService
 from .kernel_relation_projection_invariant_service import (
@@ -64,6 +72,12 @@ __all__ = [
     "KernelEntityService",
     "KernelEntitySimilarityService",
     "EntityEmbeddingRefreshSummary",
+    "GraphDomainViewType",
+    "KernelClaimMechanismChain",
+    "KernelGraphDomainView",
+    "KernelGraphViewNotFoundError",
+    "KernelGraphViewService",
+    "KernelGraphViewValidationError",
     "KernelObservationService",
     "KernelRelationClaimService",
     "KernelRelationProjectionInvariantService",
