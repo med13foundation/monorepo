@@ -34,6 +34,8 @@ from src.domain.entities.kernel.reasoning_paths import (
 from src.domain.entities.kernel.relation_claims import KernelRelationClaim
 from src.domain.entities.kernel.relations import KernelRelation
 
+pytestmark = pytest.mark.graph
+
 if TYPE_CHECKING:
     from src.domain.agents.contexts.graph_connection_context import (
         GraphConnectionContext,
@@ -813,6 +815,111 @@ async def test_generate_hypotheses_dedupes_existing_fingerprint() -> None:
     assert result.created_count == 0
     assert result.deduped_count == 1
     assert claim_service.created_payloads == []
+
+
+@pytest.mark.asyncio
+async def test_generate_hypotheses_is_deterministic_for_identical_inputs() -> None:
+    reset_metric_counters_for_tests()
+    research_space_id = uuid4()
+    seed_id = uuid4()
+    source_id = uuid4()
+    target_id = uuid4()
+
+    source_entity = _build_entity(
+        entity_id=source_id,
+        research_space_id=research_space_id,
+        entity_type="GENE",
+        display_label="MED13",
+    )
+    target_entity = _build_entity(
+        entity_id=target_id,
+        research_space_id=research_space_id,
+        entity_type="PHENOTYPE",
+        display_label="Autism",
+    )
+    contract = _build_contract(
+        research_space_id=str(research_space_id),
+        seed_entity_id=str(seed_id),
+        source_entity_id=str(source_id),
+        target_entity_id=str(target_id),
+        confidence=0.91,
+        supporting_documents=5,
+    )
+
+    def _build_service() -> (
+        tuple[HypothesisGenerationService, StubRelationClaimService]
+    ):
+        claim_service = StubRelationClaimService(
+            discovery_seed_claims=[],
+            existing_hypothesis_claims=[],
+        )
+        service = HypothesisGenerationService(
+            dependencies=HypothesisGenerationServiceDependencies(
+                graph_connection_agent=StubGraphConnectionAgent(
+                    {str(seed_id): contract},
+                ),
+                relation_claim_service=claim_service,
+                claim_participant_service=StubClaimParticipantService(),
+                claim_evidence_service=StubClaimEvidenceService(),
+                entity_repository=StubEntityRepository(
+                    entities={
+                        str(source_id): source_entity,
+                        str(target_id): target_entity,
+                    },
+                    fallback_entities=[source_entity],
+                ),
+                relation_repository=StubRelationRepository(
+                    connected_relations=[],
+                    canonical_by_source={},
+                ),
+                dictionary_service=StubDictionaryService(allow_all=True),
+                reasoning_path_service=None,
+            ),
+        )
+        return service, claim_service
+
+    first_service, first_claim_service = _build_service()
+    second_service, second_claim_service = _build_service()
+
+    first_result = await first_service.generate_hypotheses(
+        research_space_id=str(research_space_id),
+        seed_entity_ids=[str(seed_id)],
+        source_type="pubmed",
+        relation_types=["ASSOCIATED_WITH"],
+        max_depth=2,
+        max_hypotheses=20,
+        model_id=None,
+    )
+    second_result = await second_service.generate_hypotheses(
+        research_space_id=str(research_space_id),
+        seed_entity_ids=[str(seed_id)],
+        source_type="pubmed",
+        relation_types=["ASSOCIATED_WITH"],
+        max_depth=2,
+        max_hypotheses=20,
+        model_id=None,
+    )
+
+    assert first_result.created_count == 1
+    assert second_result.created_count == 1
+    first_payload = first_claim_service.created_payloads[0]
+    second_payload = second_claim_service.created_payloads[0]
+    assert first_payload["source_type"] == second_payload["source_type"]
+    assert first_payload["target_type"] == second_payload["target_type"]
+    assert first_payload["relation_type"] == second_payload["relation_type"]
+    assert first_payload["confidence"] == second_payload["confidence"]
+    assert first_payload["claim_text"] == second_payload["claim_text"]
+    first_metadata = {
+        key: value
+        for key, value in first_payload["metadata"].items()
+        if key != "run_id"
+    }
+    second_metadata = {
+        key: value
+        for key, value in second_payload["metadata"].items()
+        if key != "run_id"
+    }
+    assert first_metadata == second_metadata
 
 
 @pytest.mark.asyncio

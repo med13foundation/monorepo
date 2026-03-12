@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+pytestmark = pytest.mark.graph
+
 _MIGRATION_025_REQUIRED_TRIGGERS: tuple[tuple[str, str], ...] = (
     ("entities", "trg_entities_normalize_validate"),
     ("relations", "trg_relations_normalize_validate"),

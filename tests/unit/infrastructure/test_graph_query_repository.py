@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+import pytest
+
 from src.domain.entities.kernel.relations import RelationEvidenceWrite
 from src.domain.entities.user import UserRole, UserStatus
 from src.infrastructure.repositories.kernel.graph_query_repository import (
@@ -31,6 +33,8 @@ from src.models.database.user import UserModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+pytestmark = pytest.mark.graph
 
 
 def _seed_dictionary_primitives(db_session: Session) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import delete
 
 from src.application.services.kernel.kernel_claim_participant_backfill_service import (
@@ -46,6 +47,8 @@ from src.models.database.kernel.relation_projection_sources import (
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
+
+pytestmark = pytest.mark.graph
 
 
 class _ConceptPortStub(ConceptPort):

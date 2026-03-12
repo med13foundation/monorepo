@@ -309,6 +309,10 @@ def pytest_configure(config):
     )
     config.addinivalue_line("markers", "integration: marks tests as integration tests")
     config.addinivalue_line("markers", "e2e: marks tests as end-to-end tests")
+    config.addinivalue_line(
+        "markers",
+        "graph: marks tests as graph and claim-ledger invariant coverage",
+    )
 
 
 # Test data fixtures

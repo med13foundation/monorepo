@@ -6,7 +6,11 @@ import argparse
 from contextlib import contextmanager
 from dataclasses import dataclass
 
+import pytest
+
 from scripts import check_claim_projection_readiness as readiness_script
+
+pytestmark = pytest.mark.graph
 
 
 @dataclass(frozen=True)

@@ -46,6 +46,8 @@ from tests.db_reset import reset_database
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+pytestmark = pytest.mark.graph
+
 
 def _using_postgres() -> bool:
     return os.getenv("DATABASE_URL", "").startswith("postgresql")

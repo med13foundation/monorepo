@@ -13,6 +13,8 @@ from src.application.services.kernel.kernel_relation_projection_invariant_servic
     OrphanCanonicalRelationError,
 )
 
+pytestmark = pytest.mark.graph
+
 
 @dataclass
 class _ProjectionRepoStub:

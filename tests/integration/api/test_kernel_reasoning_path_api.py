@@ -42,6 +42,8 @@ from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
 from tests.db_reset import reset_database
 
+pytestmark = pytest.mark.graph
+
 
 def _using_postgres() -> bool:
     return os.getenv("DATABASE_URL", "").startswith("postgresql")

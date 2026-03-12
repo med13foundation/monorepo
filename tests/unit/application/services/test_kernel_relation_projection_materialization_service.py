@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -15,6 +16,7 @@ from src.application.services.kernel.kernel_relation_projection_materialization_
     KernelRelationProjectionMaterializationService,
     RelationProjectionMaterializationError,
 )
+from src.domain.entities.kernel.claim_participants import KernelClaimParticipant
 from src.domain.entities.user import UserRole, UserStatus
 from src.domain.ports.dictionary_search_harness_port import DictionarySearchHarnessPort
 from src.infrastructure.repositories.kernel import (
@@ -26,9 +28,14 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
 )
+from src.models.database.kernel.claim_evidence import ClaimEvidenceModel
 from src.models.database.kernel.dictionary import DictionaryDomainContextModel
+from src.models.database.kernel.entities import EntityModel
+from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
+
+pytestmark = pytest.mark.graph
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -529,3 +536,341 @@ def test_materialize_support_claim_requires_claim_participants(
         )
         == []
     )
+
+
+@pytest.mark.database
+@pytest.mark.parametrize(
+    ("claim_status", "persistability", "error_message"),
+    [
+        (
+            "OPEN",
+            "PERSISTABLE",
+            "Only RESOLVED claims can materialize canonical relations",
+        ),
+        (
+            "RESOLVED",
+            "NON_PERSISTABLE",
+            "Only PERSISTABLE claims can materialize canonical relations",
+        ),
+    ],
+)
+def test_materialize_support_claim_enforces_materializable_state(
+    db_session: Session,
+    claim_status: RelationClaimStatus,
+    persistability: RelationClaimPersistability,
+    error_message: str,
+) -> None:
+    fixture = _build_fixture(db_session)
+    claim_id = _create_claim(
+        fixture,
+        claim_status=claim_status,
+        persistability=persistability,
+        evidence_seeds=[
+            _EvidenceSeed(
+                summary="Inactive support claim evidence.",
+                confidence=0.5,
+                tier="COMPUTATIONAL",
+                sentence="This claim should not materialize.",
+            ),
+        ],
+    )
+
+    with pytest.raises(RelationProjectionMaterializationError, match=error_message):
+        fixture.service.materialize_support_claim(
+            claim_id=claim_id,
+            research_space_id=fixture.research_space_id,
+            projection_origin="CLAIM_RESOLUTION",
+        )
+
+    assert (
+        fixture.relation_repo.find_by_research_space(
+            fixture.research_space_id,
+            limit=10,
+            offset=0,
+        )
+        == []
+    )
+
+
+@pytest.mark.database
+def test_materialize_support_claim_rejects_unresolved_endpoint_entities(
+    db_session: Session,
+) -> None:
+    fixture = _build_fixture(db_session)
+    claim_id = _create_claim(
+        fixture,
+        evidence_seeds=[
+            _EvidenceSeed(
+                summary="Support claim with deleted entity.",
+                confidence=0.62,
+                tier="LITERATURE",
+                sentence="An endpoint entity was removed before projection.",
+            ),
+        ],
+    )
+
+    source_entity = db_session.get(EntityModel, UUID(fixture.source_entity_id))
+    assert source_entity is not None
+    db_session.delete(source_entity)
+    db_session.flush()
+
+    with pytest.raises(
+        RelationProjectionMaterializationError,
+        match="Claim participant endpoint entities must exist before projection",
+    ):
+        fixture.service.materialize_support_claim(
+            claim_id=claim_id,
+            research_space_id=fixture.research_space_id,
+            projection_origin="EXTRACTION",
+        )
+
+    assert (
+        fixture.relation_repo.find_by_research_space(
+            fixture.research_space_id,
+            limit=10,
+            offset=0,
+        )
+        == []
+    )
+
+
+@pytest.mark.database
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("polarity", "REFUTE"),
+        ("claim_status", "OPEN"),
+        ("persistability", "NON_PERSISTABLE"),
+    ],
+)
+def test_rebuild_relation_projection_prunes_invalidated_claim_sources(
+    db_session: Session,
+    field_name: str,
+    value: str,
+) -> None:
+    fixture = _build_fixture(db_session)
+    claim_id = _create_claim(
+        fixture,
+        evidence_seeds=[
+            _EvidenceSeed(
+                summary="Support claim before invalidation.",
+                confidence=0.81,
+                tier="LITERATURE",
+                sentence="This support claim is initially valid.",
+            ),
+        ],
+    )
+
+    materialized = fixture.service.materialize_support_claim(
+        claim_id=claim_id,
+        research_space_id=fixture.research_space_id,
+        projection_origin="CLAIM_RESOLUTION",
+    )
+    assert materialized.relation is not None
+    relation_id = str(materialized.relation.id)
+
+    claim_model = db_session.get(RelationClaimModel, UUID(claim_id))
+    assert claim_model is not None
+    setattr(claim_model, field_name, value)
+    db_session.flush()
+
+    rebuilt = fixture.service.rebuild_relation_projection(
+        relation_id=relation_id,
+        research_space_id=fixture.research_space_id,
+    )
+
+    assert rebuilt.relation is None
+    assert rebuilt.deleted_relation_ids == (relation_id,)
+    assert fixture.relation_repo.get_by_id(relation_id, claim_backed_only=False) is None
+    assert fixture.projection_repo.find_by_relation_id(relation_id) == []
+
+
+@pytest.mark.database
+def test_materialize_support_claim_is_idempotent_for_same_claim(
+    db_session: Session,
+) -> None:
+    fixture = _build_fixture(db_session)
+    claim_id = _create_claim(
+        fixture,
+        evidence_seeds=[
+            _EvidenceSeed(
+                summary="Idempotent support claim evidence.",
+                confidence=0.73,
+                tier="LITERATURE",
+                sentence="The same support claim is materialized twice.",
+            ),
+        ],
+    )
+
+    first = fixture.service.materialize_support_claim(
+        claim_id=claim_id,
+        research_space_id=fixture.research_space_id,
+        projection_origin="EXTRACTION",
+    )
+    second = fixture.service.materialize_support_claim(
+        claim_id=claim_id,
+        research_space_id=fixture.research_space_id,
+        projection_origin="EXTRACTION",
+    )
+
+    assert first.relation is not None
+    assert second.relation is not None
+    assert second.relation.id == first.relation.id
+    relation_id = str(second.relation.id)
+    assert len(fixture.projection_repo.find_by_relation_id(relation_id)) == 1
+    assert (
+        len(
+            fixture.relation_repo.list_evidence_for_relation(
+                research_space_id=fixture.research_space_id,
+                relation_id=relation_id,
+            ),
+        )
+        == 1
+    )
+
+
+@pytest.mark.database
+def test_rebuild_relation_projection_refreshes_derived_evidence_after_claim_update(
+    db_session: Session,
+) -> None:
+    fixture = _build_fixture(db_session)
+    claim_id = _create_claim(
+        fixture,
+        evidence_seeds=[
+            _EvidenceSeed(
+                summary="Original evidence summary.",
+                confidence=0.66,
+                tier="LITERATURE",
+                sentence="Original support evidence sentence.",
+            ),
+        ],
+    )
+
+    materialized = fixture.service.materialize_support_claim(
+        claim_id=claim_id,
+        research_space_id=fixture.research_space_id,
+        projection_origin="EXTRACTION",
+    )
+    assert materialized.relation is not None
+    relation_id = str(materialized.relation.id)
+
+    claim_evidence = (
+        db_session.query(ClaimEvidenceModel)
+        .filter_by(
+            claim_id=UUID(claim_id),
+        )
+        .one()
+    )
+    claim_evidence.sentence = "Updated support evidence sentence."
+    claim_evidence.metadata_payload = {
+        "evidence_summary": "Updated evidence summary.",
+        "evidence_tier": "EXPERIMENTAL",
+    }
+    db_session.flush()
+
+    rebuilt = fixture.service.rebuild_relation_projection(
+        relation_id=relation_id,
+        research_space_id=fixture.research_space_id,
+    )
+
+    assert rebuilt.relation is not None
+    evidence_rows = fixture.relation_repo.list_evidence_for_relation(
+        research_space_id=fixture.research_space_id,
+        relation_id=relation_id,
+    )
+    assert len(evidence_rows) == 1
+    assert evidence_rows[0].evidence_summary == "Updated evidence summary."
+    assert evidence_rows[0].evidence_sentence == "Updated support evidence sentence."
+    assert evidence_rows[0].evidence_tier == "EXPERIMENTAL"
+
+    projection_rows = fixture.projection_repo.find_by_relation_id(relation_id)
+    assert len(projection_rows) == 1
+    projection_claim_id = str(projection_rows[0].claim_id)
+    assert projection_claim_id == claim_id
+    assert fixture.claim_evidence_repo.find_by_claim_id(projection_claim_id)[
+        0
+    ].sentence == ("Updated support evidence sentence.")
+
+
+@pytest.mark.database
+def test_projection_endpoint_resolution_rejects_cross_space_entities(
+    db_session: Session,
+) -> None:
+    fixture = _build_fixture(db_session)
+    claim_id = _create_claim(
+        fixture,
+        with_participants=False,
+        evidence_seeds=[
+            _EvidenceSeed(
+                summary="Cross-space projection attempt.",
+                confidence=0.7,
+                tier="LITERATURE",
+                sentence="A foreign-space entity should not materialize here.",
+            ),
+        ],
+    )
+    claim = fixture.claim_repo.get_by_id(claim_id)
+    assert claim is not None
+
+    foreign_user = UserModel(
+        email=f"foreign-projection-{uuid4().hex}@example.com",
+        username=f"foreign-projection-{uuid4().hex[:8]}",
+        full_name="Foreign Projection Tester",
+        hashed_password="hashed",
+        role=UserRole.RESEARCHER,
+        status=UserStatus.ACTIVE,
+    )
+    db_session.add(foreign_user)
+    db_session.flush()
+    foreign_space = ResearchSpaceModel(
+        slug=f"foreign-projection-{uuid4().hex[:12]}",
+        name="Foreign Projection Space",
+        description="Cross-space projection isolation test",
+        owner_id=foreign_user.id,
+        status="active",
+    )
+    db_session.add(foreign_space)
+    db_session.flush()
+    foreign_entity = SqlAlchemyKernelEntityRepository(db_session).create(
+        research_space_id=str(foreign_space.id),
+        entity_type="PHENOTYPE",
+        display_label="Foreign phenotype",
+        metadata={},
+    )
+
+    participants = [
+        KernelClaimParticipant(
+            id=uuid4(),
+            claim_id=UUID(claim_id),
+            research_space_id=UUID(fixture.research_space_id),
+            label="MED13",
+            entity_id=UUID(fixture.source_entity_id),
+            role="SUBJECT",
+            position=0,
+            qualifiers={},
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        ),
+        KernelClaimParticipant(
+            id=uuid4(),
+            claim_id=UUID(claim_id),
+            research_space_id=UUID(fixture.research_space_id),
+            label="Foreign phenotype",
+            entity_id=foreign_entity.id,
+            role="OBJECT",
+            position=1,
+            qualifiers={},
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        ),
+    ]
+
+    with pytest.raises(
+        RelationProjectionMaterializationError,
+        match="is not in research space",
+    ):
+        fixture.service._resolve_projection_endpoints(
+            claim=claim,
+            research_space_id=fixture.research_space_id,
+            participants=participants,
+        )

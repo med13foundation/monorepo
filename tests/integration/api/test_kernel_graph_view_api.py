@@ -10,12 +10,24 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from src.application.services.kernel.kernel_relation_projection_materialization_service import (
+    KernelRelationProjectionMaterializationService,
+)
 from src.database import session as session_module
 from src.database.seeds.seeder import (
     seed_entity_resolution_policies,
     seed_relation_constraints,
 )
 from src.domain.entities.user import UserRole
+from src.infrastructure.repositories.kernel import (
+    SqlAlchemyDictionaryRepository,
+    SqlAlchemyKernelClaimEvidenceRepository,
+    SqlAlchemyKernelClaimParticipantRepository,
+    SqlAlchemyKernelEntityRepository,
+    SqlAlchemyKernelRelationClaimRepository,
+    SqlAlchemyKernelRelationProjectionSourceRepository,
+    SqlAlchemyKernelRelationRepository,
+)
 from src.infrastructure.security.jwt_provider import JWTProvider
 from src.main import create_app
 from src.models.database.base import Base
@@ -41,6 +53,8 @@ from src.models.database.user_data_source import (
     UserDataSourceModel,
 )
 from tests.db_reset import reset_database
+
+pytestmark = pytest.mark.graph
 
 
 def _using_postgres() -> bool:
@@ -115,6 +129,26 @@ def _create_admin_user(session) -> UserModel:
     session.refresh(user)
     session.expunge(user)
     return user
+
+
+def _build_projection_materializer(
+    session,
+) -> KernelRelationProjectionMaterializationService:
+    return KernelRelationProjectionMaterializationService(
+        relation_repo=SqlAlchemyKernelRelationRepository(session),
+        relation_claim_repo=SqlAlchemyKernelRelationClaimRepository(session),
+        claim_participant_repo=SqlAlchemyKernelClaimParticipantRepository(session),
+        claim_evidence_repo=SqlAlchemyKernelClaimEvidenceRepository(session),
+        entity_repo=SqlAlchemyKernelEntityRepository(
+            session,
+            phi_encryption_service=None,
+            enable_phi_encryption=False,
+        ),
+        dictionary_repo=SqlAlchemyDictionaryRepository(session),
+        relation_projection_repo=SqlAlchemyKernelRelationProjectionSourceRepository(
+            session,
+        ),
+    )
 
 
 @pytest.fixture(scope="function")
@@ -398,6 +432,83 @@ def test_gene_graph_view_route_returns_claims_relations_and_evidence(
     assert payload["counts"]["participants"] >= 3
     assert payload["counts"]["evidence"] >= 1
     assert payload["canonical_relations"][0]["id"] == str(relation_id)
+
+
+def test_gene_graph_view_drops_stale_canonical_relations_after_claim_rebuild(
+    test_client: TestClient,
+    db_session,
+    researcher_user: UserModel,
+    space: ResearchSpaceModel,
+) -> None:
+    researcher_headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        _seed_kernel_dictionary(session)
+        source_id = _create_entity(
+            session=session,
+            space_id=space.id,
+            entity_type="GENE",
+            display_label="MED13",
+        )
+        target_id = _create_entity(
+            session=session,
+            space_id=space.id,
+            entity_type="PHENOTYPE",
+            display_label="Developmental delay",
+        )
+        admin_user = _create_admin_user(session)
+
+    admin_headers = _auth_headers(admin_user)
+    relation_response = test_client.post(
+        f"/research-spaces/{space.id}/relations",
+        headers=admin_headers,
+        json={
+            "source_id": str(source_id),
+            "relation_type": "ASSOCIATED_WITH",
+            "target_id": str(target_id),
+            "confidence": 0.91,
+            "evidence_summary": "Curated support evidence",
+            "evidence_sentence": "MED13 is associated with developmental delay.",
+            "evidence_tier": "LITERATURE",
+            "provenance_id": None,
+        },
+    )
+    assert relation_response.status_code == 201, relation_response.text
+    relation_id = UUID(relation_response.json()["id"])
+
+    response_before_rebuild = test_client.get(
+        f"/research-spaces/{space.id}/graph/views/gene/{source_id}",
+        headers=researcher_headers,
+        params={"claim_limit": 25, "relation_limit": 25},
+    )
+    assert response_before_rebuild.status_code == 200, response_before_rebuild.text
+    payload_before = response_before_rebuild.json()
+    assert payload_before["counts"]["canonical_relations"] == 1
+
+    with _session_for_api(db_session) as session:
+        support_claim = session.scalar(
+            select(RelationClaimModel).where(
+                RelationClaimModel.linked_relation_id == relation_id,
+            ),
+        )
+        assert support_claim is not None
+        support_claim.polarity = "REFUTE"
+        _build_projection_materializer(session).rebuild_relation_projection(
+            relation_id=str(relation_id),
+            research_space_id=str(space.id),
+        )
+        session.commit()
+
+    response_after_rebuild = test_client.get(
+        f"/research-spaces/{space.id}/graph/views/gene/{source_id}",
+        headers=researcher_headers,
+        params={"claim_limit": 25, "relation_limit": 25},
+    )
+    assert response_after_rebuild.status_code == 200, response_after_rebuild.text
+    payload_after = response_after_rebuild.json()
+    assert payload_after["counts"]["canonical_relations"] == 0
+    assert payload_after["counts"]["claims"] >= 1
+    assert payload_after["canonical_relations"] == []
 
 
 def test_paper_graph_view_route_returns_claim_backed_projection_bundle(

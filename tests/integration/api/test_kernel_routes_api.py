@@ -4,6 +4,7 @@ Integration tests for kernel API routes (entities/observations/relations + admin
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from contextlib import contextmanager
 from uuid import UUID, uuid4
@@ -13,6 +14,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from src.application.services.kernel.kernel_relation_projection_materialization_service import (
+    KernelRelationProjectionMaterializationService,
+)
 from src.database import session as session_module
 from src.database.seeds.seeder import (
     seed_entity_resolution_policies,
@@ -22,6 +26,11 @@ from src.domain.entities.kernel.relations import RelationEvidenceWrite
 from src.domain.entities.user import UserRole
 from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
 from src.infrastructure.repositories.kernel import (
+    SqlAlchemyDictionaryRepository,
+    SqlAlchemyKernelClaimEvidenceRepository,
+    SqlAlchemyKernelClaimParticipantRepository,
+    SqlAlchemyKernelEntityRepository,
+    SqlAlchemyKernelRelationClaimRepository,
     SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
 )
@@ -48,6 +57,8 @@ from src.routes.research_spaces.dependencies import (
     get_ingestion_scheduling_service_for_space,
 )
 from tests.db_reset import reset_database
+
+pytestmark = pytest.mark.graph
 
 
 def _using_postgres() -> bool:
@@ -155,6 +166,107 @@ def _create_kernel_relation_for_space(
     )
     assert response.status_code == 201, response.text
     return UUID(response.json()["id"])
+
+
+def _build_projection_materializer(
+    session,
+) -> KernelRelationProjectionMaterializationService:
+    relation_repo = SqlAlchemyKernelRelationRepository(session)
+    claim_repo = SqlAlchemyKernelRelationClaimRepository(session)
+    participant_repo = SqlAlchemyKernelClaimParticipantRepository(session)
+    claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(session)
+    entity_repo = SqlAlchemyKernelEntityRepository(
+        session,
+        phi_encryption_service=None,
+        enable_phi_encryption=False,
+    )
+    return KernelRelationProjectionMaterializationService(
+        relation_repo=relation_repo,
+        relation_claim_repo=claim_repo,
+        claim_participant_repo=participant_repo,
+        claim_evidence_repo=claim_evidence_repo,
+        entity_repo=entity_repo,
+        dictionary_repo=SqlAlchemyDictionaryRepository(session),
+        relation_projection_repo=SqlAlchemyKernelRelationProjectionSourceRepository(
+            session,
+        ),
+    )
+
+
+def _create_claim_backed_projection(
+    session,
+    *,
+    space_id: UUID,
+    source_id: UUID,
+    target_id: UUID,
+) -> tuple[UUID, UUID]:
+    claim_repo = SqlAlchemyKernelRelationClaimRepository(session)
+    participant_repo = SqlAlchemyKernelClaimParticipantRepository(session)
+    claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(session)
+    service = _build_projection_materializer(session)
+
+    claim = claim_repo.create(
+        research_space_id=str(space_id),
+        source_document_id=None,
+        agent_run_id="graph-read-model-test",
+        source_type="GENE",
+        relation_type="ASSOCIATED_WITH",
+        target_type="PHENOTYPE",
+        source_label="MED13",
+        target_label="Developmental delay",
+        confidence=0.88,
+        validation_state="ALLOWED",
+        validation_reason=None,
+        persistability="PERSISTABLE",
+        claim_status="RESOLVED",
+        polarity="SUPPORT",
+        claim_text="MED13 is associated with developmental delay.",
+        claim_section="results",
+        linked_relation_id=None,
+        metadata={},
+    )
+    claim_id = str(claim.id)
+    participant_repo.create(
+        claim_id=claim_id,
+        research_space_id=str(space_id),
+        role="SUBJECT",
+        label="MED13",
+        entity_id=str(source_id),
+        position=0,
+        qualifiers={},
+    )
+    participant_repo.create(
+        claim_id=claim_id,
+        research_space_id=str(space_id),
+        role="OBJECT",
+        label="Developmental delay",
+        entity_id=str(target_id),
+        position=1,
+        qualifiers={},
+    )
+    claim_evidence_repo.create(
+        claim_id=claim_id,
+        source_document_id=None,
+        agent_run_id="graph-read-model-test",
+        sentence="MED13 is associated with developmental delay.",
+        sentence_source="verbatim_span",
+        sentence_confidence="high",
+        sentence_rationale=None,
+        figure_reference=None,
+        table_reference=None,
+        confidence=0.88,
+        metadata={
+            "evidence_summary": "Curated claim-backed support evidence",
+            "evidence_tier": "LITERATURE",
+        },
+    )
+    relation = service.materialize_support_claim(
+        claim_id=claim_id,
+        research_space_id=str(space_id),
+        projection_origin="CLAIM_RESOLUTION",
+    ).relation
+    assert relation is not None
+    return UUID(claim_id), UUID(str(relation.id))
 
 
 @pytest.fixture(scope="function")
@@ -849,6 +961,128 @@ def test_graph_subgraph_validation_and_membership_guards(
     )
     assert response_invalid.status_code == 400
     assert "seed_entity_ids is required" in str(response_invalid.json()["detail"])
+
+
+def test_graph_read_models_track_claim_mutation_and_projection_rebuild(
+    test_client,
+    db_session,
+    researcher_user,
+    space,
+):
+    headers = _auth_headers(researcher_user)
+
+    with _session_for_api(db_session) as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+
+    source_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="GENE",
+        display_label="MED13",
+        identifier_namespace="hgnc_id",
+        identifier_value=f"HGNC:{uuid4().hex[:8]}",
+    )
+    target_id = _create_kernel_entity_for_space(
+        test_client=test_client,
+        space_id=space.id,
+        headers=headers,
+        entity_type="PHENOTYPE",
+        display_label="Developmental delay",
+        identifier_namespace="hpo_id",
+        identifier_value=f"HP:{uuid4().hex[:7]}",
+    )
+
+    with _session_for_api(db_session) as session:
+        claim_id, relation_id = _create_claim_backed_projection(
+            session,
+            space_id=space.id,
+            source_id=source_id,
+            target_id=target_id,
+        )
+        session.commit()
+
+    list_response = test_client.get(
+        f"/research-spaces/{space.id}/relations",
+        headers=headers,
+        params={"offset": 0, "limit": 20},
+    )
+    assert list_response.status_code == 200, list_response.text
+    listed_ids = {row["id"] for row in list_response.json()["relations"]}
+    assert str(relation_id) in listed_ids
+
+    subgraph_response = test_client.post(
+        f"/research-spaces/{space.id}/graph/subgraph",
+        headers=headers,
+        json={
+            "mode": "seeded",
+            "seed_entity_ids": [str(source_id)],
+            "depth": 1,
+            "top_k": 10,
+            "max_nodes": 20,
+            "max_edges": 20,
+        },
+    )
+    assert subgraph_response.status_code == 200, subgraph_response.text
+    subgraph_edge_ids = {edge["id"] for edge in subgraph_response.json()["edges"]}
+    assert str(relation_id) in subgraph_edge_ids
+
+    neighborhood_response = test_client.get(
+        f"/research-spaces/{space.id}/graph/neighborhood/{source_id}",
+        headers=headers,
+        params={"depth": 1},
+    )
+    assert neighborhood_response.status_code == 200, neighborhood_response.text
+    neighborhood_edge_ids = {
+        edge["id"] for edge in neighborhood_response.json()["edges"]
+    }
+    assert str(relation_id) in neighborhood_edge_ids
+
+    with _session_for_api(db_session) as session:
+        claim_model = session.get(RelationClaimModel, claim_id)
+        assert claim_model is not None
+        claim_model.polarity = "REFUTE"
+        _build_projection_materializer(session).rebuild_relation_projection(
+            relation_id=str(relation_id),
+            research_space_id=str(space.id),
+        )
+        session.commit()
+
+    list_after_rebuild = test_client.get(
+        f"/research-spaces/{space.id}/relations",
+        headers=headers,
+        params={"offset": 0, "limit": 20},
+    )
+    assert list_after_rebuild.status_code == 200, list_after_rebuild.text
+    assert str(relation_id) not in {
+        row["id"] for row in list_after_rebuild.json()["relations"]
+    }
+
+    subgraph_after_rebuild = test_client.post(
+        f"/research-spaces/{space.id}/graph/subgraph",
+        headers=headers,
+        json={
+            "mode": "seeded",
+            "seed_entity_ids": [str(source_id)],
+            "depth": 1,
+            "top_k": 10,
+            "max_nodes": 20,
+            "max_edges": 20,
+        },
+    )
+    assert subgraph_after_rebuild.status_code == 200, subgraph_after_rebuild.text
+    assert subgraph_after_rebuild.json()["edges"] == []
+
+    neighborhood_after_rebuild = test_client.get(
+        f"/research-spaces/{space.id}/graph/neighborhood/{source_id}",
+        headers=headers,
+        params={"depth": 1},
+    )
+    assert (
+        neighborhood_after_rebuild.status_code == 200
+    ), neighborhood_after_rebuild.text
+    assert neighborhood_after_rebuild.json()["edges"] == []
 
 
 def test_kernel_relations_status_alias_totals_and_strict_status_validation(
@@ -1867,6 +2101,10 @@ def test_relation_claim_resolution_persists_evidence_sentence_from_claim_evidenc
     assert evidence_rows[0].evidence_sentence_rationale is None
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("artana") is None,
+    reason="artana-kernel dependency required for graph search route coverage",
+)
 def test_graph_search_respects_curation_status_filters(
     postgres_required,
     test_client,

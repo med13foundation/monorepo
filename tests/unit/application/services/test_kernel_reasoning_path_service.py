@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+import pytest
+
 from src.application.services.kernel.kernel_reasoning_path_service import (
     KernelReasoningPathService,
 )
@@ -24,6 +26,8 @@ from src.domain.repositories.kernel.reasoning_path_repository import (
     ReasoningPathWrite,
     ReasoningPathWriteBundle,
 )
+
+pytestmark = pytest.mark.graph
 
 if TYPE_CHECKING:
     from src.domain.entities.kernel.reasoning_paths import (
@@ -683,3 +687,16 @@ def test_rebuild_excludes_claims_missing_evidence_and_marks_paths_stale() -> Non
     assert stale_count == 1
     listed = service.list_paths(research_space_id=str(space_id), status="STALE")
     assert listed.total == 1
+
+    stale_by_claim_count = service.mark_stale_for_claim_ids(
+        [str(claim_a_id)],
+        str(space_id),
+    )
+    assert stale_by_claim_count == 1
+
+    evidence_by_claim = service._evidence.evidence_by_claim
+    evidence_by_claim[str(claim_b_id)] = [_build_evidence(claim_id=claim_b_id)]
+    rebuild_summary = service.rebuild_for_space(str(space_id), replace_existing=True)
+    assert rebuild_summary.rebuilt_paths == 1
+    active_paths = service.list_paths(research_space_id=str(space_id), status="ACTIVE")
+    assert active_paths.total == 1
