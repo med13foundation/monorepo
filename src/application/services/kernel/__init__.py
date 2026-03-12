@@ -26,6 +26,11 @@ from .kernel_relation_projection_invariant_service import (
     KernelRelationProjectionInvariantService,
     OrphanCanonicalRelationError,
 )
+from .kernel_relation_projection_materialization_service import (
+    KernelRelationProjectionMaterializationService,
+    RelationProjectionMaterializationError,
+    RelationProjectionMaterializationResult,
+)
 from .kernel_relation_projection_source_service import (
     KernelRelationProjectionSourceService,
 )
@@ -49,6 +54,9 @@ __all__ = [
     "KernelRelationClaimService",
     "KernelRelationProjectionInvariantService",
     "OrphanCanonicalRelationError",
+    "KernelRelationProjectionMaterializationService",
+    "RelationProjectionMaterializationError",
+    "RelationProjectionMaterializationResult",
     "KernelRelationProjectionSourceService",
     "KernelRelationSuggestionService",
     "KernelRelationService",

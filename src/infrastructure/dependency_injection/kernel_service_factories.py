@@ -22,6 +22,7 @@ from src.application.services.kernel import (
     KernelObservationService,
     KernelRelationClaimService,
     KernelRelationProjectionInvariantService,
+    KernelRelationProjectionMaterializationService,
     KernelRelationProjectionSourceService,
     KernelRelationService,
     KernelRelationSuggestionService,
@@ -141,11 +142,9 @@ class KernelServiceFactoryMixin:
     ) -> KernelRelationService:
         relation_repo = SqlAlchemyKernelRelationRepository(session)
         entity_repo = self._build_entity_repository(session)
-        dictionary_repo = SqlAlchemyDictionaryRepository(session)
         return KernelRelationService(
             relation_repo=relation_repo,
             entity_repo=entity_repo,
-            dictionary_repo=dictionary_repo,
         )
 
     def create_kernel_relation_suggestion_service(
@@ -186,6 +185,22 @@ class KernelServiceFactoryMixin:
         projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(session)
         return KernelRelationProjectionInvariantService(
             relation_projection_repo=projection_repo,
+        )
+
+    def create_kernel_relation_projection_materialization_service(
+        self,
+        session: Session,
+    ) -> KernelRelationProjectionMaterializationService:
+        return KernelRelationProjectionMaterializationService(
+            relation_repo=SqlAlchemyKernelRelationRepository(session),
+            relation_claim_repo=SqlAlchemyKernelRelationClaimRepository(session),
+            claim_participant_repo=SqlAlchemyKernelClaimParticipantRepository(session),
+            claim_evidence_repo=SqlAlchemyKernelClaimEvidenceRepository(session),
+            entity_repo=self._build_entity_repository(session),
+            dictionary_repo=SqlAlchemyDictionaryRepository(session),
+            relation_projection_repo=SqlAlchemyKernelRelationProjectionSourceRepository(
+                session,
+            ),
         )
 
     def create_kernel_claim_participant_service(

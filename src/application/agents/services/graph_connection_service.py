@@ -24,11 +24,17 @@ from src.domain.value_objects.relation_types import normalize_relation_type
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from src.application.services.kernel.kernel_relation_projection_materialization_service import (
+        KernelRelationProjectionMaterializationService,
+    )
     from src.domain.agents.contracts.graph_connection import (
         GraphConnectionContract,
         ProposedRelation,
     )
     from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
+    from src.domain.repositories.kernel.claim_evidence_repository import (
+        KernelClaimEvidenceRepository,
+    )
     from src.domain.repositories.kernel.claim_participant_repository import (
         KernelClaimParticipantRepository,
     )
@@ -61,8 +67,12 @@ class GraphConnectionServiceDependencies:
     entity_repository: KernelEntityRepository | None = None
     relation_claim_repository: KernelRelationClaimRepository | None = None
     claim_participant_repository: KernelClaimParticipantRepository | None = None
+    claim_evidence_repository: KernelClaimEvidenceRepository | None = None
     relation_projection_source_repository: (
         KernelRelationProjectionSourceRepository | None
+    ) = None
+    relation_projection_materialization_service: (
+        KernelRelationProjectionMaterializationService | None
     ) = None
     governance_service: GovernanceService | None = None
     research_space_repository: ResearchSpaceRepository | None = None
@@ -97,9 +107,11 @@ class GraphConnectionService:
         self._entities = dependencies.entity_repository
         self._relation_claims = dependencies.relation_claim_repository
         self._claim_participants = dependencies.claim_participant_repository
+        self._claim_evidence = dependencies.claim_evidence_repository
         self._relation_projection_sources = (
             dependencies.relation_projection_source_repository
         )
+        self._materializer = dependencies.relation_projection_materialization_service
         self._governance = dependencies.governance_service or GovernanceService()
         self._research_spaces = dependencies.research_space_repository
         self._review_queue_submitter = dependencies.review_queue_submitter
@@ -253,32 +265,15 @@ class GraphConnectionService:
                 persistence_errors.append("relation_type_missing")
                 continue
             try:
-                created_relation = self._relations.create(
+                materialized_relation_id = self._record_claim_backed_projection(
                     research_space_id=resolved_research_space_id,
-                    source_id=relation.source_id,
-                    relation_type=normalized_relation_type,
-                    target_id=relation.target_id,
-                    confidence=relation.confidence,
-                    evidence_summary=relation.evidence_summary,
-                    evidence_tier=relation.evidence_tier,
-                    curation_status="DRAFT",
-                    provenance_id=(
-                        relation.supporting_provenance_ids[0]
-                        if relation.supporting_provenance_ids
-                        else None
-                    ),
-                    agent_run_id=run_id,
+                    relation=relation,
+                    normalized_relation_type=normalized_relation_type,
+                    run_id=run_id,
                 )
-                relation_id = getattr(created_relation, "id", None)
-                if relation_id is not None:
-                    self._record_claim_backed_projection(
-                        research_space_id=resolved_research_space_id,
-                        relation_id=str(relation_id),
-                        relation=relation,
-                        run_id=run_id,
-                    )
+                if materialized_relation_id is not None:
                     self._enqueue_relation_review_item(
-                        relation_id=str(relation_id),
+                        relation_id=materialized_relation_id,
                         research_space_id=resolved_research_space_id,
                         fallback_requires_pending_review=fallback_requires_pending_review,
                     )
@@ -343,15 +338,16 @@ class GraphConnectionService:
         self,
         *,
         research_space_id: str,
-        relation_id: str,
         relation: ProposedRelation,
+        normalized_relation_type: str,
         run_id: str | None,
-    ) -> None:
+    ) -> str | None:
         if (
             self._entities is None
             or self._relation_claims is None
             or self._claim_participants is None
-            or self._relation_projection_sources is None
+            or self._claim_evidence is None
+            or self._materializer is None
         ):
             msg = (
                 "Graph connection persistence requires claim-backed projection "
@@ -368,7 +364,7 @@ class GraphConnectionService:
             source_document_id=None,
             agent_run_id=run_id,
             source_type=source_entity.entity_type,
-            relation_type=relation.relation_type,
+            relation_type=normalized_relation_type,
             target_type=target_entity.entity_type,
             source_label=source_entity.display_label,
             target_label=target_entity.display_label,
@@ -380,7 +376,7 @@ class GraphConnectionService:
             polarity="SUPPORT",
             claim_text=relation.evidence_summary,
             claim_section=None,
-            linked_relation_id=relation_id,
+            linked_relation_id=None,
             metadata={
                 "origin": "graph_connection",
                 "reasoning": relation.reasoning,
@@ -408,15 +404,38 @@ class GraphConnectionService:
             position=1,
             qualifiers={"origin": "graph_connection"},
         )
-        self._relation_projection_sources.create(
-            research_space_id=research_space_id,
-            relation_id=relation_id,
+        self._claim_evidence.create(
             claim_id=str(claim.id),
-            projection_origin="GRAPH_CONNECTION",
             source_document_id=None,
             agent_run_id=run_id,
-            metadata={"origin": "graph_connection"},
+            sentence=None,
+            sentence_source=None,
+            sentence_confidence=None,
+            sentence_rationale=None,
+            figure_reference=None,
+            table_reference=None,
+            confidence=relation.confidence,
+            metadata={
+                "origin": "graph_connection",
+                "evidence_summary": relation.evidence_summary,
+                "evidence_tier": relation.evidence_tier,
+                "supporting_provenance_ids": relation.supporting_provenance_ids,
+                "provenance_id": (
+                    relation.supporting_provenance_ids[0]
+                    if relation.supporting_provenance_ids
+                    else None
+                ),
+                "reasoning": relation.reasoning,
+            },
         )
+        materialized = self._materializer.materialize_support_claim(
+            claim_id=str(claim.id),
+            research_space_id=research_space_id,
+            projection_origin="GRAPH_CONNECTION",
+        )
+        if materialized.relation is None:
+            return None
+        return str(materialized.relation.id)
 
     def _rollback_relation_write(self, *, context: str) -> None:
         rollback = self._rollback_on_error

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -18,6 +18,9 @@ from src.application.services.kernel.concept_management_service import (
 )
 from src.application.services.kernel.dictionary_management_service import (
     DictionaryManagementService,
+)
+from src.application.services.kernel.kernel_relation_projection_materialization_service import (
+    KernelRelationProjectionMaterializationService,
 )
 from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.entity_recognition import EntityRecognitionContract
@@ -62,7 +65,6 @@ from src.infrastructure.repositories.kernel import (
 )
 from src.models.database.kernel.claim_evidence import ClaimEvidenceModel
 from src.models.database.kernel.dictionary import DictionaryDomainContextModel
-from src.models.database.kernel.relations import RelationEvidenceModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
 from src.models.database.user_data_source import (
@@ -106,6 +108,29 @@ class _DeterministicHarness(DictionarySearchHarnessPort):
             query_embeddings=None,
             include_inactive=include_inactive,
         )
+
+
+def _build_relation_projection_materializer(
+    *,
+    db_session: Session,
+    relation_repo: SqlAlchemyKernelRelationRepository,
+    claim_repo: SqlAlchemyKernelRelationClaimRepository,
+    claim_participant_repo: SqlAlchemyKernelClaimParticipantRepository,
+    claim_evidence_repo: SqlAlchemyKernelClaimEvidenceRepository,
+    entity_repo: SqlAlchemyKernelEntityRepository,
+    dictionary_repo: SqlAlchemyDictionaryRepository,
+) -> KernelRelationProjectionMaterializationService:
+    return KernelRelationProjectionMaterializationService(
+        relation_repo=relation_repo,
+        relation_claim_repo=claim_repo,
+        claim_participant_repo=claim_participant_repo,
+        claim_evidence_repo=claim_evidence_repo,
+        entity_repo=entity_repo,
+        dictionary_repo=dictionary_repo,
+        relation_projection_repo=SqlAlchemyKernelRelationProjectionSourceRepository(
+            db_session,
+        ),
+    )
 
 
 class _FixedExtractionAgent(ExtractionAgentPort):
@@ -178,12 +203,17 @@ class _RaisingEvidenceSentenceHarness(EvidenceSentenceHarnessPort):
         raise self._error
 
 
-class _FailingRelationProjectionSourceRepository:
-    """Projection repository stub that fails after canonical relation creation."""
+class _FailingRelationProjectionMaterializationService:
+    """Materializer stub that fails before a canonical relation can commit."""
 
-    def create(self, **kwargs: object) -> object:
+    def materialize_support_claim(self, **kwargs: object) -> object:
         del kwargs
-        msg = "projection lineage write failed"
+        msg = "projection materialization failed"
+        raise ValueError(msg)
+
+    def find_claim_backed_relation_for_claim(self, **kwargs: object) -> object:
+        del kwargs
+        msg = "projection materialization failed"
         raise ValueError(msg)
 
 
@@ -425,6 +455,17 @@ def _build_optional_missing_span_harness_fixture(
             relation_projection_source_repository=(
                 SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
             ),
+            relation_projection_materialization_service=(
+                _build_relation_projection_materializer(
+                    db_session=db_session,
+                    relation_repo=relation_repo,
+                    claim_repo=claim_repo,
+                    claim_participant_repo=claim_participant_repo,
+                    claim_evidence_repo=claim_evidence_repo,
+                    entity_repo=entity_repo,
+                    dictionary_repo=dictionary_repo,
+                )
+            ),
             claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
@@ -662,6 +703,17 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
             relation_projection_source_repository=(
                 SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
             ),
+            relation_projection_materialization_service=(
+                _build_relation_projection_materializer(
+                    db_session=db_session,
+                    relation_repo=relation_repo,
+                    claim_repo=claim_repo,
+                    claim_participant_repo=claim_participant_repo,
+                    claim_evidence_repo=claim_evidence_repo,
+                    entity_repo=entity_repo,
+                    dictionary_repo=dictionary_repo,
+                )
+            ),
             claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
@@ -685,7 +737,7 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
     db_session.commit()
 
     assert outcome.status == "extracted"
-    assert outcome.persisted_relations_count == 1
+    assert outcome.persisted_relations_count == 0
     assert outcome.pending_review_relations_count == 1
     assert outcome.concept_members_created_count >= 2
     assert outcome.concept_aliases_created_count >= 2
@@ -739,9 +791,7 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
     ]
     assert len(persistable_claims) == 3
     assert len(non_persistable_claims) == 3
-    assert (
-        sum(claim.linked_relation_id is not None for claim in persistable_claims) == 1
-    )
+    assert all(claim.linked_relation_id is None for claim in persistable_claims)
     assert all(claim.linked_relation_id is None for claim in non_persistable_claims)
     claim_evidence_rows = db_session.scalars(
         select(ClaimEvidenceModel).where(
@@ -755,26 +805,14 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
         limit=20,
         offset=0,
     )
-    assert len(persisted_relations) == 1
-    assert all(relation.curation_status == "DRAFT" for relation in persisted_relations)
-    evidence_rows = db_session.scalars(
-        select(RelationEvidenceModel).where(
-            RelationEvidenceModel.relation_id == persisted_relations[0].id,
-        ),
-    ).all()
-    assert len(evidence_rows) == 1
-    evidence_sentence = evidence_rows[0].evidence_sentence
-    assert isinstance(evidence_sentence, str)
-    normalized_evidence_sentence = evidence_sentence.casefold()
-    assert "med13" in normalized_evidence_sentence
-    assert "cardiomyopathy" in normalized_evidence_sentence
+    assert persisted_relations == []
 
     queued_relation_claims = [
         item for item in queued_items if item[0] == "relation_claim"
     ]
     queued_relations = [item for item in queued_items if item[0] == "relation"]
-    assert len(queued_relation_claims) == 5
-    assert len(queued_relations) == 1
+    assert len(queued_relation_claims) == 6
+    assert len(queued_relations) == 0
     assert all(item[2] == str(space.id) for item in queued_relation_claims)
     assert any(item[3] == "high" for item in queued_relation_claims)
 
@@ -945,6 +983,17 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
             relation_projection_source_repository=(
                 SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
             ),
+            relation_projection_materialization_service=(
+                _build_relation_projection_materializer(
+                    db_session=db_session,
+                    relation_repo=relation_repo,
+                    claim_repo=claim_repo,
+                    claim_participant_repo=claim_participant_repo,
+                    claim_evidence_repo=claim_evidence_repo,
+                    entity_repo=entity_repo,
+                    dictionary_repo=dictionary_repo,
+                )
+            ),
             claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,
             entity_repository=entity_repo,
@@ -1053,28 +1102,14 @@ async def test_optional_missing_span_uses_harness_sentence_when_available(
     db_session.commit()
 
     assert outcome.status == "extracted"
-    assert outcome.persisted_relations_count == 1
+    assert outcome.persisted_relations_count == 0
 
     persisted_relations = relation_repo.find_by_research_space(
         str(space.id),
         limit=10,
         offset=0,
     )
-    assert len(persisted_relations) == 1
-    evidence_rows = db_session.scalars(
-        select(RelationEvidenceModel).where(
-            RelationEvidenceModel.relation_id == persisted_relations[0].id,
-        ),
-    ).all()
-    assert len(evidence_rows) == 1
-    evidence_row = evidence_rows[0]
-    assert evidence_row.evidence_sentence == generated_sentence
-    assert evidence_row.evidence_sentence_source == "artana_generated"
-    assert evidence_row.evidence_sentence_confidence == "medium"
-    assert (
-        evidence_row.evidence_sentence_rationale
-        == "No direct span found; inferred from extraction context."
-    )
+    assert persisted_relations == []
 
     claims = claim_repo.find_by_research_space(str(space.id), limit=10, offset=0)
     assert len(claims) == 1
@@ -1141,25 +1176,14 @@ async def test_optional_missing_span_persists_fail_open_when_harness_errors(
     db_session.commit()
 
     assert outcome.status == "extracted"
-    assert outcome.persisted_relations_count == 1
+    assert outcome.persisted_relations_count == 0
 
     persisted_relations = relation_repo.find_by_research_space(
         str(space.id),
         limit=10,
         offset=0,
     )
-    assert len(persisted_relations) == 1
-    evidence_rows = db_session.scalars(
-        select(RelationEvidenceModel).where(
-            RelationEvidenceModel.relation_id == persisted_relations[0].id,
-        ),
-    ).all()
-    assert len(evidence_rows) == 1
-    evidence_row = evidence_rows[0]
-    assert evidence_row.evidence_sentence is None
-    assert evidence_row.evidence_sentence_source is None
-    assert evidence_row.evidence_sentence_confidence is None
-    assert evidence_row.evidence_sentence_rationale is None
+    assert persisted_relations == []
 
     claims = claim_repo.find_by_research_space(str(space.id), limit=10, offset=0)
     assert len(claims) == 1
@@ -1197,7 +1221,10 @@ async def test_projection_lineage_failure_rolls_back_canonical_relation(
             harness=None,
         )
     )
-    service._relation_projection_sources = _FailingRelationProjectionSourceRepository()
+    service._materializer = cast(
+        "KernelRelationProjectionMaterializationService",
+        _FailingRelationProjectionMaterializationService(),
+    )
     service._rollback_on_error = db_session.rollback
 
     document = _build_document(
@@ -1209,7 +1236,7 @@ async def test_projection_lineage_failure_rolls_back_canonical_relation(
     outcome = await service.extract_from_entity_recognition(
         document=document,
         recognition_contract=recognition_contract,
-        research_space_settings={"relation_governance_mode": "HUMAN_IN_LOOP"},
+        research_space_settings={"relation_governance_mode": "FULL_AUTO"},
     )
     db_session.commit()
 
@@ -1390,6 +1417,17 @@ async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0
             relation_claim_repository=claim_repo,
             relation_projection_source_repository=(
                 SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
+            ),
+            relation_projection_materialization_service=(
+                _build_relation_projection_materializer(
+                    db_session=db_session,
+                    relation_repo=relation_repo,
+                    claim_repo=claim_repo,
+                    claim_participant_repo=claim_participant_repo,
+                    claim_evidence_repo=claim_evidence_repo,
+                    entity_repo=entity_repo,
+                    dictionary_repo=dictionary_repo,
+                )
             ),
             claim_participant_repository=claim_participant_repo,
             claim_evidence_repository=claim_evidence_repo,

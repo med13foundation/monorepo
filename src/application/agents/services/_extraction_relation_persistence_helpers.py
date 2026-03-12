@@ -54,6 +54,9 @@ if TYPE_CHECKING:
     from src.application.agents.services._extraction_relation_policy_helpers import (
         RelationGovernanceMode,
     )
+    from src.application.services.kernel.kernel_relation_projection_materialization_service import (
+        KernelRelationProjectionMaterializationService,
+    )
     from src.domain.agents.contracts.extraction import (
         ExtractedRelation,
         ExtractionContract,
@@ -133,6 +136,11 @@ def _raise_missing_projection_lineage_support() -> NoReturn:
     raise ValueError(msg)
 
 
+def _raise_missing_materialized_relation() -> NoReturn:
+    msg = "Resolved support claim did not materialize a canonical relation"
+    raise ValueError(msg)
+
+
 @dataclass(frozen=True)
 class RelationPersistenceResult:
     persisted_relations_count: int = 0
@@ -186,6 +194,7 @@ class _ExtractionRelationPersistenceHelpers(
     _relations: KernelRelationRepository | None
     _relation_claims: KernelRelationClaimRepository | None
     _relation_projection_sources: KernelRelationProjectionSourceRepository | None
+    _materializer: KernelRelationProjectionMaterializationService | None
     _claim_participants: KernelClaimParticipantRepository | None
     _claim_evidences: KernelClaimEvidenceRepository | None
     _entities: KernelEntityRepository | None
@@ -1010,7 +1019,7 @@ class _ExtractionRelationPersistenceHelpers(
             return (f"claim_evidence_create_failed:{error_code}",)
         return ()
 
-    def _persist_candidate_relation(  # noqa: C901, PLR0912, PLR0913, PLR0915
+    def _persist_candidate_relation(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
         self,
         *,
         document: SourceDocument,
@@ -1037,10 +1046,16 @@ class _ExtractionRelationPersistenceHelpers(
         relation_claims_count_delta = 0
         claim_evidence_rows_created_count_delta = 0
         relation_claims_queued_for_review_count = 0
-        if self._relations is None:
+        del evidence_summary
+        if self._relation_claims is None or claim_id is None:
             return _RelationWriteOutcome(
                 persistence_failed_count=1,
-                errors=("relation_persistence_unavailable",),
+                errors=("relation_claim_required_for_projection",),
+            )
+        if self._materializer is None:
+            return _RelationWriteOutcome(
+                persistence_failed_count=1,
+                errors=("relation_projection_materializer_unavailable",),
             )
         source_entity_id = effective_candidate.source_entity_id
         target_entity_id = effective_candidate.target_entity_id
@@ -1049,55 +1064,71 @@ class _ExtractionRelationPersistenceHelpers(
                 persistence_failed_count=1,
                 errors=("relation_persistence_missing_endpoint_entity_id",),
             )
-        try:
-            created_relation = self._relations.create(
+        if relation_governance_mode != "FULL_AUTO":
+            self._enqueue_review_item(
+                entity_type="relation_claim",
+                entity_id=claim_id,
                 research_space_id=research_space_id,
-                source_id=source_entity_id,
-                relation_type=effective_candidate.relation_type,
-                target_id=target_entity_id,
-                confidence=effective_candidate.confidence,
-                evidence_summary=evidence_summary,
-                evidence_sentence=evidence_sentence,
-                evidence_sentence_source=evidence_sentence_source,
-                evidence_sentence_confidence=evidence_sentence_confidence,
-                evidence_sentence_rationale=evidence_sentence_rationale,
-                evidence_tier="COMPUTATIONAL",
-                curation_status="DRAFT",
-                source_document_id=str(document.id),
-                agent_run_id=run_id,
+                priority=self._review_priority_for_candidate(
+                    candidate=effective_candidate,
+                ),
             )
-            if claim_id is not None and self._relation_claims is not None:
-                projection_sources = self._relation_projection_sources
-                if projection_sources is None:
-                    _raise_missing_projection_lineage_support()
-                projection_sources.create(
-                    research_space_id=research_space_id,
-                    relation_id=str(created_relation.id),
-                    claim_id=claim_id,
-                    projection_origin="EXTRACTION",
-                    source_document_id=str(document.id),
-                    agent_run_id=run_id,
-                    metadata={
-                        "candidate_signature": list(candidate_signature),
-                        "relation_governance_mode": relation_governance_mode,
+            if should_log_candidate:
+                logger.info(
+                    "Persist relation candidate completed as claim-only review item",
+                    extra={
+                        "document_id": str(document.id),
+                        "run_id": run_id,
+                        "candidate_index": index,
+                        "candidate_total": total_candidates,
+                        "claim_id": claim_id,
+                        "relation_type": effective_candidate.relation_type,
                     },
                 )
-                with_context_errors = self._link_claim_to_relation(
+            return _RelationWriteOutcome(
+                pending_review_relations_count=1,
+                relation_claims_count_delta=relation_claims_count_delta,
+                claim_evidence_rows_created_count_delta=(
+                    claim_evidence_rows_created_count_delta
+                ),
+                relation_claims_queued_for_review_count=1,
+                errors=tuple(errors),
+            )
+        try:
+            status_errors = self._set_claim_system_status(
+                claim_id=claim_id,
+                claim_status="RESOLVED",
+            )
+            errors.extend(status_errors)
+            if effective_candidate.polarity == "SUPPORT":
+                materialized = self._materializer.materialize_support_claim(
                     claim_id=claim_id,
-                    relation_id=str(created_relation.id),
+                    research_space_id=research_space_id,
+                    projection_origin="EXTRACTION",
                 )
-                errors.extend(with_context_errors)
-                if relation_governance_mode == "FULL_AUTO":
-                    status_errors = self._set_claim_system_status(
+                if materialized.relation is None:
+                    _raise_missing_materialized_relation()
+            else:
+                linked_relation = (
+                    self._materializer.find_claim_backed_relation_for_claim(
                         claim_id=claim_id,
-                        claim_status="RESOLVED",
+                        research_space_id=research_space_id,
                     )
-                    errors.extend(status_errors)
-                    if candidate_signature in full_auto_retry_index:
-                        full_auto_retry_index.pop(candidate_signature)
+                )
+                if linked_relation is None:
+                    self._relation_claims.clear_relation_link(claim_id)
+                else:
+                    errors.extend(
+                        self._link_claim_to_relation(
+                            claim_id=claim_id,
+                            relation_id=str(linked_relation.id),
+                        ),
+                    )
+            if candidate_signature in full_auto_retry_index:
+                full_auto_retry_index.pop(candidate_signature)
         except (TypeError, ValueError, SQLAlchemyError) as exc:
             self._rollback_after_persistence_error(
-                context="relation_create",
+                context="relation_projection_materialization",
             )
             error_code = self._map_relation_write_error_code(exc)
             errors.append(
@@ -1108,102 +1139,94 @@ class _ExtractionRelationPersistenceHelpers(
                     f"->{target_entity_id}"
                 ),
             )
-            if claim_id is not None and self._relation_claims is not None:
-                relation_claims_count_delta -= 1
-                try:
-                    recreated_claim = self._relation_claims.create(
-                        research_space_id=research_space_id,
-                        source_document_id=str(document.id),
-                        agent_run_id=run_id,
-                        source_type=effective_candidate.source_type,
-                        relation_type=effective_candidate.relation_type,
-                        target_type=effective_candidate.target_type,
-                        source_label=effective_candidate.source_label,
-                        target_label=effective_candidate.target_label,
-                        confidence=effective_candidate.confidence,
-                        validation_state=effective_candidate.validation_state,
-                        validation_reason=effective_candidate.validation_reason,
-                        persistability=effective_candidate.persistability,
-                        claim_status=(
-                            "NEEDS_MAPPING"
-                            if relation_governance_mode == "FULL_AUTO"
-                            else "OPEN"
-                        ),
-                        polarity=effective_candidate.polarity,
-                        claim_text=effective_candidate.claim_text,
-                        claim_section=effective_candidate.claim_section,
-                        linked_relation_id=None,
-                        metadata=payload,
+            relation_claims_count_delta -= 1
+            try:
+                recreated_claim = self._relation_claims.create(
+                    research_space_id=research_space_id,
+                    source_document_id=str(document.id),
+                    agent_run_id=run_id,
+                    source_type=effective_candidate.source_type,
+                    relation_type=effective_candidate.relation_type,
+                    target_type=effective_candidate.target_type,
+                    source_label=effective_candidate.source_label,
+                    target_label=effective_candidate.target_label,
+                    confidence=effective_candidate.confidence,
+                    validation_state=effective_candidate.validation_state,
+                    validation_reason=effective_candidate.validation_reason,
+                    persistability=effective_candidate.persistability,
+                    claim_status="NEEDS_MAPPING",
+                    polarity=effective_candidate.polarity,
+                    claim_text=effective_candidate.claim_text,
+                    claim_section=effective_candidate.claim_section,
+                    linked_relation_id=None,
+                    metadata=payload,
+                )
+                claim_id = str(recreated_claim.id)
+                relation_claims_count_delta += 1
+                claim_evidence_errors = self._create_claim_evidence_record(
+                    claim_id=claim_id,
+                    document=document,
+                    run_id=run_id,
+                    relation_evidence_metadata=relation_evidence_metadata,
+                    evidence_sentence=evidence_sentence,
+                    evidence_sentence_source=evidence_sentence_source,
+                    evidence_sentence_confidence=evidence_sentence_confidence,
+                    evidence_sentence_rationale=evidence_sentence_rationale,
+                    candidate_confidence=effective_candidate.confidence,
+                )
+                if not claim_evidence_errors:
+                    claim_evidence_rows_created_count_delta += 1
+                errors.extend(claim_evidence_errors)
+                full_auto_retry_index[candidate_signature] = dictionary_fingerprint
+                self._enqueue_review_item(
+                    entity_type="relation_claim",
+                    entity_id=claim_id,
+                    research_space_id=research_space_id,
+                    priority="high",
+                )
+                relation_claims_queued_for_review_count += 1
+                if should_log_candidate:
+                    logger.info(
+                        "Persist relation candidate claim restored after projection rollback",
+                        extra={
+                            "document_id": str(document.id),
+                            "run_id": run_id,
+                            "candidate_index": index,
+                            "candidate_total": total_candidates,
+                            "claim_id": claim_id,
+                            "relation_type": effective_candidate.relation_type,
+                            "error_code": error_code,
+                        },
                     )
-                    claim_id = str(recreated_claim.id)
-                    relation_claims_count_delta += 1
-                    claim_evidence_errors = self._create_claim_evidence_record(
-                        claim_id=claim_id,
-                        document=document,
-                        run_id=run_id,
-                        relation_evidence_metadata=relation_evidence_metadata,
-                        evidence_sentence=evidence_sentence,
-                        evidence_sentence_source=evidence_sentence_source,
-                        evidence_sentence_confidence=evidence_sentence_confidence,
-                        evidence_sentence_rationale=evidence_sentence_rationale,
-                        candidate_confidence=effective_candidate.confidence,
+            except (TypeError, ValueError, SQLAlchemyError) as claim_exc:
+                self._rollback_after_persistence_error(
+                    context="relation_claim_recreate",
+                )
+                claim_error_code = self._map_relation_write_error_code(
+                    claim_exc,
+                )
+                errors.append(
+                    (
+                        "relation_claim_recreate_failed:"
+                        f"{claim_error_code}:{effective_candidate.relation_type}"
+                    ),
+                )
+                if should_log_candidate:
+                    logger.warning(
+                        "Persist relation candidate claim recreate failed after rollback",
+                        extra={
+                            "document_id": str(document.id),
+                            "run_id": run_id,
+                            "candidate_index": index,
+                            "candidate_total": total_candidates,
+                            "relation_type": effective_candidate.relation_type,
+                            "error_code": claim_error_code,
+                            "error": str(claim_exc),
+                        },
                     )
-                    if not claim_evidence_errors:
-                        claim_evidence_rows_created_count_delta += 1
-                    errors.extend(claim_evidence_errors)
-                    if relation_governance_mode == "FULL_AUTO":
-                        full_auto_retry_index[candidate_signature] = (
-                            dictionary_fingerprint
-                        )
-                    self._enqueue_review_item(
-                        entity_type="relation_claim",
-                        entity_id=claim_id,
-                        research_space_id=research_space_id,
-                        priority="high",
-                    )
-                    relation_claims_queued_for_review_count += 1
-                    if should_log_candidate:
-                        logger.info(
-                            "Persist relation candidate claim restored after relation rollback",
-                            extra={
-                                "document_id": str(document.id),
-                                "run_id": run_id,
-                                "candidate_index": index,
-                                "candidate_total": total_candidates,
-                                "claim_id": claim_id,
-                                "relation_type": effective_candidate.relation_type,
-                                "error_code": error_code,
-                            },
-                        )
-                except (TypeError, ValueError, SQLAlchemyError) as claim_exc:
-                    self._rollback_after_persistence_error(
-                        context="relation_claim_recreate",
-                    )
-                    claim_error_code = self._map_relation_write_error_code(
-                        claim_exc,
-                    )
-                    errors.append(
-                        (
-                            "relation_claim_recreate_failed:"
-                            f"{claim_error_code}:{effective_candidate.relation_type}"
-                        ),
-                    )
-                    if should_log_candidate:
-                        logger.warning(
-                            "Persist relation candidate claim recreate failed after rollback",
-                            extra={
-                                "document_id": str(document.id),
-                                "run_id": run_id,
-                                "candidate_index": index,
-                                "candidate_total": total_candidates,
-                                "relation_type": effective_candidate.relation_type,
-                                "error_code": claim_error_code,
-                                "error": str(claim_exc),
-                            },
-                        )
             if should_log_candidate:
                 logger.warning(
-                    "Persist relation candidate relation write failed",
+                    "Persist relation candidate projection write failed",
                     extra={
                         "document_id": str(document.id),
                         "run_id": run_id,
@@ -1227,10 +1250,52 @@ class _ExtractionRelationPersistenceHelpers(
                 persistence_failed_count=1,
                 errors=tuple(errors),
             )
+        if effective_candidate.polarity == "SUPPORT":
+            relation = self._materializer.find_claim_backed_relation_for_claim(
+                claim_id=claim_id,
+                research_space_id=research_space_id,
+            )
+            if relation is None:
+                msg = "Materialized support claim is missing canonical relation"
+                raise ValueError(msg)
+            self._enqueue_review_item(
+                entity_type="relation",
+                entity_id=str(relation.id),
+                research_space_id=research_space_id,
+                priority=self._review_priority_for_candidate(
+                    candidate=effective_candidate,
+                ),
+            )
+            if should_log_candidate:
+                logger.info(
+                    "Persist relation candidate completed as claim-backed projection",
+                    extra={
+                        "document_id": str(document.id),
+                        "run_id": run_id,
+                        "candidate_index": index,
+                        "candidate_total": total_candidates,
+                        "relation_id": str(relation.id),
+                        "claim_id": claim_id,
+                        "validation_state": effective_candidate.validation_state,
+                        "relation_type": effective_candidate.relation_type,
+                    },
+                )
+            return _RelationWriteOutcome(
+                persisted_relations_count=1,
+                pending_review_relations_count=1,
+                relation_claims_count_delta=relation_claims_count_delta,
+                claim_evidence_rows_created_count_delta=(
+                    claim_evidence_rows_created_count_delta
+                ),
+                relation_claims_queued_for_review_count=(
+                    relation_claims_queued_for_review_count
+                ),
+                errors=tuple(errors),
+            )
 
         self._enqueue_review_item(
-            entity_type="relation",
-            entity_id=str(created_relation.id),
+            entity_type="relation_claim",
+            entity_id=claim_id,
             research_space_id=research_space_id,
             priority=self._review_priority_for_candidate(
                 candidate=effective_candidate,
@@ -1238,28 +1303,26 @@ class _ExtractionRelationPersistenceHelpers(
         )
         if should_log_candidate:
             logger.info(
-                "Persist relation candidate completed as persisted relation",
+                "Persist relation candidate completed as resolved non-support claim",
                 extra={
                     "document_id": str(document.id),
                     "run_id": run_id,
                     "candidate_index": index,
                     "candidate_total": total_candidates,
-                    "relation_id": str(created_relation.id),
                     "claim_id": claim_id,
                     "validation_state": effective_candidate.validation_state,
                     "relation_type": effective_candidate.relation_type,
+                    "polarity": effective_candidate.polarity,
                 },
             )
-
         return _RelationWriteOutcome(
-            persisted_relations_count=1,
             pending_review_relations_count=1,
             relation_claims_count_delta=relation_claims_count_delta,
             claim_evidence_rows_created_count_delta=(
                 claim_evidence_rows_created_count_delta
             ),
             relation_claims_queued_for_review_count=(
-                relation_claims_queued_for_review_count
+                relation_claims_queued_for_review_count + 1
             ),
             errors=tuple(errors),
         )

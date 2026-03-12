@@ -9,20 +9,22 @@ from sqlalchemy import and_, func, or_, select
 
 from src.domain.entities.kernel.entities import KernelEntity
 from src.domain.entities.kernel.observations import KernelObservation
-from src.domain.entities.kernel.relations import KernelRelation, KernelRelationEvidence
 from src.domain.ports.graph_query_port import GraphQueryPort
 from src.infrastructure.repositories.kernel.kernel_relation_repository import (
     SqlAlchemyKernelRelationRepository,
 )
 from src.models.database.kernel.entities import EntityModel
 from src.models.database.kernel.observations import ObservationModel
-from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
     from sqlalchemy.sql import Select
     from sqlalchemy.sql.elements import ColumnElement
 
+    from src.domain.entities.kernel.relations import (
+        KernelRelation,
+        KernelRelationEvidence,
+    )
     from src.type_definitions.common import JSONObject, JSONValue
 
 
@@ -153,23 +155,12 @@ class SqlAlchemyGraphQueryRepository(GraphQueryPort):
         relation_id: str,
         limit: int = 200,
     ) -> list[KernelRelationEvidence]:
-        stmt = (
-            select(RelationEvidenceModel)
-            .join(
-                RelationModel,
-                RelationModel.id == RelationEvidenceModel.relation_id,
-            )
-            .where(
-                RelationModel.id == _as_uuid(relation_id),
-                RelationModel.research_space_id == _as_uuid(research_space_id),
-            )
-            .order_by(RelationEvidenceModel.created_at.desc())
-            .limit(max(limit, 1))
+        return self._relations.list_evidence_for_relation(
+            research_space_id=research_space_id,
+            relation_id=relation_id,
+            claim_backed_only=True,
+            limit=max(limit, 1),
         )
-        return [
-            KernelRelationEvidence.model_validate(model)
-            for model in self._session.scalars(stmt).all()
-        ]
 
     def graph_query_relations(  # noqa: PLR0913
         self,

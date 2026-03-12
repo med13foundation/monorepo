@@ -41,6 +41,15 @@ class KernelRelationProjectionSourceRepository(ABC):
         """List claim lineage rows for one canonical relation."""
 
     @abstractmethod
+    def find_by_claim_id(
+        self,
+        *,
+        research_space_id: str,
+        claim_id: str,
+    ) -> list[KernelRelationProjectionSource]:
+        """List projection-lineage rows for one claim."""
+
+    @abstractmethod
     def count_by_relation_ids(
         self,
         *,
@@ -75,6 +84,25 @@ class KernelRelationProjectionSourceRepository(ABC):
         research_space_id: str | None,
     ) -> int:
         """Count canonical relations that have no projection-lineage row."""
+
+    @abstractmethod
+    def delete_by_claim_id(
+        self,
+        *,
+        research_space_id: str,
+        claim_id: str,
+    ) -> list[str]:
+        """Delete projection-lineage rows for one claim and return relation IDs."""
+
+    @abstractmethod
+    def delete_projection_source(
+        self,
+        *,
+        research_space_id: str,
+        relation_id: str,
+        claim_id: str,
+    ) -> bool:
+        """Delete one claim/relation projection-lineage row."""
 
 
 __all__ = [

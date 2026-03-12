@@ -247,6 +247,11 @@ class ApplicationServiceFactoryMixin(
                 relation_projection_source_repository=(
                     SqlAlchemyKernelRelationProjectionSourceRepository(session)
                 ),
+                relation_projection_materialization_service=(
+                    self.create_kernel_relation_projection_materialization_service(
+                        session,
+                    )
+                ),
                 claim_participant_repository=(
                     SqlAlchemyKernelClaimParticipantRepository(session)
                 ),
@@ -367,11 +372,19 @@ class ApplicationServiceFactoryMixin(
                 graph_connection_agent=graph_connection_agent,
                 relation_repository=relation_repository,
                 entity_repository=SqlAlchemyKernelEntityRepository(session),
+                relation_projection_materialization_service=(
+                    self.create_kernel_relation_projection_materialization_service(
+                        session,
+                    )
+                ),
                 relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
                     session,
                 ),
                 claim_participant_repository=(
                     SqlAlchemyKernelClaimParticipantRepository(session)
+                ),
+                claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
+                    session,
                 ),
                 relation_projection_source_repository=(
                     SqlAlchemyKernelRelationProjectionSourceRepository(session)

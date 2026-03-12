@@ -13,7 +13,11 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
-from src.domain.entities.kernel.relations import KernelRelation
+from src.domain.entities.kernel.relations import (
+    KernelRelation,
+    KernelRelationEvidence,
+    RelationEvidenceWrite,
+)
 from src.domain.repositories.kernel.relation_repository import KernelRelationRepository
 from src.models.database.kernel.provenance import ProvenanceModel
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
@@ -53,24 +57,15 @@ class SqlAlchemyKernelRelationRepository(
             auto_promotion_policy or AutoPromotionPolicy.from_environment()
         )
 
-    def create(  # noqa: C901, PLR0912, PLR0913, PLR0915
+    def upsert_relation(  # noqa: PLR0913
         self,
         *,
         research_space_id: str,
         source_id: str,
         relation_type: str,
         target_id: str,
-        confidence: float = 0.5,
-        evidence_summary: str | None = None,
-        evidence_sentence: str | None = None,
-        evidence_sentence_source: str | None = None,
-        evidence_sentence_confidence: str | None = None,
-        evidence_sentence_rationale: str | None = None,
-        evidence_tier: str | None = None,
         curation_status: str = "DRAFT",
         provenance_id: str | None = None,
-        source_document_id: str | None = None,
-        agent_run_id: str | None = None,
     ) -> KernelRelation:
         provenance_uuid = self._resolve_existing_provenance_uuid(provenance_id)
         canonical_stmt = select(RelationModel).where(
@@ -96,133 +91,104 @@ class SqlAlchemyKernelRelationRepository(
             )
             self._session.add(relation)
             self._session.flush()
-        normalized_confidence = _clamp_confidence(confidence)
-        normalized_tier = _normalize_evidence_tier(evidence_tier)
-        normalized_sentence_source = (
-            evidence_sentence_source.strip().lower()
-            if isinstance(evidence_sentence_source, str)
-            and evidence_sentence_source.strip()
-            else None
-        )
-        normalized_sentence_confidence = (
-            evidence_sentence_confidence.strip().lower()
-            if isinstance(evidence_sentence_confidence, str)
-            and evidence_sentence_confidence.strip()
-            else None
-        )
-        normalized_sentence_rationale = (
-            evidence_sentence_rationale.strip()[:2000]
-            if isinstance(evidence_sentence_rationale, str)
-            and evidence_sentence_rationale.strip()
-            else None
-        )
-        source_document_uuid: UUID | None = None
-        if source_document_id is not None:
-            try:
-                source_document_uuid = _as_uuid(source_document_id)
-            except ValueError:
-                source_document_uuid = None
-        agent_run_value = (
-            agent_run_id.strip()
-            if isinstance(agent_run_id, str) and agent_run_id.strip()
-            else None
-        )
-
         if provenance_uuid is not None and relation.provenance_id is None:
             relation.provenance_id = provenance_uuid
+        self._session.flush()
+        return KernelRelation.model_validate(relation)
 
-        duplicate_stmt = select(RelationEvidenceModel.id).where(
-            RelationEvidenceModel.relation_id == relation.id,
-            RelationEvidenceModel.confidence == normalized_confidence,
-            RelationEvidenceModel.evidence_tier == normalized_tier,
+    def replace_derived_evidence_cache(
+        self,
+        relation_id: str,
+        *,
+        evidences: list[RelationEvidenceWrite],
+    ) -> KernelRelation:
+        relation_uuid = _as_uuid(relation_id)
+        relation = self._session.get(RelationModel, relation_uuid)
+        if relation is None:
+            msg = f"Relation {relation_id} not found"
+            raise ValueError(msg)
+
+        existing = list(
+            self._session.scalars(
+                select(RelationEvidenceModel).where(
+                    RelationEvidenceModel.relation_id == relation_uuid,
+                ),
+            ).all(),
         )
-        if evidence_summary is None:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.evidence_summary.is_(None),
-            )
-        else:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.evidence_summary == evidence_summary,
-            )
-        if evidence_sentence is None:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.evidence_sentence.is_(None),
-            )
-        else:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.evidence_sentence == evidence_sentence,
-            )
-        if normalized_sentence_source is None:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.evidence_sentence_source.is_(None),
-            )
-        else:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.evidence_sentence_source
-                == normalized_sentence_source,
-            )
-        if normalized_sentence_confidence is None:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.evidence_sentence_confidence.is_(None),
-            )
-        else:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.evidence_sentence_confidence
-                == normalized_sentence_confidence,
-            )
-        if normalized_sentence_rationale is None:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.evidence_sentence_rationale.is_(None),
-            )
-        else:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.evidence_sentence_rationale
-                == normalized_sentence_rationale,
-            )
-        if provenance_uuid is None:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.provenance_id.is_(None),
-            )
-        else:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.provenance_id == provenance_uuid,
-            )
-        if source_document_uuid is None:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.source_document_id.is_(None),
-            )
-        else:
-            duplicate_stmt = duplicate_stmt.where(
-                RelationEvidenceModel.source_document_id == source_document_uuid,
-            )
-        duplicate_evidence_id = self._session.scalar(duplicate_stmt.limit(1))
+        for existing_evidence in existing:
+            self._session.delete(existing_evidence)
+        self._session.flush()
 
-        if duplicate_evidence_id is None:
-            evidence = RelationEvidenceModel(
-                id=uuid4(),
-                relation_id=relation.id,
-                confidence=normalized_confidence,
-                evidence_summary=evidence_summary,
-                evidence_sentence=evidence_sentence,
-                evidence_sentence_source=normalized_sentence_source,
-                evidence_sentence_confidence=normalized_sentence_confidence,
-                evidence_sentence_rationale=normalized_sentence_rationale,
-                evidence_tier=normalized_tier,
-                provenance_id=provenance_uuid,
-                source_document_id=source_document_uuid,
-                agent_run_id=agent_run_value,
+        for evidence_write in evidences:
+            self._session.add(
+                RelationEvidenceModel(
+                    id=uuid4(),
+                    relation_id=relation_uuid,
+                    confidence=_clamp_confidence(evidence_write.confidence),
+                    evidence_summary=_normalize_optional_text(
+                        evidence_write.evidence_summary,
+                        max_length=2000,
+                    ),
+                    evidence_sentence=_normalize_optional_text(
+                        evidence_write.evidence_sentence,
+                        max_length=2000,
+                    ),
+                    evidence_sentence_source=_normalize_enum_text(
+                        evidence_write.evidence_sentence_source,
+                    ),
+                    evidence_sentence_confidence=_normalize_enum_text(
+                        evidence_write.evidence_sentence_confidence,
+                    ),
+                    evidence_sentence_rationale=_normalize_optional_text(
+                        evidence_write.evidence_sentence_rationale,
+                        max_length=2000,
+                    ),
+                    evidence_tier=_normalize_evidence_tier(
+                        evidence_write.evidence_tier,
+                    ),
+                    provenance_id=evidence_write.provenance_id,
+                    source_document_id=evidence_write.source_document_id,
+                    agent_run_id=_normalize_optional_text(
+                        evidence_write.agent_run_id,
+                        max_length=255,
+                    ),
+                ),
             )
-            self._session.add(evidence)
-            self._session.flush()
-
-        self._recompute_relation_aggregate(relation.id)
-        auto_promotion_decision = self._apply_auto_promotion(relation.id)
+        self._session.flush()
+        self._recompute_relation_aggregate(relation_uuid)
+        auto_promotion_decision = self._apply_auto_promotion(relation_uuid)
         self._log_auto_promotion_decision(
             relation=relation,
             decision=auto_promotion_decision,
         )
         self._session.flush()
         return KernelRelation.model_validate(relation)
+
+    def list_evidence_for_relation(
+        self,
+        *,
+        research_space_id: str,
+        relation_id: str,
+        claim_backed_only: bool = True,
+        limit: int | None = None,
+    ) -> list[KernelRelationEvidence]:
+        relation = self.get_by_id(
+            relation_id,
+            claim_backed_only=claim_backed_only,
+        )
+        if relation is None or str(relation.research_space_id) != research_space_id:
+            return []
+        stmt = (
+            select(RelationEvidenceModel)
+            .where(RelationEvidenceModel.relation_id == _as_uuid(relation_id))
+            .order_by(RelationEvidenceModel.created_at.desc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return [
+            KernelRelationEvidence.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
 
     def _resolve_existing_provenance_uuid(
         self,
@@ -241,6 +207,26 @@ class SqlAlchemyKernelRelationRepository(
             )
             return None
         return candidate
+
+
+def _normalize_optional_text(
+    value: str | None,
+    *,
+    max_length: int,
+) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized[:max_length]
+
+
+def _normalize_enum_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
 
 
 __all__ = ["SqlAlchemyKernelRelationRepository"]

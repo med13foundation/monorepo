@@ -13,12 +13,11 @@ from src.routes.auth import get_current_active_user
 from src.routes.research_spaces import research_spaces_router
 from src.routes.research_spaces.dependencies import get_membership_service
 from src.routes.research_spaces.kernel_dependencies import (
+    get_kernel_claim_evidence_service,
     get_kernel_claim_participant_service,
     get_kernel_entity_service,
     get_kernel_relation_claim_service,
-    get_kernel_relation_projection_invariant_service,
-    get_kernel_relation_projection_source_service,
-    get_kernel_relation_service,
+    get_kernel_relation_projection_materialization_service,
 )
 
 
@@ -44,15 +43,6 @@ class _DictionaryServiceStub:
         return object()
 
 
-class _RelationServiceStub:
-    def create_relation(self, *_args, **_kwargs) -> object:
-        return type(
-            "_Relation",
-            (),
-            {"id": uuid4(), "relation_type": "ASSOCIATED_WITH"},
-        )()
-
-
 class _EntityServiceStub:
     def get_entity(self, entity_id: str) -> object:
         return type(
@@ -76,20 +66,25 @@ class _ClaimParticipantServiceStub:
         return object()
 
 
-class _RelationProjectionSourceServiceStub:
-    def create_projection_source(self, *_args, **_kwargs) -> object:
+class _ClaimEvidenceServiceStub:
+    def create_evidence(self, *_args, **_kwargs) -> object:
         return object()
 
 
-class _FailingRelationProjectionSourceServiceStub:
-    def create_projection_source(self, *_args, **_kwargs) -> object:
-        msg = "projection lineage write failed"
+class _RelationProjectionMaterializationServiceStub:
+    def materialize_support_claim(self, *_args, **_kwargs) -> object:
+        relation = type(
+            "_Relation",
+            (),
+            {"id": uuid4(), "relation_type": "ASSOCIATED_WITH"},
+        )()
+        return type("_Materialized", (), {"relation": relation})()
+
+
+class _FailingRelationProjectionMaterializationServiceStub:
+    def materialize_support_claim(self, *_args, **_kwargs) -> object:
+        msg = "claim materialization failed"
         raise RuntimeError(msg)
-
-
-class _RelationProjectionInvariantServiceStub:
-    def assert_no_orphan_relations_for_write(self, *_args, **_kwargs) -> None:
-        return None
 
 
 def _admin_user() -> User:
@@ -156,12 +151,11 @@ def test_relation_type_review_status_maps_integrity_error_to_conflict() -> None:
 
 
 def test_create_relation_maps_integrity_error_to_conflict() -> None:
-    relation_service = _RelationServiceStub()
     entity_service = _EntityServiceStub()
     claim_service = _RelationClaimServiceStub()
     participant_service = _ClaimParticipantServiceStub()
-    projection_service = _RelationProjectionSourceServiceStub()
-    invariant_service = _RelationProjectionInvariantServiceStub()
+    claim_evidence_service = _ClaimEvidenceServiceStub()
+    materialization_service = _RelationProjectionMaterializationServiceStub()
     session = _SessionStub(
         commit_error=IntegrityError(
             "INSERT INTO relations",
@@ -173,17 +167,16 @@ def test_create_relation_maps_integrity_error_to_conflict() -> None:
     app.include_router(research_spaces_router)
     app.dependency_overrides[get_current_active_user] = _admin_user
     app.dependency_overrides[get_membership_service] = lambda: object()
-    app.dependency_overrides[get_kernel_relation_service] = lambda: relation_service
     app.dependency_overrides[get_kernel_entity_service] = lambda: entity_service
     app.dependency_overrides[get_kernel_relation_claim_service] = lambda: claim_service
     app.dependency_overrides[get_kernel_claim_participant_service] = (
         lambda: participant_service
     )
-    app.dependency_overrides[get_kernel_relation_projection_invariant_service] = (
-        lambda: invariant_service
+    app.dependency_overrides[get_kernel_claim_evidence_service] = (
+        lambda: claim_evidence_service
     )
-    app.dependency_overrides[get_kernel_relation_projection_source_service] = (
-        lambda: projection_service
+    app.dependency_overrides[get_kernel_relation_projection_materialization_service] = (
+        lambda: materialization_service
     )
     app.dependency_overrides[get_session] = lambda: session
     client = TestClient(app)
@@ -207,28 +200,26 @@ def test_create_relation_maps_integrity_error_to_conflict() -> None:
 
 
 def test_create_relation_projection_failure_rolls_back_and_returns_500() -> None:
-    relation_service = _RelationServiceStub()
     entity_service = _EntityServiceStub()
     claim_service = _RelationClaimServiceStub()
     participant_service = _ClaimParticipantServiceStub()
-    projection_service = _FailingRelationProjectionSourceServiceStub()
-    invariant_service = _RelationProjectionInvariantServiceStub()
+    claim_evidence_service = _ClaimEvidenceServiceStub()
+    materialization_service = _FailingRelationProjectionMaterializationServiceStub()
     session = _SessionStub()
     app = FastAPI()
     app.include_router(research_spaces_router)
     app.dependency_overrides[get_current_active_user] = _admin_user
     app.dependency_overrides[get_membership_service] = lambda: object()
-    app.dependency_overrides[get_kernel_relation_service] = lambda: relation_service
     app.dependency_overrides[get_kernel_entity_service] = lambda: entity_service
     app.dependency_overrides[get_kernel_relation_claim_service] = lambda: claim_service
     app.dependency_overrides[get_kernel_claim_participant_service] = (
         lambda: participant_service
     )
-    app.dependency_overrides[get_kernel_relation_projection_invariant_service] = (
-        lambda: invariant_service
+    app.dependency_overrides[get_kernel_claim_evidence_service] = (
+        lambda: claim_evidence_service
     )
-    app.dependency_overrides[get_kernel_relation_projection_source_service] = (
-        lambda: projection_service
+    app.dependency_overrides[get_kernel_relation_projection_materialization_service] = (
+        lambda: materialization_service
     )
     app.dependency_overrides[get_session] = lambda: session
     client = TestClient(app)

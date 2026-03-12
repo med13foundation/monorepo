@@ -55,15 +55,11 @@ class StubGraphConnectionAgent(GraphConnectionPort):
 
 @dataclass
 class StubRelationRepository:
-    """Relation repository stub that captures create calls."""
+    """Relation repository stub that captures materialized relation calls."""
 
     def __post_init__(self) -> None:
         self.calls: list[dict[str, object]] = []
         self.neighbourhood: list[_StubNeighbourhoodRelation] = []
-
-    def create(self, **kwargs: object) -> object:
-        self.calls.append(kwargs)
-        return SimpleNamespace(id=str(uuid4()))
 
     def find_neighborhood(
         self,
@@ -79,7 +75,7 @@ class StubRelationRepository:
 class FailingRelationRepository(StubRelationRepository):
     """Relation repository stub that raises deterministic DB integrity errors."""
 
-    def create(self, **kwargs: object) -> object:
+    def record_materialized_relation(self, **kwargs: object) -> object:
         self.calls.append(kwargs)
         statement = "INSERT INTO relations (...)"
         raise IntegrityError(
@@ -119,6 +115,15 @@ class StubClaimParticipantRepository:
 
 
 @dataclass
+class StubClaimEvidenceRepository:
+    calls: list[dict[str, object]]
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        return SimpleNamespace(id=str(uuid4()))
+
+
+@dataclass
 class StubRelationProjectionSourceRepository:
     calls: list[dict[str, object]]
 
@@ -135,6 +140,99 @@ class FailingRelationProjectionSourceRepository:
         self.calls.append(kwargs)
         msg = "projection lineage write failed"
         raise ValueError(msg)
+
+
+@dataclass
+class StubProjectionMaterializationService:
+    relation_repository: StubRelationRepository
+    relation_claim_repository: StubRelationClaimRepository | None = None
+    relation_projection_source_repository: (
+        StubRelationProjectionSourceRepository
+        | FailingRelationProjectionSourceRepository
+        | None
+    ) = None
+    linked_relations_by_claim_id: dict[str, str] | None = None
+
+    def __post_init__(self) -> None:
+        self.materialize_calls: list[dict[str, object]] = []
+        self.find_calls: list[dict[str, object]] = []
+
+    def materialize_support_claim(
+        self,
+        claim_id: str,
+        research_space_id: str,
+        projection_origin: str,
+        reviewed_by: str | None = None,
+    ) -> object:
+        _ = reviewed_by
+        relation_id = str(uuid4())
+        relation_type = None
+        if (
+            self.relation_claim_repository is not None
+            and self.relation_claim_repository.calls
+        ):
+            relation_type = self.relation_claim_repository.calls[-1].get(
+                "relation_type",
+            )
+        self.materialize_calls.append(
+            {
+                "claim_id": claim_id,
+                "research_space_id": research_space_id,
+                "projection_origin": projection_origin,
+                "relation_type": relation_type,
+            },
+        )
+        if isinstance(self.relation_repository, FailingRelationRepository):
+            self.relation_repository.record_materialized_relation(
+                claim_id=claim_id,
+                research_space_id=research_space_id,
+                projection_origin=projection_origin,
+                relation_type=relation_type,
+            )
+        else:
+            self.relation_repository.calls.append(
+                {
+                    "claim_id": claim_id,
+                    "research_space_id": research_space_id,
+                    "projection_origin": projection_origin,
+                    "relation_type": relation_type,
+                },
+            )
+        if self.relation_projection_source_repository is not None:
+            self.relation_projection_source_repository.create(
+                research_space_id=research_space_id,
+                relation_id=relation_id,
+                claim_id=claim_id,
+                projection_origin=projection_origin,
+                source_document_id=None,
+                agent_run_id=None,
+                metadata={"origin": "graph_connection"},
+            )
+        if (
+            self.relation_claim_repository is not None
+            and self.relation_claim_repository.calls
+        ):
+            self.relation_claim_repository.calls[-1]["linked_relation_id"] = relation_id
+        return SimpleNamespace(relation=SimpleNamespace(id=relation_id))
+
+    def find_claim_backed_relation_for_claim(
+        self,
+        *,
+        claim_id: str,
+        research_space_id: str,
+    ) -> object | None:
+        self.find_calls.append(
+            {
+                "claim_id": claim_id,
+                "research_space_id": research_space_id,
+            },
+        )
+        relation_id = None
+        if self.linked_relations_by_claim_id is not None:
+            relation_id = self.linked_relations_by_claim_id.get(claim_id)
+        if relation_id is None:
+            return None
+        return SimpleNamespace(id=relation_id)
 
 
 @dataclass(frozen=True)
@@ -248,6 +346,13 @@ def _build_empty_contract() -> GraphConnectionContract:
 
 def _build_claim_backed_projection_dependencies(
     contract: GraphConnectionContract,
+    *,
+    relation_repository: StubRelationRepository | None = None,
+    projection_repository: (
+        StubRelationProjectionSourceRepository
+        | FailingRelationProjectionSourceRepository
+        | None
+    ) = None,
 ) -> dict[str, object]:
     entity_map: dict[str, object] = {}
     for relation in contract.proposed_relations:
@@ -261,12 +366,25 @@ def _build_claim_backed_projection_dependencies(
             entity_type="DISEASE",
             display_label="Target Entity",
         )
+    relation_claim_repository = StubRelationClaimRepository(calls=[])
+    effective_relation_repository = relation_repository or StubRelationRepository()
+    effective_projection_repository = (
+        projection_repository
+        if projection_repository is not None
+        else StubRelationProjectionSourceRepository(calls=[])
+    )
     return {
         "entity_repository": StubEntityRepository(entities=entity_map),
-        "relation_claim_repository": StubRelationClaimRepository(calls=[]),
+        "relation_claim_repository": relation_claim_repository,
         "claim_participant_repository": StubClaimParticipantRepository(calls=[]),
-        "relation_projection_source_repository": (
-            StubRelationProjectionSourceRepository(calls=[])
+        "claim_evidence_repository": StubClaimEvidenceRepository(calls=[]),
+        "relation_projection_source_repository": effective_projection_repository,
+        "relation_projection_materialization_service": (
+            StubProjectionMaterializationService(
+                relation_repository=effective_relation_repository,
+                relation_claim_repository=relation_claim_repository,
+                relation_projection_source_repository=effective_projection_repository,
+            )
         ),
     }
 
@@ -275,7 +393,10 @@ def _build_claim_backed_projection_dependencies(
 async def test_discover_connections_for_seed_writes_relations() -> None:
     contract = _build_contract()
     relation_repository = StubRelationRepository()
-    projection_dependencies = _build_claim_backed_projection_dependencies(contract)
+    projection_dependencies = _build_claim_backed_projection_dependencies(
+        contract,
+        relation_repository=relation_repository,
+    )
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
@@ -306,6 +427,7 @@ async def test_discover_connections_for_seed_records_claim_backed_projection() -
     relation_repository = StubRelationRepository()
     relation_claim_repository = StubRelationClaimRepository(calls=[])
     claim_participant_repository = StubClaimParticipantRepository(calls=[])
+    claim_evidence_repository = StubClaimEvidenceRepository(calls=[])
     projection_repository = StubRelationProjectionSourceRepository(calls=[])
     entity_repository = StubEntityRepository(
         entities={
@@ -328,7 +450,15 @@ async def test_discover_connections_for_seed_records_claim_backed_projection() -
             entity_repository=entity_repository,
             relation_claim_repository=relation_claim_repository,
             claim_participant_repository=claim_participant_repository,
+            claim_evidence_repository=claim_evidence_repository,
             relation_projection_source_repository=projection_repository,
+            relation_projection_materialization_service=(
+                StubProjectionMaterializationService(
+                    relation_repository=relation_repository,
+                    relation_claim_repository=relation_claim_repository,
+                    relation_projection_source_repository=projection_repository,
+                )
+            ),
             governance_service=_build_governance_service(),
         ),
     )
@@ -347,6 +477,7 @@ async def test_discover_connections_for_seed_records_claim_backed_projection() -
     assert relation_claim_repository.calls[0]["claim_status"] == "RESOLVED"
     assert relation_claim_repository.calls[0]["linked_relation_id"]
     assert len(claim_participant_repository.calls) == 2
+    assert len(claim_evidence_repository.calls) == 1
     assert {call["role"] for call in claim_participant_repository.calls} == {
         "SUBJECT",
         "OBJECT",
@@ -362,6 +493,7 @@ async def test_discover_connections_for_seed_rolls_back_on_projection_failure() 
     relation_repository = StubRelationRepository()
     relation_claim_repository = StubRelationClaimRepository(calls=[])
     claim_participant_repository = StubClaimParticipantRepository(calls=[])
+    claim_evidence_repository = StubClaimEvidenceRepository(calls=[])
     projection_repository = FailingRelationProjectionSourceRepository(calls=[])
     entity_repository = StubEntityRepository(
         entities={
@@ -385,7 +517,15 @@ async def test_discover_connections_for_seed_rolls_back_on_projection_failure() 
             entity_repository=entity_repository,
             relation_claim_repository=relation_claim_repository,
             claim_participant_repository=claim_participant_repository,
+            claim_evidence_repository=claim_evidence_repository,
             relation_projection_source_repository=projection_repository,
+            relation_projection_materialization_service=(
+                StubProjectionMaterializationService(
+                    relation_repository=relation_repository,
+                    relation_claim_repository=relation_claim_repository,
+                    relation_projection_source_repository=projection_repository,
+                )
+            ),
             governance_service=_build_governance_service(),
             rollback_on_error=lambda: rollback_calls.append("rollback"),
         ),
@@ -411,11 +551,16 @@ async def test_discover_connections_for_seed_rolls_back_on_projection_failure() 
 async def test_discover_connections_for_seed_maps_integrity_errors_to_codes() -> None:
     contract = _build_contract()
     relation_repository = FailingRelationRepository()
+    projection_dependencies = _build_claim_backed_projection_dependencies(
+        contract,
+        relation_repository=relation_repository,
+    )
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
+            **projection_dependencies,
         ),
     )
 
@@ -465,7 +610,10 @@ async def test_discover_connections_for_seed_requires_review_on_low_confidence()
 ):
     contract = _build_contract(confidence_score=0.4)
     relation_repository = StubRelationRepository()
-    projection_dependencies = _build_claim_backed_projection_dependencies(contract)
+    projection_dependencies = _build_claim_backed_projection_dependencies(
+        contract,
+        relation_repository=relation_repository,
+    )
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
@@ -494,7 +642,10 @@ async def test_discover_connections_for_seed_requires_review_on_low_confidence()
 async def test_discover_connections_for_seed_uses_relation_type_thresholds() -> None:
     contract = _build_contract(confidence_score=0.86, relation_type="CAUSES")
     relation_repository = StubRelationRepository()
-    projection_dependencies = _build_claim_backed_projection_dependencies(contract)
+    projection_dependencies = _build_claim_backed_projection_dependencies(
+        contract,
+        relation_repository=relation_repository,
+    )
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
@@ -526,7 +677,10 @@ async def test_discover_connections_for_seed_uses_relation_type_thresholds() -> 
 async def test_discover_connections_for_seed_enqueues_review_item() -> None:
     contract = _build_contract(confidence_score=0.86, relation_type="CAUSES")
     relation_repository = StubRelationRepository()
-    projection_dependencies = _build_claim_backed_projection_dependencies(contract)
+    projection_dependencies = _build_claim_backed_projection_dependencies(
+        contract,
+        relation_repository=relation_repository,
+    )
     queued_items: list[tuple[str, str, str | None, str]] = []
 
     def submit_review_item(
@@ -574,6 +728,8 @@ async def test_discover_connections_for_seed_promotes_rejected_candidates() -> N
     contract = _build_contract_with_rejected_candidate()
     relation_repository = StubRelationRepository()
     rejected_candidate = contract.rejected_candidates[0]
+    relation_claim_repository = StubRelationClaimRepository(calls=[])
+    projection_repository = StubRelationProjectionSourceRepository(calls=[])
     projection_dependencies = {
         "entity_repository": StubEntityRepository(
             entities={
@@ -589,10 +745,16 @@ async def test_discover_connections_for_seed_promotes_rejected_candidates() -> N
                 ),
             },
         ),
-        "relation_claim_repository": StubRelationClaimRepository(calls=[]),
+        "relation_claim_repository": relation_claim_repository,
         "claim_participant_repository": StubClaimParticipantRepository(calls=[]),
-        "relation_projection_source_repository": (
-            StubRelationProjectionSourceRepository(calls=[])
+        "claim_evidence_repository": StubClaimEvidenceRepository(calls=[]),
+        "relation_projection_source_repository": projection_repository,
+        "relation_projection_materialization_service": (
+            StubProjectionMaterializationService(
+                relation_repository=relation_repository,
+                relation_claim_repository=relation_claim_repository,
+                relation_projection_source_repository=projection_repository,
+            )
         ),
     }
     queued_items: list[tuple[str, str, str | None, str]] = []
@@ -682,6 +844,7 @@ async def test_discover_connections_for_seed_uses_neighbourhood_fallback() -> No
     )
     projection_dependencies = _build_claim_backed_projection_dependencies(
         fallback_contract,
+        relation_repository=relation_repository,
     )
     queued_items: list[tuple[str, str, str | None, str]] = []
 

@@ -263,7 +263,7 @@ def test_record_observation_unit_transform(
 # ── Kernel Relation Service Tests ─────────────────────────────────────────────
 
 
-def test_create_relation_success(
+def test_get_relation_passes_claim_backed_policy_to_repository(
     mock_relation_repo,
     mock_entity_repo,
     mock_dictionary_repo,
@@ -274,138 +274,48 @@ def test_create_relation_success(
         mock_dictionary_repo,
     )
 
-    # Setup
-    mock_entity_repo.get_by_id.side_effect = [
-        EntityModel(id="src-1", research_space_id="space-1", entity_type="GENE"),
-        EntityModel(id="tgt-1", research_space_id="space-1", entity_type="DISEASE"),
-    ]
-    mock_dictionary_repo.resolve_relation_synonym.return_value = None
-    mock_dictionary_repo.is_triple_allowed.return_value = True
+    service.get_relation(
+        "rel-1",
+        claim_backed_only=False,
+    )
 
-    # Execute
-    service.create_relation(
-        research_space_id="space-1",
-        source_id="src-1",
+    mock_relation_repo.get_by_id.assert_called_once_with(
+        "rel-1",
+        claim_backed_only=False,
+    )
+
+
+def test_list_by_research_space_passes_claim_backed_policy_to_repository(
+    mock_relation_repo,
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelRelationService(
+        mock_relation_repo,
+        mock_entity_repo,
+        mock_dictionary_repo,
+    )
+
+    service.list_by_research_space(
+        "space-1",
         relation_type="ASSOCIATED_WITH",
-        target_id="tgt-1",
-        evidence_summary="Paper X",
+        claim_backed_only=False,
+        limit=10,
+        offset=5,
     )
 
-    # Verify
-    mock_relation_repo.create.assert_called_once()
-    mock_dictionary_repo.is_triple_allowed.assert_called_once_with(
-        "GENE",
-        "ASSOCIATED_WITH",
-        "DISEASE",
-    )
-
-
-def test_create_relation_constraint_violation(
-    mock_relation_repo,
-    mock_entity_repo,
-    mock_dictionary_repo,
-):
-    service = KernelRelationService(
-        mock_relation_repo,
-        mock_entity_repo,
-        mock_dictionary_repo,
-    )
-
-    # Setup
-    mock_entity_repo.get_by_id.side_effect = [
-        EntityModel(id="src-1", research_space_id="space-1", entity_type="GENE"),
-        EntityModel(id="tgt-1", research_space_id="space-1", entity_type="DISEASE"),
-    ]
-    mock_dictionary_repo.resolve_relation_synonym.return_value = None
-    # Constraint says NO
-    mock_dictionary_repo.is_triple_allowed.return_value = False
-
-    # Execute & Verify
-    with pytest.raises(ValueError, match="not allowed by constraints"):
-        service.create_relation(
-            research_space_id="space-1",
-            source_id="src-1",
-            relation_type="BAD_RELATION",
-            target_id="tgt-1",
-        )
-
-
-def test_create_relation_canonicalizes_alias_before_constraint_check(
-    mock_relation_repo,
-    mock_entity_repo,
-    mock_dictionary_repo,
-):
-    service = KernelRelationService(
-        mock_relation_repo,
-        mock_entity_repo,
-        mock_dictionary_repo,
-    )
-
-    mock_entity_repo.get_by_id.side_effect = [
-        EntityModel(id="src-1", research_space_id="space-1", entity_type="GENE"),
-        EntityModel(id="tgt-1", research_space_id="space-1", entity_type="DISEASE"),
-    ]
-
-    resolved_relation = Mock()
-    resolved_relation.id = "CAUSES"
-    mock_dictionary_repo.resolve_relation_synonym.return_value = resolved_relation
-    mock_dictionary_repo.is_triple_allowed.return_value = True
-    mock_dictionary_repo.requires_evidence.return_value = False
-
-    service.create_relation(
-        research_space_id="space-1",
-        source_id="src-1",
-        relation_type="drives",
-        target_id="tgt-1",
-    )
-
-    mock_dictionary_repo.resolve_relation_synonym.assert_called_once_with("DRIVES")
-    mock_dictionary_repo.is_triple_allowed.assert_called_once_with(
-        "GENE",
-        "CAUSES",
-        "DISEASE",
-    )
-    mock_relation_repo.create.assert_called_once()
-    assert mock_relation_repo.create.call_args.kwargs["relation_type"] == "CAUSES"
-
-
-def test_create_relation_normalizes_relation_type_when_no_synonym_match(
-    mock_relation_repo,
-    mock_entity_repo,
-    mock_dictionary_repo,
-):
-    service = KernelRelationService(
-        mock_relation_repo,
-        mock_entity_repo,
-        mock_dictionary_repo,
-    )
-
-    mock_entity_repo.get_by_id.side_effect = [
-        EntityModel(id="src-1", research_space_id="space-1", entity_type="GENE"),
-        EntityModel(id="tgt-1", research_space_id="space-1", entity_type="DISEASE"),
-    ]
-    mock_dictionary_repo.resolve_relation_synonym.return_value = None
-    mock_dictionary_repo.is_triple_allowed.return_value = True
-    mock_dictionary_repo.requires_evidence.return_value = False
-
-    service.create_relation(
-        research_space_id="space-1",
-        source_id="src-1",
-        relation_type=" associated_with ",
-        target_id="tgt-1",
-    )
-
-    mock_dictionary_repo.resolve_relation_synonym.assert_called_once_with(
-        "ASSOCIATED_WITH",
-    )
-    mock_dictionary_repo.is_triple_allowed.assert_called_once_with(
-        "GENE",
-        "ASSOCIATED_WITH",
-        "DISEASE",
-    )
-    mock_relation_repo.create.assert_called_once()
-    assert (
-        mock_relation_repo.create.call_args.kwargs["relation_type"] == "ASSOCIATED_WITH"
+    mock_relation_repo.find_by_research_space.assert_called_once_with(
+        "space-1",
+        relation_type="ASSOCIATED_WITH",
+        curation_status=None,
+        validation_state=None,
+        source_document_id=None,
+        certainty_band=None,
+        node_query=None,
+        node_ids=None,
+        claim_backed_only=False,
+        limit=10,
+        offset=5,
     )
 
 
@@ -432,6 +342,7 @@ def test_get_neighborhood_passes_limit_to_repository(
         "seed-1",
         depth=2,
         relation_types=["ASSOCIATED_WITH"],
+        claim_backed_only=True,
         limit=15,
     )
 
@@ -473,6 +384,7 @@ def test_get_neighborhood_in_space_filters_cross_space_relations(
         "seed-1",
         depth=1,
         relation_types=None,
+        claim_backed_only=True,
         limit=5,
     )
     assert relations == [relation_same_space]

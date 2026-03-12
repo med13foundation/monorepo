@@ -20,6 +20,7 @@ from src.application.services.kernel import (
     KernelObservationService,
     KernelRelationClaimService,
     KernelRelationProjectionInvariantService,
+    KernelRelationProjectionMaterializationService,
     KernelRelationProjectionSourceService,
     KernelRelationService,
     KernelRelationSuggestionService,
@@ -158,11 +159,9 @@ def get_kernel_relation_service(
     """Kernel relation service (graph edges + curation lifecycle)."""
     relation_repo = SqlAlchemyKernelRelationRepository(session)
     entity_repo = _build_entity_repository(session)
-    dictionary_repo = SqlAlchemyDictionaryRepository(session)
     return KernelRelationService(
         relation_repo=relation_repo,
         entity_repo=entity_repo,
-        dictionary_repo=dictionary_repo,
     )
 
 
@@ -207,6 +206,23 @@ def get_kernel_relation_projection_invariant_service(
     projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(session)
     return KernelRelationProjectionInvariantService(
         relation_projection_repo=projection_repo,
+    )
+
+
+def get_kernel_relation_projection_materialization_service(
+    session: Session = Depends(get_session),
+) -> KernelRelationProjectionMaterializationService:
+    """Kernel relation projection materializer."""
+    return KernelRelationProjectionMaterializationService(
+        relation_repo=SqlAlchemyKernelRelationRepository(session),
+        relation_claim_repo=SqlAlchemyKernelRelationClaimRepository(session),
+        claim_participant_repo=SqlAlchemyKernelClaimParticipantRepository(session),
+        claim_evidence_repo=SqlAlchemyKernelClaimEvidenceRepository(session),
+        entity_repo=_build_entity_repository(session),
+        dictionary_repo=SqlAlchemyDictionaryRepository(session),
+        relation_projection_repo=SqlAlchemyKernelRelationProjectionSourceRepository(
+            session,
+        ),
     )
 
 

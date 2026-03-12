@@ -168,7 +168,9 @@ def test_build_graph_connection_tools_calls_dependencies() -> None:
         None,
     )
     assert relation["relation_type"] == "ASSOCIATED_WITH"
-    relation_repository.create.assert_called_once()
+    assert relation["created"] is False
+    assert relation["error"] == "direct_canonical_upsert_disabled"
+    relation_repository.create.assert_not_called()
 
     triple_validation = validate_triple("GENE", "ASSOCIATED_WITH", "PHENOTYPE")
     assert triple_validation["allowed"] is True

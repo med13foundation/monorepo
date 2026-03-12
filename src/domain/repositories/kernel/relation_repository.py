@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from src.domain.entities.kernel.relations import KernelRelation
+    from src.domain.entities.kernel.relations import (
+        KernelRelation,
+        KernelRelationEvidence,
+        RelationEvidenceWrite,
+    )
 
 
 class KernelRelationRepository(ABC):
@@ -27,32 +31,49 @@ class KernelRelationRepository(ABC):
     # ── Write ─────────────────────────────────────────────────────────
 
     @abstractmethod
-    def create(  # noqa: PLR0913
+    def upsert_relation(  # noqa: PLR0913
         self,
         *,
         research_space_id: str,
         source_id: str,
         relation_type: str,
         target_id: str,
-        confidence: float = 0.5,
-        evidence_summary: str | None = None,
-        evidence_sentence: str | None = None,
-        evidence_sentence_source: str | None = None,
-        evidence_sentence_confidence: str | None = None,
-        evidence_sentence_rationale: str | None = None,
-        evidence_tier: str | None = None,
         curation_status: str = "DRAFT",
         provenance_id: str | None = None,
-        source_document_id: str | None = None,
-        agent_run_id: str | None = None,
     ) -> KernelRelation:
-        """Create a new relation (graph edge) between two entities."""
+        """Create or return the bare canonical relation row for one triple."""
+
+    @abstractmethod
+    def replace_derived_evidence_cache(
+        self,
+        relation_id: str,
+        *,
+        evidences: list[RelationEvidenceWrite],
+    ) -> KernelRelation:
+        """Replace all cached canonical evidence rows for one relation."""
 
     # ── Read ──────────────────────────────────────────────────────────
 
     @abstractmethod
-    def get_by_id(self, relation_id: str) -> KernelRelation | None:
+    def get_by_id(
+        self,
+        relation_id: str,
+        *,
+        claim_backed_only: bool = True,
+    ) -> KernelRelation | None:
         """Retrieve a single relation by primary key."""
+
+    @abstractmethod
+    def find_by_triple(
+        self,
+        *,
+        research_space_id: str,
+        source_id: str,
+        relation_type: str,
+        target_id: str,
+        claim_backed_only: bool = True,
+    ) -> KernelRelation | None:
+        """Retrieve one relation by canonical triple."""
 
     @abstractmethod
     def find_by_source(
@@ -60,6 +81,7 @@ class KernelRelationRepository(ABC):
         source_id: str,
         *,
         relation_type: str | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:
@@ -71,6 +93,7 @@ class KernelRelationRepository(ABC):
         target_id: str,
         *,
         relation_type: str | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:
@@ -83,6 +106,7 @@ class KernelRelationRepository(ABC):
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
     ) -> list[KernelRelation]:
         """
@@ -105,6 +129,7 @@ class KernelRelationRepository(ABC):
         certainty_band: str | None = None,
         node_query: str | None = None,
         node_ids: list[str] | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:
@@ -116,9 +141,21 @@ class KernelRelationRepository(ABC):
         research_space_id: str,
         query: str,
         *,
+        claim_backed_only: bool = True,
         limit: int = 20,
     ) -> list[KernelRelation]:
         """Search relations in a research space by type, status, and evidence text."""
+
+    @abstractmethod
+    def list_evidence_for_relation(
+        self,
+        *,
+        research_space_id: str,
+        relation_id: str,
+        claim_backed_only: bool = True,
+        limit: int | None = None,
+    ) -> list[KernelRelationEvidence]:
+        """Return cached canonical evidence rows for one relation."""
 
     # ── Curation lifecycle ────────────────────────────────────────────
 
@@ -155,6 +192,7 @@ class KernelRelationRepository(ABC):
         certainty_band: str | None = None,
         node_query: str | None = None,
         node_ids: list[str] | None = None,
+        claim_backed_only: bool = True,
     ) -> int:
         """Count relations in a research space with optional filters."""
 

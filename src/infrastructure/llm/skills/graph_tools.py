@@ -321,7 +321,13 @@ def make_upsert_relation_tool(
     research_space_id: str | None = None,
     **_: object,
 ) -> Callable[[str, str, str, float, str | None, str | None, str | None], JSONObject]:
-    """Build an upsert_relation tool callable backed by canonical relation upsert."""
+    """Build an upsert_relation tool callable.
+
+    Direct canonical relation writes are disabled under the claim-first
+    projection architecture. Callers must go through a claim materialization
+    path instead of writing to ``relations`` directly.
+    """
+    del relation_repository
     space_id = _normalize_space_id(research_space_id)
 
     def upsert_relation(  # noqa: PLR0913
@@ -333,26 +339,15 @@ def make_upsert_relation_tool(
         evidence_tier: str | None = "COMPUTATIONAL",
         provenance_id: str | None = None,
     ) -> JSONObject:
-        try:
-            relation = relation_repository.create(
-                research_space_id=space_id,
-                source_id=source_id,
-                relation_type=relation_type,
-                target_id=target_id,
-                confidence=confidence,
-                evidence_summary=evidence_summary,
-                evidence_tier=evidence_tier,
-                provenance_id=provenance_id,
-            )
-        except (TypeError, ValueError):
-            return {
-                "created": False,
-                "error": "invalid_relation_payload",
-                "source_id": source_id,
-                "relation_type": relation_type,
-                "target_id": target_id,
-            }
-        return _model_to_json(relation)
+        del confidence, evidence_summary, evidence_tier, provenance_id
+        return {
+            "created": False,
+            "error": "direct_canonical_upsert_disabled",
+            "research_space_id": space_id,
+            "source_id": source_id,
+            "relation_type": relation_type,
+            "target_id": target_id,
+        }
 
     return upsert_relation
 

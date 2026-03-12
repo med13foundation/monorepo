@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
+from src.domain.entities.kernel.relations import RelationEvidenceWrite
 from src.domain.entities.user import UserRole, UserStatus
 from src.infrastructure.repositories.kernel.kernel_relation_repository import (
     SqlAlchemyKernelRelationRepository,
@@ -20,6 +21,117 @@ from src.models.database.user import UserModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+def _as_optional_uuid(value: str | None) -> UUID | None:
+    if value is None:
+        return None
+    return UUID(value)
+
+
+def _create_relation(  # noqa: PLR0913
+    repository: SqlAlchemyKernelRelationRepository,
+    *,
+    research_space_id: str,
+    source_id: str,
+    relation_type: str,
+    target_id: str,
+    confidence: float = 0.5,
+    evidence_summary: str | None = None,
+    evidence_sentence: str | None = None,
+    evidence_sentence_source: str | None = None,
+    evidence_sentence_confidence: str | None = None,
+    evidence_sentence_rationale: str | None = None,
+    evidence_tier: str | None = "COMPUTATIONAL",
+    curation_status: str = "DRAFT",
+    provenance_id: str | None = None,
+    source_document_id: str | None = None,
+    agent_run_id: str | None = None,
+):
+    relation = repository.upsert_relation(
+        research_space_id=research_space_id,
+        source_id=source_id,
+        relation_type=relation_type,
+        target_id=target_id,
+        curation_status=curation_status,
+        provenance_id=provenance_id,
+    )
+    existing = repository.list_evidence_for_relation(
+        research_space_id=research_space_id,
+        relation_id=str(relation.id),
+        claim_backed_only=False,
+    )
+    new_evidence = RelationEvidenceWrite(
+        confidence=max(0.0, min(confidence, 1.0)),
+        evidence_summary=evidence_summary,
+        evidence_sentence=evidence_sentence,
+        evidence_sentence_source=evidence_sentence_source,
+        evidence_sentence_confidence=evidence_sentence_confidence,
+        evidence_sentence_rationale=evidence_sentence_rationale,
+        evidence_tier=evidence_tier or "COMPUTATIONAL",
+        provenance_id=_as_optional_uuid(provenance_id),
+        source_document_id=_as_optional_uuid(source_document_id),
+        agent_run_id=agent_run_id,
+    )
+    evidence_rows = [
+        RelationEvidenceWrite(
+            confidence=float(row.confidence),
+            evidence_summary=row.evidence_summary,
+            evidence_sentence=row.evidence_sentence,
+            evidence_sentence_source=row.evidence_sentence_source,
+            evidence_sentence_confidence=row.evidence_sentence_confidence,
+            evidence_sentence_rationale=row.evidence_sentence_rationale,
+            evidence_tier=row.evidence_tier,
+            provenance_id=row.provenance_id,
+            source_document_id=row.source_document_id,
+            agent_run_id=row.agent_run_id,
+        )
+        for row in existing
+    ]
+    existing_keys = {
+        (
+            float(row.confidence),
+            row.evidence_summary,
+            row.evidence_sentence,
+            row.evidence_sentence_source,
+            row.evidence_sentence_confidence,
+            row.evidence_sentence_rationale,
+            row.evidence_tier,
+            str(row.provenance_id) if row.provenance_id is not None else None,
+            str(row.source_document_id) if row.source_document_id is not None else None,
+            row.agent_run_id,
+        )
+        for row in existing
+    }
+    new_key = (
+        float(new_evidence.confidence),
+        new_evidence.evidence_summary,
+        new_evidence.evidence_sentence,
+        new_evidence.evidence_sentence_source,
+        new_evidence.evidence_sentence_confidence,
+        new_evidence.evidence_sentence_rationale,
+        new_evidence.evidence_tier,
+        (
+            str(new_evidence.provenance_id)
+            if new_evidence.provenance_id is not None
+            else None
+        ),
+        (
+            str(new_evidence.source_document_id)
+            if new_evidence.source_document_id is not None
+            else None
+        ),
+        new_evidence.agent_run_id,
+    )
+    if new_key not in existing_keys:
+        evidence_rows.append(new_evidence)
+    return repository.replace_derived_evidence_cache(
+        str(relation.id),
+        evidences=evidence_rows,
+    )
+
+
+SqlAlchemyKernelRelationRepository.create = _create_relation  # type: ignore[attr-defined]
 
 
 def _seed_space_and_entities(
@@ -734,10 +846,12 @@ def test_find_by_research_space_filters_by_node_ids(
     by_source = repository.find_by_research_space(
         str(research_space_id),
         node_ids=[str(source_entity_id)],
+        claim_backed_only=False,
     )
     by_target = repository.find_by_research_space(
         str(research_space_id),
         node_ids=[str(target_entity_id)],
+        claim_backed_only=False,
     )
 
     assert [str(relation.id) for relation in by_source] == [str(expected_relation.id)]

@@ -53,6 +53,7 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         self._relation_projection_sources = (
             dependencies.relation_projection_source_repository
         )
+        self._materializer = dependencies.relation_projection_materialization_service
         self._claim_participants = dependencies.claim_participant_repository
         self._claim_evidences = dependencies.claim_evidence_repository
         self._entities = dependencies.entity_repository
@@ -68,6 +69,12 @@ class ExtractionService(_ExtractionRelationPersistenceHelpers):
         if self._relation_claims is not None and self._claim_participants is None:
             msg = (
                 "claim_participant_repository is required when "
+                "relation_claim_repository is configured"
+            )
+            raise ValueError(msg)
+        if self._relation_claims is not None and self._materializer is None:
+            msg = (
+                "relation_projection_materialization_service is required when "
                 "relation_claim_repository is configured"
             )
             raise ValueError(msg)

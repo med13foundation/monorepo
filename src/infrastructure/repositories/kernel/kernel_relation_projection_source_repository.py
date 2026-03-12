@@ -111,6 +111,26 @@ class SqlAlchemyKernelRelationProjectionSourceRepository(
             for model in self._session.scalars(stmt).all()
         ]
 
+    def find_by_claim_id(
+        self,
+        *,
+        research_space_id: str,
+        claim_id: str,
+    ) -> list[KernelRelationProjectionSource]:
+        stmt = (
+            select(RelationProjectionSourceModel)
+            .where(
+                RelationProjectionSourceModel.research_space_id
+                == _as_uuid(research_space_id),
+                RelationProjectionSourceModel.claim_id == _as_uuid(claim_id),
+            )
+            .order_by(RelationProjectionSourceModel.created_at.asc())
+        )
+        return [
+            KernelRelationProjectionSource.model_validate(model)
+            for model in self._session.scalars(stmt).all()
+        ]
+
     def count_by_relation_ids(
         self,
         *,
@@ -199,6 +219,48 @@ class SqlAlchemyKernelRelationProjectionSourceRepository(
             )
         count = self._session.scalar(stmt)
         return int(count or 0)
+
+    def delete_by_claim_id(
+        self,
+        *,
+        research_space_id: str,
+        claim_id: str,
+    ) -> list[str]:
+        stmt = select(RelationProjectionSourceModel).where(
+            RelationProjectionSourceModel.research_space_id
+            == _as_uuid(research_space_id),
+            RelationProjectionSourceModel.claim_id == _as_uuid(claim_id),
+        )
+        models = list(self._session.scalars(stmt).all())
+        relation_ids: list[str] = []
+        for model in models:
+            relation_id = str(model.relation_id)
+            if relation_id not in relation_ids:
+                relation_ids.append(relation_id)
+            self._session.delete(model)
+        if models:
+            self._session.flush()
+        return relation_ids
+
+    def delete_projection_source(
+        self,
+        *,
+        research_space_id: str,
+        relation_id: str,
+        claim_id: str,
+    ) -> bool:
+        stmt = select(RelationProjectionSourceModel).where(
+            RelationProjectionSourceModel.research_space_id
+            == _as_uuid(research_space_id),
+            RelationProjectionSourceModel.relation_id == _as_uuid(relation_id),
+            RelationProjectionSourceModel.claim_id == _as_uuid(claim_id),
+        )
+        model = self._session.scalars(stmt.limit(1)).first()
+        if model is None:
+            return False
+        self._session.delete(model)
+        self._session.flush()
+        return True
 
 
 __all__ = ["SqlAlchemyKernelRelationProjectionSourceRepository"]

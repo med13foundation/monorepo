@@ -1,32 +1,24 @@
 """
 Kernel relation application service.
 
-Creates graph edges with constraint validation, manages
-curation lifecycle, and provides graph traversal.
+Manages canonical relation reads, curation lifecycle,
+and graph traversal for claim-backed projections.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
-
-from src.domain.value_objects.relation_types import normalize_relation_type
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from src.domain.entities.kernel.relations import KernelRelation
-    from src.domain.repositories.kernel.dictionary_repository import (
-        DictionaryRepository,
-    )
     from src.domain.repositories.kernel.entity_repository import (
         KernelEntityRepository,
     )
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
-
-logger = logging.getLogger(__name__)
 _ALLOWED_CURATION_STATUSES = frozenset(
     {"DRAFT", "UNDER_REVIEW", "APPROVED", "REJECTED", "RETRACTED"},
 )
@@ -36,126 +28,18 @@ class KernelRelationService:
     """
     Application service for kernel relations (graph edges).
 
-    Validates triples against relation constraints before creation
-    and manages the curation lifecycle.
+    Reads canonical claim-backed projections and manages the
+    curation lifecycle for already materialized relations.
     """
 
     def __init__(
         self,
         relation_repo: KernelRelationRepository,
-        entity_repo: KernelEntityRepository,
-        dictionary_repo: DictionaryRepository,
+        entity_repo: KernelEntityRepository | None = None,
+        *_unused_dependencies: object,
     ) -> None:
         self._relations = relation_repo
         self._entities = entity_repo
-        self._dictionary = dictionary_repo
-
-    # ── Create ────────────────────────────────────────────────────────
-
-    def create_relation(  # noqa: PLR0913
-        self,
-        *,
-        research_space_id: str,
-        source_id: str,
-        relation_type: str,
-        target_id: str,
-        confidence: float = 0.5,
-        evidence_summary: str | None = None,
-        evidence_sentence: str | None = None,
-        evidence_sentence_source: str | None = None,
-        evidence_sentence_confidence: str | None = None,
-        evidence_sentence_rationale: str | None = None,
-        evidence_tier: str | None = None,
-        provenance_id: str | None = None,
-        source_document_id: str | None = None,
-        agent_run_id: str | None = None,
-    ) -> KernelRelation:
-        """
-        Create a relation with constraint validation.
-
-        1. Verify source and target entities exist
-        2. Check relation constraint allows the triple
-        3. Check evidence requirement
-        4. Create the relation
-        """
-        # 1. Verify entities exist
-        source = self._entities.get_by_id(source_id)
-        if source is None:
-            msg = f"Source entity {source_id} not found"
-            raise ValueError(msg)
-
-        target = self._entities.get_by_id(target_id)
-        if target is None:
-            msg = f"Target entity {target_id} not found"
-            raise ValueError(msg)
-
-        # 1b. Enforce research-space isolation for graph edges
-        if str(source.research_space_id) != str(research_space_id):
-            msg = f"Source entity {source_id} is not in research space {research_space_id}"
-            raise ValueError(msg)
-        if str(target.research_space_id) != str(research_space_id):
-            msg = f"Target entity {target_id} is not in research space {research_space_id}"
-            raise ValueError(msg)
-
-        normalized_relation_type = normalize_relation_type(relation_type)
-        if not normalized_relation_type:
-            msg = "relation_type is required"
-            raise ValueError(msg)
-
-        canonical_relation_type = normalized_relation_type
-        resolved_relation_type = self._dictionary.resolve_relation_synonym(
-            normalized_relation_type,
-        )
-        if resolved_relation_type is not None:
-            resolved_relation_type_id = getattr(resolved_relation_type, "id", None)
-            if (
-                isinstance(resolved_relation_type_id, str)
-                and resolved_relation_type_id.strip()
-            ):
-                canonical_relation_type = resolved_relation_type_id.strip().upper()
-
-        # 2. Check triple is allowed
-        if not self._dictionary.is_triple_allowed(
-            source.entity_type,
-            canonical_relation_type,
-            target.entity_type,
-        ):
-            msg = (
-                f"Triple ({source.entity_type}, {canonical_relation_type}, "
-                f"{target.entity_type}) is not allowed by constraints"
-            )
-            raise ValueError(msg)
-
-        # 3. Check evidence requirement
-        if (
-            self._dictionary.requires_evidence(
-                source.entity_type,
-                canonical_relation_type,
-                target.entity_type,
-            )
-            and not evidence_summary
-        ):
-            logger.warning(
-                "Creating relation %s without evidence (required by constraints)",
-                canonical_relation_type,
-            )
-
-        return self._relations.create(
-            research_space_id=research_space_id,
-            source_id=source_id,
-            relation_type=canonical_relation_type,
-            target_id=target_id,
-            confidence=confidence,
-            evidence_summary=evidence_summary,
-            evidence_sentence=evidence_sentence,
-            evidence_sentence_source=evidence_sentence_source,
-            evidence_sentence_confidence=evidence_sentence_confidence,
-            evidence_sentence_rationale=evidence_sentence_rationale,
-            evidence_tier=evidence_tier,
-            provenance_id=provenance_id,
-            source_document_id=source_document_id,
-            agent_run_id=agent_run_id,
-        )
 
     # ── Curation lifecycle ────────────────────────────────────────────
 
@@ -183,9 +67,17 @@ class KernelRelationService:
 
     # ── Read operations ───────────────────────────────────────────────
 
-    def get_relation(self, relation_id: str) -> KernelRelation | None:
+    def get_relation(
+        self,
+        relation_id: str,
+        *,
+        claim_backed_only: bool = True,
+    ) -> KernelRelation | None:
         """Retrieve a single relation."""
-        return self._relations.get_by_id(relation_id)
+        return self._relations.get_by_id(
+            relation_id,
+            claim_backed_only=claim_backed_only,
+        )
 
     def get_neighborhood(
         self,
@@ -193,6 +85,7 @@ class KernelRelationService:
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
     ) -> list[KernelRelation]:
         """Graph traversal around an entity."""
@@ -200,16 +93,18 @@ class KernelRelationService:
             entity_id,
             depth=depth,
             relation_types=relation_types,
+            claim_backed_only=claim_backed_only,
             limit=limit,
         )
 
-    def get_neighborhood_in_space(
+    def get_neighborhood_in_space(  # noqa: PLR0913
         self,
         research_space_id: str,
         entity_id: str,
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
     ) -> list[KernelRelation]:
         """
@@ -217,6 +112,9 @@ class KernelRelationService:
 
         This protects against cross-space leakage if invalid relations exist.
         """
+        if self._entities is None:
+            msg = "Entity repository is required for in-space neighborhood traversal"
+            raise ValueError(msg)
         entity = self._entities.get_by_id(entity_id)
         if entity is None:
             msg = f"Entity {entity_id} not found"
@@ -229,6 +127,7 @@ class KernelRelationService:
             entity_id,
             depth=depth,
             relation_types=relation_types,
+            claim_backed_only=claim_backed_only,
             limit=limit,
         )
         return [
@@ -248,6 +147,7 @@ class KernelRelationService:
         certainty_band: str | None = None,
         node_query: str | None = None,
         node_ids: list[str] | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:
@@ -261,6 +161,7 @@ class KernelRelationService:
             certainty_band=certainty_band,
             node_query=node_query,
             node_ids=node_ids,
+            claim_backed_only=claim_backed_only,
             limit=limit,
             offset=offset,
         )
@@ -276,6 +177,7 @@ class KernelRelationService:
         certainty_band: str | None = None,
         node_query: str | None = None,
         node_ids: list[str] | None = None,
+        claim_backed_only: bool = True,
     ) -> int:
         """Count relations in one research space with optional filters."""
         return self._relations.count_by_research_space(
@@ -287,6 +189,7 @@ class KernelRelationService:
             certainty_band=certainty_band,
             node_query=node_query,
             node_ids=node_ids,
+            claim_backed_only=claim_backed_only,
         )
 
     # ── Delete ────────────────────────────────────────────────────────

@@ -146,6 +146,13 @@ class KernelRelationClaimService:
             linked_relation_id=linked_relation_id,
         )
 
+    def clear_claim_relation_link(
+        self,
+        claim_id: str,
+    ) -> KernelRelationClaim:
+        """Clear the linked canonical relation pointer for one claim."""
+        return self._claims.clear_relation_link(claim_id)
+
     def set_system_status(
         self,
         claim_id: str,

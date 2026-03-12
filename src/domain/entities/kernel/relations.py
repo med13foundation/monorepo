@@ -63,6 +63,23 @@ class KernelRelationEvidence(BaseModel):
     created_at: datetime
 
 
+class RelationEvidenceWrite(BaseModel):
+    """Write payload for one derived canonical relation-evidence cache row."""
+
+    model_config = ConfigDict(frozen=True)
+
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    evidence_summary: str | None = None
+    evidence_sentence: str | None = None
+    evidence_sentence_source: EvidenceSentenceSource | None = None
+    evidence_sentence_confidence: EvidenceSentenceConfidence | None = None
+    evidence_sentence_rationale: str | None = None
+    evidence_tier: str = Field(default="COMPUTATIONAL", min_length=1, max_length=32)
+    provenance_id: UUID | None = None
+    source_document_id: UUID | None = None
+    agent_run_id: str | None = Field(default=None, max_length=255)
+
+
 class EvidenceSentenceGenerationRequest(BaseModel):
     """Input payload for optional AI evidence-sentence generation."""
 
@@ -104,4 +121,5 @@ __all__ = [
     "EvidenceSentenceSource",
     "KernelRelation",
     "KernelRelationEvidence",
+    "RelationEvidenceWrite",
 ]

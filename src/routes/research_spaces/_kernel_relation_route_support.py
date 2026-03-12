@@ -11,15 +11,17 @@ from src.database.session import get_session
 from src.routes.research_spaces.dependencies import get_membership_service
 from src.routes.research_spaces.kernel_dependencies import (
     get_dictionary_service,
+    get_kernel_claim_evidence_service,
     get_kernel_claim_participant_service,
     get_kernel_entity_service,
     get_kernel_relation_claim_service,
-    get_kernel_relation_projection_invariant_service,
-    get_kernel_relation_projection_source_service,
-    get_kernel_relation_service,
+    get_kernel_relation_projection_materialization_service,
 )
 
 if TYPE_CHECKING:
+    from src.application.services.kernel.kernel_claim_evidence_service import (
+        KernelClaimEvidenceService,
+    )
     from src.application.services.kernel.kernel_claim_participant_service import (
         KernelClaimParticipantService,
     )
@@ -29,14 +31,8 @@ if TYPE_CHECKING:
     from src.application.services.kernel.kernel_relation_claim_service import (
         KernelRelationClaimService,
     )
-    from src.application.services.kernel.kernel_relation_projection_invariant_service import (
-        KernelRelationProjectionInvariantService,
-    )
-    from src.application.services.kernel.kernel_relation_projection_source_service import (
-        KernelRelationProjectionSourceService,
-    )
-    from src.application.services.kernel.kernel_relation_service import (
-        KernelRelationService,
+    from src.application.services.kernel.kernel_relation_projection_materialization_service import (
+        KernelRelationProjectionMaterializationService,
     )
     from src.application.services.membership_management_service import (
         MembershipManagementService,
@@ -47,9 +43,9 @@ if TYPE_CHECKING:
 class RelationClaimTriageDependencies(NamedTuple):
     membership_service: MembershipManagementService
     relation_claim_service: KernelRelationClaimService
-    relation_projection_invariant_service: KernelRelationProjectionInvariantService
-    relation_projection_service: KernelRelationProjectionSourceService
-    relation_service: KernelRelationService
+    relation_projection_materialization_service: (
+        KernelRelationProjectionMaterializationService
+    )
     dictionary_service: DictionaryPort
     session: Session
 
@@ -59,38 +55,34 @@ def get_relation_claim_triage_dependencies(
     relation_claim_service: KernelRelationClaimService = Depends(
         get_kernel_relation_claim_service,
     ),
-    relation_projection_invariant_service: KernelRelationProjectionInvariantService = Depends(
-        get_kernel_relation_projection_invariant_service,
+    relation_projection_materialization_service: KernelRelationProjectionMaterializationService = Depends(
+        get_kernel_relation_projection_materialization_service,
     ),
-    relation_projection_service: KernelRelationProjectionSourceService = Depends(
-        get_kernel_relation_projection_source_service,
-    ),
-    relation_service: KernelRelationService = Depends(get_kernel_relation_service),
     dictionary_service: DictionaryPort = Depends(get_dictionary_service),
     session: Session = Depends(get_session),
 ) -> RelationClaimTriageDependencies:
     return RelationClaimTriageDependencies(
         membership_service=membership_service,
         relation_claim_service=relation_claim_service,
-        relation_projection_invariant_service=relation_projection_invariant_service,
-        relation_projection_service=relation_projection_service,
-        relation_service=relation_service,
+        relation_projection_materialization_service=(
+            relation_projection_materialization_service
+        ),
         dictionary_service=dictionary_service,
         session=session,
     )
 
 
 class KernelRelationWriteServices(NamedTuple):
-    relation_service: KernelRelationService
     entity_service: KernelEntityService
     relation_claim_service: KernelRelationClaimService
     claim_participant_service: KernelClaimParticipantService
-    relation_projection_invariant_service: KernelRelationProjectionInvariantService
-    relation_projection_service: KernelRelationProjectionSourceService
+    claim_evidence_service: KernelClaimEvidenceService
+    relation_projection_materialization_service: (
+        KernelRelationProjectionMaterializationService
+    )
 
 
 def get_kernel_relation_write_services(
-    relation_service: KernelRelationService = Depends(get_kernel_relation_service),
     entity_service: KernelEntityService = Depends(get_kernel_entity_service),
     relation_claim_service: KernelRelationClaimService = Depends(
         get_kernel_relation_claim_service,
@@ -98,20 +90,21 @@ def get_kernel_relation_write_services(
     claim_participant_service: KernelClaimParticipantService = Depends(
         get_kernel_claim_participant_service,
     ),
-    relation_projection_invariant_service: KernelRelationProjectionInvariantService = Depends(
-        get_kernel_relation_projection_invariant_service,
+    claim_evidence_service: KernelClaimEvidenceService = Depends(
+        get_kernel_claim_evidence_service,
     ),
-    relation_projection_service: KernelRelationProjectionSourceService = Depends(
-        get_kernel_relation_projection_source_service,
+    relation_projection_materialization_service: KernelRelationProjectionMaterializationService = Depends(
+        get_kernel_relation_projection_materialization_service,
     ),
 ) -> KernelRelationWriteServices:
     return KernelRelationWriteServices(
-        relation_service=relation_service,
         entity_service=entity_service,
         relation_claim_service=relation_claim_service,
         claim_participant_service=claim_participant_service,
-        relation_projection_invariant_service=relation_projection_invariant_service,
-        relation_projection_service=relation_projection_service,
+        claim_evidence_service=claim_evidence_service,
+        relation_projection_materialization_service=(
+            relation_projection_materialization_service
+        ),
     )
 
 
@@ -142,33 +135,6 @@ def normalize_optional_text(value: object) -> str | None:
     return normalized or None
 
 
-def claim_endpoint_entity_ids(claim: object) -> tuple[str | None, str | None]:
-    metadata_payload = getattr(claim, "metadata_payload", None)
-    if not isinstance(metadata_payload, dict):
-        return None, None
-    source_entity_id = normalize_optional_text(
-        metadata_payload.get("source_entity_id"),
-    )
-    target_entity_id = normalize_optional_text(
-        metadata_payload.get("target_entity_id"),
-    )
-    return source_entity_id, target_entity_id
-
-
-def claim_resolution_evidence_summary(claim: object) -> str:
-    validation_reason = normalize_optional_text(
-        getattr(claim, "validation_reason", None),
-    )
-    claim_id = normalize_optional_text(str(getattr(claim, "id", "")))
-    if validation_reason is not None:
-        if claim_id is None:
-            return validation_reason
-        return f"{validation_reason} (claim_id={claim_id})"
-    if claim_id is None:
-        return "Promoted from resolved extraction claim."
-    return f"Promoted from resolved extraction claim ({claim_id})."
-
-
 def manual_relation_claim_text(
     *,
     evidence_summary: str | None,
@@ -196,8 +162,6 @@ __all__ = [
     "CreateRelationDependencies",
     "KernelRelationWriteServices",
     "RelationClaimTriageDependencies",
-    "claim_endpoint_entity_ids",
-    "claim_resolution_evidence_summary",
     "get_create_relation_dependencies",
     "get_kernel_relation_write_services",
     "get_relation_claim_triage_dependencies",

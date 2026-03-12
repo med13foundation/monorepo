@@ -117,6 +117,13 @@ class KernelRelationClaimRepository(ABC):
         """Attach a canonical relation ID to an existing claim."""
 
     @abstractmethod
+    def clear_relation_link(
+        self,
+        claim_id: str,
+    ) -> KernelRelationClaim:
+        """Clear any linked canonical relation pointer from a claim."""
+
+    @abstractmethod
     def set_system_status(
         self,
         claim_id: str,

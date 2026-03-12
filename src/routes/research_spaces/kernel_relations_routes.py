@@ -24,12 +24,9 @@ from src.routes.research_spaces._claim_evidence_paper_links import (
 from src.routes.research_spaces._kernel_relation_route_support import (
     CreateRelationDependencies,
     RelationClaimTriageDependencies,
-    claim_endpoint_entity_ids,
-    claim_resolution_evidence_summary,
     get_create_relation_dependencies,
     get_relation_claim_triage_dependencies,
     manual_relation_claim_text,
-    normalize_optional_text,
 )
 from src.routes.research_spaces.dependencies import (
     get_membership_service,
@@ -136,21 +133,26 @@ _CLAIM_VALIDATION_STATE_MAP: dict[str, _ClaimValidationState] = {
 }
 
 
-def _resolve_claim_resolution_evidence(
-    *,
-    claim_id: str,
-    claim_evidence_service: KernelClaimEvidenceService,
-) -> tuple[str | None, str | None, str | None, str | None]:
-    evidence = claim_evidence_service.get_preferred_for_claim(claim_id)
-    if evidence is None:
-        return None, None, None, None
-    sentence = normalize_optional_text(evidence.sentence)
-    if sentence is None:
-        return None, None, None, None
-    sentence_source = normalize_optional_text(evidence.sentence_source)
-    sentence_confidence = normalize_optional_text(evidence.sentence_confidence)
-    sentence_rationale = normalize_optional_text(evidence.sentence_rationale)
-    return sentence[:2000], sentence_source, sentence_confidence, sentence_rationale
+def _normalize_claim_evidence_sentence_source(
+    value: str | None,
+) -> Literal["verbatim_span", "artana_generated"] | None:
+    if value == "verbatim_span":
+        return "verbatim_span"
+    if value == "artana_generated":
+        return "artana_generated"
+    return None
+
+
+def _normalize_claim_evidence_sentence_confidence(
+    value: str | None,
+) -> Literal["low", "medium", "high"] | None:
+    if value == "low":
+        return "low"
+    if value == "medium":
+        return "medium"
+    if value == "high":
+        return "high"
+    return None
 
 
 def _activate_dictionary_dependencies_for_claim(  # noqa: PLR0913
@@ -465,20 +467,6 @@ def create_kernel_relation(
     )
 
     try:
-        relation = dependencies.write_services.relation_service.create_relation(
-            research_space_id=str(space_id),
-            source_id=str(request.source_id),
-            relation_type=request.relation_type,
-            target_id=str(request.target_id),
-            confidence=request.confidence,
-            evidence_summary=request.evidence_summary,
-            evidence_sentence=request.evidence_sentence,
-            evidence_sentence_source=request.evidence_sentence_source,
-            evidence_sentence_confidence=request.evidence_sentence_confidence,
-            evidence_sentence_rationale=request.evidence_sentence_rationale,
-            evidence_tier=request.evidence_tier,
-            provenance_id=str(request.provenance_id) if request.provenance_id else None,
-        )
         source_entity = dependencies.write_services.entity_service.get_entity(
             str(request.source_id),
         )
@@ -493,7 +481,7 @@ def create_kernel_relation(
             source_document_id=None,
             agent_run_id=None,
             source_type=source_entity.entity_type,
-            relation_type=relation.relation_type,
+            relation_type=request.relation_type,
             target_type=target_entity.entity_type,
             source_label=source_entity.display_label,
             target_label=target_entity.display_label,
@@ -506,16 +494,21 @@ def create_kernel_relation(
             claim_text=manual_relation_claim_text(
                 evidence_summary=request.evidence_summary,
                 evidence_sentence=request.evidence_sentence,
-                relation_type=relation.relation_type,
+                relation_type=request.relation_type,
                 source_label=source_entity.display_label,
                 target_label=target_entity.display_label,
             ),
             claim_section=None,
-            linked_relation_id=str(relation.id),
+            linked_relation_id=None,
             metadata={
                 "origin": "manual_relation_api",
                 "source_entity_id": str(request.source_id),
                 "target_entity_id": str(request.target_id),
+                "provenance_id": (
+                    str(request.provenance_id)
+                    if request.provenance_id is not None
+                    else None
+                ),
             },
         )
         dependencies.write_services.claim_participant_service.create_participant(
@@ -536,19 +529,47 @@ def create_kernel_relation(
             position=1,
             qualifiers={"origin": "manual_relation_api"},
         )
-        dependencies.write_services.relation_projection_service.create_projection_source(
-            research_space_id=str(space_id),
-            relation_id=str(relation.id),
+        if (
+            request.evidence_summary is not None
+            or request.evidence_sentence is not None
+            or request.provenance_id is not None
+        ):
+            dependencies.write_services.claim_evidence_service.create_evidence(
+                claim_id=str(manual_claim.id),
+                source_document_id=None,
+                agent_run_id=None,
+                sentence=request.evidence_sentence,
+                sentence_source=_normalize_claim_evidence_sentence_source(
+                    request.evidence_sentence_source,
+                ),
+                sentence_confidence=_normalize_claim_evidence_sentence_confidence(
+                    request.evidence_sentence_confidence,
+                ),
+                sentence_rationale=request.evidence_sentence_rationale,
+                figure_reference=None,
+                table_reference=None,
+                confidence=request.confidence,
+                metadata={
+                    "origin": "manual_relation_api",
+                    "evidence_summary": request.evidence_summary,
+                    "evidence_tier": request.evidence_tier or "COMPUTATIONAL",
+                    "provenance_id": (
+                        str(request.provenance_id)
+                        if request.provenance_id is not None
+                        else None
+                    ),
+                },
+            )
+        materialized = dependencies.write_services.relation_projection_materialization_service.materialize_support_claim(
             claim_id=str(manual_claim.id),
-            projection_origin="MANUAL_RELATION",
-            source_document_id=None,
-            agent_run_id=None,
-            metadata={"origin": "manual_relation_api"},
-        )
-        dependencies.write_services.relation_projection_invariant_service.assert_no_orphan_relations_for_write(
-            relation_id=str(relation.id),
             research_space_id=str(space_id),
+            projection_origin="MANUAL_RELATION",
+            reviewed_by=str(current_user.id),
         )
+        relation = materialized.relation
+        if relation is None:
+            msg = "Manual relation claim did not materialize a canonical relation"
+            raise ValueError(msg)
         dependencies.session.commit()
         return KernelRelationResponse.from_model(relation)
     except IntegrityError as e:
@@ -1037,7 +1058,7 @@ def list_relation_conflicts(
     response_model=KernelRelationClaimResponse,
     summary="Update relation-claim triage status",
 )
-def update_relation_claim_status(
+def update_relation_claim_status(  # noqa: PLR0912
     space_id: UUID,
     claim_id: UUID,
     request: KernelRelationClaimTriageRequest,
@@ -1045,17 +1066,12 @@ def update_relation_claim_status(
     triage_dependencies: RelationClaimTriageDependencies = Depends(
         get_relation_claim_triage_dependencies,
     ),
-    claim_evidence_service: KernelClaimEvidenceService = Depends(
-        get_kernel_claim_evidence_service,
-    ),
 ) -> KernelRelationClaimResponse:
     membership_service = triage_dependencies.membership_service
     relation_claim_service = triage_dependencies.relation_claim_service
-    relation_projection_invariant_service = (
-        triage_dependencies.relation_projection_invariant_service
+    relation_projection_materialization_service = (
+        triage_dependencies.relation_projection_materialization_service
     )
-    relation_projection_service = triage_dependencies.relation_projection_service
-    relation_service = triage_dependencies.relation_service
     dictionary_service = triage_dependencies.dictionary_service
     session = triage_dependencies.session
 
@@ -1077,97 +1093,65 @@ def update_relation_claim_status(
         if normalized_status is None:
             msg = "claim_status is required"
             raise ValueError(msg)
-
-        if normalized_status == "RESOLVED" and existing.linked_relation_id is None:
-            if existing.persistability != "PERSISTABLE":
-                msg = (
-                    "Claim cannot be resolved yet because it is NON_PERSISTABLE. "
-                    "Use Needs Mapping or Reject."
-                )
-                raise ValueError(msg)
-
-            source_entity_id, target_entity_id = claim_endpoint_entity_ids(existing)
-            if source_entity_id is None or target_entity_id is None:
-                msg = (
-                    "Claim cannot be resolved yet because source/target entity "
-                    "mapping is missing. Use Needs Mapping."
-                )
-                raise ValueError(msg)
-
-            try:
-                reviewed_by = str(current_user.id)
-                source_ref = f"relation_claim:{existing.id}"
-                (
-                    evidence_sentence,
-                    evidence_sentence_source,
-                    evidence_sentence_confidence,
-                    evidence_sentence_rationale,
-                ) = _resolve_claim_resolution_evidence(
-                    claim_id=str(existing.id),
-                    claim_evidence_service=claim_evidence_service,
-                )
-                _activate_dictionary_dependencies_for_claim(
-                    dictionary_service=dictionary_service,
-                    source_type=existing.source_type,
-                    relation_type=existing.relation_type,
-                    target_type=existing.target_type,
-                    reviewed_by=reviewed_by,
-                    source_ref=source_ref,
-                )
-                promoted_relation = relation_service.create_relation(
-                    research_space_id=str(space_id),
-                    source_id=source_entity_id,
-                    relation_type=existing.relation_type,
-                    target_id=target_entity_id,
-                    confidence=float(existing.confidence),
-                    evidence_summary=claim_resolution_evidence_summary(existing),
-                    evidence_sentence=evidence_sentence,
-                    evidence_sentence_source=evidence_sentence_source,
-                    evidence_sentence_confidence=evidence_sentence_confidence,
-                    evidence_sentence_rationale=evidence_sentence_rationale,
-                    evidence_tier="COMPUTATIONAL",
-                    source_document_id=(
-                        str(existing.source_document_id)
-                        if existing.source_document_id is not None
-                        else None
-                    ),
-                    agent_run_id=existing.agent_run_id,
-                )
-            except ValueError as exc:
-                msg = (
-                    "Claim cannot be resolved into a canonical relation because the "
-                    "dictionary cascade could not complete. Use Needs Mapping for "
-                    "manual curation. "
-                    f"Details: {exc!s}"
-                )
-                raise ValueError(msg) from exc
-            relation_claim_service.link_claim_to_relation(
-                str(claim_id),
-                linked_relation_id=str(promoted_relation.id),
-            )
-            relation_projection_service.create_projection_source(
-                research_space_id=str(space_id),
-                relation_id=str(promoted_relation.id),
-                claim_id=str(claim_id),
-                projection_origin="CLAIM_RESOLUTION",
-                source_document_id=(
-                    str(existing.source_document_id)
-                    if existing.source_document_id is not None
-                    else None
-                ),
-                agent_run_id=existing.agent_run_id,
-                metadata={"origin": "claim_resolution"},
-            )
-            relation_projection_invariant_service.assert_no_orphan_relations_for_write(
-                relation_id=str(promoted_relation.id),
-                research_space_id=str(space_id),
-            )
-
         updated = relation_claim_service.update_claim_status(
             str(claim_id),
             claim_status=normalized_status,
             triaged_by=str(current_user.id),
         )
+        if normalized_status == "RESOLVED":
+            if updated.persistability != "PERSISTABLE":
+                msg = (
+                    "Claim cannot be resolved yet because it is NON_PERSISTABLE. "
+                    "Use Needs Mapping or Reject."
+                )
+                raise ValueError(msg)
+            reviewed_by = str(current_user.id)
+            source_ref = f"relation_claim:{updated.id}"
+            _activate_dictionary_dependencies_for_claim(
+                dictionary_service=dictionary_service,
+                source_type=updated.source_type,
+                relation_type=updated.relation_type,
+                target_type=updated.target_type,
+                reviewed_by=reviewed_by,
+                source_ref=source_ref,
+            )
+            if updated.polarity == "SUPPORT":
+                relation_projection_materialization_service.materialize_support_claim(
+                    claim_id=str(updated.id),
+                    research_space_id=str(space_id),
+                    projection_origin="CLAIM_RESOLUTION",
+                    reviewed_by=reviewed_by,
+                )
+                refreshed_claim = relation_claim_service.get_claim(str(updated.id))
+                if refreshed_claim is not None:
+                    updated = refreshed_claim
+            else:
+                linked_relation = None
+                try:
+                    linked_relation = relation_projection_materialization_service.find_claim_backed_relation_for_claim(
+                        claim_id=str(updated.id),
+                        research_space_id=str(space_id),
+                    )
+                except ValueError:
+                    linked_relation = None
+                if linked_relation is not None:
+                    updated = relation_claim_service.link_claim_to_relation(
+                        str(updated.id),
+                        linked_relation_id=str(linked_relation.id),
+                    )
+                else:
+                    updated = relation_claim_service.clear_claim_relation_link(
+                        str(updated.id),
+                    )
+        elif existing.polarity == "SUPPORT":
+            relation_projection_materialization_service.detach_claim_projection(
+                str(existing.id),
+                str(space_id),
+            )
+        else:
+            updated = relation_claim_service.clear_claim_relation_link(
+                str(updated.id),
+            )
         session.commit()
         return KernelRelationClaimResponse.from_model(updated)
     except ValueError as exc:

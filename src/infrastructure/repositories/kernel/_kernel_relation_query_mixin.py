@@ -6,12 +6,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, func, or_, select
+from sqlalchemy import String, and_, func, or_, select
 from sqlalchemy.orm import aliased
 
 from src.domain.entities.kernel.relations import KernelRelation
 from src.models.database.kernel.entities import EntityModel
 from src.models.database.kernel.relation_claims import RelationClaimModel
+from src.models.database.kernel.relation_projection_sources import (
+    RelationProjectionSourceModel,
+)
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 
 from ._kernel_relation_repository_shared import _as_uuid
@@ -20,6 +23,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy.sql import Select
+    from sqlalchemy.sql.elements import ColumnElement
 
     from src.infrastructure.repositories.kernel.kernel_relation_repository import (
         SqlAlchemyKernelRelationRepository,
@@ -35,8 +39,33 @@ class _KernelRelationQueryMixin:
     def get_by_id(
         self: SqlAlchemyKernelRelationRepository,
         relation_id: str,
+        *,
+        claim_backed_only: bool = True,
     ) -> KernelRelation | None:
-        model = self._session.get(RelationModel, _as_uuid(relation_id))
+        stmt = select(RelationModel).where(RelationModel.id == _as_uuid(relation_id))
+        if claim_backed_only:
+            stmt = stmt.where(self._active_support_projection_exists())
+        model = self._session.scalars(stmt.limit(1)).first()
+        return KernelRelation.model_validate(model) if model is not None else None
+
+    def find_by_triple(
+        self: SqlAlchemyKernelRelationRepository,
+        *,
+        research_space_id: str,
+        source_id: str,
+        relation_type: str,
+        target_id: str,
+        claim_backed_only: bool = True,
+    ) -> KernelRelation | None:
+        stmt = select(RelationModel).where(
+            RelationModel.research_space_id == _as_uuid(research_space_id),
+            RelationModel.source_id == _as_uuid(source_id),
+            RelationModel.relation_type == relation_type,
+            RelationModel.target_id == _as_uuid(target_id),
+        )
+        if claim_backed_only:
+            stmt = stmt.where(self._active_support_projection_exists())
+        model = self._session.scalars(stmt.limit(1)).first()
         return KernelRelation.model_validate(model) if model is not None else None
 
     def find_by_source(
@@ -44,6 +73,7 @@ class _KernelRelationQueryMixin:
         source_id: str,
         *,
         relation_type: str | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:
@@ -52,6 +82,8 @@ class _KernelRelationQueryMixin:
         )
         if relation_type is not None:
             stmt = stmt.where(RelationModel.relation_type == relation_type)
+        if claim_backed_only:
+            stmt = stmt.where(self._active_support_projection_exists())
         stmt = stmt.order_by(RelationModel.created_at.desc())
         if limit is not None:
             stmt = stmt.limit(limit)
@@ -67,6 +99,7 @@ class _KernelRelationQueryMixin:
         target_id: str,
         *,
         relation_type: str | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:
@@ -75,6 +108,8 @@ class _KernelRelationQueryMixin:
         )
         if relation_type is not None:
             stmt = stmt.where(RelationModel.relation_type == relation_type)
+        if claim_backed_only:
+            stmt = stmt.where(self._active_support_projection_exists())
         stmt = stmt.order_by(RelationModel.created_at.desc())
         if limit is not None:
             stmt = stmt.limit(limit)
@@ -85,12 +120,13 @@ class _KernelRelationQueryMixin:
             for model in self._session.scalars(stmt).all()
         ]
 
-    def find_neighborhood(
+    def find_neighborhood(  # noqa: C901
         self: SqlAlchemyKernelRelationRepository,
         entity_id: str,
         *,
         depth: int = 1,
         relation_types: list[str] | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
     ) -> list[KernelRelation]:
         """
@@ -115,6 +151,8 @@ class _KernelRelationQueryMixin:
             )
             if relation_types:
                 stmt = stmt.where(RelationModel.relation_type.in_(relation_types))
+            if claim_backed_only:
+                stmt = stmt.where(self._active_support_projection_exists())
 
             hop_relations = list(self._session.scalars(stmt).all())
             all_relations.extend(hop_relations)
@@ -153,6 +191,7 @@ class _KernelRelationQueryMixin:
         certainty_band: str | None = None,
         node_query: str | None = None,
         node_ids: list[str] | None = None,
+        claim_backed_only: bool = True,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[KernelRelation]:
@@ -165,6 +204,7 @@ class _KernelRelationQueryMixin:
             certainty_band=certainty_band,
             node_query=node_query,
             node_ids=node_ids,
+            claim_backed_only=claim_backed_only,
         )
         if stmt is None:
             return []
@@ -183,6 +223,7 @@ class _KernelRelationQueryMixin:
         research_space_id: str,
         query: str,
         *,
+        claim_backed_only: bool = True,
         limit: int = 20,
     ) -> list[KernelRelation]:
         stmt = (
@@ -202,6 +243,8 @@ class _KernelRelationQueryMixin:
             .order_by(RelationModel.updated_at.desc())
             .limit(limit)
         )
+        if claim_backed_only:
+            stmt = stmt.where(self._active_support_projection_exists())
         models = list(self._session.scalars(stmt).all())
         seen: set[UUID] = set()
         unique_models: list[RelationModel] = []
@@ -223,6 +266,7 @@ class _KernelRelationQueryMixin:
         certainty_band: str | None = None,
         node_query: str | None = None,
         node_ids: list[str] | None = None,
+        claim_backed_only: bool = True,
     ) -> int:
         """Count total relations in a research space."""
         stmt = self._build_research_space_stmt(
@@ -234,6 +278,7 @@ class _KernelRelationQueryMixin:
             certainty_band=certainty_band,
             node_query=node_query,
             node_ids=node_ids,
+            claim_backed_only=claim_backed_only,
         )
         if stmt is None:
             return 0
@@ -256,10 +301,13 @@ class _KernelRelationQueryMixin:
         certainty_band: str | None,
         node_query: str | None,
         node_ids: list[str] | None,
+        claim_backed_only: bool,
     ) -> Select[tuple[RelationModel]] | None:
         stmt = select(RelationModel).where(
             RelationModel.research_space_id == _as_uuid(research_space_id),
         )
+        if claim_backed_only:
+            stmt = stmt.where(self._active_support_projection_exists())
         if relation_type is not None:
             stmt = stmt.where(RelationModel.relation_type == relation_type)
         if curation_status is not None:
@@ -348,6 +396,27 @@ class _KernelRelationQueryMixin:
                 ),
             )
         return stmt
+
+    @staticmethod
+    def _active_support_projection_exists() -> ColumnElement[bool]:
+        projection_to_claim = and_(
+            RelationClaimModel.id == RelationProjectionSourceModel.claim_id,
+            RelationClaimModel.research_space_id
+            == RelationProjectionSourceModel.research_space_id,
+        )
+        return (
+            select(RelationProjectionSourceModel.id)
+            .join(RelationClaimModel, projection_to_claim)
+            .where(
+                RelationProjectionSourceModel.relation_id == RelationModel.id,
+                RelationProjectionSourceModel.research_space_id
+                == RelationModel.research_space_id,
+                RelationClaimModel.polarity == "SUPPORT",
+                RelationClaimModel.claim_status == "RESOLVED",
+                RelationClaimModel.persistability == "PERSISTABLE",
+            )
+            .exists()
+        )
 
 
 def _try_as_uuid(value: str | None) -> UUID | None:

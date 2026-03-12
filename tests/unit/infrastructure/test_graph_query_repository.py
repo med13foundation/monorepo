@@ -6,9 +6,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+from src.domain.entities.kernel.relations import RelationEvidenceWrite
 from src.domain.entities.user import UserRole, UserStatus
 from src.infrastructure.repositories.kernel.graph_query_repository import (
     SqlAlchemyGraphQueryRepository,
+)
+from src.infrastructure.repositories.kernel.kernel_relation_projection_source_repository import (
+    SqlAlchemyKernelRelationProjectionSourceRepository,
 )
 from src.infrastructure.repositories.kernel.kernel_relation_repository import (
     SqlAlchemyKernelRelationRepository,
@@ -21,6 +25,7 @@ from src.models.database.kernel.dictionary import (
 )
 from src.models.database.kernel.entities import EntityModel
 from src.models.database.kernel.observations import ObservationModel
+from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.research_space import ResearchSpaceModel, SpaceStatusEnum
 from src.models.database.user import UserModel
 
@@ -194,29 +199,99 @@ def _seed_graph(
     )
     db_session.flush()
 
-    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
-    relation = relation_repo.create(
-        research_space_id=str(research_space_id),
-        source_id=str(entity_a),
-        relation_type="ASSOCIATED_WITH",
-        target_id=str(entity_b),
-        confidence=0.8,
-        evidence_summary="MED13 association supported by curated source.",
-        evidence_sentence="MED13 is associated with cardiomyopathy in this cohort.",
-        evidence_tier="LITERATURE",
-    )
-    relation_repo.create(
-        research_space_id=str(research_space_id),
-        source_id=str(entity_a),
-        relation_type="ASSOCIATED_WITH",
-        target_id=str(entity_b),
-        confidence=0.9,
-        evidence_summary="Independent replication support.",
-        evidence_sentence="Independent analysis replicated the MED13 phenotype link.",
-        evidence_tier="EXPERIMENTAL",
+    relation = _seed_claim_backed_relation(
+        db_session,
+        research_space_id=research_space_id,
+        source_id=entity_a,
+        target_id=entity_b,
     )
 
     return entity_a, entity_b, shared_entity, relation.id
+
+
+def _seed_claim_backed_relation(
+    db_session: Session,
+    *,
+    research_space_id: UUID,
+    source_id: UUID,
+    target_id: UUID,
+):
+    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
+    projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
+    relation = relation_repo.upsert_relation(
+        research_space_id=str(research_space_id),
+        source_id=str(source_id),
+        relation_type="ASSOCIATED_WITH",
+        target_id=str(target_id),
+    )
+    relation = relation_repo.replace_derived_evidence_cache(
+        str(relation.id),
+        evidences=[
+            RelationEvidenceWrite(
+                confidence=0.8,
+                evidence_summary="MED13 association supported by curated source.",
+                evidence_sentence=(
+                    "MED13 is associated with cardiomyopathy in this cohort."
+                ),
+                evidence_sentence_source="verbatim_span",
+                evidence_sentence_confidence="high",
+                evidence_sentence_rationale=None,
+                evidence_tier="LITERATURE",
+                provenance_id=None,
+                source_document_id=None,
+                agent_run_id="graph-query-test-run",
+            ),
+            RelationEvidenceWrite(
+                confidence=0.9,
+                evidence_summary="Independent replication support.",
+                evidence_sentence=(
+                    "Independent analysis replicated the MED13 phenotype link."
+                ),
+                evidence_sentence_source="verbatim_span",
+                evidence_sentence_confidence="high",
+                evidence_sentence_rationale=None,
+                evidence_tier="EXPERIMENTAL",
+                provenance_id=None,
+                source_document_id=None,
+                agent_run_id="graph-query-test-run",
+            ),
+        ],
+    )
+    claim = RelationClaimModel(
+        research_space_id=research_space_id,
+        source_document_id=None,
+        agent_run_id="graph-query-test-run",
+        source_type="GENE",
+        relation_type="ASSOCIATED_WITH",
+        target_type="PHENOTYPE",
+        source_label="MED13",
+        target_label="Cardiomyopathy",
+        confidence=0.9,
+        validation_state="ALLOWED",
+        validation_reason=None,
+        persistability="PERSISTABLE",
+        claim_status="RESOLVED",
+        polarity="SUPPORT",
+        claim_text="MED13 is associated with cardiomyopathy.",
+        claim_section="results",
+        linked_relation_id=relation.id,
+        metadata_payload={},
+        triaged_by=None,
+        triaged_at=None,
+    )
+    db_session.add(claim)
+    db_session.flush()
+    projection_repo.create(
+        research_space_id=str(research_space_id),
+        relation_id=str(relation.id),
+        claim_id=str(claim.id),
+        projection_origin="EXTRACTION",
+        source_document_id=None,
+        agent_run_id="graph-query-test-run",
+        metadata={"origin": "graph_query_test"},
+    )
+    db_session.flush()
+    return relation
 
 
 def test_graph_query_neighbourhood_scopes_to_research_space(
@@ -230,15 +305,9 @@ def test_graph_query_neighbourhood_scopes_to_research_space(
         research_space_id=primary_space,
     )
 
-    # Add an inconsistent edge in another space to ensure repository scoping works.
-    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
-    relation_repo.create(
-        research_space_id=str(other_space),
-        source_id=str(entity_a),
-        relation_type="ASSOCIATED_WITH",
-        target_id=str(entity_b),
-        confidence=0.5,
-        evidence_tier="COMPUTATIONAL",
+    _seed_graph(
+        db_session,
+        research_space_id=other_space,
     )
 
     repository = SqlAlchemyGraphQueryRepository(db_session)

@@ -22,6 +22,9 @@ if TYPE_CHECKING:
         GovernanceDecision,
         GovernanceService,
     )
+    from src.application.services.kernel.kernel_relation_projection_materialization_service import (
+        KernelRelationProjectionMaterializationService,
+    )
     from src.application.services.ports.ingestion_pipeline_port import (
         IngestionPipelinePort,
     )
@@ -69,6 +72,9 @@ class ExtractionServiceDependencies:
     relation_claim_repository: KernelRelationClaimRepository | None = None
     relation_projection_source_repository: (
         KernelRelationProjectionSourceRepository | None
+    ) = None
+    relation_projection_materialization_service: (
+        KernelRelationProjectionMaterializationService | None
     ) = None
     claim_participant_repository: KernelClaimParticipantRepository | None = None
     claim_evidence_repository: KernelClaimEvidenceRepository | None = None

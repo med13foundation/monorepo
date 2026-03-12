@@ -13,19 +13,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from src.application.services.kernel.kernel_relation_service import (
-    KernelRelationService,
-)
 from src.database import session as session_module
 from src.database.seeds.seeder import (
     seed_entity_resolution_policies,
     seed_relation_constraints,
 )
+from src.domain.entities.kernel.relations import RelationEvidenceWrite
 from src.domain.entities.user import UserRole
 from src.domain.services.pubmed_ingestion import PubMedIngestionSummary
 from src.infrastructure.repositories.kernel import (
-    SqlAlchemyDictionaryRepository,
-    SqlAlchemyKernelEntityRepository,
     SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
 )
@@ -1374,9 +1370,9 @@ def test_graph_document_returns_canonical_claim_and_evidence_elements(
 
     assert payload["meta"]["counts"]["canonical_edges"] == 1
     assert payload["meta"]["counts"]["claim_nodes"] == 2
-    assert payload["meta"]["counts"]["evidence_nodes"] == 1
+    assert payload["meta"]["counts"]["evidence_nodes"] == 2
     assert payload["meta"]["counts"]["claim_participant_edges"] == 4
-    assert payload["meta"]["counts"]["claim_evidence_edges"] == 1
+    assert payload["meta"]["counts"]["claim_evidence_edges"] == 2
 
     canonical_edges = [
         edge for edge in payload["edges"] if edge["kind"] == "CANONICAL_RELATION"
@@ -1431,19 +1427,12 @@ def test_postgres_commit_rejects_orphan_canonical_relation(
 
     relation_id: str | None = None
     with _session_for_api(db_session) as session:
-        relation_service = KernelRelationService(
-            relation_repo=SqlAlchemyKernelRelationRepository(session),
-            entity_repo=SqlAlchemyKernelEntityRepository(session),
-            dictionary_repo=SqlAlchemyDictionaryRepository(session),
-        )
-        relation = relation_service.create_relation(
+        relation_repository = SqlAlchemyKernelRelationRepository(session)
+        relation = relation_repository.upsert_relation(
             research_space_id=str(space.id),
             source_id=str(source_id),
             relation_type="ASSOCIATED_WITH",
             target_id=str(target_id),
-            confidence=0.82,
-            evidence_summary="Claim-backed enforcement test evidence",
-            evidence_tier="LITERATURE",
         )
         relation_id = str(relation.id)
         with pytest.raises(IntegrityError):
@@ -1492,20 +1481,13 @@ def test_postgres_commit_allows_relation_with_projection_lineage(
     relation_id: str | None = None
     claim_id: str | None = None
     with _session_for_api(db_session) as session:
-        relation_service = KernelRelationService(
-            relation_repo=SqlAlchemyKernelRelationRepository(session),
-            entity_repo=SqlAlchemyKernelEntityRepository(session),
-            dictionary_repo=SqlAlchemyDictionaryRepository(session),
-        )
+        relation_repository = SqlAlchemyKernelRelationRepository(session)
         projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(session)
-        relation = relation_service.create_relation(
+        relation = relation_repository.upsert_relation(
             research_space_id=str(space.id),
             source_id=str(source_id),
             relation_type="ASSOCIATED_WITH",
             target_id=str(target_id),
-            confidence=0.82,
-            evidence_summary="Claim-backed enforcement test evidence",
-            evidence_tier="LITERATURE",
         )
         claim = RelationClaimModel(
             research_space_id=space.id,
@@ -1539,6 +1521,26 @@ def test_postgres_commit_allows_relation_with_projection_lineage(
             source_document_id=None,
             agent_run_id="projection-enforcement-test",
             metadata={"origin": "integration_test"},
+        )
+        relation_repository.replace_derived_evidence_cache(
+            str(relation.id),
+            evidences=[
+                RelationEvidenceWrite(
+                    confidence=0.82,
+                    evidence_summary="Projection enforcement integration evidence.",
+                    evidence_sentence=(
+                        "MED13 variants were associated with cardiomyopathy "
+                        "in an integration test cohort."
+                    ),
+                    evidence_sentence_source="verbatim_span",
+                    evidence_sentence_confidence="high",
+                    evidence_sentence_rationale=None,
+                    evidence_tier="LITERATURE",
+                    provenance_id=None,
+                    source_document_id=None,
+                    agent_run_id="projection-enforcement-test",
+                ),
+            ],
         )
         session.commit()
         relation_id = str(relation.id)
@@ -1739,6 +1741,28 @@ def test_relation_claim_resolution_persists_evidence_sentence_from_claim_evidenc
                 table_reference=None,
                 confidence=0.72,
                 metadata_payload={},
+            ),
+        )
+        session.add(
+            ClaimParticipantModel(
+                claim_id=claim_id,
+                research_space_id=space.id,
+                label="MED13",
+                entity_id=source_entity_id,
+                role="SUBJECT",
+                position=1,
+                qualifiers={},
+            ),
+        )
+        session.add(
+            ClaimParticipantModel(
+                claim_id=claim_id,
+                research_space_id=space.id,
+                label="Cardiomyopathy",
+                entity_id=target_entity_id,
+                role="OBJECT",
+                position=2,
+                qualifiers={},
             ),
         )
         session.commit()
