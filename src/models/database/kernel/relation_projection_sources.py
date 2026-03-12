@@ -5,7 +5,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, ForeignKeyConstraint, Index, String, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -79,6 +86,13 @@ class RelationProjectionSourceModel(Base):
             ["relation_claims.id", "relation_claims.research_space_id"],
             ondelete="CASCADE",
             name="fk_relation_projection_sources_claim_space",
+        ),
+        CheckConstraint(
+            (
+                "projection_origin IN "
+                "('EXTRACTION','CLAIM_RESOLUTION','MANUAL_RELATION','GRAPH_CONNECTION')"
+            ),
+            name="ck_relation_projection_sources_origin",
         ),
         UniqueConstraint(
             "research_space_id",

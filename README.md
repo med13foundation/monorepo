@@ -69,6 +69,8 @@ make dev-postgres
 
 This starts/reuses Docker Postgres + Redis, runs migrations, initializes Artana schema, seeds admin, then starts backend + Next.js.
 
+The migration history was intentionally reset to a single baseline on March 11, 2026. Old local dev/test databases are not upgrade-compatible with the current repo state and should be dropped and rebuilt from scratch.
+
 **Local URLs**
 - API docs: http://localhost:8080/docs
 - Admin UI: http://localhost:3000/dashboard

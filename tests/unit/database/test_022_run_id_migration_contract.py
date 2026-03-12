@@ -1,28 +1,72 @@
-"""Contract checks for revision 022 run-id migration SQL intent."""
+"""Contract checks for baseline run-id column types."""
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
+from sqlalchemy import create_engine, inspect
 
-def _migration_source() -> str:
-    path = Path("alembic/versions/022_run_ids_as_text.py")
-    return path.read_text(encoding="utf-8")
-
-
-def test_022_upgrade_postgres_uses_explicit_text_casts() -> None:
-    source = _migration_source()
-
-    assert "USING enrichment_agent_run_id::text" in source
-    assert "USING extraction_agent_run_id::text" in source
-    assert "USING agent_run_id::text" in source
-    assert "USING extraction_run_id::text" in source
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_022_downgrade_postgres_documents_non_uuid_nulling() -> None:
-    source = _migration_source()
+def _run_alembic_upgrade(*, database_url: str) -> None:
+    env = dict(os.environ)
+    env["ALEMBIC_DATABASE_URL"] = database_url
+    subprocess.run(
+        [
+            REPOSITORY_ROOT.joinpath("venv", "bin", "alembic").as_posix(),
+            "upgrade",
+            "head",
+        ],
+        check=True,
+        cwd=REPOSITORY_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
 
-    assert "Non-UUID run ids are intentionally nulled" in source
-    assert "ELSE NULL" in source
-    assert "ALTER COLUMN agent_run_id TYPE UUID" in source
-    assert "ALTER COLUMN extraction_run_id TYPE UUID" in source
+
+def test_baseline_upgrade_stores_source_document_run_ids_as_text(
+    tmp_path: Path,
+) -> None:
+    database_url = (
+        f"sqlite:///{tmp_path / 'baseline_run_id_columns_source_documents.db'}"
+    )
+    _run_alembic_upgrade(database_url=database_url)
+
+    inspector = inspect(create_engine(database_url, future=True))
+    source_document_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspector.get_columns("source_documents")
+    }
+
+    assert source_document_columns["enrichment_agent_run_id"].startswith(
+        ("VARCHAR", "TEXT"),
+    )
+    assert source_document_columns["extraction_agent_run_id"].startswith(
+        ("VARCHAR", "TEXT"),
+    )
+
+
+def test_baseline_upgrade_stores_relation_and_provenance_run_ids_as_text(
+    tmp_path: Path,
+) -> None:
+    database_url = (
+        f"sqlite:///{tmp_path / 'baseline_run_id_columns_relation_provenance.db'}"
+    )
+    _run_alembic_upgrade(database_url=database_url)
+
+    inspector = inspect(create_engine(database_url, future=True))
+    relation_evidence_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspector.get_columns("relation_evidence")
+    }
+    provenance_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspector.get_columns("provenance")
+    }
+
+    assert relation_evidence_columns["agent_run_id"].startswith(("VARCHAR", "TEXT"))
+    assert provenance_columns["extraction_run_id"].startswith(("VARCHAR", "TEXT"))

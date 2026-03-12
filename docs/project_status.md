@@ -56,7 +56,7 @@ This document summarizes the project based on repository documentation and highl
 
 - Clean Architecture foundation is documented as complete and stable.
 - Data Sources module is implemented across domain, application, infrastructure, and UI layers.
-- A consolidated kernel migration exists (`alembic/versions/001_kernel_schema.py`) creating:
+- A consolidated baseline migration exists (`alembic/versions/001_current_baseline.py`) creating the current schema from scratch:
   - dictionary tables (`variable_definitions`, `variable_synonyms`, `transform_registry`, `entity_resolution_policies`, `relation_constraints`)
   - fact tables (`entities`, `entity_identifiers`, `observations`, `relations`, `provenance`)
   - workspace tables (`research_spaces`, `research_space_memberships`)

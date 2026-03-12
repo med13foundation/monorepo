@@ -8,7 +8,7 @@ It also includes an explicit phase to unify terminology and naming to **`researc
 
 As of **2026-02-10**, the core kernel migration (Phases 0-3) is **COMPLETE**.
 
-- **Schema:** Kernel tables (`entities`, `observations`, `relations`) + dictionary tables (`variable_definitions`, etc.) are deployed via `001_kernel_schema.py`.
+- **Schema:** Kernel tables (`entities`, `observations`, `relations`) + dictionary tables (`variable_definitions`, etc.) are deployed via `001_current_baseline.py`.
 - **Services:** All kernel services (`kernel_entity_service.py`, `kernel_observation_service.py`, `kernel_relation_service.py`, `dictionary_service.py`) are implemented and active.
 - **Ingestion:** The full "Map -> Normalize -> Resolve -> Validate" pipeline is implemented in `src/infrastructure/ingestion/`.
 - **Legacy Cleanup:** All legacy domain entities (`gene.py`, `variant.py`, etc.) and their repositories/services have been **deleted**.
@@ -74,7 +74,7 @@ Deliverable:
 
 Because this is a clean-sheet database, the simplest path is:
 
-- [x] Update `alembic/versions/001_kernel_schema.py` to create **`research_spaces`** instead of `studies`.
+- [x] Update the baseline migration to create **`research_spaces`** instead of `studies`.
 - [x] Rename kernel membership table to **`research_space_memberships`**.
 - [x] Rename all foreign keys/columns across kernel + infra tables:
   - `study_id` -> `research_space_id` in: `entities`, `observations`, `relations`, `provenance`, `user_data_sources`, `ingestion_jobs`, etc.
