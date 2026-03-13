@@ -14,5 +14,10 @@ For day-to-day usage, start at [../README.md](../README.md) instead.
 
 ## Files
 
+- [migration-phase2-checklist.md](migration-phase2-checklist.md)
+  Progress checklist for executing the phase-2 implementation plan.
+- [migration-phase2.md](migration-phase2.md)
+  Phase-2 design plan for productization, domain-pack separation, auth and
+  tenancy boundary hardening, and query/read-model evolution.
 - [service-migration-plan.md](service-migration-plan.md)
   The full extraction plan, phase breakdown, milestone notes, and progress log.

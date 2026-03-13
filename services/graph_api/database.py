@@ -110,7 +110,6 @@ class _CursorConnectionProtocol(Protocol):
 
 if _is_postgres_url(_SETTINGS.database_url) and _GRAPH_SCHEMA is not None:
 
-    @event.listens_for(engine, "connect")
     def _set_graph_search_path(
         dbapi_connection: object,
         _connection_record: object,
@@ -123,6 +122,8 @@ if _is_postgres_url(_SETTINGS.database_url) and _GRAPH_SCHEMA is not None:
             )
         finally:
             cursor.close()
+
+    event.listen(engine, "connect", _set_graph_search_path)
 
 
 SessionLocal = sessionmaker(
