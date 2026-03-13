@@ -20,22 +20,14 @@ def root() -> JSONObject:
         "resources": "/resources",
         "dashboard": "/api/dashboard",
         "research_spaces": "/research-spaces",
-        "kernel": {
-            "entities": "/research-spaces/{space_id}/entities",
-            "observations": "/research-spaces/{space_id}/observations",
-            "relations": "/research-spaces/{space_id}/relations",
-            "provenance": "/research-spaces/{space_id}/provenance",
-            "ingest": "/research-spaces/{space_id}/ingest",
-            "graph_export": "/research-spaces/{space_id}/graph/export",
-            "graph_subgraph": "/research-spaces/{space_id}/graph/subgraph",
-            "graph_document": "/research-spaces/{space_id}/graph/document",
-            "graph_search": "/research-spaces/{space_id}/graph/search",
-            "graph_connections_discover": (
-                "/research-spaces/{space_id}/graph/connections/discover"
+        "graph_service": {
+            "description": (
+                "Graph APIs are served by the standalone graph service rather than "
+                "the platform app."
             ),
-            "entity_graph_connections": (
-                "/research-spaces/{space_id}/entities/{entity_id}/connections"
-            ),
+            "spaces": "/v1/spaces/{space_id}",
+            "dictionary": "/v1/dictionary",
+            "admin": "/v1/admin",
             "content_enrichment_run": (
                 "/research-spaces/{space_id}/documents/enrichment/run"
             ),

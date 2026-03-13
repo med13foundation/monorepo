@@ -5,7 +5,6 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete
 
 from src.application.services.kernel.kernel_claim_participant_backfill_service import (
     KernelClaimParticipantBackfillService,
@@ -37,16 +36,10 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelRelationProjectionSourceRepository,
     SqlAlchemyKernelRelationRepository,
 )
-from src.models.database.kernel.claim_evidence import ClaimEvidenceModel
-from src.models.database.kernel.claim_participants import ClaimParticipantModel
-from src.models.database.kernel.entities import EntityModel
-from src.models.database.kernel.relation_claims import RelationClaimModel
-from src.models.database.kernel.relation_projection_sources import (
-    RelationProjectionSourceModel,
-)
-from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
+from src.models.database.base import Base
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
+from tests.db_reset import reset_database
 
 pytestmark = pytest.mark.graph
 
@@ -179,16 +172,8 @@ def _build_services(db_session):
 
 
 def _clear_graph_state(db_session) -> None:
-    db_session.execute(delete(ClaimParticipantModel))
-    db_session.execute(delete(ClaimEvidenceModel))
-    db_session.execute(delete(RelationProjectionSourceModel))
-    db_session.execute(delete(RelationClaimModel))
-    db_session.execute(delete(RelationEvidenceModel))
-    db_session.execute(delete(RelationModel))
-    db_session.execute(delete(EntityModel))
-    db_session.execute(delete(ResearchSpaceModel))
-    db_session.execute(delete(UserModel))
-    db_session.commit()
+    db_session.rollback()
+    reset_database(db_session.get_bind(), Base.metadata)
 
 
 def _create_entities(db_session, *, space_id: str):
@@ -210,6 +195,21 @@ def _create_entities(db_session, *, space_id: str):
         metadata={"kind": "target"},
     )
     return source, target
+
+
+def _test_relation_evidence(tag: str) -> RelationEvidenceWrite:
+    return RelationEvidenceWrite(
+        confidence=0.8,
+        evidence_summary=f"{tag} evidence summary",
+        evidence_sentence=f"{tag} evidence sentence",
+        evidence_sentence_source="artana_generated",
+        evidence_sentence_confidence="low",
+        evidence_sentence_rationale=None,
+        evidence_tier="LITERATURE",
+        provenance_id=None,
+        source_document_id=None,
+        agent_run_id=f"{tag}-run",
+    )
 
 
 def test_readiness_audit_counts_failure_categories(db_session) -> None:
@@ -241,8 +241,16 @@ def test_readiness_audit_counts_failure_categories(db_session) -> None:
         relation_type="ASSOCIATED_WITH",
         target_id=str(invalid_target.id),
     )
+    relation_repo.replace_derived_evidence_cache(
+        str(orphan_relation.id),
+        evidences=[_test_relation_evidence("problematic-orphan")],
+    )
+    relation_repo.replace_derived_evidence_cache(
+        str(invalid_projection_relation.id),
+        evidences=[_test_relation_evidence("problematic-invalid-projection")],
+    )
 
-    claim_service.create_claim(
+    missing_projection_claim = claim_service.create_claim(
         research_space_id=str(space.id),
         source_document_id=None,
         agent_run_id="audit-problematic",
@@ -261,6 +269,15 @@ def test_readiness_audit_counts_failure_categories(db_session) -> None:
         claim_section=None,
         linked_relation_id=str(orphan_relation.id),
         metadata={},
+    )
+    SqlAlchemyKernelRelationProjectionSourceRepository(db_session).create(
+        research_space_id=str(space.id),
+        relation_id=str(orphan_relation.id),
+        claim_id=str(missing_projection_claim.id),
+        projection_origin="MANUAL_RELATION",
+        source_document_id=None,
+        agent_run_id="audit-problematic",
+        metadata={"origin": "test"},
     )
 
     invalid_source_claim = claim_service.create_claim(
@@ -328,11 +345,11 @@ def test_readiness_audit_counts_failure_categories(db_session) -> None:
     report = readiness_service.audit(sample_limit=5)
 
     assert report.ready is False
-    assert report.orphan_relations.count == 1
+    assert report.orphan_relations.count == 0
     assert report.missing_claim_participants.count == 1
     assert report.missing_claim_evidence.count == 1
     assert report.linked_relation_mismatches.count == 2
-    assert report.invalid_projection_relations.count == 1
+    assert report.invalid_projection_relations.count == 2
 
 
 def test_readiness_audit_returns_ready_for_clean_projection_graph(db_session) -> None:
@@ -354,6 +371,10 @@ def test_readiness_audit_returns_ready_for_clean_projection_graph(db_session) ->
         source_id=str(source.id),
         relation_type="ASSOCIATED_WITH",
         target_id=str(target.id),
+    )
+    relation_repo.replace_derived_evidence_cache(
+        str(relation.id),
+        evidences=[_test_relation_evidence("clean")],
     )
     claim = claim_service.create_claim(
         research_space_id=str(space.id),

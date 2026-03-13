@@ -1,4 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut, type ApiRequestOptions } from '@/lib/api/client'
+import { resolveGraphApiBaseUrl } from '@/lib/api/graph-base-url'
 import type {
   KernelEntityEmbeddingRefreshRequest,
   KernelEntityEmbeddingRefreshResponse,
@@ -13,6 +14,10 @@ import type {
   KernelGraphExportResponse,
   KernelGraphSubgraphRequest,
   KernelGraphSubgraphResponse,
+  GraphConnectionDiscoverRequest,
+  GraphConnectionDiscoverResponse,
+  GraphConnectionOutcomeResponse,
+  GraphConnectionSingleRequest,
   GraphSearchRequest,
   GraphSearchResponse,
   KernelObservationCreateRequest,
@@ -63,12 +68,27 @@ import type {
   SpaceSourceIngestionRunResponse,
 } from '@/types/kernel'
 
+const GRAPH_API_BASE_URL = resolveGraphApiBaseUrl()
+
 export interface KernelEntityListParams {
   type?: string
   q?: string
   ids?: string[]
   offset?: number
   limit?: number
+}
+
+function withGraphApiOptions<TResponse>(
+  options: ApiRequestOptions<TResponse>,
+): ApiRequestOptions<TResponse> {
+  return {
+    ...options,
+    baseURL: GRAPH_API_BASE_URL,
+  }
+}
+
+function graphSpacePath(spaceId: string, path: string): string {
+  return `/v1/spaces/${spaceId}${path}`
 }
 
 export async function fetchKernelEntities(
@@ -91,7 +111,10 @@ export async function fetchKernelEntities(
     },
   }
 
-  return apiGet<KernelEntityListResponse>(`/research-spaces/${spaceId}/entities`, options)
+  return apiGet<KernelEntityListResponse>(
+    graphSpacePath(spaceId, '/entities'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function createKernelEntity(
@@ -103,9 +126,9 @@ export async function createKernelEntity(
     throw new Error('Authentication token is required for createKernelEntity')
   }
   return apiPost<KernelEntityUpsertResponse>(
-    `/research-spaces/${spaceId}/entities`,
+    graphSpacePath(spaceId, '/entities'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -117,7 +140,10 @@ export async function fetchKernelEntity(
   if (!token) {
     throw new Error('Authentication token is required for fetchKernelEntity')
   }
-  return apiGet<KernelEntityResponse>(`/research-spaces/${spaceId}/entities/${entityId}`, { token })
+  return apiGet<KernelEntityResponse>(
+    graphSpacePath(spaceId, `/entities/${entityId}`),
+    withGraphApiOptions({ token }),
+  )
 }
 
 export interface KernelEntitySimilarParams {
@@ -148,8 +174,8 @@ export async function fetchKernelSimilarEntities(
   }
 
   return apiGet<KernelEntitySimilarityListResponse>(
-    `/research-spaces/${spaceId}/entities/${entityId}/similar`,
-    options,
+    graphSpacePath(spaceId, `/entities/${entityId}/similar`),
+    withGraphApiOptions(options),
   )
 }
 
@@ -162,9 +188,9 @@ export async function refreshKernelEntityEmbeddings(
     throw new Error('Authentication token is required for refreshKernelEntityEmbeddings')
   }
   return apiPost<KernelEntityEmbeddingRefreshResponse>(
-    `/research-spaces/${spaceId}/entities/embeddings/refresh`,
+    graphSpacePath(spaceId, '/entities/embeddings/refresh'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -178,9 +204,9 @@ export async function updateKernelEntity(
     throw new Error('Authentication token is required for updateKernelEntity')
   }
   return apiPut<KernelEntityResponse>(
-    `/research-spaces/${spaceId}/entities/${entityId}`,
+    graphSpacePath(spaceId, `/entities/${entityId}`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -192,7 +218,10 @@ export async function deleteKernelEntity(
   if (!token) {
     throw new Error('Authentication token is required for deleteKernelEntity')
   }
-  await apiDelete<void>(`/research-spaces/${spaceId}/entities/${entityId}`, { token })
+  await apiDelete<void>(
+    graphSpacePath(spaceId, `/entities/${entityId}`),
+    withGraphApiOptions({ token }),
+  )
 }
 
 export interface KernelObservationListParams {
@@ -222,8 +251,8 @@ export async function fetchKernelObservations(
   }
 
   return apiGet<KernelObservationListResponse>(
-    `/research-spaces/${spaceId}/observations`,
-    options,
+    graphSpacePath(spaceId, '/observations'),
+    withGraphApiOptions(options),
   )
 }
 
@@ -236,9 +265,9 @@ export async function createKernelObservation(
     throw new Error('Authentication token is required for createKernelObservation')
   }
   return apiPost<KernelObservationResponse>(
-    `/research-spaces/${spaceId}/observations`,
+    graphSpacePath(spaceId, '/observations'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -251,8 +280,8 @@ export async function fetchKernelObservation(
     throw new Error('Authentication token is required for fetchKernelObservation')
   }
   return apiGet<KernelObservationResponse>(
-    `/research-spaces/${spaceId}/observations/${observationId}`,
-    { token },
+    graphSpacePath(spaceId, `/observations/${observationId}`),
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -294,7 +323,10 @@ export async function fetchKernelRelations(
     },
   }
 
-  return apiGet<KernelRelationListResponse>(`/research-spaces/${spaceId}/relations`, options)
+  return apiGet<KernelRelationListResponse>(
+    graphSpacePath(spaceId, '/relations'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function createKernelRelation(
@@ -305,7 +337,11 @@ export async function createKernelRelation(
   if (!token) {
     throw new Error('Authentication token is required for createKernelRelation')
   }
-  return apiPost<KernelRelationResponse>(`/research-spaces/${spaceId}/relations`, payload, { token })
+  return apiPost<KernelRelationResponse>(
+    graphSpacePath(spaceId, '/relations'),
+    payload,
+    withGraphApiOptions({ token }),
+  )
 }
 
 export async function suggestKernelRelations(
@@ -317,9 +353,40 @@ export async function suggestKernelRelations(
     throw new Error('Authentication token is required for suggestKernelRelations')
   }
   return apiPost<KernelRelationSuggestionListResponse>(
-    `/research-spaces/${spaceId}/graph/relation-suggestions`,
+    graphSpacePath(spaceId, '/graph/relation-suggestions'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
+  )
+}
+
+export async function discoverGraphConnections(
+  spaceId: string,
+  payload: GraphConnectionDiscoverRequest,
+  token?: string,
+): Promise<GraphConnectionDiscoverResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for discoverGraphConnections')
+  }
+  return apiPost<GraphConnectionDiscoverResponse>(
+    graphSpacePath(spaceId, '/graph/connections/discover'),
+    payload,
+    withGraphApiOptions({ token }),
+  )
+}
+
+export async function discoverEntityGraphConnections(
+  spaceId: string,
+  entityId: string,
+  payload: GraphConnectionSingleRequest,
+  token?: string,
+): Promise<GraphConnectionOutcomeResponse> {
+  if (!token) {
+    throw new Error('Authentication token is required for discoverEntityGraphConnections')
+  }
+  return apiPost<GraphConnectionOutcomeResponse>(
+    graphSpacePath(spaceId, `/entities/${entityId}/connections`),
+    payload,
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -333,9 +400,9 @@ export async function updateKernelRelationCurationStatus(
     throw new Error('Authentication token is required for updateKernelRelationCurationStatus')
   }
   return apiPut<KernelRelationResponse>(
-    `/research-spaces/${spaceId}/relations/${relationId}`,
+    graphSpacePath(spaceId, `/relations/${relationId}`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -378,8 +445,8 @@ export async function fetchRelationClaims(
   }
 
   return apiGet<RelationClaimListResponse>(
-    `/research-spaces/${spaceId}/relation-claims`,
-    options,
+    graphSpacePath(spaceId, '/claims'),
+    withGraphApiOptions(options),
   )
 }
 
@@ -404,8 +471,8 @@ export async function fetchHypotheses(
     },
   }
   return apiGet<HypothesisListResponse>(
-    `/research-spaces/${spaceId}/hypotheses`,
-    options,
+    graphSpacePath(spaceId, '/hypotheses'),
+    withGraphApiOptions(options),
   )
 }
 
@@ -418,9 +485,9 @@ export async function createManualHypothesis(
     throw new Error('Authentication token is required for createManualHypothesis')
   }
   return apiPost<HypothesisResponse>(
-    `/research-spaces/${spaceId}/hypotheses/manual`,
+    graphSpacePath(spaceId, '/hypotheses/manual'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -433,9 +500,9 @@ export async function generateHypotheses(
     throw new Error('Authentication token is required for generateHypotheses')
   }
   return apiPost<GenerateHypothesesResponse>(
-    `/research-spaces/${spaceId}/hypotheses/generate`,
+    graphSpacePath(spaceId, '/hypotheses/generate'),
     payload,
-    { token, timeout: 0 },
+    withGraphApiOptions({ token, timeout: 0 }),
   )
 }
 
@@ -472,8 +539,8 @@ export async function fetchClaimRelations(
   }
 
   return apiGet<ClaimRelationListResponse>(
-    `/research-spaces/${spaceId}/claim-relations`,
-    options,
+    graphSpacePath(spaceId, '/claim-relations'),
+    withGraphApiOptions(options),
   )
 }
 
@@ -487,9 +554,9 @@ export async function createClaimRelation(
   }
 
   return apiPost<ClaimRelationResponse>(
-    `/research-spaces/${spaceId}/claim-relations`,
+    graphSpacePath(spaceId, '/claim-relations'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -504,9 +571,9 @@ export async function updateClaimRelationReview(
   }
 
   return apiPatch<ClaimRelationResponse>(
-    `/research-spaces/${spaceId}/claim-relations/${relationId}`,
+    graphSpacePath(spaceId, `/claim-relations/${relationId}`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -519,8 +586,8 @@ export async function fetchClaimParticipants(
     throw new Error('Authentication token is required for fetchClaimParticipants')
   }
   return apiGet<ClaimParticipantListResponse>(
-    `/research-spaces/${spaceId}/claims/${claimId}/participants`,
-    { token },
+    graphSpacePath(spaceId, `/claims/${claimId}/participants`),
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -534,14 +601,14 @@ export async function fetchClaimsByEntity(
     throw new Error('Authentication token is required for fetchClaimsByEntity')
   }
   return apiGet<RelationClaimListResponse>(
-    `/research-spaces/${spaceId}/claims/by-entity/${entityId}`,
-    {
+    graphSpacePath(spaceId, `/claims/by-entity/${entityId}`),
+    withGraphApiOptions({
       token,
       params: {
         limit: params.limit ?? 20,
         offset: params.offset ?? 0,
       },
-    },
+    }),
   )
 }
 
@@ -554,14 +621,14 @@ export async function fetchClaimParticipantCoverage(
     throw new Error('Authentication token is required for fetchClaimParticipantCoverage')
   }
   return apiGet<ClaimParticipantCoverageResponse>(
-    `/research-spaces/${spaceId}/claim-participants/coverage`,
-    {
+    graphSpacePath(spaceId, '/claim-participants/coverage'),
+    withGraphApiOptions({
       token,
       params: {
         limit: params.limit ?? 500,
         offset: params.offset ?? 0,
       },
-    },
+    }),
   )
 }
 
@@ -574,9 +641,9 @@ export async function runClaimParticipantBackfill(
     throw new Error('Authentication token is required for runClaimParticipantBackfill')
   }
   return apiPost<ClaimParticipantBackfillResponse>(
-    `/research-spaces/${spaceId}/claim-participants/backfill`,
+    graphSpacePath(spaceId, '/claim-participants/backfill'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -589,8 +656,8 @@ export async function fetchRelationClaimEvidence(
     throw new Error('Authentication token is required for fetchRelationClaimEvidence')
   }
   return apiGet<ClaimEvidenceListResponse>(
-    `/research-spaces/${spaceId}/relation-claims/${claimId}/evidence`,
-    { token },
+    graphSpacePath(spaceId, `/claims/${claimId}/evidence`),
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -615,8 +682,8 @@ export async function fetchRelationConflicts(
     },
   }
   return apiGet<RelationConflictListResponse>(
-    `/research-spaces/${spaceId}/relations/conflicts`,
-    options,
+    graphSpacePath(spaceId, '/relations/conflicts'),
+    withGraphApiOptions(options),
   )
 }
 
@@ -630,9 +697,9 @@ export async function updateRelationClaimStatus(
     throw new Error('Authentication token is required for updateRelationClaimStatus')
   }
   return apiPatch<RelationClaimResponse>(
-    `/research-spaces/${spaceId}/relation-claims/${claimId}`,
+    graphSpacePath(spaceId, `/claims/${claimId}`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -643,7 +710,10 @@ export async function fetchKernelGraphExport(
   if (!token) {
     throw new Error('Authentication token is required for fetchKernelGraphExport')
   }
-  return apiGet<KernelGraphExportResponse>(`/research-spaces/${spaceId}/graph/export`, { token })
+  return apiGet<KernelGraphExportResponse>(
+    graphSpacePath(spaceId, '/graph/export'),
+    withGraphApiOptions({ token }),
+  )
 }
 
 export async function searchKernelGraph(
@@ -655,9 +725,9 @@ export async function searchKernelGraph(
     throw new Error('Authentication token is required for searchKernelGraph')
   }
   return apiPost<GraphSearchResponse>(
-    `/research-spaces/${spaceId}/graph/search`,
+    graphSpacePath(spaceId, '/graph/search'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -670,9 +740,9 @@ export async function fetchKernelSubgraph(
     throw new Error('Authentication token is required for fetchKernelSubgraph')
   }
   return apiPost<KernelGraphSubgraphResponse>(
-    `/research-spaces/${spaceId}/graph/subgraph`,
+    graphSpacePath(spaceId, '/graph/subgraph'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -685,9 +755,9 @@ export async function fetchKernelGraphDocument(
     throw new Error('Authentication token is required for fetchKernelGraphDocument')
   }
   return apiPost<KernelGraphDocumentResponse>(
-    `/research-spaces/${spaceId}/graph/document`,
+    graphSpacePath(spaceId, '/graph/document'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -705,8 +775,8 @@ export async function fetchKernelNeighborhood(
     params: { depth },
   }
   return apiGet<KernelGraphExportResponse>(
-    `/research-spaces/${spaceId}/graph/neighborhood/${entityId}`,
-    options,
+    graphSpacePath(spaceId, `/graph/neighborhood/${entityId}`),
+    withGraphApiOptions(options),
   )
 }
 
@@ -734,7 +804,10 @@ export async function fetchKernelProvenance(
     },
   }
 
-  return apiGet<KernelProvenanceListResponse>(`/research-spaces/${spaceId}/provenance`, options)
+  return apiGet<KernelProvenanceListResponse>(
+    graphSpacePath(spaceId, '/provenance'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function fetchKernelProvenanceRecord(
@@ -746,8 +819,8 @@ export async function fetchKernelProvenanceRecord(
     throw new Error('Authentication token is required for fetchKernelProvenanceRecord')
   }
   return apiGet<KernelProvenanceResponse>(
-    `/research-spaces/${spaceId}/provenance/${provenanceId}`,
-    { token },
+    graphSpacePath(spaceId, `/provenance/${provenanceId}`),
+    withGraphApiOptions({ token }),
   )
 }
 

@@ -66,6 +66,7 @@ class SqlAlchemyKernelRelationProjectionSourceRepository(
         projection_origin: RelationProjectionOrigin,
         source_document_id: str | None,
         agent_run_id: str | None,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelRelationProjectionSource:
         existing_stmt = select(RelationProjectionSourceModel).where(
@@ -85,6 +86,7 @@ class SqlAlchemyKernelRelationProjectionSourceRepository(
             claim_id=_as_uuid(claim_id),
             projection_origin=projection_origin,
             source_document_id=_try_as_uuid(source_document_id),
+            source_document_ref=_normalize_optional_text(source_document_ref),
             agent_run_id=_normalize_optional_text(agent_run_id),
             metadata_payload=metadata or {},
             created_at=datetime.now(UTC),

@@ -127,6 +127,12 @@
             "expires_on": "2026-12-31"
         },
         {
+            "path": "src/infrastructure/graph_service/client.py",
+            "max_lines": 2800,
+            "reason": "Typed graph-service client remains centralized while the final standalone API surface and caller migration stabilize; split by bounded API area is planned after cutover completion.",
+            "expires_on": "2026-12-31"
+        },
+        {
             "path": "src/application/agents/services/extraction_service.py",
             "max_lines": 900,
             "reason": "Extraction service still co-locates orchestration and persistence integration pending helper-module decomposition.",
@@ -245,6 +251,30 @@
             "max_lines": 900,
             "reason": "Hypothesis generation service currently centralizes seed resolution, scoring, deduping, and claim write orchestration; staged helper-module decomposition is planned.",
             "expires_on": "2026-12-31"
+        },
+        {
+            "path": "src/type_definitions/graph_api_schemas/kernel_schemas.py",
+            "max_lines": 900,
+            "reason": "Shared graph API schema definitions were moved out of route modules into a neutral contract package; split by bounded API area remains follow-up work.",
+            "expires_on": "2026-12-31"
+        },
+        {
+            "path": "src/infrastructure/dependency_injection/graph_runtime_factories.py",
+            "max_lines": 800,
+            "reason": "Neutral shared graph runtime builders temporarily centralize legacy and standalone graph composition while the final shared-runtime split is stabilized.",
+            "expires_on": "2026-12-31"
+        },
+        {
+            "path": "src/infrastructure/graph_governance/dictionary_search.py",
+            "max_lines": 950,
+            "reason": "Shared graph governance search remains centralized after extraction from the service package; decomposition by search capability remains follow-up work.",
+            "expires_on": "2026-12-31"
+        },
+        {
+            "path": "src/infrastructure/graph_governance/dictionary_repository.py",
+            "max_lines": 1600,
+            "reason": "Shared graph governance repository intentionally mirrors the full standalone governance surface while the extracted package settles; split by capability remains follow-up work.",
+            "expires_on": "2026-12-31"
         }
     ],
     "class_size": [
@@ -274,6 +304,20 @@
             "class_name": "DictionaryManagementService",
             "max_methods": 70,
             "reason": "Service-level orchestration remains centralized while semantic layer interfaces are still evolving.",
+            "expires_on": "2026-12-31"
+        },
+        {
+            "path": "src/infrastructure/graph_service/client.py",
+            "class_name": "GraphServiceClient",
+            "max_methods": 120,
+            "reason": "Typed graph-service client intentionally mirrors the full standalone API surface while caller migration and client generation automation are still being finalized.",
+            "expires_on": "2026-12-31"
+        },
+        {
+            "path": "src/infrastructure/graph_governance/dictionary_repository.py",
+            "class_name": "GraphDictionaryRepository",
+            "max_methods": 50,
+            "reason": "Shared graph governance repository intentionally mirrors the extracted standalone governance surface while follow-up split by capability is tracked separately.",
             "expires_on": "2026-12-31"
         }
     ],
@@ -336,6 +380,12 @@
             "path": "src/routes/research_spaces/graph_connection_routes.py",
             "max_imports": 20,
             "reason": "Graph-connection routes aggregate discovery, feature-flag, and constrained suggestion APIs while endpoint decomposition is planned.",
+            "expires_on": "2026-12-31"
+        },
+        {
+            "path": "src/infrastructure/dependency_injection/graph_runtime_factories.py",
+            "max_imports": 60,
+            "reason": "Neutral shared graph runtime builders temporarily centralize legacy and standalone graph composition while the extracted runtime split is stabilized.",
             "expires_on": "2026-12-31"
         },
         {

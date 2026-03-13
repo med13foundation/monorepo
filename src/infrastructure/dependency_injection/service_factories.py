@@ -1,3 +1,4 @@
+# mypy: disable-error-code=no-untyped-def
 """
 Factory mixin for building application services used by the dependency container.
 """
@@ -17,10 +18,6 @@ from src.application.agents.services import (
     ExtractionService,
     ExtractionServiceDependencies,
     GovernanceService,
-    GraphConnectionService,
-    GraphConnectionServiceDependencies,
-    GraphSearchService,
-    GraphSearchServiceDependencies,
 )
 from src.application.services.pipeline_run_trace_service import (
     PipelineRunTraceService,
@@ -32,6 +29,10 @@ from src.infrastructure.dependency_injection import (
     discovery_service_factories,
     kernel_service_factories,
 )
+from src.infrastructure.dependency_injection.graph_runtime_factories import (
+    build_graph_connection_service,
+    build_graph_search_service,
+)
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
@@ -41,8 +42,6 @@ from src.infrastructure.llm.adapters import (
     ArtanaEvidenceSentenceHarnessAdapter,
     ArtanaExtractionAdapter,
     ArtanaExtractionPolicyAdapter,
-    ArtanaGraphConnectionAdapter,
-    ArtanaGraphSearchAdapter,
     ArtanaMappingJudgeAdapter,
     ArtanaQueryAgentAdapter,
 )
@@ -52,15 +51,6 @@ from src.infrastructure.repositories import (
     SqlAlchemyResearchSpaceRepository,
     SqlAlchemySourceDocumentRepository,
 )
-from src.infrastructure.repositories.kernel import (
-    SqlAlchemyGraphQueryRepository,
-    SqlAlchemyKernelClaimEvidenceRepository,
-    SqlAlchemyKernelClaimParticipantRepository,
-    SqlAlchemyKernelEntityRepository,
-    SqlAlchemyKernelRelationClaimRepository,
-    SqlAlchemyKernelRelationProjectionSourceRepository,
-    SqlAlchemyKernelRelationRepository,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -68,6 +58,10 @@ if TYPE_CHECKING:
     from artana.store import PostgresStore
     from sqlalchemy.orm import Session
 
+    from src.application.agents.services import (
+        GraphConnectionService,
+        GraphSearchService,
+    )
     from src.application.services import SystemStatusService
     from src.domain.agents.ports import (
         EntityRecognitionPort,
@@ -209,6 +203,13 @@ class ApplicationServiceFactoryMixin(
             self._mapping_judge_agent = None
         return self._mapping_judge_agent
 
+    def create_ingestion_pipeline(
+        self,
+        session: Session,
+    ):
+        """Build the ingestion pipeline through the legacy factory wrapper."""
+        return create_ingestion_pipeline(session)
+
     def create_entity_recognition_service(
         self,
         session: Session,
@@ -216,7 +217,7 @@ class ApplicationServiceFactoryMixin(
         dictionary_service = self.create_dictionary_management_service(session)
         concept_service = self.create_concept_management_service(session)
         governance_service = GovernanceService()
-        ingestion_pipeline = create_ingestion_pipeline(session)
+        ingestion_pipeline = self.create_ingestion_pipeline(session)
         registry = get_model_registry()
         model_spec = registry.get_default_model(
             ModelCapability.EVIDENCE_EXTRACTION,
@@ -240,12 +241,12 @@ class ApplicationServiceFactoryMixin(
                 extraction_agent=extraction_agent,
                 extraction_policy_agent=extraction_policy_agent,
                 ingestion_pipeline=ingestion_pipeline,
-                relation_repository=SqlAlchemyKernelRelationRepository(session),
-                relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
+                relation_repository=self._build_relation_repository(session),
+                relation_claim_repository=self._build_relation_claim_repository(
                     session,
                 ),
                 relation_projection_source_repository=(
-                    SqlAlchemyKernelRelationProjectionSourceRepository(session)
+                    self._build_relation_projection_source_repository(session)
                 ),
                 relation_projection_materialization_service=(
                     self.create_kernel_relation_projection_materialization_service(
@@ -253,12 +254,12 @@ class ApplicationServiceFactoryMixin(
                     )
                 ),
                 claim_participant_repository=(
-                    SqlAlchemyKernelClaimParticipantRepository(session)
+                    self._build_claim_participant_repository(session)
                 ),
-                claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
+                claim_evidence_repository=self._build_claim_evidence_repository(
                     session,
                 ),
-                entity_repository=SqlAlchemyKernelEntityRepository(session),
+                entity_repository=self._build_entity_repository(session),
                 dictionary_service=dictionary_service,
                 concept_service=concept_service,
                 evidence_sentence_harness=evidence_sentence_harness,
@@ -308,21 +309,21 @@ class ApplicationServiceFactoryMixin(
             dependencies=ExtractionServiceDependencies(
                 extraction_agent=extraction_agent,
                 extraction_policy_agent=extraction_policy_agent,
-                ingestion_pipeline=create_ingestion_pipeline(session),
-                relation_repository=SqlAlchemyKernelRelationRepository(session),
-                relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
+                ingestion_pipeline=self.create_ingestion_pipeline(session),
+                relation_repository=self._build_relation_repository(session),
+                relation_claim_repository=self._build_relation_claim_repository(
                     session,
                 ),
                 relation_projection_source_repository=(
-                    SqlAlchemyKernelRelationProjectionSourceRepository(session)
+                    self._build_relation_projection_source_repository(session)
                 ),
                 claim_participant_repository=(
-                    SqlAlchemyKernelClaimParticipantRepository(session)
+                    self._build_claim_participant_repository(session)
                 ),
-                claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
+                claim_evidence_repository=self._build_claim_evidence_repository(
                     session,
                 ),
-                entity_repository=SqlAlchemyKernelEntityRepository(session),
+                entity_repository=self._build_entity_repository(session),
                 dictionary_service=dictionary_service,
                 concept_service=concept_service,
                 evidence_sentence_harness=evidence_sentence_harness,
@@ -354,74 +355,10 @@ class ApplicationServiceFactoryMixin(
         self,
         session: Session,
     ) -> GraphConnectionService:
-        dictionary_service = self.create_dictionary_management_service(session)
-        relation_repository = SqlAlchemyKernelRelationRepository(session)
-        graph_query_service = SqlAlchemyGraphQueryRepository(session)
-        registry = get_model_registry()
-        model_spec = registry.get_default_model(
-            ModelCapability.EVIDENCE_EXTRACTION,
-        )
-        graph_connection_agent = ArtanaGraphConnectionAdapter(
-            model=model_spec.model_id,
-            dictionary_service=dictionary_service,
-            graph_query_service=graph_query_service,
-            relation_repository=relation_repository,
-        )
-        return GraphConnectionService(
-            dependencies=GraphConnectionServiceDependencies(
-                graph_connection_agent=graph_connection_agent,
-                relation_repository=relation_repository,
-                entity_repository=SqlAlchemyKernelEntityRepository(session),
-                relation_projection_materialization_service=(
-                    self.create_kernel_relation_projection_materialization_service(
-                        session,
-                    )
-                ),
-                relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
-                    session,
-                ),
-                claim_participant_repository=(
-                    SqlAlchemyKernelClaimParticipantRepository(session)
-                ),
-                claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
-                    session,
-                ),
-                relation_projection_source_repository=(
-                    SqlAlchemyKernelRelationProjectionSourceRepository(session)
-                ),
-                governance_service=GovernanceService(),
-                research_space_repository=SqlAlchemyResearchSpaceRepository(session),
-                review_queue_submitter=self._build_review_queue_submitter(session),
-                rollback_on_error=session.rollback,
-            ),
-        )
+        return build_graph_connection_service(session)
 
     def create_graph_search_service(self, session: Session) -> GraphSearchService:
-        from src.application.services.research_query_service import ResearchQueryService
-
-        dictionary_service = self.create_dictionary_management_service(session)
-        graph_query_service = SqlAlchemyGraphQueryRepository(session)
-        research_query_service = ResearchQueryService(
-            dictionary_service=dictionary_service,
-        )
-        graph_search_agent = None
-        if self._is_stage_enabled("MED13_ENABLE_GRAPH_SEARCH_AGENT"):
-            registry = get_model_registry()
-            model_spec = registry.get_default_model(ModelCapability.QUERY_GENERATION)
-            graph_search_agent = ArtanaGraphSearchAdapter(
-                model=model_spec.model_id,
-                graph_query_service=graph_query_service,
-                artana_store=self.get_artana_store(),
-            )
-
-        return GraphSearchService(
-            dependencies=GraphSearchServiceDependencies(
-                research_query_service=research_query_service,
-                graph_query_service=graph_query_service,
-                graph_search_agent=graph_search_agent,
-                governance_service=GovernanceService(),
-            ),
-        )
+        return build_graph_search_service(session)
 
     def create_content_enrichment_service(
         self,

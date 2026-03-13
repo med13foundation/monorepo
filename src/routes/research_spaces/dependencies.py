@@ -24,6 +24,7 @@ from src.application.services.research_space_management_service import (
 from src.database.session import get_session, set_session_rls_context
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import UserRole
+from src.infrastructure.graph_service import GraphServiceSpaceLifecycleSync
 from src.infrastructure.repositories import (
     SqlAlchemyDataSourceActivationRepository,
     SqlAlchemyResearchSpaceRepository,
@@ -39,8 +40,12 @@ def get_research_space_service(
 ) -> ResearchSpaceManagementService:
     """Get research space management service."""
     space_repository = SqlAlchemyResearchSpaceRepository(session=db)
+    membership_repository = SqlAlchemyResearchSpaceMembershipRepository(session=db)
     return ResearchSpaceManagementService(
         research_space_repository=space_repository,
+        space_lifecycle_sync=GraphServiceSpaceLifecycleSync(
+            membership_repository=membership_repository,
+        ),
     )
 
 
@@ -53,6 +58,9 @@ def get_membership_service(
     return MembershipManagementService(
         membership_repository=membership_repository,
         research_space_repository=space_repository,
+        space_lifecycle_sync=GraphServiceSpaceLifecycleSync(
+            membership_repository=membership_repository,
+        ),
     )
 
 

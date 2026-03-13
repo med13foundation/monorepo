@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from src.application.services.kernel.kernel_graph_view_service import (
-    KernelClaimMechanismChain,
-    KernelGraphDomainView,
+from src.domain.entities.kernel.source_documents import (
+    KernelSourceDocumentReference,
 )
-from src.domain.entities.source_document import SourceDocument
 from src.routes.research_spaces.claim_graph_schemas import (
     ClaimParticipantResponse,
     ClaimRelationResponse,
@@ -23,6 +22,33 @@ from src.routes.research_spaces.kernel_schemas import (
     KernelRelationResponse,
 )
 from src.type_definitions.common import JSONObject
+
+
+class GraphDomainViewLike(Protocol):
+    """Structural contract for graph-domain view serialization."""
+
+    view_type: str
+    resource_id: str | UUID
+    entity: object | None
+    claim: object | None
+    paper: KernelSourceDocumentReference | None
+    canonical_relations: list[object]
+    claims: list[object]
+    claim_relations: list[object]
+    participants: list[object]
+    evidence: list[object]
+
+
+class ClaimMechanismChainLike(Protocol):
+    """Structural contract for mechanism-chain serialization."""
+
+    root_claim: object
+    max_depth: int
+    canonical_relations: list[object]
+    claims: list[object]
+    claim_relations: list[object]
+    participants: list[object]
+    evidence: list[object]
 
 
 class KernelSourceDocumentResponse(BaseModel):
@@ -43,16 +69,19 @@ class KernelSourceDocumentResponse(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, model: SourceDocument) -> KernelSourceDocumentResponse:
+    def from_model(
+        cls,
+        model: KernelSourceDocumentReference,
+    ) -> KernelSourceDocumentResponse:
         return cls(
             id=model.id,
             research_space_id=model.research_space_id,
             source_id=model.source_id,
             external_record_id=model.external_record_id,
-            source_type=model.source_type.value,
-            document_format=model.document_format.value,
-            enrichment_status=model.enrichment_status.value,
-            extraction_status=model.extraction_status.value,
+            source_type=model.source_type,
+            document_format=model.document_format,
+            enrichment_status=model.enrichment_status,
+            extraction_status=model.extraction_status,
             metadata=dict(model.metadata),
             created_at=model.created_at,
             updated_at=model.updated_at,
@@ -91,7 +120,7 @@ class KernelGraphDomainViewResponse(BaseModel):
     @classmethod
     def from_domain_view(
         cls,
-        view: KernelGraphDomainView,
+        view: GraphDomainViewLike,
     ) -> KernelGraphDomainViewResponse:
         canonical_relations = [
             KernelRelationResponse.from_model(item) for item in view.canonical_relations
@@ -156,7 +185,7 @@ class KernelClaimMechanismChainResponse(BaseModel):
     @classmethod
     def from_chain(
         cls,
-        chain: KernelClaimMechanismChain,
+        chain: ClaimMechanismChainLike,
     ) -> KernelClaimMechanismChainResponse:
         canonical_relations = [
             KernelRelationResponse.from_model(item)

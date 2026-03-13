@@ -80,6 +80,8 @@ from .relations import (
     KernelRelation,
     KernelRelationEvidence,
 )
+from .source_documents import KernelSourceDocumentReference
+from .spaces import KernelSpaceRegistryEntry
 
 __all__ = [
     "DictionaryChangelog",
@@ -132,6 +134,8 @@ __all__ = [
     "KernelRelationSuggestionConstraintCheck",
     "KernelRelationSuggestionResult",
     "KernelRelationSuggestionScoreBreakdown",
+    "KernelSourceDocumentReference",
+    "KernelSpaceRegistryEntry",
     "ConceptAlias",
     "ConceptDecision",
     "ConceptDecisionProposal",

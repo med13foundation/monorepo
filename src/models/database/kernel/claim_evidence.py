@@ -10,6 +10,10 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from src.database.graph_schema import (
+    graph_table_options,
+    qualify_graph_foreign_key_target,
+)
 from src.models.database.base import Base
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
@@ -26,12 +30,20 @@ class ClaimEvidenceModel(Base):
     )
     claim_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("relation_claims.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("relation_claims.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     source_document_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         nullable=True,
+    )
+    source_document_ref: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+        doc="Graph-owned external document reference without platform identity coupling",
     )
     agent_run_id: Mapped[str | None] = mapped_column(
         String(255),
@@ -68,8 +80,11 @@ class ClaimEvidenceModel(Base):
     __table_args__ = (
         Index("idx_claim_evidence_claim_id", "claim_id"),
         Index("idx_claim_evidence_source_document_id", "source_document_id"),
+        Index("idx_claim_evidence_source_document_ref", "source_document_ref"),
         Index("idx_claim_evidence_created_at", "created_at"),
-        {"comment": "Evidence rows supporting extracted relation claims"},
+        graph_table_options(
+            comment="Evidence rows supporting extracted relation claims",
+        ),
     )
 
 

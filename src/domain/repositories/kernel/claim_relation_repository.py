@@ -32,6 +32,7 @@ class KernelClaimRelationRepository(ABC):
         confidence: float,
         review_status: ClaimRelationReviewStatus,
         evidence_summary: str | None,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelClaimRelation:
         """Create one claim relation row."""

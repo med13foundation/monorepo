@@ -29,6 +29,10 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from src.database.graph_schema import (
+    graph_table_options,
+    qualify_graph_foreign_key_target,
+)
 from src.models.database.base import Base
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
@@ -46,14 +50,13 @@ class ConceptSetModel(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     slug: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     domain_context: Mapped[str] = mapped_column(
-        ForeignKey("dictionary_domain_contexts.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_domain_contexts.id")),
         nullable=False,
     )
     created_by: Mapped[str] = mapped_column(
@@ -82,7 +85,10 @@ class ConceptSetModel(Base):
     valid_to: Mapped[datetime | None] = mapped_column(nullable=True)
     superseded_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_sets.id", ondelete="SET NULL"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_sets.id"),
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -109,6 +115,9 @@ class ConceptSetModel(Base):
         ),
         Index("idx_concept_sets_space_created_at", "research_space_id", "created_at"),
         Index("idx_concept_sets_space_active", "research_space_id", "is_active"),
+        graph_table_options(
+            comment="Research-space scoped semantic concept sets",
+        ),
     )
 
 
@@ -120,16 +129,18 @@ class ConceptMemberModel(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     concept_set_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_sets.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_sets.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     domain_context: Mapped[str] = mapped_column(
-        ForeignKey("dictionary_domain_contexts.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_domain_contexts.id")),
         nullable=False,
     )
     dictionary_dimension: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -177,7 +188,10 @@ class ConceptMemberModel(Base):
     valid_to: Mapped[datetime | None] = mapped_column(nullable=True)
     superseded_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_members.id", ondelete="SET NULL"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_members.id"),
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -193,7 +207,10 @@ class ConceptMemberModel(Base):
         UniqueConstraint("id", "research_space_id", name="uq_concept_members_id_space"),
         ForeignKeyConstraint(
             ["concept_set_id", "research_space_id"],
-            ["concept_sets.id", "concept_sets.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("concept_sets.id"),
+                qualify_graph_foreign_key_target("concept_sets.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_concept_members_set_space_concept_sets",
         ),
@@ -234,6 +251,9 @@ class ConceptMemberModel(Base):
             unique=True,
             postgresql_where=text("is_active AND dictionary_entry_id IS NULL"),
         ),
+        graph_table_options(
+            comment="Canonical and provisional concept members per research space",
+        ),
     )
 
 
@@ -245,16 +265,18 @@ class ConceptAliasModel(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     concept_member_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_members.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_members.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     domain_context: Mapped[str] = mapped_column(
-        ForeignKey("dictionary_domain_contexts.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_domain_contexts.id")),
         nullable=False,
     )
     alias_label: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -285,7 +307,10 @@ class ConceptAliasModel(Base):
     )
     valid_to: Mapped[datetime | None] = mapped_column(nullable=True)
     superseded_by: Mapped[int | None] = mapped_column(
-        ForeignKey("concept_aliases.id", ondelete="SET NULL"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_aliases.id"),
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -300,7 +325,10 @@ class ConceptAliasModel(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["concept_member_id", "research_space_id"],
-            ["concept_members.id", "concept_members.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("concept_members.id"),
+                qualify_graph_foreign_key_target("concept_members.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_concept_aliases_member_space_concept_members",
         ),
@@ -323,6 +351,9 @@ class ConceptAliasModel(Base):
             unique=True,
             postgresql_where=text("is_active"),
         ),
+        graph_table_options(
+            comment="Normalized aliases for concept-member resolution",
+        ),
     )
 
 
@@ -334,17 +365,22 @@ class ConceptLinkModel(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     source_member_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_members.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_members.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     target_member_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_members.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_members.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     link_type: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -384,7 +420,10 @@ class ConceptLinkModel(Base):
     valid_to: Mapped[datetime | None] = mapped_column(nullable=True)
     superseded_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_links.id", ondelete="SET NULL"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_links.id"),
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -400,13 +439,19 @@ class ConceptLinkModel(Base):
         UniqueConstraint("id", "research_space_id", name="uq_concept_links_id_space"),
         ForeignKeyConstraint(
             ["source_member_id", "research_space_id"],
-            ["concept_members.id", "concept_members.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("concept_members.id"),
+                qualify_graph_foreign_key_target("concept_members.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_concept_links_source_member_space_concept_members",
         ),
         ForeignKeyConstraint(
             ["target_member_id", "research_space_id"],
-            ["concept_members.id", "concept_members.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("concept_members.id"),
+                qualify_graph_foreign_key_target("concept_members.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_concept_links_target_member_space_concept_members",
         ),
@@ -438,6 +483,9 @@ class ConceptLinkModel(Base):
             unique=True,
             postgresql_where=text("is_active"),
         ),
+        graph_table_options(
+            comment="Typed semantic links between concept members",
+        ),
     )
 
 
@@ -449,7 +497,6 @@ class ConceptPolicyModel(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     profile_name: Mapped[str] = mapped_column(
@@ -532,6 +579,9 @@ class ConceptPolicyModel(Base):
             unique=True,
             postgresql_where=text("is_active"),
         ),
+        graph_table_options(
+            comment="Per-space concept governance policy profiles",
+        ),
     )
 
 
@@ -543,22 +593,30 @@ class ConceptDecisionModel(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     concept_set_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_sets.id", ondelete="SET NULL"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_sets.id"),
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     concept_member_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_members.id", ondelete="SET NULL"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_members.id"),
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     concept_link_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_links.id", ondelete="SET NULL"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_links.id"),
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     decision_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -596,19 +654,28 @@ class ConceptDecisionModel(Base):
         ),
         ForeignKeyConstraint(
             ["concept_set_id", "research_space_id"],
-            ["concept_sets.id", "concept_sets.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("concept_sets.id"),
+                qualify_graph_foreign_key_target("concept_sets.research_space_id"),
+            ],
             ondelete="SET NULL",
             name="fk_concept_decisions_set_space_concept_sets",
         ),
         ForeignKeyConstraint(
             ["concept_member_id", "research_space_id"],
-            ["concept_members.id", "concept_members.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("concept_members.id"),
+                qualify_graph_foreign_key_target("concept_members.research_space_id"),
+            ],
             ondelete="SET NULL",
             name="fk_concept_decisions_member_space_concept_members",
         ),
         ForeignKeyConstraint(
             ["concept_link_id", "research_space_id"],
-            ["concept_links.id", "concept_links.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("concept_links.id"),
+                qualify_graph_foreign_key_target("concept_links.research_space_id"),
+            ],
             ondelete="SET NULL",
             name="fk_concept_decisions_link_space_concept_links",
         ),
@@ -642,6 +709,9 @@ class ConceptDecisionModel(Base):
             "research_space_id",
             "created_at",
         ),
+        graph_table_options(
+            comment="Decision ledger for concept governance operations",
+        ),
     )
 
 
@@ -653,12 +723,14 @@ class ConceptHarnessResultModel(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     decision_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("concept_decisions.id", ondelete="SET NULL"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("concept_decisions.id"),
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     harness_name: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -692,7 +764,10 @@ class ConceptHarnessResultModel(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["decision_id", "research_space_id"],
-            ["concept_decisions.id", "concept_decisions.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("concept_decisions.id"),
+                qualify_graph_foreign_key_target("concept_decisions.research_space_id"),
+            ],
             ondelete="SET NULL",
             name="fk_concept_harness_results_decision_space_concept_decisions",
         ),
@@ -708,6 +783,9 @@ class ConceptHarnessResultModel(Base):
         Index(
             "idx_concept_harness_results_decision_id",
             "decision_id",
+        ),
+        graph_table_options(
+            comment="Harness/audit outcomes attached to concept decisions",
         ),
     )
 

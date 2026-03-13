@@ -10,6 +10,7 @@ from src.domain.value_objects.relation_types import normalize_relation_type
 from ._kernel_relation_projection_materialization_support import (
     RelationProjectionMaterializationError,
     RelationProjectionMaterializationResult,
+    _backfill_claim_evidence_from_relation_cache,
     _claim_evidence_provenance_id,
     _claim_evidence_summary,
     _claim_evidence_tier,
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
     )
     from src.domain.entities.kernel.relations import (
         KernelRelation,
-        KernelRelationEvidence,
     )
     from src.domain.repositories.kernel.claim_evidence_repository import (
         KernelClaimEvidenceRepository,
@@ -126,6 +126,7 @@ class KernelRelationProjectionMaterializationService:
                 if claim.source_document_id is not None
                 else None
             ),
+            source_document_ref=claim.source_document_ref,
             agent_run_id=claim.agent_run_id,
             metadata={"origin": projection_origin.lower()},
         )
@@ -274,10 +275,11 @@ class KernelRelationProjectionMaterializationService:
         if len(valid_sources) == 1 and not self._claim_evidence.find_by_claim_id(
             valid_sources[0][0],
         ):
-            self._backfill_claim_evidence_from_relation_cache(
+            _backfill_claim_evidence_from_relation_cache(
                 claim_id=valid_sources[0][0],
                 claim=valid_sources[0][1],
                 current_evidence=current_evidence,
+                claim_evidence_repo=self._claim_evidence,
             )
 
         endpoints = valid_sources[0][2]
@@ -318,6 +320,7 @@ class KernelRelationProjectionMaterializationService:
                         evidence_tier=_claim_evidence_tier(evidence),
                         provenance_id=_claim_evidence_provenance_id(evidence),
                         source_document_id=evidence.source_document_id,
+                        source_document_ref=evidence.source_document_ref,
                         agent_run_id=evidence.agent_run_id or claim.agent_run_id,
                     )
                     for evidence in self._claim_evidence.find_by_claim_id(claim_id)
@@ -455,41 +458,6 @@ class KernelRelationProjectionMaterializationService:
             target_label=target_entity.display_label,
             target_type=target_entity.entity_type,
         )
-
-    def _backfill_claim_evidence_from_relation_cache(
-        self,
-        *,
-        claim_id: str,
-        claim: KernelRelationClaim,
-        current_evidence: list[KernelRelationEvidence],
-    ) -> None:
-        for evidence in current_evidence:
-            self._claim_evidence.create(
-                claim_id=claim_id,
-                source_document_id=(
-                    str(evidence.source_document_id)
-                    if evidence.source_document_id is not None
-                    else None
-                ),
-                agent_run_id=evidence.agent_run_id or claim.agent_run_id,
-                sentence=evidence.evidence_sentence,
-                sentence_source=evidence.evidence_sentence_source,
-                sentence_confidence=evidence.evidence_sentence_confidence,
-                sentence_rationale=evidence.evidence_sentence_rationale,
-                figure_reference=None,
-                table_reference=None,
-                confidence=float(evidence.confidence),
-                metadata={
-                    "origin": "relation_evidence_backfill",
-                    "evidence_summary": evidence.evidence_summary,
-                    "evidence_tier": evidence.evidence_tier,
-                    "provenance_id": (
-                        str(evidence.provenance_id)
-                        if evidence.provenance_id is not None
-                        else None
-                    ),
-                },
-            )
 
 
 __all__ = [

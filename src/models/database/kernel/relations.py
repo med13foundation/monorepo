@@ -26,6 +26,10 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from src.database.graph_schema import (
+    graph_table_options,
+    qualify_graph_foreign_key_target,
+)
 from src.models.database.base import Base
 
 
@@ -49,25 +53,30 @@ class RelationModel(Base):
     )
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
         doc="Owning research space",
     )
     source_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("entities.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("entities.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
         doc="Source entity",
     )
     relation_type: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("dictionary_relation_types.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_relation_types.id")),
         nullable=False,
         doc="Relationship type, e.g. CAUSES, ASSOCIATED_WITH",
     )
     target_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("entities.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("entities.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
         doc="Target entity",
     )
@@ -102,7 +111,7 @@ class RelationModel(Base):
     # Legacy canonical provenance pointer (evidence-level provenance is authoritative)
     provenance_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("provenance.id"),
+        ForeignKey(qualify_graph_foreign_key_target("provenance.id")),
         nullable=True,
         doc="Optional canonical provenance pointer",
     )
@@ -110,8 +119,8 @@ class RelationModel(Base):
     # Review tracking
     reviewed_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("users.id"),
         nullable=True,
+        doc="External actor identifier recorded without platform user FK coupling",
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -138,13 +147,19 @@ class RelationModel(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["source_id", "research_space_id"],
-            ["entities.id", "entities.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("entities.id"),
+                qualify_graph_foreign_key_target("entities.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_relations_source_space_entities",
         ),
         ForeignKeyConstraint(
             ["target_id", "research_space_id"],
-            ["entities.id", "entities.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("entities.id"),
+                qualify_graph_foreign_key_target("entities.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_relations_target_space_entities",
         ),
@@ -167,7 +182,9 @@ class RelationModel(Base):
             "research_space_id",
             name="uq_relations_canonical_edge",
         ),
-        {"comment": "Canonical graph edges with evidence and curation lifecycle"},
+        graph_table_options(
+            comment="Canonical graph edges with evidence and curation lifecycle",
+        ),
     )
 
     def __repr__(self) -> str:
@@ -190,7 +207,10 @@ class RelationEvidenceModel(Base):
     )
     relation_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("relations.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("relations.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
         doc="Parent relation ID",
     )
@@ -233,7 +253,7 @@ class RelationEvidenceModel(Base):
     )
     provenance_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("provenance.id"),
+        ForeignKey(qualify_graph_foreign_key_target("provenance.id")),
         nullable=True,
         doc="Link to ingestion provenance",
     )
@@ -241,6 +261,11 @@ class RelationEvidenceModel(Base):
         PGUUID(as_uuid=True),
         nullable=True,
         doc="Optional source document reference",
+    )
+    source_document_ref: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+        doc="Graph-owned external document reference without platform identity coupling",
     )
     agent_run_id: Mapped[str | None] = mapped_column(
         String(255),
@@ -262,7 +287,10 @@ class RelationEvidenceModel(Base):
         Index("idx_relation_evidence_relation", "relation_id"),
         Index("idx_relation_evidence_provenance", "provenance_id"),
         Index("idx_relation_evidence_tier", "evidence_tier"),
-        {"comment": "Per-source evidence supporting canonical relation edges"},
+        Index("idx_relation_evidence_source_document_ref", "source_document_ref"),
+        graph_table_options(
+            comment="Per-source evidence supporting canonical relation edges",
+        ),
     )
 
 

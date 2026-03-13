@@ -49,8 +49,6 @@ class _StubContainer:
     def __init__(self) -> None:
         self.content_services: list[_StubAsyncService] = []
         self.entity_services: list[_StubAsyncService] = []
-        self.graph_services: list[_StubAsyncService] = []
-        self.graph_search_services: list[_StubAsyncService] = []
 
     def create_content_enrichment_service(
         self,
@@ -68,24 +66,6 @@ class _StubContainer:
         self.entity_services.append(service)
         return service
 
-    def create_graph_connection_service(
-        self,
-        session: object,
-    ) -> _StubAsyncService:
-        service = _StubAsyncService(result={"stage": "graph", "session": session})
-        self.graph_services.append(service)
-        return service
-
-    def create_graph_search_service(
-        self,
-        session: object,
-    ) -> _StubAsyncService:
-        service = _StubAsyncService(
-            result={"stage": "graph_search", "session": session},
-        )
-        self.graph_search_services.append(service)
-        return service
-
 
 class _DummyPipelineOrchestrationService:
     def __init__(self, dependencies: PipelineOrchestrationDependencies) -> None:
@@ -98,6 +78,17 @@ async def test_pipeline_worker_context_keeps_shared_artana_services_open(
 ) -> None:
     sessions: list[_StubSession] = []
     container = _StubContainer()
+    graph_seed_calls: list[dict[str, object]] = []
+    graph_search_calls: list[dict[str, object]] = []
+
+    async def graph_seed_runner(**kwargs: object) -> object:
+        graph_seed_calls.append(dict(kwargs))
+        return {"stage": "graph-http"}
+
+    class _StubGraphSearchAdapter:
+        async def search(self, **kwargs: object) -> object:
+            graph_search_calls.append(dict(kwargs))
+            return {"stage": "graph-search-http"}
 
     def build_session() -> _StubSession:
         session = _StubSession()
@@ -163,6 +154,16 @@ async def test_pipeline_worker_context_keeps_shared_artana_services_open(
         "PipelineOrchestrationService",
         _DummyPipelineOrchestrationService,
     )
+    monkeypatch.setattr(
+        pipeline_orchestration_factory,
+        "build_graph_connection_seed_runner_for_service",
+        lambda: graph_seed_runner,
+    )
+    monkeypatch.setattr(
+        pipeline_orchestration_factory,
+        "build_graph_search_service_for_service",
+        lambda: _StubGraphSearchAdapter(),
+    )
 
     async with (
         pipeline_orchestration_factory.pipeline_orchestration_service_context() as (
@@ -201,18 +202,21 @@ async def test_pipeline_worker_context_keeps_shared_artana_services_open(
             pipeline_run_id="run_1",
             fallback_relations=None,
         )
+        graph_search_result = await dependencies.graph_search_service.search(
+            question="seed prompt",
+            research_space_id="space_1",
+            force_agent=True,
+        )
 
     assert enrichment_result == {"stage": "enrichment", "session": sessions[1]}
     assert extraction_result == {"stage": "extraction", "session": sessions[2]}
-    assert graph_result == {"stage": "graph", "session": sessions[3]}
+    assert graph_result == {"stage": "graph-http"}
+    assert graph_search_result == {"stage": "graph-search-http"}
 
     assert all(session.closed for session in sessions)
-    assert len(sessions) == 4
+    assert len(sessions) == 3
+    assert graph_seed_calls[0]["pipeline_run_id"] == "run_1"
+    assert graph_search_calls[0]["force_agent"] is True
 
-    all_services = (
-        container.content_services
-        + container.entity_services
-        + container.graph_services
-        + container.graph_search_services
-    )
+    all_services = container.content_services + container.entity_services
     assert all(service.close_calls == 0 for service in all_services)

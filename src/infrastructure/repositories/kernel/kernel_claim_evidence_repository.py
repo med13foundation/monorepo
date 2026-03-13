@@ -66,12 +66,14 @@ class SqlAlchemyKernelClaimEvidenceRepository(KernelClaimEvidenceRepository):
         figure_reference: str | None,
         table_reference: str | None,
         confidence: float,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelClaimEvidence:
         model = ClaimEvidenceModel(
             id=uuid4(),
             claim_id=_as_uuid(claim_id),
             source_document_id=_try_as_uuid(source_document_id),
+            source_document_ref=_normalize_optional_text(source_document_ref),
             agent_run_id=_normalize_optional_text(agent_run_id),
             sentence=_normalize_optional_text(sentence),
             sentence_source=sentence_source,

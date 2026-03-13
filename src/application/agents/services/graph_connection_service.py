@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         ProposedRelation,
     )
     from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
+    from src.domain.ports.space_settings_port import SpaceSettingsPort
     from src.domain.repositories.kernel.claim_evidence_repository import (
         KernelClaimEvidenceRepository,
     )
@@ -49,9 +50,6 @@ if TYPE_CHECKING:
     )
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
-    )
-    from src.domain.repositories.research_space_repository import (
-        ResearchSpaceRepository,
     )
     from src.type_definitions.common import ResearchSpaceSettings
 
@@ -75,7 +73,7 @@ class GraphConnectionServiceDependencies:
         KernelRelationProjectionMaterializationService | None
     ) = None
     governance_service: GovernanceService | None = None
-    research_space_repository: ResearchSpaceRepository | None = None
+    space_settings_port: SpaceSettingsPort | None = None
     review_queue_submitter: Callable[[str, str, str | None, str], None] | None = None
     rollback_on_error: Callable[[], None] | None = None
 
@@ -113,7 +111,7 @@ class GraphConnectionService:
         )
         self._materializer = dependencies.relation_projection_materialization_service
         self._governance = dependencies.governance_service or GovernanceService()
-        self._research_spaces = dependencies.research_space_repository
+        self._space_settings = dependencies.space_settings_port
         self._review_queue_submitter = dependencies.review_queue_submitter
         self._rollback_on_error = dependencies.rollback_on_error
 
@@ -462,16 +460,16 @@ class GraphConnectionService:
     ) -> ResearchSpaceSettings | None:
         if provided_settings is not None:
             return provided_settings
-        if self._research_spaces is None:
+        if self._space_settings is None:
             return None
         try:
             space_uuid = UUID(research_space_id)
         except ValueError:
             return None
-        space = self._research_spaces.find_by_id(space_uuid)
-        if space is None:
+        settings = self._space_settings.get_settings(space_uuid)
+        if settings is None:
             return None
-        return self._normalize_research_space_settings(space.settings)
+        return self._normalize_research_space_settings(settings)
 
     @staticmethod
     def _normalize_research_space_settings(  # noqa: C901

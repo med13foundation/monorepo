@@ -31,9 +31,11 @@ if TYPE_CHECKING:
     from src.domain.entities.kernel.entities import KernelEntity
     from src.domain.entities.kernel.relation_claims import KernelRelationClaim
     from src.domain.entities.kernel.relations import KernelRelation
-    from src.domain.entities.source_document import SourceDocument
-    from src.domain.repositories.source_document_repository import (
-        SourceDocumentRepository,
+    from src.domain.entities.kernel.source_documents import (
+        KernelSourceDocumentReference,
+    )
+    from src.domain.ports.source_document_reference_port import (
+        SourceDocumentReferencePort,
     )
 
 
@@ -78,7 +80,7 @@ class KernelGraphViewServiceDependencies:
     claim_participant_service: KernelClaimParticipantService
     claim_relation_service: KernelClaimRelationService
     claim_evidence_service: KernelClaimEvidenceService
-    source_document_repository: SourceDocumentRepository
+    source_document_lookup: SourceDocumentReferencePort
 
 
 @dataclass(frozen=True)
@@ -89,7 +91,7 @@ class KernelGraphDomainView:
     resource_id: str
     entity: KernelEntity | None
     claim: KernelRelationClaim | None
-    paper: SourceDocument | None
+    paper: KernelSourceDocumentReference | None
     canonical_relations: tuple[KernelRelation, ...]
     claims: tuple[KernelRelationClaim, ...]
     claim_relations: tuple[KernelClaimRelation, ...]

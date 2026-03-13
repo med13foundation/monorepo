@@ -1,4 +1,5 @@
 import { apiGet, apiPatch, apiPost, type ApiRequestOptions } from '@/lib/api/client'
+import { resolveGraphApiBaseUrl } from '@/lib/api/graph-base-url'
 import type {
   DictionaryEntityTypeListResponse,
   DictionaryEntityTypeResponse,
@@ -13,6 +14,21 @@ import type {
   VariableDefinitionListResponse,
   VariableDefinitionResponse,
 } from '@/types/dictionary'
+
+const GRAPH_API_BASE_URL = resolveGraphApiBaseUrl()
+
+function withGraphApiOptions<TResponse>(
+  options: ApiRequestOptions<TResponse>,
+): ApiRequestOptions<TResponse> {
+  return {
+    ...options,
+    baseURL: GRAPH_API_BASE_URL,
+  }
+}
+
+function graphDictionaryPath(path: string): string {
+  return `/v1/dictionary${path}`
+}
 
 export interface DictionaryVariablesListParams {
   domain_context?: string
@@ -35,7 +51,10 @@ export async function fetchDictionaryVariables(
     },
   }
 
-  return apiGet<VariableDefinitionListResponse>('/admin/dictionary/variables', options)
+  return apiGet<VariableDefinitionListResponse>(
+    graphDictionaryPath('/variables'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function createDictionaryVariable(
@@ -45,7 +64,11 @@ export async function createDictionaryVariable(
   if (!token) {
     throw new Error('Authentication token is required for createDictionaryVariable')
   }
-  return apiPost<VariableDefinitionResponse>('/admin/dictionary/variables', payload, { token })
+  return apiPost<VariableDefinitionResponse>(
+    graphDictionaryPath('/variables'),
+    payload,
+    withGraphApiOptions({ token }),
+  )
 }
 
 export async function fetchDictionaryTransforms(
@@ -63,7 +86,10 @@ export async function fetchDictionaryTransforms(
     },
   }
 
-  return apiGet<TransformRegistryListResponse>('/admin/dictionary/transforms', options)
+  return apiGet<TransformRegistryListResponse>(
+    graphDictionaryPath('/transforms'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function fetchDictionaryResolutionPolicies(
@@ -72,7 +98,10 @@ export async function fetchDictionaryResolutionPolicies(
   if (!token) {
     throw new Error('Authentication token is required for fetchDictionaryResolutionPolicies')
   }
-  return apiGet<EntityResolutionPolicyListResponse>('/admin/dictionary/resolution-policies', { token })
+  return apiGet<EntityResolutionPolicyListResponse>(
+    graphDictionaryPath('/resolution-policies'),
+    withGraphApiOptions({ token }),
+  )
 }
 
 export async function fetchDictionaryRelationConstraints(
@@ -91,7 +120,10 @@ export async function fetchDictionaryRelationConstraints(
     },
   }
 
-  return apiGet<RelationConstraintListResponse>('/admin/dictionary/relation-constraints', options)
+  return apiGet<RelationConstraintListResponse>(
+    graphDictionaryPath('/relation-constraints'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function fetchDictionaryEntityTypes(
@@ -109,7 +141,10 @@ export async function fetchDictionaryEntityTypes(
     },
   }
 
-  return apiGet<DictionaryEntityTypeListResponse>('/admin/dictionary/entity-types', options)
+  return apiGet<DictionaryEntityTypeListResponse>(
+    graphDictionaryPath('/entity-types'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function fetchDictionaryRelationTypes(
@@ -127,7 +162,10 @@ export async function fetchDictionaryRelationTypes(
     },
   }
 
-  return apiGet<DictionaryRelationTypeListResponse>('/admin/dictionary/relation-types', options)
+  return apiGet<DictionaryRelationTypeListResponse>(
+    graphDictionaryPath('/relation-types'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function revokeDictionaryVariable(
@@ -140,9 +178,9 @@ export async function revokeDictionaryVariable(
   }
 
   return apiPost<VariableDefinitionResponse>(
-    `/admin/dictionary/variables/${variableId}/revoke`,
+    graphDictionaryPath(`/variables/${variableId}/revoke`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -156,9 +194,9 @@ export async function mergeDictionaryVariable(
   }
 
   return apiPost<VariableDefinitionResponse>(
-    `/admin/dictionary/variables/${variableId}/merge`,
+    graphDictionaryPath(`/variables/${variableId}/merge`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -172,9 +210,9 @@ export async function setDictionaryVariableReviewStatus(
   }
 
   return apiPatch<VariableDefinitionResponse>(
-    `/admin/dictionary/variables/${variableId}/review-status`,
+    graphDictionaryPath(`/variables/${variableId}/review-status`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -188,9 +226,9 @@ export async function revokeDictionaryEntityType(
   }
 
   return apiPost<DictionaryEntityTypeResponse>(
-    `/admin/dictionary/entity-types/${entityTypeId}/revoke`,
+    graphDictionaryPath(`/entity-types/${entityTypeId}/revoke`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -204,9 +242,9 @@ export async function mergeDictionaryEntityType(
   }
 
   return apiPost<DictionaryEntityTypeResponse>(
-    `/admin/dictionary/entity-types/${entityTypeId}/merge`,
+    graphDictionaryPath(`/entity-types/${entityTypeId}/merge`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -220,9 +258,9 @@ export async function revokeDictionaryRelationType(
   }
 
   return apiPost<DictionaryRelationTypeResponse>(
-    `/admin/dictionary/relation-types/${relationTypeId}/revoke`,
+    graphDictionaryPath(`/relation-types/${relationTypeId}/revoke`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -236,8 +274,8 @@ export async function mergeDictionaryRelationType(
   }
 
   return apiPost<DictionaryRelationTypeResponse>(
-    `/admin/dictionary/relation-types/${relationTypeId}/merge`,
+    graphDictionaryPath(`/relation-types/${relationTypeId}/merge`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }

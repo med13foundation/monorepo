@@ -526,7 +526,7 @@ export interface PublicationExtractionDocumentResponse {
 
 export interface PublicationExtractionResponse {
   id: string;
-  publication_id: number;
+  publication_id?: number | null;
   pubmed_id?: string | null;
   source_id: string;
   ingestion_job_id: string;
@@ -611,7 +611,7 @@ export interface QueryParameterCapabilities {
   supports_sort_options?: boolean;
   supports_additional_terms?: boolean;
   max_results_limit?: number;
-  supported_storage_use_cases?: 'pdf' | 'export' | 'raw_source' | 'backup'[];
+  supported_storage_use_cases?: 'pdf' | 'export' | 'raw_source' | 'document_content' | 'backup'[];
   supports_variation_type?: boolean;
   supports_clinical_significance?: boolean;
   supports_review_status?: boolean;

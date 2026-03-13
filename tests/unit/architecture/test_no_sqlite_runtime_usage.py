@@ -15,7 +15,7 @@ SCAN_TARGETS = (
     "scripts",
     "Makefile",
     "README.md",
-    "alembic.ini",
+    "services/graph_api/alembic.ini",
     "docker-compose.postgres.yml",
     ".env.postgres.example",
 )

@@ -38,6 +38,9 @@ from src.infrastructure.extraction import (
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
+from src.infrastructure.graph_service.pipeline import (
+    build_graph_connection_seed_runner_for_service,
+)
 from src.infrastructure.llm.adapters.pubmed_relevance_agent_adapter import (
     ArtanaPubMedRelevanceAdapter,
 )
@@ -229,6 +232,7 @@ def build_ingestion_scheduling_service(  # noqa: C901, PLR0915
             _ENV_POST_INGESTION_GRAPH_SEED_TIMEOUT_SECONDS,
             default=_DEFAULT_POST_INGESTION_GRAPH_SEED_TIMEOUT_SECONDS,
         )
+        graph_seed_runner = build_graph_connection_seed_runner_for_service()
 
         async def _run_enrichment_stage_isolated_uow(
             *,
@@ -288,26 +292,18 @@ def build_ingestion_scheduling_service(  # noqa: C901, PLR0915
             source_type: str,
             seed_entity_id: str,
         ) -> None:
-            isolated_session = SessionLocal()
-            set_session_rls_context(isolated_session, bypass_rls=True)
-            isolated_graph_service = container.create_graph_connection_service(
-                isolated_session,
+            await graph_seed_runner(
+                source_id=str(source_id),
+                research_space_id=str(research_space_id),
+                seed_entity_id=seed_entity_id,
+                source_type=source_type,
+                model_id=None,
+                relation_types=None,
+                max_depth=2,
+                shadow_mode=None,
+                pipeline_run_id=None,
+                fallback_relations=None,
             )
-            try:
-                await isolated_graph_service.discover_connections_for_seed(
-                    research_space_id=str(research_space_id),
-                    seed_entity_id=seed_entity_id,
-                    source_id=str(source_id),
-                    source_type=source_type,
-                    model_id=None,
-                    relation_types=None,
-                    max_depth=2,
-                    shadow_mode=None,
-                    pipeline_run_id=None,
-                )
-            finally:
-                await isolated_graph_service.close()
-                isolated_session.close()
 
         async def _run_post_ingestion_pipeline(  # noqa: C901
             source: UserDataSource,

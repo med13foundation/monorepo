@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
-
 from src.application.services.kernel._kernel_reasoning_path_support import (
     KernelReasoningPathDetail,
     ReasoningPathListResult,
@@ -40,6 +38,7 @@ if TYPE_CHECKING:
         ReasoningPathStatus,
     )
     from src.domain.entities.kernel.relation_claims import KernelRelationClaim
+    from src.domain.ports.space_registry_port import SpaceRegistryPort
     from src.domain.repositories.kernel.reasoning_path_repository import (
         KernelReasoningPathRepository,
         ReasoningPathWriteBundle,
@@ -72,6 +71,7 @@ class KernelReasoningPathService:
         claim_relation_service: KernelClaimRelationService,
         relation_service: KernelRelationService,
         session: Session | None = None,
+        space_registry_port: SpaceRegistryPort | None = None,
     ) -> None:
         self._paths = reasoning_path_repo
         self._claims = relation_claim_service
@@ -80,6 +80,7 @@ class KernelReasoningPathService:
         self._claim_relations = claim_relation_service
         self._relations = relation_service
         self._session = session
+        self._space_registry = space_registry_port
 
     def rebuild_for_space(
         self,
@@ -152,21 +153,16 @@ class KernelReasoningPathService:
         *,
         max_depth: int = 4,
     ) -> list[ReasoningPathRebuildSummary]:
-        if self._session is None:
-            msg = "Session-backed global rebuild is unavailable"
+        if self._space_registry is None:
+            msg = "Space-registry-backed global rebuild is unavailable"
             raise ValueError(msg)
-        from src.models.database.research_space import ResearchSpaceModel
-
-        space_rows = self._session.scalars(
-            select(ResearchSpaceModel.id).order_by(ResearchSpaceModel.id.asc()),
-        ).all()
         return [
             self.rebuild_for_space(
                 str(space_id),
                 max_depth=max_depth,
                 replace_existing=True,
             )
-            for space_id in space_rows
+            for space_id in self._space_registry.list_space_ids()
         ]
 
     def list_paths(  # noqa: PLR0913

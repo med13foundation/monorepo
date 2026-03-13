@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 class TokenPayload(TypedDict, total=False):
     sub: str
     role: str
+    graph_admin: bool
     type: Literal["access", "refresh"]
     jti: str
     exp: datetime
@@ -23,6 +24,7 @@ class TokenPayload(TypedDict, total=False):
 class DecodedTokenPayload(TypedDict, total=False):
     sub: str
     role: str
+    graph_admin: bool
     type: Literal["access", "refresh"]
     jti: str
     exp: int

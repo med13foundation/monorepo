@@ -79,6 +79,22 @@ def _create_relation_type(
     )
 
 
+def _create_relation_constraint(
+    repository: SqlAlchemyDictionaryRepository,
+    *,
+    source_type: str,
+    relation_type: str,
+    target_type: str,
+) -> None:
+    repository.create_relation_constraint(
+        source_type=source_type,
+        relation_type=relation_type,
+        target_type=target_type,
+        created_by="manual:test",
+        source_ref="test:repository",
+    )
+
+
 def _ensure_domain_context(
     repository: SqlAlchemyDictionaryRepository,
     domain_context: str,
@@ -130,6 +146,7 @@ def _seed_space_with_entities(
             tags=[],
         ),
     )
+    repository._session.flush()
 
     source_entity_id = uuid4()
     target_entity_id = uuid4()
@@ -481,6 +498,18 @@ def test_merge_relation_type_repoints_and_merges_relation_evidence(
     _create_entity_type(repository, entity_type="PHENOTYPE")
     _create_relation_type(repository, relation_type="REL_REPO_SRC_REL")
     _create_relation_type(repository, relation_type="REL_REPO_TGT_REL")
+    _create_relation_constraint(
+        repository,
+        source_type="GENE",
+        relation_type="REL_REPO_SRC_REL",
+        target_type="PHENOTYPE",
+    )
+    _create_relation_constraint(
+        repository,
+        source_type="GENE",
+        relation_type="REL_REPO_TGT_REL",
+        target_type="PHENOTYPE",
+    )
     research_space_id, source_entity_id, target_entity_id = _seed_space_with_entities(
         repository,
         source_entity_type="GENE",

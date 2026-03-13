@@ -7,7 +7,6 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     CheckConstraint,
-    ForeignKey,
     ForeignKeyConstraint,
     Index,
     SmallInteger,
@@ -18,6 +17,10 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from src.database.graph_schema import (
+    graph_table_options,
+    qualify_graph_foreign_key_target,
+)
 from src.models.database.base import Base
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
@@ -35,7 +38,6 @@ class ClaimParticipantModel(Base):
     claim_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     label: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -70,13 +72,19 @@ class ClaimParticipantModel(Base):
         ),
         ForeignKeyConstraint(
             ["claim_id", "research_space_id"],
-            ["relation_claims.id", "relation_claims.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("relation_claims.id"),
+                qualify_graph_foreign_key_target("relation_claims.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_claim_participants_claim_space",
         ),
         ForeignKeyConstraint(
             ["entity_id", "research_space_id"],
-            ["entities.id", "entities.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("entities.id"),
+                qualify_graph_foreign_key_target("entities.research_space_id"),
+            ],
             ondelete="RESTRICT",
             name="fk_claim_participants_entity_space",
         ),
@@ -88,9 +96,9 @@ class ClaimParticipantModel(Base):
             postgresql_where=text("entity_id IS NOT NULL"),
         ),
         Index("idx_claim_participants_space_role", "research_space_id", "role"),
-        {
-            "comment": "Structured claim participants with role semantics",
-        },
+        graph_table_options(
+            comment="Structured claim participants with role semantics",
+        ),
     )
 
 

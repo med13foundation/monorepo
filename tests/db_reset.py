@@ -8,9 +8,12 @@ SQLAlchemy models.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from sqlalchemy import inspect, text
+
+from src.database.graph_schema import graph_schema_name
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from sqlalchemy.engine import Engine
@@ -20,6 +23,20 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def _escape_identifier(identifier: str) -> str:
     # Double-quote escaping per SQL spec.
     return identifier.replace('"', '""')
+
+
+def _qualified_tables_for_schema(
+    *,
+    inspector,
+    schema: str,
+) -> list[str]:
+    tables = [
+        table
+        for table in inspector.get_table_names(schema=schema)
+        if not (schema == "public" and table == "alembic_version")
+    ]
+    escaped_schema = _escape_identifier(schema)
+    return [f'"{escaped_schema}"."{_escape_identifier(table)}"' for table in tables]
 
 
 def reset_database(engine: Engine, metadata: MetaData) -> None:
@@ -34,19 +51,26 @@ def reset_database(engine: Engine, metadata: MetaData) -> None:
         dialect_name = connection.dialect.name
         if dialect_name == "postgresql":
             inspector = inspect(connection)
-            tables = [
-                table
-                for table in inspector.get_table_names(schema="public")
-                if table != "alembic_version"
-            ]
-            if not tables:
+            schemas = ["public"]
+            graph_schema = graph_schema_name(os.getenv("GRAPH_DB_SCHEMA"))
+            if graph_schema is not None:
+                schemas.append(graph_schema)
+            qualified_tables: list[str] = []
+            for schema in schemas:
+                qualified_tables.extend(
+                    _qualified_tables_for_schema(
+                        inspector=inspector,
+                        schema=schema,
+                    ),
+                )
+            if not qualified_tables:
                 return
-
-            qualified = ", ".join(
-                f'public."{_escape_identifier(table)}"' for table in tables
-            )
             connection.execute(
-                text(f"TRUNCATE TABLE {qualified} RESTART IDENTITY CASCADE"),
+                text(
+                    "TRUNCATE TABLE "
+                    + ", ".join(qualified_tables)
+                    + " RESTART IDENTITY CASCADE",
+                ),
             )
             return
 

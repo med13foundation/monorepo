@@ -29,3 +29,18 @@ def test_create_refresh_token_is_unique_per_issue_time() -> None:
     assert provider.create_refresh_token(user_id) != provider.create_refresh_token(
         user_id,
     )
+
+
+def test_create_access_token_preserves_extra_claims() -> None:
+    provider = JWTProvider(
+        secret_key="test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz",
+    )
+
+    token = provider.create_access_token(
+        uuid4(),
+        "viewer",
+        extra_claims={"graph_admin": True},
+    )
+    payload = provider.decode_token(token)
+
+    assert payload["graph_admin"] is True

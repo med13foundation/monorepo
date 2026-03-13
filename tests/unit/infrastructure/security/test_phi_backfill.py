@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -15,6 +16,7 @@ from src.infrastructure.security.phi_encryption import PHIEncryptionService
 from src.models.database.kernel.entities import EntityIdentifierModel, EntityModel
 from src.models.database.research_space import ResearchSpaceModel, SpaceStatusEnum
 from src.models.database.user import UserModel
+from tests.graph_seed_helpers import ensure_entity_types
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -57,6 +59,7 @@ def _reset_identifier_table(db_session: Session) -> None:
 
 
 def _seed_entity(session: Session) -> tuple[UUID, UUID]:
+    ensure_entity_types(session, "PATIENT")
     owner_id = uuid4()
     session.add(
         UserModel(
@@ -233,3 +236,32 @@ def test_backfill_completes_encrypted_rows_missing_blind_index(
         )
         assert row.encryption_key_version == "v1"
         assert row.blind_index_version == "v1"
+
+
+def test_backfill_load_batch_uses_graph_service_helper() -> None:
+    encryption_service = _build_encryption_service()
+    runner = PHIIdentifierBackfillRunner(lambda: Session(), encryption_service)
+    session = Session()
+    rows = [SimpleNamespace(id=101)]
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        captured: dict[str, object] = {}
+
+        def _fake_loader(*args: object, **kwargs: object) -> list[object]:
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return rows
+
+        monkeypatch.setattr(
+            "src.infrastructure.security.phi_backfill.load_phi_identifier_backfill_batch",
+            _fake_loader,
+        )
+        result = runner._load_batch(
+            session,
+            last_seen_id=100,
+            limit=25,
+        )
+
+    assert captured["args"] == (session,)
+    assert captured["kwargs"] == {"last_seen_id": 100, "limit": 25}
+    assert result == []

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from datetime import timedelta
     from uuid import UUID
 
@@ -15,6 +16,7 @@ class JWTProviderService(Protocol):
         user_id: UUID,
         role: str,
         expires_delta: timedelta | None = None,
+        extra_claims: Mapping[str, object] | None = None,
     ) -> str:
         """Create a signed JWT access token."""
 

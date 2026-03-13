@@ -11,7 +11,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
 
 import src.models.database  # noqa: F401
+from src.database.graph_schema import graph_postgres_search_path, graph_schema_name
 from src.database.url_resolver import (
     resolve_async_database_url,
     to_async_database_url,
@@ -42,6 +43,12 @@ TEST_DATABASE_URL = f"sqlite:///{TEST_DB_PATH}"
 TEST_ASYNC_DATABASE_URL = f"sqlite+aiosqlite:///{TEST_DB_PATH}"
 
 # Set core env vars early so imports (e.g., SessionLocal) bind to the test DB.
+_existing_database_url = os.environ.get("DATABASE_URL", "")
+if _existing_database_url.startswith("postgresql"):
+    os.environ.setdefault("GRAPH_DATABASE_URL", _existing_database_url)
+else:
+    os.environ.setdefault("GRAPH_DATABASE_URL", TEST_DATABASE_URL)
+
 os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
 os.environ.setdefault("ASYNC_DATABASE_URL", TEST_ASYNC_DATABASE_URL)
 os.environ.setdefault("TESTING", "true")
@@ -49,6 +56,11 @@ os.environ.setdefault(
     "MED13_DEV_JWT_SECRET",
     "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz",
 )
+os.environ.setdefault(
+    "GRAPH_JWT_SECRET",
+    "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz",
+)
+os.environ.setdefault("GRAPH_SERVICE_RELOAD", "0")
 os.environ.setdefault("MED13_ENABLE_ARTANA_DICTIONARY_SEARCH_HARNESS", "0")
 
 
@@ -70,15 +82,41 @@ def compile_uuid_sqlite(type_, compiler, **kw):
 @pytest.fixture(scope="session")
 def test_engine():
     """Create a test database engine."""
-    # Use in-memory SQLite for fast tests
-    test_engine = create_engine(
-        TEST_DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=test_engine)
+    active_database_url = os.environ.get("DATABASE_URL", TEST_DATABASE_URL)
+    engine_kwargs: dict[str, object]
+    if active_database_url.startswith("postgresql"):
+        engine_kwargs = {"future": True, "pool_pre_ping": True}
+    else:
+        engine_kwargs = {
+            "connect_args": {"check_same_thread": False},
+            "poolclass": StaticPool,
+        }
+
+    test_engine = create_engine(active_database_url, **engine_kwargs)
+    if active_database_url.startswith("sqlite"):
+        Base.metadata.create_all(bind=test_engine)
+    elif active_database_url.startswith("postgresql"):
+        graph_schema = graph_schema_name()
+        if graph_schema is not None:
+
+            @event.listens_for(test_engine, "connect")
+            def _set_test_graph_search_path(
+                dbapi_connection: object,
+                _connection_record: object,
+            ) -> None:
+                cursor = dbapi_connection.cursor()
+                try:
+                    cursor.execute(
+                        f"SET search_path TO {graph_postgres_search_path(graph_schema)}",
+                    )
+                finally:
+                    cursor.close()
+
+        _prepare_postgres_graph_schema(test_engine)
+        Base.metadata.create_all(bind=test_engine)
     yield test_engine
-    Base.metadata.drop_all(bind=test_engine)
+    if active_database_url.startswith("sqlite"):
+        Base.metadata.drop_all(bind=test_engine)
     test_engine.dispose()
 
 
@@ -100,13 +138,31 @@ def _apply_test_environment(existing_db_url: str) -> None:
     if not use_postgres:
         os.environ["DATABASE_URL"] = TEST_DATABASE_URL
         os.environ["ASYNC_DATABASE_URL"] = TEST_ASYNC_DATABASE_URL
+        os.environ["GRAPH_DATABASE_URL"] = TEST_DATABASE_URL
     elif not os.environ.get("ASYNC_DATABASE_URL"):
         os.environ["ASYNC_DATABASE_URL"] = to_async_database_url(existing_db_url)
+    if use_postgres:
+        os.environ["GRAPH_DATABASE_URL"] = existing_db_url
 
     os.environ["TESTING"] = "true"
     os.environ["MED13_DEV_JWT_SECRET"] = (
         "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz"
     )
+    os.environ["GRAPH_JWT_SECRET"] = (
+        "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz"
+    )
+    os.environ["GRAPH_SERVICE_RELOAD"] = "0"
+
+
+def _prepare_postgres_graph_schema(engine) -> None:
+    graph_schema = graph_schema_name()
+    with engine.begin() as connection:
+        if graph_schema is not None:
+            connection.execute(
+                text(f'CREATE SCHEMA IF NOT EXISTS "{graph_schema}"'),
+            )
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
 
 
 def _wire_container_dependencies() -> None:
@@ -133,6 +189,22 @@ def _wire_container_dependencies() -> None:
     async_engine = create_async_engine(resolved_db_url, **engine_kwargs)
     if resolved_db_url.startswith("sqlite"):
         configure_sqlite_engine(async_engine.sync_engine)
+    elif resolved_db_url.startswith("postgresql"):
+        graph_schema = graph_schema_name()
+        if graph_schema is not None:
+
+            @event.listens_for(async_engine.sync_engine, "connect")
+            def _set_async_graph_search_path(
+                dbapi_connection: object,
+                _connection_record: object,
+            ) -> None:
+                cursor = dbapi_connection.cursor()
+                try:
+                    cursor.execute(
+                        f"SET search_path TO {graph_postgres_search_path(graph_schema)}",
+                    )
+                finally:
+                    cursor.close()
 
     container_module.container.database_url = resolved_db_url
     container_module.container.engine = async_engine
@@ -179,6 +251,24 @@ def _wire_sync_session() -> None:
     sync_engine = create_engine(sync_db_url, **sync_engine_kwargs)
     if sync_db_url.startswith("sqlite"):
         configure_sqlite_engine(sync_engine)
+    elif sync_db_url.startswith("postgresql"):
+        graph_schema = graph_schema_name()
+        if graph_schema is not None:
+
+            @event.listens_for(sync_engine, "connect")
+            def _set_sync_graph_search_path(
+                dbapi_connection: object,
+                _connection_record: object,
+            ) -> None:
+                cursor = dbapi_connection.cursor()
+                try:
+                    cursor.execute(
+                        f"SET search_path TO {graph_postgres_search_path(graph_schema)}",
+                    )
+                finally:
+                    cursor.close()
+
+        _prepare_postgres_graph_schema(sync_engine)
 
     session_module.DATABASE_URL = sync_db_url
     session_module.engine = sync_engine

@@ -11,11 +11,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Float, ForeignKey, Index, String
+from sqlalchemy import Float, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from src.database.graph_schema import graph_table_options
 from src.models.database.base import Base
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
@@ -38,7 +39,6 @@ class ProvenanceModel(Base):
     )
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
         doc="Owning research space",
     )
@@ -86,7 +86,7 @@ class ProvenanceModel(Base):
         Index("idx_provenance_space", "research_space_id"),
         Index("idx_provenance_source_type", "source_type"),
         Index("idx_provenance_extraction", "extraction_run_id"),
-        {"comment": "Data provenance chain for reproducibility"},
+        graph_table_options(comment="Data provenance chain for reproducibility"),
     )
 
     def __repr__(self) -> str:

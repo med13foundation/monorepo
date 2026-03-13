@@ -11,8 +11,10 @@ from src.application.services._source_workflow_monitor_shared import (
     coerce_json_object,
     normalize_optional_string,
 )
+from src.infrastructure.repositories.graph_observability_repository import (
+    load_relation_evidence_agent_run_ids_for_document_ids,
+)
 from src.models.database.ingestion_job import IngestionJobKindEnum, IngestionJobModel
-from src.models.database.kernel.relations import RelationEvidenceModel
 from src.models.database.publication_extraction import PublicationExtractionModel
 from src.models.database.source_document import SourceDocumentModel
 from src.models.database.user_data_source import UserDataSourceModel
@@ -224,19 +226,13 @@ class _PipelineRunTraceRunIdLoader:
             document_ids.append(str(document.id))
         if not document_ids:
             return
-        relation_rows = (
-            self._session.execute(
-                select(RelationEvidenceModel).where(
-                    RelationEvidenceModel.source_document_id.in_(document_ids),
-                ),
-            )
-            .scalars()
-            .all()
-        )
-        for row in relation_rows:
+        for run_id in load_relation_evidence_agent_run_ids_for_document_ids(
+            self._session,
+            document_ids=document_ids,
+        ):
             _append_unique(
                 stage_run_ids["graph"],
-                normalize_optional_string(row.agent_run_id),
+                normalize_optional_string(run_id),
             )
 
 

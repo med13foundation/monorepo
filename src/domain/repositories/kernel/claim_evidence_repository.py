@@ -29,6 +29,7 @@ class KernelClaimEvidenceRepository(ABC):
         figure_reference: str | None,
         table_reference: str | None,
         confidence: float,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelClaimEvidence:
         """Create one claim evidence row."""

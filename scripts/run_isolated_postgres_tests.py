@@ -25,6 +25,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine.url import make_url
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+GRAPH_ALEMBIC_CONFIG = REPO_ROOT / "services" / "graph_api" / "alembic.ini"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -104,7 +105,7 @@ def _run_alembic_migrations(env: dict[str, str]) -> None:
             alembic_cmd = str(bin_path)
             break
     subprocess.run(  # noqa: S603
-        [alembic_cmd, "upgrade", "heads"],
+        [alembic_cmd, "-c", str(GRAPH_ALEMBIC_CONFIG), "upgrade", "heads"],
         check=True,
         env=env,
     )

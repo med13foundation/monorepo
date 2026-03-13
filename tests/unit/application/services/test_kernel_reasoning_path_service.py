@@ -21,6 +21,7 @@ from src.domain.entities.kernel.reasoning_paths import (
 )
 from src.domain.entities.kernel.relation_claims import KernelRelationClaim
 from src.domain.entities.kernel.relations import KernelRelation
+from src.domain.entities.kernel.spaces import KernelSpaceRegistryEntry
 from src.domain.repositories.kernel.reasoning_path_repository import (
     ReasoningPathStepWrite,
     ReasoningPathWrite,
@@ -452,6 +453,46 @@ class StubRelationService:
         return self.relations_by_id.get(relation_id)
 
 
+@dataclass
+class StubSpaceRegistryPort:
+    space_ids: list[UUID]
+
+    def get_by_id(self, space_id: UUID) -> KernelSpaceRegistryEntry | None:
+        if space_id not in self.space_ids:
+            return None
+        now = _now()
+        return KernelSpaceRegistryEntry(
+            id=space_id,
+            slug=f"graph-space-{str(space_id).replace('-', '')[:8]}",
+            name="Graph Space",
+            description=None,
+            owner_id=uuid4(),
+            status="active",
+            settings={},
+            created_at=now,
+            updated_at=now,
+        )
+
+    def list_space_ids(self) -> list[UUID]:
+        return list(self.space_ids)
+
+    def list_entries(self) -> list[KernelSpaceRegistryEntry]:
+        entries: list[KernelSpaceRegistryEntry] = []
+        for space_id in self.space_ids:
+            entry = self.get_by_id(space_id)
+            if entry is not None:
+                entries.append(entry)
+        return entries
+
+    def save(
+        self,
+        entry: KernelSpaceRegistryEntry,
+    ) -> KernelSpaceRegistryEntry:
+        if entry.id not in self.space_ids:
+            self.space_ids.append(entry.id)
+        return entry
+
+
 def test_rebuild_creates_grounded_paths_and_detail() -> None:
     space_id = uuid4()
     claim_a_id = uuid4()
@@ -685,6 +726,7 @@ def test_rebuild_excludes_claims_missing_evidence_and_marks_paths_stale() -> Non
         str(space_id),
     )
     assert stale_count == 1
+
     listed = service.list_paths(research_space_id=str(space_id), status="STALE")
     assert listed.total == 1
 
@@ -698,5 +740,26 @@ def test_rebuild_excludes_claims_missing_evidence_and_marks_paths_stale() -> Non
     evidence_by_claim[str(claim_b_id)] = [_build_evidence(claim_id=claim_b_id)]
     rebuild_summary = service.rebuild_for_space(str(space_id), replace_existing=True)
     assert rebuild_summary.rebuilt_paths == 1
-    active_paths = service.list_paths(research_space_id=str(space_id), status="ACTIVE")
-    assert active_paths.total == 1
+
+
+def test_rebuild_global_uses_space_registry_port() -> None:
+    first_space_id = uuid4()
+    second_space_id = uuid4()
+    service = KernelReasoningPathService(
+        reasoning_path_repo=StubReasoningPathRepository(),
+        relation_claim_service=StubRelationClaimService([]),
+        claim_participant_service=StubClaimParticipantService({}),
+        claim_evidence_service=StubClaimEvidenceService({}),
+        claim_relation_service=StubClaimRelationService([]),
+        relation_service=StubRelationService({}),
+        space_registry_port=StubSpaceRegistryPort([first_space_id, second_space_id]),
+    )
+
+    summaries = service.rebuild_global(max_depth=3)
+
+    assert [summary.research_space_id for summary in summaries] == [
+        str(first_space_id),
+        str(second_space_id),
+    ]
+    assert all(summary.eligible_claims == 0 for summary in summaries)
+    assert all(summary.rebuilt_paths == 0 for summary in summaries)

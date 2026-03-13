@@ -1,168 +1,225 @@
+# mypy: disable-error-code=no-untyped-def
 """Core kernel service factory mixin."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import src.infrastructure.repositories.kernel as kernel_repositories
-from src.application.services.kernel.concept_management_service import (
-    ConceptManagementService,
-)
-from src.application.services.kernel.dictionary_management_service import (
-    DictionaryManagementService,
-)
-from src.application.services.kernel.kernel_entity_service import KernelEntityService
-from src.application.services.kernel.kernel_entity_similarity_service import (
-    KernelEntitySimilarityService,
-)
-from src.application.services.kernel.kernel_observation_service import (
-    KernelObservationService,
-)
-from src.application.services.kernel.kernel_relation_service import (
-    KernelRelationService,
-)
-from src.application.services.kernel.kernel_relation_suggestion_service import (
-    KernelRelationSuggestionService,
-)
-from src.application.services.kernel.provenance_service import ProvenanceService
-from src.infrastructure.embeddings import HybridTextEmbeddingProvider
-from src.infrastructure.factories.dictionary_search_harness_factory import (
-    create_dictionary_search_harness,
-)
-from src.infrastructure.llm.adapters import DeterministicConceptDecisionHarnessAdapter
-from src.infrastructure.security.phi_encryption import (
-    build_phi_encryption_service_from_env,
-    is_phi_encryption_enabled,
-)
+from src.infrastructure.dependency_injection import graph_runtime_factories
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from src.domain.ports import ConceptPort, DictionaryPort
+    from src.domain.ports.dictionary_search_harness_port import (
+        DictionarySearchHarnessPort,
+    )
     from src.domain.repositories.kernel.entity_embedding_repository import (
         EntityEmbeddingRepository,
     )
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
+    from src.domain.repositories.kernel.observation_repository import (
+        KernelObservationRepository,
+    )
+    from src.domain.repositories.kernel.relation_repository import (
+        KernelRelationRepository,
+    )
+    from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 
 
 class KernelCoreServiceFactoryMixin:
     """Factory methods for core dictionary, entity, relation, and provenance services."""
 
     @staticmethod
+    def build_dictionary_repository(session: Session):
+        return graph_runtime_factories.build_dictionary_repository(session)
+
+    @staticmethod
+    def _build_dictionary_repository(session: Session):
+        return graph_runtime_factories.build_dictionary_repository(session)
+
+    @staticmethod
+    def _build_concept_repository(session: Session):
+        return graph_runtime_factories.build_concept_repository(session)
+
+    @staticmethod
+    def build_provenance_repository(session: Session):
+        return graph_runtime_factories.build_provenance_repository(session)
+
+    @staticmethod
+    def _build_provenance_repository(session: Session):
+        return graph_runtime_factories.build_provenance_repository(session)
+
+    @staticmethod
+    def _build_graph_query_repository(session: Session):
+        return graph_runtime_factories.build_graph_query_repository(session)
+
+    @staticmethod
     def _build_entity_repository(session: Session) -> KernelEntityRepository:
-        enable_phi_encryption = is_phi_encryption_enabled()
-        phi_encryption_service = (
-            build_phi_encryption_service_from_env() if enable_phi_encryption else None
-        )
-        return kernel_repositories.SqlAlchemyKernelEntityRepository(
-            session,
-            phi_encryption_service=phi_encryption_service,
-            enable_phi_encryption=enable_phi_encryption,
-        )
+        return graph_runtime_factories.build_entity_repository(session)
 
     def create_kernel_entity_service(
         self,
         session: Session,
-    ) -> KernelEntityService:
-        return KernelEntityService(
-            entity_repo=self._build_entity_repository(session),
-            dictionary_repo=kernel_repositories.SqlAlchemyDictionaryRepository(session),
-        )
+    ):
+        return graph_runtime_factories.create_kernel_entity_service(session)
 
     @staticmethod
     def _build_entity_embedding_repository(
         session: Session,
     ) -> EntityEmbeddingRepository:
-        return kernel_repositories.SqlAlchemyEntityEmbeddingRepository(session)
+        return graph_runtime_factories.build_entity_embedding_repository(session)
+
+    @staticmethod
+    def _build_observation_repository(
+        session: Session,
+    ) -> KernelObservationRepository:
+        return graph_runtime_factories.build_observation_repository(session)
+
+    @staticmethod
+    def _build_relation_repository(
+        session: Session,
+    ) -> KernelRelationRepository:
+        return graph_runtime_factories.build_relation_repository(session)
+
+    @staticmethod
+    def _build_relation_claim_repository(
+        session: Session,
+    ):
+        return graph_runtime_factories.build_relation_claim_repository(session)
+
+    @staticmethod
+    def _build_relation_projection_source_repository(
+        session: Session,
+    ):
+        return graph_runtime_factories.build_relation_projection_source_repository(
+            session,
+        )
+
+    @staticmethod
+    def _build_claim_participant_repository(
+        session: Session,
+    ):
+        return graph_runtime_factories.build_claim_participant_repository(session)
+
+    @staticmethod
+    def _build_claim_evidence_repository(
+        session: Session,
+    ):
+        return graph_runtime_factories.build_claim_evidence_repository(session)
+
+    @staticmethod
+    def _build_claim_relation_repository(
+        session: Session,
+    ):
+        return graph_runtime_factories.build_claim_relation_repository(session)
+
+    @staticmethod
+    def _build_reasoning_path_repository(
+        session: Session,
+    ):
+        return graph_runtime_factories.build_reasoning_path_repository(session)
+
+    @staticmethod
+    def _build_space_registry_repository(
+        session: Session,
+    ):
+        return graph_runtime_factories.build_space_registry_repository(session)
+
+    @staticmethod
+    def _build_source_document_reference_repository(
+        session: Session,
+    ):
+        return graph_runtime_factories.build_source_document_reference_repository(
+            session,
+        )
+
+    def _build_dictionary_service(
+        self,
+        session: Session,
+        *,
+        dictionary_search_harness: DictionarySearchHarnessPort | None = None,
+        embedding_provider: HybridTextEmbeddingProvider | None = None,
+    ) -> DictionaryPort:
+        return graph_runtime_factories.build_dictionary_service(
+            session,
+            dictionary_search_harness=dictionary_search_harness,
+            embedding_provider=embedding_provider,
+        )
+
+    def build_dictionary_service(
+        self,
+        session: Session,
+        *,
+        dictionary_search_harness: DictionarySearchHarnessPort | None = None,
+        embedding_provider: HybridTextEmbeddingProvider | None = None,
+    ) -> DictionaryPort:
+        return graph_runtime_factories.build_dictionary_service(
+            session,
+            dictionary_search_harness=dictionary_search_harness,
+            embedding_provider=embedding_provider,
+        )
+
+    @staticmethod
+    def build_entity_repository(session: Session) -> KernelEntityRepository:
+        return graph_runtime_factories.build_entity_repository(session)
 
     def create_kernel_entity_similarity_service(
         self,
         session: Session,
-    ) -> KernelEntitySimilarityService:
-        return KernelEntitySimilarityService(
-            entity_repo=self._build_entity_repository(session),
-            embedding_repo=self._build_entity_embedding_repository(session),
-            embedding_provider=HybridTextEmbeddingProvider(),
+    ):
+        return graph_runtime_factories.create_kernel_entity_similarity_service(
+            session,
         )
 
     def create_kernel_observation_service(
         self,
         session: Session,
-    ) -> KernelObservationService:
-        dictionary_repo = kernel_repositories.SqlAlchemyDictionaryRepository(session)
-        embedding_provider = HybridTextEmbeddingProvider()
-        search_harness = create_dictionary_search_harness(
-            dictionary_repo=dictionary_repo,
-            embedding_provider=embedding_provider,
-        )
-        return KernelObservationService(
-            observation_repo=kernel_repositories.SqlAlchemyKernelObservationRepository(
-                session,
-            ),
-            entity_repo=self._build_entity_repository(session),
-            dictionary_repo=DictionaryManagementService(
-                dictionary_repo=dictionary_repo,
-                dictionary_search_harness=search_harness,
-                embedding_provider=embedding_provider,
-            ),
+        *,
+        dictionary_service: DictionaryPort | None = None,
+        entity_repository: KernelEntityRepository | None = None,
+        observation_repository: KernelObservationRepository | None = None,
+    ):
+        return graph_runtime_factories.create_kernel_observation_service(
+            session,
+            dictionary_service=dictionary_service,
+            entity_repository=entity_repository,
+            observation_repository=observation_repository,
         )
 
     def create_kernel_relation_service(
         self,
         session: Session,
-    ) -> KernelRelationService:
-        return KernelRelationService(
-            relation_repo=kernel_repositories.SqlAlchemyKernelRelationRepository(
-                session,
-            ),
-            entity_repo=self._build_entity_repository(session),
-        )
+    ):
+        return graph_runtime_factories.create_kernel_relation_service(session)
 
     def create_kernel_relation_suggestion_service(
         self,
         session: Session,
-    ) -> KernelRelationSuggestionService:
-        return KernelRelationSuggestionService(
-            entity_repo=self._build_entity_repository(session),
-            relation_repo=kernel_repositories.SqlAlchemyKernelRelationRepository(
-                session,
-            ),
-            dictionary_repo=kernel_repositories.SqlAlchemyDictionaryRepository(session),
-            embedding_repo=self._build_entity_embedding_repository(session),
+    ):
+        return graph_runtime_factories.create_kernel_relation_suggestion_service(
+            session,
         )
 
     def create_dictionary_management_service(
         self,
         session: Session,
     ) -> DictionaryPort:
-        dictionary_repo = kernel_repositories.SqlAlchemyDictionaryRepository(session)
-        embedding_provider = HybridTextEmbeddingProvider()
-        search_harness = create_dictionary_search_harness(
-            dictionary_repo=dictionary_repo,
-            embedding_provider=embedding_provider,
-        )
-        return DictionaryManagementService(
-            dictionary_repo=dictionary_repo,
-            dictionary_search_harness=search_harness,
-            embedding_provider=embedding_provider,
+        return graph_runtime_factories.create_dictionary_management_service(
+            session,
         )
 
     def create_concept_management_service(
         self,
         session: Session,
     ) -> ConceptPort:
-        return ConceptManagementService(
-            concept_repo=kernel_repositories.SqlAlchemyConceptRepository(session),
-            concept_harness=DeterministicConceptDecisionHarnessAdapter(),
-        )
+        return graph_runtime_factories.create_concept_management_service(session)
 
     def create_provenance_service(
         self,
         session: Session,
-    ) -> ProvenanceService:
-        return ProvenanceService(
-            provenance_repo=kernel_repositories.SqlAlchemyProvenanceRepository(session),
-        )
+    ):
+        return graph_runtime_factories.create_provenance_service(session)
 
 
 __all__ = ["KernelCoreServiceFactoryMixin"]

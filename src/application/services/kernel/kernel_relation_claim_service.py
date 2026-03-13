@@ -185,12 +185,14 @@ class KernelRelationClaimService:
         claim_text: str | None,
         claim_section: str | None,
         linked_relation_id: str | None = None,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelRelationClaim:
         """Create one generic relation claim row."""
         return self._claims.create(
             research_space_id=research_space_id,
             source_document_id=source_document_id,
+            source_document_ref=source_document_ref,
             agent_run_id=agent_run_id,
             source_type=source_type,
             relation_type=relation_type,
@@ -225,6 +227,7 @@ class KernelRelationClaimService:
         claim_text: str | None,
         metadata: JSONObject | None = None,
         source_document_id: str | None = None,
+        source_document_ref: str | None = None,
         agent_run_id: str | None = None,
         claim_status: RelationClaimStatus = "OPEN",
     ) -> KernelRelationClaim:
@@ -232,6 +235,7 @@ class KernelRelationClaimService:
         return self._claims.create(
             research_space_id=research_space_id,
             source_document_id=source_document_id,
+            source_document_ref=source_document_ref,
             agent_run_id=agent_run_id,
             source_type=source_type,
             relation_type=relation_type,

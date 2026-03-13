@@ -36,6 +36,7 @@ class KernelClaimRelation(BaseModel):
     relation_type: ClaimRelationType
     agent_run_id: str | None = Field(default=None, max_length=255)
     source_document_id: UUID | None = None
+    source_document_ref: str | None = Field(default=None, max_length=512)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     review_status: ClaimRelationReviewStatus = "PROPOSED"
     evidence_summary: str | None = None

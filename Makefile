@@ -20,14 +20,30 @@ BACKEND_LOG := logs/backend.log
 BACKEND_PORT := 8080
 BACKEND_UVICORN_APP := main:app
 BACKEND_UVICORN_MATCH := uvicorn .*main:app
+GRAPH_SERVICE_PORT := 8090
+GRAPH_SERVICE_URL ?= http://127.0.0.1:$(GRAPH_SERVICE_PORT)
+GRAPH_SERVICE_UVICORN_APP := services.graph_api.main:app
+GRAPH_DOCKERFILE := services/graph_api/Dockerfile
+GRAPH_IMAGE_LOCAL := med13-graph-api
+GRAPH_DEPLOY_REGION ?= us-central1
+GRAPH_DEPLOY_PROJECT_ID ?= YOUR_PROJECT_ID
+GRAPH_ARTIFACT_REPOSITORY ?= cloud-run-source-deploy
+GRAPH_IMAGE_DEV := $(GRAPH_DEPLOY_REGION)-docker.pkg.dev/$(GRAPH_DEPLOY_PROJECT_ID)/$(GRAPH_ARTIFACT_REPOSITORY)/med13-graph-api-dev:latest
+GRAPH_IMAGE_STAGING := $(GRAPH_DEPLOY_REGION)-docker.pkg.dev/$(GRAPH_DEPLOY_PROJECT_ID)/$(GRAPH_ARTIFACT_REPOSITORY)/med13-graph-api-staging:latest
+GRAPH_IMAGE_PROD := $(GRAPH_DEPLOY_REGION)-docker.pkg.dev/$(GRAPH_DEPLOY_PROJECT_ID)/$(GRAPH_ARTIFACT_REPOSITORY)/med13-graph-api:latest
 WEB_PID_FILE := .next.dev.pid
 WEB_LOG := logs/web.log
 WEB_PID_FILE_ABS := $(abspath $(WEB_PID_FILE))
 WEB_LOG_ABS := $(abspath $(WEB_LOG))
 NEXT_DEV_ENV := NEXTAUTH_SECRET=med13-resource-library-nextauth-secret-key-for-development-2024-secure-random-string NEXTAUTH_URL=http://localhost:3000 NEXT_PUBLIC_API_URL=http://localhost:8080
 BACKEND_DEV_ENV := MED13_DEV_JWT_SECRET=med13-resource-library-backend-jwt-secret-for-development-2026-01
+GRAPH_SERVICE_CLIENT_ENV := GRAPH_SERVICE_URL=$(GRAPH_SERVICE_URL) $(BACKEND_DEV_ENV)
 NEXTAUTH_URL ?= http://localhost:3000
-NEXT_BUILD_ENV := NEXTAUTH_URL=$(NEXTAUTH_URL)
+LOCAL_GRAPH_API_URL ?= http://localhost:8090
+NEXT_BUILD_ENV := NEXTAUTH_URL=$(NEXTAUTH_URL) \
+	INTERNAL_GRAPH_API_URL=$(LOCAL_GRAPH_API_URL) \
+	GRAPH_API_BASE_URL=$(LOCAL_GRAPH_API_URL) \
+	NEXT_PUBLIC_GRAPH_API_URL=$(LOCAL_GRAPH_API_URL)
 WEB_WAIT_TIMEOUT_SECONDS ?= 120
 WEB_WAIT_INTERVAL_SECONDS ?= 2
 FRONTDOOR_PORT ?= 3010
@@ -131,9 +147,9 @@ define ensure_frontdoor_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-graph test-graph-fast test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit graph-readiness graph-reasoning-rebuild
+.PHONY: help venv venv-check install install-dev test test-graph test-graph-fast test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate graph-db-wait graph-db-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres run-graph-service graph-service-lint graph-service-type-check graph-service-test graph-service-openapi graph-service-client-types graph-service-sync-contracts graph-service-contract-check graph-service-checks graph-topology-validate test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod deploy-graph-dev deploy-graph-staging deploy-graph-prod graph-docker-build setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit graph-readiness graph-reasoning-rebuild graph-space-sync
 
-PY_CHECK_PATHS := src tests scripts alembic
+PY_CHECK_PATHS := src tests scripts services/graph_api/alembic
 PY_STRICT_CHECK_PATHS := src
 GRAPH_TEST_PATHS := \
 	tests/unit/application/services/test_kernel_relation_projection_materialization_service.py \
@@ -141,10 +157,13 @@ GRAPH_TEST_PATHS := \
 	tests/unit/application/services/test_kernel_claim_projection_readiness_service.py \
 	tests/unit/application/services/test_check_claim_projection_readiness_script.py \
 	tests/unit/application/services/test_rebuild_reasoning_paths_script.py \
+	tests/unit/application/services/test_space_lifecycle_sync_service.py \
+	tests/unit/application/services/test_sync_graph_spaces_script.py \
 	tests/unit/application/services/test_kernel_reasoning_path_service.py \
 	tests/unit/application/services/test_hypothesis_generation_service.py \
 	tests/unit/infrastructure/test_graph_query_repository.py \
 	tests/integration/api/test_hypothesis_routes_api.py \
+	tests/integration/graph_service/test_graph_api.py \
 	tests/integration/api/test_kernel_graph_view_api.py \
 	tests/integration/api/test_kernel_reasoning_path_api.py \
 	tests/integration/api/test_kernel_routes_api.py \
@@ -155,9 +174,50 @@ GRAPH_FAST_TEST_PATHS := \
 	tests/unit/application/services/test_kernel_claim_projection_readiness_service.py \
 	tests/unit/application/services/test_check_claim_projection_readiness_script.py \
 	tests/unit/application/services/test_rebuild_reasoning_paths_script.py \
+	tests/unit/application/services/test_space_lifecycle_sync_service.py \
+	tests/unit/application/services/test_sync_graph_spaces_script.py \
 	tests/unit/application/services/test_kernel_reasoning_path_service.py \
 	tests/unit/application/services/test_hypothesis_generation_service.py \
-	tests/unit/infrastructure/test_graph_query_repository.py
+	tests/unit/infrastructure/test_graph_query_repository.py \
+	tests/integration/graph_service/test_graph_api.py
+GRAPH_SERVICE_LINT_PATHS := \
+	src/database/graph_schema.py \
+	src/infrastructure/dependency_injection/graph_runtime_factories.py \
+	src/infrastructure/graph_governance \
+	src/infrastructure/repositories/graph_observability_repository.py \
+	src/infrastructure/queries/graph_security_queries.py \
+	src/type_definitions/graph_api_schemas \
+	src/type_definitions/graph_service_contracts.py \
+	services/graph_api/alembic \
+	services/graph_api/__main__.py \
+	services/graph_api/config.py \
+	services/graph_api/database.py \
+	services/graph_api/manage.py \
+	src/infrastructure/dependency_injection/service_factories.py \
+	scripts/export_graph_openapi.py \
+	tests/unit/scripts/test_export_graph_openapi.py \
+	tests/unit/scripts/test_generate_ts_types.py \
+	tests/unit/infrastructure/dependency_injection/test_graph_service_factory_delegation.py
+GRAPH_SERVICE_TYPE_PATHS := \
+	src/database/graph_schema.py \
+	src/infrastructure/dependency_injection/graph_runtime_factories.py \
+	src/infrastructure/graph_governance \
+	src/infrastructure/repositories/graph_observability_repository.py \
+	src/infrastructure/queries/graph_security_queries.py \
+	src/type_definitions/graph_api_schemas \
+	src/type_definitions/graph_service_contracts.py \
+	services/graph_api/__main__.py \
+	services/graph_api/config.py \
+	services/graph_api/database.py \
+	services/graph_api/manage.py \
+	scripts/export_graph_openapi.py
+GRAPH_SERVICE_TEST_PATHS := \
+	tests/unit/services/graph_api \
+	tests/unit/infrastructure/graph_service \
+	tests/integration/graph_service
+GRAPH_ALEMBIC_CONFIG := services/graph_api/alembic.ini
+GRAPH_SERVICE_OPENAPI_OUTPUT := services/graph_api/openapi.json
+GRAPH_SERVICE_TS_TYPES_OUTPUT := src/web/types/graph-service.generated.ts
 
 # Default target
 help: ## Show this help message
@@ -210,6 +270,48 @@ generate-ts-types: ## Generate TypeScript definitions from backend models
 	$(call check_venv)
 	$(USE_PYTHON) scripts/generate_ts_types.py
 
+graph-service-openapi: ## Export standalone graph-service OpenAPI schema
+	$(call check_venv)
+	$(USE_PYTHON) scripts/export_graph_openapi.py --output $(GRAPH_SERVICE_OPENAPI_OUTPUT)
+
+graph-service-client-types: ## Generate TypeScript client contract types for graph-service
+	$(call check_venv)
+	$(USE_PYTHON) scripts/generate_ts_types.py --module src.type_definitions.graph_service_contracts --output $(GRAPH_SERVICE_TS_TYPES_OUTPUT)
+
+graph-service-sync-contracts: ## Regenerate graph-service OpenAPI and client contract artifacts
+	$(call check_venv)
+	@$(MAKE) -s graph-service-openapi
+	@$(MAKE) -s graph-service-client-types
+
+graph-service-contract-check: ## Verify graph-service OpenAPI and client contract artifacts are up to date
+	$(call check_venv)
+	$(USE_PYTHON) scripts/export_graph_openapi.py --output $(GRAPH_SERVICE_OPENAPI_OUTPUT) --check
+	$(USE_PYTHON) scripts/generate_ts_types.py --module src.type_definitions.graph_service_contracts --output $(GRAPH_SERVICE_TS_TYPES_OUTPUT) --check
+
+graph-service-lint: ## Run ruff on graph-service-owned Python paths
+	$(call check_venv)
+	$(USE_PYTHON) -m ruff check $(GRAPH_SERVICE_LINT_PATHS)
+
+graph-service-type-check: ## Run mypy on graph-service-owned Python paths
+	$(call check_venv)
+	$(USE_PYTHON) -m mypy $(GRAPH_SERVICE_TYPE_PATHS) --show-error-codes --follow-imports=skip --disable-error-code no-any-unimported --disable-error-code no-any-return --disable-error-code misc --disable-error-code untyped-decorator
+
+graph-service-test: ## Run graph-service unit/integration suites
+	$(call check_venv)
+	@$(MAKE) -s postgres-wait
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py $(GRAPH_SERVICE_TEST_PATHS) -q)
+
+graph-service-checks: ## Run graph-service lint, types, contract sync checks, and tests
+	$(call check_venv)
+	@$(MAKE) -s graph-service-lint
+	@$(MAKE) -s graph-service-type-check
+	@$(MAKE) -s graph-service-contract-check
+	@$(MAKE) -s graph-service-test
+
+graph-topology-validate: ## Validate deployed shared-instance graph topology wiring (requires gcloud + deploy env vars)
+	$(call check_venv)
+	$(USE_PYTHON) scripts/deploy/validate_shared_instance_graph_topology.py
+
 # Testing
 test: ## Run all tests (excluding heavy performance tests)
 	$(call check_venv)
@@ -250,6 +352,7 @@ validate-architecture: ## Validate architectural compliance
 	$(call check_venv)
 	@echo "🔍 Validating architectural compliance..."
 	$(USE_PYTHON) scripts/validate_architecture.py
+	$(USE_PYTHON) scripts/validate_graph_service_boundary.py
 	@echo "✅ Architectural validation passed"
 
 validate-dependencies: ## Validate dependency graph and layer boundaries (fails on errors)
@@ -273,15 +376,17 @@ test-cov: ## Run tests with coverage report
 	@$(MAKE) -s postgres-wait
 	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py --cov=src --cov-report=html --cov-report=term-missing)
 
-graph-readiness: ## Audit global claim-backed projection readiness
+graph-readiness: ## Audit global claim-backed projection readiness via graph service
 	$(call check_venv)
-	@$(MAKE) -s postgres-wait
-	$(call run_with_postgres_env,$(USE_PYTHON) scripts/check_claim_projection_readiness.py)
+	$(GRAPH_SERVICE_CLIENT_ENV) $(USE_PYTHON) scripts/check_claim_projection_readiness.py
 
-graph-reasoning-rebuild: ## Rebuild derived reasoning paths from grounded claim chains
+graph-reasoning-rebuild: ## Rebuild derived reasoning paths via graph service
 	$(call check_venv)
-	@$(MAKE) -s postgres-wait
-	$(call run_with_postgres_env,$(USE_PYTHON) scripts/rebuild_reasoning_paths.py)
+	$(GRAPH_SERVICE_CLIENT_ENV) $(USE_PYTHON) scripts/rebuild_reasoning_paths.py
+
+graph-space-sync: ## Reconcile platform space and membership state into graph service
+	$(call check_venv)
+	$(GRAPH_SERVICE_CLIENT_ENV) $(USE_PYTHON) scripts/sync_graph_spaces.py
 
 test-watch: ## Run tests in watch mode
 	$(call check_venv)
@@ -435,6 +540,12 @@ backend-status: ## Show FastAPI background process status
 
 run-local-postgres: ## Run the FastAPI backend with Postgres env vars loaded
 	$(call run_with_postgres_env,$(BACKEND_DEV_ENV) $(USE_PYTHON) -m uvicorn $(BACKEND_UVICORN_APP) --host 0.0.0.0 --port $(BACKEND_PORT) --reload)
+
+run-graph-service: ## Run the standalone graph API service locally
+	$(call check_venv)
+	@$(MAKE) -s setup-postgres
+	@$(MAKE) graph-db-migrate
+	$(call run_with_postgres_env,$(BACKEND_DEV_ENV) GRAPH_DATABASE_URL="$$DATABASE_URL" GRAPH_SERVICE_HOST=0.0.0.0 GRAPH_SERVICE_PORT=$(GRAPH_SERVICE_PORT) GRAPH_SERVICE_RELOAD=1 $(USE_PYTHON) -m services.graph_api)
 
 
 run-web: ## Run the Next.js admin interface locally (seeds admin user if needed)
@@ -651,6 +762,9 @@ docker-push: docker-build ## Build and push Docker image to GCR
 	docker tag med13-resource-library gcr.io/YOUR_PROJECT_ID/med13-resource-library
 	docker push gcr.io/YOUR_PROJECT_ID/med13-resource-library
 
+graph-docker-build: ## Build the standalone graph-service Docker image locally
+	docker build -f $(GRAPH_DOCKERFILE) -t $(GRAPH_IMAGE_LOCAL) .
+
 # Dockerized Postgres helpers
 docker-postgres-up: ## Start Postgres dev container (creates .env.postgres if missing)
 	$(call ensure_postgres_env)
@@ -715,7 +829,17 @@ postgres-wait: ## Wait until Postgres is ready to accept connections
 postgres-migrate: ## Run Alembic migrations with Postgres
 	@$(MAKE) -s postgres-wait
 	@echo "Applying Alembic migrations (Postgres)..."
-	$(call run_with_postgres_env,$(ALEMBIC_BIN) upgrade heads)
+	$(call run_with_postgres_env,$(ALEMBIC_BIN) -c $(GRAPH_ALEMBIC_CONFIG) upgrade heads)
+
+graph-db-wait: ## Wait for the standalone graph service database
+	@$(MAKE) -s postgres-wait
+	@echo "Waiting for graph-service database health check..."
+	$(call run_with_postgres_env,GRAPH_DATABASE_URL="$$DATABASE_URL" $(USE_PYTHON) -m services.graph_api.manage wait-db)
+
+graph-db-migrate: ## Run graph-service migrations with explicit graph DB ownership
+	@$(MAKE) -s graph-db-wait
+	@echo "Applying graph-service migrations..."
+	$(call run_with_postgres_env,GRAPH_DATABASE_URL="$$DATABASE_URL" $(USE_PYTHON) -m services.graph_api.manage migrate)
 
 init-artana-schema: ## Initialize the artana schema in Postgres
 	$(call check_venv)
@@ -732,17 +856,17 @@ setup-postgres: ## Full PostgreSQL setup including artana schema
 # Database
 db-migrate: ## Run database migrations
 	@$(MAKE) -s postgres-wait
-	$(call run_with_postgres_env,alembic upgrade heads)
+	$(call run_with_postgres_env,alembic -c $(GRAPH_ALEMBIC_CONFIG) upgrade heads)
 
 db-create: ## Create database migration
 	@echo "Creating new migration..."
 	@$(MAKE) -s postgres-wait
-	$(call run_with_postgres_env,alembic revision --autogenerate -m "$(msg)")
+	$(call run_with_postgres_env,alembic -c $(GRAPH_ALEMBIC_CONFIG) revision --autogenerate -m "$(msg)")
 
 db-reset: ## Reset database (WARNING: destroys data)
 	@echo "This will destroy all data. Are you sure? [y/N] " && read ans && [ $${ans:-N} = y ]
 	@$(MAKE) -s postgres-wait
-	$(call run_with_postgres_env,alembic downgrade base)
+	$(call run_with_postgres_env,alembic -c $(GRAPH_ALEMBIC_CONFIG) downgrade base)
 
 db-seed: ## Seed database with test data
 	$(call check_venv)
@@ -819,6 +943,48 @@ deploy-prod: ## Deploy to production environment
 		--region us-central1 \
 		--no-allow-unauthenticated \
 		--service-account med13-prod@YOUR_PROJECT_ID.iam.gserviceaccount.com
+
+deploy-graph-dev: ## Build, push, and deploy the graph service to dev
+	@if [ "$(GRAPH_DEPLOY_PROJECT_ID)" = "YOUR_PROJECT_ID" ]; then \
+		echo "Set GRAPH_DEPLOY_PROJECT_ID before deploying the graph service."; \
+		exit 1; \
+	fi
+	gcloud auth configure-docker $(GRAPH_DEPLOY_REGION)-docker.pkg.dev --quiet
+	docker build -f $(GRAPH_DOCKERFILE) -t $(GRAPH_IMAGE_DEV) .
+	docker push $(GRAPH_IMAGE_DEV)
+	gcloud run deploy med13-graph-api-dev \
+		--image $(GRAPH_IMAGE_DEV) \
+		--project $(GRAPH_DEPLOY_PROJECT_ID) \
+		--region $(GRAPH_DEPLOY_REGION) \
+		--no-allow-unauthenticated
+
+deploy-graph-staging: ## Build, push, and deploy the graph service to staging
+	@if [ "$(GRAPH_DEPLOY_PROJECT_ID)" = "YOUR_PROJECT_ID" ]; then \
+		echo "Set GRAPH_DEPLOY_PROJECT_ID before deploying the graph service."; \
+		exit 1; \
+	fi
+	gcloud auth configure-docker $(GRAPH_DEPLOY_REGION)-docker.pkg.dev --quiet
+	docker build -f $(GRAPH_DOCKERFILE) -t $(GRAPH_IMAGE_STAGING) .
+	docker push $(GRAPH_IMAGE_STAGING)
+	gcloud run deploy med13-graph-api-staging \
+		--image $(GRAPH_IMAGE_STAGING) \
+		--project $(GRAPH_DEPLOY_PROJECT_ID) \
+		--region $(GRAPH_DEPLOY_REGION) \
+		--no-allow-unauthenticated
+
+deploy-graph-prod: ## Build, push, and deploy the graph service to production
+	@if [ "$(GRAPH_DEPLOY_PROJECT_ID)" = "YOUR_PROJECT_ID" ]; then \
+		echo "Set GRAPH_DEPLOY_PROJECT_ID before deploying the graph service."; \
+		exit 1; \
+	fi
+	gcloud auth configure-docker $(GRAPH_DEPLOY_REGION)-docker.pkg.dev --quiet
+	docker build -f $(GRAPH_DOCKERFILE) -t $(GRAPH_IMAGE_PROD) .
+	docker push $(GRAPH_IMAGE_PROD)
+	gcloud run deploy med13-graph-api \
+		--image $(GRAPH_IMAGE_PROD) \
+		--project $(GRAPH_DEPLOY_PROJECT_ID) \
+		--region $(GRAPH_DEPLOY_REGION) \
+		--no-allow-unauthenticated
 
 # Cloud Operations
 cloud-logs: ## View Cloud Run logs

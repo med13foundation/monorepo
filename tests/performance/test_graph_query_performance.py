@@ -8,6 +8,9 @@ from uuid import uuid4
 
 import pytest
 
+from services.graph_api._relation_subgraph_helpers import (
+    collect_candidate_relations,
+)
 from src.application.services.kernel.kernel_claim_evidence_service import (
     KernelClaimEvidenceService,
 )
@@ -56,10 +59,9 @@ from src.infrastructure.repositories.kernel.kernel_claim_relation_repository imp
 from src.models.database.base import Base
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
-from src.routes.research_spaces._kernel_relation_subgraph_helpers import (
-    collect_candidate_relations,
+from src.type_definitions.graph_api_schemas.kernel_schemas import (
+    KernelGraphSubgraphRequest,
 )
-from src.routes.research_spaces.kernel_schemas import KernelGraphSubgraphRequest
 from tests.db_reset import reset_database
 
 pytestmark = [pytest.mark.graph, pytest.mark.performance]

@@ -29,6 +29,7 @@ class KernelRelationProjectionSource(BaseModel):
     claim_id: UUID
     projection_origin: RelationProjectionOrigin
     source_document_id: UUID | None = None
+    source_document_ref: str | None = Field(default=None, max_length=512)
     agent_run_id: str | None = Field(default=None, max_length=255)
     metadata_payload: JSONObject = Field(default_factory=dict)
     created_at: datetime

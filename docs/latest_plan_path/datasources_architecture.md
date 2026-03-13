@@ -1931,7 +1931,7 @@ and the Graph Query Port for execution, then synthesizes results.
 The Graph Search Agent powers the **research query interface** in the admin UI:
 
 1. Researcher types a natural language question.
-2. The agent processes it via the API (`/research-spaces/{space_id}/graph/search`).
+2. The agent processes it via the standalone graph-service API (`/v1/spaces/{space_id}/graph/search`).
 3. Results are displayed as an entity list with observations, relations, and
    evidence chains.
 4. The researcher can drill into any result to see full provenance.

@@ -192,6 +192,34 @@ class TestArchitecturalCompliance:
             f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
         )
 
+    def test_graph_service_boundary_validation(self) -> None:
+        """
+        Verify new code does not bypass the standalone graph-service boundary.
+
+        Direct imports of graph internals are only allowed inside the graph
+        service and a shrinking legacy allowlist during extraction.
+        """
+        validator_script = (
+            PROJECT_ROOT / "scripts" / "validate_graph_service_boundary.py"
+        )
+
+        assert (
+            validator_script.exists()
+        ), f"Graph boundary validation script not found at {validator_script}"
+
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, str(validator_script)],
+            check=False,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, (
+            "Found graph boundary violations:\n"
+            f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+
     def test_no_monolithic_files(self) -> None:
         """
         Verify that no files exceed the maximum size threshold.

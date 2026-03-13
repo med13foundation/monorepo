@@ -30,6 +30,7 @@ from src.models.database.kernel.observations import ObservationModel
 from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.research_space import ResearchSpaceModel, SpaceStatusEnum
 from src.models.database.user import UserModel
+from tests.graph_seed_helpers import ensure_relation_constraint
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -94,6 +95,24 @@ def _seed_dictionary_primitives(db_session: Session) -> None:
                 created_by="seed",
             ),
         )
+    ensure_relation_constraint(
+        db_session,
+        source_type="GENE",
+        relation_type="ASSOCIATED_WITH",
+        target_type="PHENOTYPE",
+    )
+    ensure_relation_constraint(
+        db_session,
+        source_type="PATIENT",
+        relation_type="ASSOCIATED_WITH",
+        target_type="PHENOTYPE",
+    )
+    ensure_relation_constraint(
+        db_session,
+        source_type="GENE",
+        relation_type="ASSOCIATED_WITH",
+        target_type="PATIENT",
+    )
     db_session.flush()
 
 

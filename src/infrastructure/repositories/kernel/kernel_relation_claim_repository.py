@@ -48,6 +48,13 @@ def _try_as_uuid(value: str | None) -> UUID | None:
         return None
 
 
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
     """SQLAlchemy implementation of relation claim ledger repository."""
 
@@ -77,12 +84,14 @@ class SqlAlchemyKernelRelationClaimRepository(KernelRelationClaimRepository):
         claim_text: str | None = None,
         claim_section: str | None = None,
         linked_relation_id: str | None = None,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelRelationClaim:
         model = RelationClaimModel(
             id=uuid4(),
             research_space_id=_as_uuid(research_space_id),
             source_document_id=_try_as_uuid(source_document_id),
+            source_document_ref=_normalize_optional_text(source_document_ref),
             agent_run_id=agent_run_id,
             source_type=source_type,
             relation_type=relation_type,

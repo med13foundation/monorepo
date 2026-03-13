@@ -122,6 +122,7 @@ export interface KernelRelationCreateRequest {
   evidence_sentence_rationale?: string | null
   evidence_tier?: string | null
   provenance_id?: string | null
+  source_document_ref?: string | null
 }
 
 export interface KernelRelationCurationUpdateRequest {
@@ -211,6 +212,7 @@ export interface RelationClaimResponse {
   id: string
   research_space_id: string
   source_document_id: string | null
+  source_document_ref?: string | null
   agent_run_id: string | null
   source_type: string
   relation_type: string
@@ -324,6 +326,7 @@ export interface ClaimRelationResponse {
   relation_type: ClaimRelationType
   agent_run_id: string | null
   source_document_id: string | null
+  source_document_ref?: string | null
   confidence: number
   review_status: ClaimRelationReviewStatus
   evidence_summary: string | null
@@ -344,6 +347,7 @@ export interface ClaimRelationCreateRequest {
   relation_type: ClaimRelationType
   agent_run_id?: string | null
   source_document_id?: string | null
+  source_document_ref?: string | null
   confidence?: number
   review_status?: ClaimRelationReviewStatus
   evidence_summary?: string | null
@@ -397,6 +401,7 @@ export interface ClaimParticipantBackfillRequest {
 }
 
 export interface ClaimParticipantBackfillResponse {
+  operation_run_id: string
   scanned_claims: number
   created_participants: number
   skipped_existing: number
@@ -408,6 +413,7 @@ export interface ClaimEvidenceResponse {
   id: string
   claim_id: string
   source_document_id: string | null
+  source_document_ref?: string | null
   agent_run_id: string | null
   sentence: string | null
   sentence_source: 'verbatim_span' | 'artana_generated' | null
@@ -881,6 +887,52 @@ export interface GraphSearchResponse {
   executed_path: GraphSearchExecutedPath
   warnings: string[]
   agent_run_id: string | null
+}
+
+export interface GraphConnectionDiscoverRequest {
+  seed_entity_ids: string[]
+  source_type?: string
+  model_id?: string | null
+  relation_types?: string[] | null
+  max_depth?: number
+  shadow_mode?: boolean | null
+}
+
+export interface GraphConnectionSingleRequest {
+  source_type?: string
+  model_id?: string | null
+  relation_types?: string[] | null
+  max_depth?: number
+  shadow_mode?: boolean | null
+}
+
+export interface GraphConnectionOutcomeResponse {
+  seed_entity_id: string
+  research_space_id: string
+  status: string
+  reason: string
+  review_required: boolean
+  shadow_mode: boolean
+  wrote_to_graph: boolean
+  run_id: string | null
+  proposed_relations_count: number
+  persisted_relations_count: number
+  rejected_candidates_count: number
+  errors: string[]
+}
+
+export interface GraphConnectionDiscoverResponse {
+  requested: number
+  processed: number
+  discovered: number
+  failed: number
+  review_required: number
+  shadow_runs: number
+  proposed_relations_count: number
+  persisted_relations_count: number
+  rejected_candidates_count: number
+  errors: string[]
+  outcomes: GraphConnectionOutcomeResponse[]
 }
 
 export type SpaceSourceRunStatus = 'completed' | 'skipped' | 'failed'

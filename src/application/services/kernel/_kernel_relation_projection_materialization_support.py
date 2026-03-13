@@ -12,7 +12,13 @@ if TYPE_CHECKING:
     from src.domain.entities.kernel.claim_evidence import KernelClaimEvidence
     from src.domain.entities.kernel.claim_participants import KernelClaimParticipant
     from src.domain.entities.kernel.relation_claims import KernelRelationClaim
-    from src.domain.entities.kernel.relations import KernelRelation
+    from src.domain.entities.kernel.relations import (
+        KernelRelation,
+        KernelRelationEvidence,
+    )
+    from src.domain.repositories.kernel.claim_evidence_repository import (
+        KernelClaimEvidenceRepository,
+    )
 
 
 class RelationProjectionMaterializationError(ValueError):
@@ -132,8 +138,46 @@ def _dedupe_relation_ids(relation_ids: list[str]) -> list[str]:
     return deduped
 
 
+def _backfill_claim_evidence_from_relation_cache(
+    *,
+    claim_evidence_repo: KernelClaimEvidenceRepository,
+    claim_id: str,
+    claim: KernelRelationClaim,
+    current_evidence: list[KernelRelationEvidence],
+) -> None:
+    for evidence in current_evidence:
+        claim_evidence_repo.create(
+            claim_id=claim_id,
+            source_document_id=(
+                str(evidence.source_document_id)
+                if evidence.source_document_id is not None
+                else None
+            ),
+            source_document_ref=evidence.source_document_ref,
+            agent_run_id=evidence.agent_run_id or claim.agent_run_id,
+            sentence=evidence.evidence_sentence,
+            sentence_source=evidence.evidence_sentence_source,
+            sentence_confidence=evidence.evidence_sentence_confidence,
+            sentence_rationale=evidence.evidence_sentence_rationale,
+            figure_reference=None,
+            table_reference=None,
+            confidence=float(evidence.confidence),
+            metadata={
+                "origin": "relation_evidence_backfill",
+                "evidence_summary": evidence.evidence_summary,
+                "evidence_tier": evidence.evidence_tier,
+                "provenance_id": (
+                    str(evidence.provenance_id)
+                    if evidence.provenance_id is not None
+                    else None
+                ),
+            },
+        )
+
+
 __all__ = [
     "_ProjectionEndpoints",
+    "_backfill_claim_evidence_from_relation_cache",
     "_claim_evidence_provenance_id",
     "_claim_evidence_summary",
     "_claim_evidence_tier",

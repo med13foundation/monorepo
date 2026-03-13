@@ -8,7 +8,6 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     CheckConstraint,
     Float,
-    ForeignKey,
     ForeignKeyConstraint,
     Index,
     String,
@@ -19,6 +18,10 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from src.database.graph_schema import (
+    graph_table_options,
+    qualify_graph_foreign_key_target,
+)
 from src.models.database.base import Base
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
@@ -35,7 +38,6 @@ class ClaimRelationModel(Base):
     )
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     source_claim_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
@@ -44,8 +46,13 @@ class ClaimRelationModel(Base):
     agent_run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_document_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("source_documents.id"),
         nullable=True,
+        doc="External source-document reference recorded without shared-schema FK",
+    )
+    source_document_ref: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+        doc="Graph-owned external document reference without platform identity coupling",
     )
     confidence: Mapped[float] = mapped_column(
         Float,
@@ -98,13 +105,19 @@ class ClaimRelationModel(Base):
         ),
         ForeignKeyConstraint(
             ["source_claim_id", "research_space_id"],
-            ["relation_claims.id", "relation_claims.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("relation_claims.id"),
+                qualify_graph_foreign_key_target("relation_claims.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_claim_relations_source_space",
         ),
         ForeignKeyConstraint(
             ["target_claim_id", "research_space_id"],
-            ["relation_claims.id", "relation_claims.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("relation_claims.id"),
+                qualify_graph_foreign_key_target("relation_claims.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_claim_relations_target_space",
         ),
@@ -119,9 +132,10 @@ class ClaimRelationModel(Base):
         Index("idx_claim_relations_target", "target_claim_id"),
         Index("idx_claim_relations_space_type", "research_space_id", "relation_type"),
         Index("idx_claim_relations_review_status", "review_status"),
-        {
-            "comment": "Claim-to-claim graph edges with provenance and governance state",
-        },
+        Index("idx_claim_relations_source_document_ref", "source_document_ref"),
+        graph_table_options(
+            comment="Claim-to-claim graph edges with provenance and governance state",
+        ),
     )
 
 

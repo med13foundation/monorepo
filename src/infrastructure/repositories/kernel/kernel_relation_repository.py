@@ -146,8 +146,14 @@ class SqlAlchemyKernelRelationRepository(
                     evidence_tier=_normalize_evidence_tier(
                         evidence_write.evidence_tier,
                     ),
-                    provenance_id=evidence_write.provenance_id,
+                    provenance_id=self._resolve_existing_provenance_uuid(
+                        evidence_write.provenance_id,
+                    ),
                     source_document_id=evidence_write.source_document_id,
+                    source_document_ref=_normalize_optional_text(
+                        evidence_write.source_document_ref,
+                        max_length=512,
+                    ),
                     agent_run_id=_normalize_optional_text(
                         evidence_write.agent_run_id,
                         max_length=255,
@@ -192,7 +198,7 @@ class SqlAlchemyKernelRelationRepository(
 
     def _resolve_existing_provenance_uuid(
         self,
-        provenance_id: str | None,
+        provenance_id: str | UUID | None,
     ) -> UUID | None:
         if provenance_id is None:
             return None

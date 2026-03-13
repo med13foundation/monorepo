@@ -14,6 +14,11 @@ from src.domain.ports.dictionary_search_harness_port import DictionarySearchHarn
 from src.domain.ports.text_embedding_port import TextEmbeddingPort
 from src.infrastructure.repositories.kernel import SqlAlchemyDictionaryRepository
 from src.models.database.kernel.dictionary import DictionaryDomainContextModel
+from tests.graph_seed_helpers import (
+    build_dense_vector,
+    ensure_data_type,
+    ensure_sensitivity_level,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -45,7 +50,7 @@ class PubMedKeywordEmbeddingProvider(TextEmbeddingPort):
         for axis_keywords in self._AXIS_KEYWORDS:
             has_axis_signal = any(keyword in normalized for keyword in axis_keywords)
             vector.append(1.0 if has_axis_signal else 0.0)
-        return vector
+        return build_dense_vector(vector)
 
 
 class StagedDictionarySearchHarness(DictionarySearchHarnessPort):
@@ -148,6 +153,8 @@ def test_dictionary_search_returns_high_precision_for_pubmed_title_queries(
         embedding_provider=embedding_provider,
     )
     _ensure_domain_context(db_session, "clinical")
+    ensure_data_type(db_session, data_type="STRING")
+    ensure_sensitivity_level(db_session, sensitivity="INTERNAL")
 
     service.create_variable(
         variable_id="VAR_PUBMED_30769017",

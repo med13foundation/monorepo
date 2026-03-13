@@ -28,6 +28,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from src.database.graph_schema import (
+    graph_table_options,
+    qualify_graph_foreign_key_target,
+)
 from src.models.database.base import Base
 from src.models.database.types import VectorEmbedding
 from src.type_definitions.common import JSONObject, JSONValue  # noqa: TC001
@@ -65,7 +69,7 @@ class DictionaryDataTypeModel(Base):
         doc="JSON schema defining supported constraints for this data type",
     )
 
-    __table_args__ = ({"comment": "First-class dictionary data types"},)
+    __table_args__ = (graph_table_options(comment="First-class dictionary data types"),)
 
 
 class DictionaryDomainContextModel(Base):
@@ -114,7 +118,7 @@ class DictionaryDomainContextModel(Base):
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_dictionary_domain_contexts_active_validity",
         ),
-        {"comment": "First-class dictionary domain contexts"},
+        graph_table_options(comment="First-class dictionary domain contexts"),
     )
 
 
@@ -164,7 +168,7 @@ class DictionarySensitivityLevelModel(Base):
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_dictionary_sensitivity_levels_active_validity",
         ),
-        {"comment": "First-class dictionary sensitivity levels"},
+        graph_table_options(comment="First-class dictionary sensitivity levels"),
     )
 
 
@@ -190,7 +194,7 @@ class DictionaryEntityTypeModel(Base):
     )
     domain_context: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("dictionary_domain_contexts.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_domain_contexts.id")),
         nullable=False,
         index=True,
         doc="Domain context for this entity type",
@@ -278,7 +282,9 @@ class DictionaryEntityTypeModel(Base):
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_dictionary_entity_types_active_validity",
         ),
-        {"comment": "First-class entity types with semantic metadata"},
+        graph_table_options(
+            comment="First-class entity types with semantic metadata",
+        ),
     )
 
 
@@ -304,7 +310,7 @@ class DictionaryRelationTypeModel(Base):
     )
     domain_context: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("dictionary_domain_contexts.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_domain_contexts.id")),
         nullable=False,
         index=True,
         doc="Domain context for this relation type",
@@ -392,7 +398,9 @@ class DictionaryRelationTypeModel(Base):
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_dictionary_relation_types_active_validity",
         ),
-        {"comment": "First-class relation types with semantic metadata"},
+        graph_table_options(
+            comment="First-class relation types with semantic metadata",
+        ),
     )
 
 
@@ -408,7 +416,10 @@ class DictionaryRelationSynonymModel(Base):
     )
     relation_type: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("dictionary_relation_types.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("dictionary_relation_types.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
         doc="Canonical relation type ID this synonym resolves to",
     )
@@ -495,7 +506,9 @@ class DictionaryRelationSynonymModel(Base):
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_dictionary_relation_synonyms_active_validity",
         ),
-        {"comment": "Synonym labels that resolve to canonical relation types"},
+        graph_table_options(
+            comment="Synonym labels that resolve to canonical relation types",
+        ),
     )
 
 
@@ -578,7 +591,10 @@ class ValueSetModel(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["variable_id", "variable_data_type"],
-            ["variable_definitions.id", "variable_definitions.data_type"],
+            [
+                qualify_graph_foreign_key_target("variable_definitions.id"),
+                qualify_graph_foreign_key_target("variable_definitions.data_type"),
+            ],
             name="fk_value_sets_variable_coded",
             ondelete="CASCADE",
         ),
@@ -586,7 +602,7 @@ class ValueSetModel(Base):
             "variable_data_type = 'CODED'",
             name="value_sets_variable_data_type_coded",
         ),
-        {"comment": "Enumerated value sets for CODED variables"},
+        graph_table_options(comment="Enumerated value sets for CODED variables"),
     )
 
 
@@ -602,7 +618,10 @@ class ValueSetItemModel(Base):
     )
     value_set_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("value_sets.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("value_sets.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
         doc="Parent value set ID",
@@ -679,7 +698,9 @@ class ValueSetItemModel(Base):
             "code",
             unique=True,
         ),
-        {"comment": "Allowed canonical codes and synonyms per value set"},
+        graph_table_options(
+            comment="Allowed canonical codes and synonyms per value set",
+        ),
     )
 
 
@@ -710,7 +731,7 @@ class VariableDefinitionModel(Base):
     )
     data_type: Mapped[str] = mapped_column(
         String(32),
-        ForeignKey("dictionary_data_types.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_data_types.id")),
         nullable=False,
         doc="Data type: INTEGER, FLOAT, STRING, DATE, CODED, BOOLEAN, JSON",
     )
@@ -727,7 +748,7 @@ class VariableDefinitionModel(Base):
     )
     domain_context: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("dictionary_domain_contexts.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_domain_contexts.id")),
         nullable=False,
         server_default="general",
         index=True,
@@ -735,7 +756,9 @@ class VariableDefinitionModel(Base):
     )
     sensitivity: Mapped[str] = mapped_column(
         String(32),
-        ForeignKey("dictionary_sensitivity_levels.id"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("dictionary_sensitivity_levels.id"),
+        ),
         nullable=False,
         server_default="INTERNAL",
         doc="Sensitivity: PUBLIC, INTERNAL, PHI",
@@ -819,7 +842,7 @@ class VariableDefinitionModel(Base):
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_variable_definitions_active_validity",
         ),
-        {"comment": "Master dictionary of allowed data variables"},
+        graph_table_options(comment="Master dictionary of allowed data variables"),
     )
 
 
@@ -839,7 +862,10 @@ class VariableSynonymModel(Base):
     )
     variable_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("variable_definitions.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("variable_definitions.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
         doc="FK to variable_definitions.id",
@@ -924,7 +950,7 @@ class VariableSynonymModel(Base):
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_variable_synonyms_active_validity",
         ),
-        {"comment": "Synonyms for deterministic field-name matching"},
+        graph_table_options(comment="Synonyms for deterministic field-name matching"),
     )
 
 
@@ -961,13 +987,13 @@ class TransformRegistryModel(Base):
     )
     input_data_type: Mapped[str | None] = mapped_column(
         String(32),
-        ForeignKey("dictionary_data_types.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_data_types.id")),
         nullable=True,
         doc="Optional expected input kernel data type",
     )
     output_data_type: Mapped[str | None] = mapped_column(
         String(32),
-        ForeignKey("dictionary_data_types.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_data_types.id")),
         nullable=True,
         doc="Optional output kernel data type",
     )
@@ -1073,7 +1099,9 @@ class TransformRegistryModel(Base):
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_transform_registry_active_validity",
         ),
-        {"comment": "Registry of safe, pre-compiled unit conversions"},
+        graph_table_options(
+            comment="Registry of safe, pre-compiled unit conversions",
+        ),
     )
 
 
@@ -1088,7 +1116,7 @@ class EntityResolutionPolicyModel(Base):
 
     entity_type: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("dictionary_entity_types.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_entity_types.id")),
         primary_key=True,
         doc="Entity type, e.g. PATIENT, GENE, PAPER",
     )
@@ -1166,7 +1194,7 @@ class EntityResolutionPolicyModel(Base):
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_entity_resolution_policies_active_validity",
         ),
-        {"comment": "Entity deduplication policies by type"},
+        graph_table_options(comment="Entity deduplication policies by type"),
     )
 
 
@@ -1185,19 +1213,19 @@ class RelationConstraintModel(Base):
     )
     source_type: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("dictionary_entity_types.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_entity_types.id")),
         nullable=False,
         doc="Source entity type, e.g. GENE",
     )
     relation_type: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("dictionary_relation_types.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_relation_types.id")),
         nullable=False,
         doc="Relation type, e.g. ASSOCIATED_WITH",
     )
     target_type: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("dictionary_entity_types.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_entity_types.id")),
         nullable=False,
         doc="Target entity type, e.g. DISEASE",
     )
@@ -1275,7 +1303,7 @@ class RelationConstraintModel(Base):
             "((is_active AND valid_to IS NULL) OR ((NOT is_active) AND valid_to IS NOT NULL))",
             name="ck_relation_constraints_active_validity",
         ),
-        {"comment": "Allowed triple patterns for graph edges"},
+        graph_table_options(comment="Allowed triple patterns for graph edges"),
     )
 
 
@@ -1329,5 +1357,5 @@ class DictionaryChangelogModel(Base):
 
     __table_args__ = (
         Index("idx_dictionary_changelog_table_record", "table_name", "record_id"),
-        {"comment": "Immutable audit log for dictionary mutations"},
+        graph_table_options(comment="Immutable audit log for dictionary mutations"),
     )

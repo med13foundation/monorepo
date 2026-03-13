@@ -15,6 +15,10 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from src.database.graph_schema import (
+    graph_table_options,
+    qualify_graph_foreign_key_target,
+)
 from src.models.database.base import Base
 from src.models.database.types import VectorEmbedding
 from src.type_definitions.common import JSONObject  # noqa: TC001
@@ -40,13 +44,12 @@ class EntityModel(Base):
     )
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
         doc="Owning research space",
     )
     entity_type: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("dictionary_entity_types.id"),
+        ForeignKey(qualify_graph_foreign_key_target("dictionary_entity_types.id")),
         nullable=False,
         index=True,
         doc="Entity type, e.g. GENE, VARIANT, PATIENT",
@@ -80,7 +83,9 @@ class EntityModel(Base):
         ),
         Index("idx_entities_space_type", "research_space_id", "entity_type"),
         Index("idx_entities_created_at", "created_at"),
-        {"comment": "Generic graph nodes (entities) for all domain types"},
+        graph_table_options(
+            comment="Generic graph nodes (entities) for all domain types",
+        ),
     )
 
     def __repr__(self) -> str:
@@ -107,7 +112,10 @@ class EntityIdentifierModel(Base):
     )
     entity_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("entities.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("entities.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
         doc="Owning entity",
     )
@@ -172,7 +180,9 @@ class EntityIdentifierModel(Base):
             "identifier_blind_index",
             unique=True,
         ),
-        {"comment": "PHI-isolated entity identifiers for secure lookup"},
+        graph_table_options(
+            comment="PHI-isolated entity identifiers for secure lookup",
+        ),
     )
 
     def __repr__(self) -> str:
@@ -194,12 +204,14 @@ class EntityEmbeddingModel(Base):
     )
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     entity_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("entities.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("entities.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     embedding: Mapped[list[float]] = mapped_column(
@@ -239,5 +251,7 @@ class EntityEmbeddingModel(Base):
         ),
         Index("idx_entity_embeddings_space", "research_space_id"),
         Index("idx_entity_embeddings_entity", "entity_id"),
-        {"comment": "Entity-level embeddings for hybrid graph + vector workflows"},
+        graph_table_options(
+            comment="Entity-level embeddings for hybrid graph + vector workflows",
+        ),
     )

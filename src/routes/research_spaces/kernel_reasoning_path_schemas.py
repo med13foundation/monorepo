@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.application.services.kernel.kernel_reasoning_path_service import (
-    KernelReasoningPathDetail,
-)
 from src.domain.entities.kernel.reasoning_paths import (
     KernelReasoningPath,
     KernelReasoningPathStep,
@@ -27,6 +25,18 @@ from src.routes.research_spaces.kernel_schemas import (
     KernelRelationResponse,
 )
 from src.type_definitions.common import JSONObject
+
+
+class ReasoningPathDetailLike(Protocol):
+    """Structural contract for reasoning-path detail serialization."""
+
+    path: KernelReasoningPath
+    steps: list[KernelReasoningPathStep]
+    canonical_relations: list[object]
+    claims: list[object]
+    claim_relations: list[object]
+    participants: list[object]
+    evidence: list[object]
 
 
 def _to_uuid(value: str | UUID) -> UUID:
@@ -140,7 +150,7 @@ class KernelReasoningPathDetailResponse(BaseModel):
     @classmethod
     def from_detail(
         cls,
-        detail: KernelReasoningPathDetail,
+        detail: ReasoningPathDetailLike,
     ) -> KernelReasoningPathDetailResponse:
         steps = [
             KernelReasoningPathStepResponse.from_model(step) for step in detail.steps

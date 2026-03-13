@@ -7,12 +7,17 @@ from uuid import uuid4
 from src.infrastructure.repositories.kernel.kernel_relation_claim_repository import (
     SqlAlchemyKernelRelationClaimRepository,
 )
+from src.infrastructure.repositories.kernel.kernel_relation_repository import (
+    SqlAlchemyKernelRelationRepository,
+)
+from src.models.database.kernel.entities import EntityModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
+from tests.graph_seed_helpers import ensure_relation_constraint
 
 
 def _create_space_and_user(db_session):
-    suffix = uuid4().hex
+    suffix = uuid4().hex[:12]
     user = UserModel(
         email=f"claim-repo-{suffix}@example.com",
         username=f"claim-repo-{suffix}",
@@ -35,6 +40,48 @@ def _create_space_and_user(db_session):
     db_session.add(space)
     db_session.flush()
     return user, space
+
+
+def _create_linked_relation(
+    db_session,
+    *,
+    research_space_id: str,
+    relation_type: str,
+) -> str:
+    ensure_relation_constraint(
+        db_session,
+        source_type="GENE",
+        relation_type=relation_type,
+        target_type="DISEASE",
+    )
+    source_id = uuid4()
+    target_id = uuid4()
+    db_session.add_all(
+        [
+            EntityModel(
+                id=source_id,
+                research_space_id=research_space_id,
+                entity_type="GENE",
+                display_label="MED13",
+                metadata_payload={},
+            ),
+            EntityModel(
+                id=target_id,
+                research_space_id=research_space_id,
+                entity_type="DISEASE",
+                display_label="Cardiomyopathy",
+                metadata_payload={},
+            ),
+        ],
+    )
+    db_session.flush()
+    relation = SqlAlchemyKernelRelationRepository(db_session).upsert_relation(
+        research_space_id=research_space_id,
+        source_id=str(source_id),
+        relation_type=relation_type,
+        target_id=str(target_id),
+    )
+    return str(relation.id)
 
 
 def test_relation_claim_repository_create_list_count_and_triage(db_session) -> None:
@@ -131,7 +178,11 @@ def test_relation_claim_repository_create_list_count_and_triage(db_session) -> N
 def test_relation_claim_repository_conflict_detection(db_session) -> None:
     _, space = _create_space_and_user(db_session)
     repository = SqlAlchemyKernelRelationClaimRepository(db_session)
-    linked_relation_id = str(uuid4())
+    linked_relation_id = _create_linked_relation(
+        db_session,
+        research_space_id=str(space.id),
+        relation_type="ASSOCIATED_WITH",
+    )
 
     _ = repository.create(
         research_space_id=str(space.id),
@@ -192,8 +243,16 @@ def test_relation_claim_repository_conflict_detection(db_session) -> None:
 def test_relation_claim_repository_find_by_linked_relation_ids(db_session) -> None:
     _, space = _create_space_and_user(db_session)
     repository = SqlAlchemyKernelRelationClaimRepository(db_session)
-    relation_id_a = str(uuid4())
-    relation_id_b = str(uuid4())
+    relation_id_a = _create_linked_relation(
+        db_session,
+        research_space_id=str(space.id),
+        relation_type="ASSOCIATED_WITH",
+    )
+    relation_id_b = _create_linked_relation(
+        db_session,
+        research_space_id=str(space.id),
+        relation_type="ASSOCIATED_WITH",
+    )
 
     claim_a = repository.create(
         research_space_id=str(space.id),
@@ -252,7 +311,11 @@ def test_relation_claim_repository_find_by_linked_relation_ids(db_session) -> No
         polarity="SUPPORT",
         claim_text="Unlinked elsewhere",
         claim_section=None,
-        linked_relation_id=str(uuid4()),
+        linked_relation_id=_create_linked_relation(
+            db_session,
+            research_space_id=str(space.id),
+            relation_type="CAUSES",
+        ),
         metadata={},
     )
 

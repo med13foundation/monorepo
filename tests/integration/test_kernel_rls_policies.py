@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select, text
 
 from src.database import session as session_module
+from src.database.graph_schema import qualify_graph_table_name, resolve_graph_db_schema
 from src.database.session import set_session_rls_context
 from src.domain.entities.user import UserRole, UserStatus
 from src.models.database.base import Base
@@ -17,7 +18,7 @@ from src.models.database.kernel.dictionary import (
     DictionaryEntityTypeModel,
 )
 from src.models.database.kernel.entities import EntityIdentifierModel, EntityModel
-from src.models.database.research_space import ResearchSpaceModel
+from src.models.database.kernel.spaces import GraphSpaceModel, GraphSpaceStatusEnum
 from src.models.database.user import UserModel
 from tests.db_reset import reset_database
 
@@ -37,11 +38,28 @@ def reset_db(postgres_required) -> None:  # noqa: ARG001
 def rls_query_role(postgres_required) -> str:  # noqa: ARG001
     """Create a non-superuser role so PostgreSQL does not bypass RLS."""
     role_name = f"rls_query_{uuid4().hex[:12]}"
+    graph_schema = resolve_graph_db_schema()
+    if graph_schema == "public":
+        graph_spaces_table = "public.graph_spaces"
+        graph_memberships_table = "public.graph_space_memberships"
+    else:
+        graph_spaces_table = qualify_graph_table_name(
+            "graph_spaces",
+            schema=graph_schema,
+        )
+        graph_memberships_table = qualify_graph_table_name(
+            "graph_space_memberships",
+            schema=graph_schema,
+        )
     admin_session = session_module.SessionLocal()
     try:
         set_session_rls_context(admin_session, bypass_rls=True)
         admin_session.execute(text(f'CREATE ROLE "{role_name}"'))
         admin_session.execute(text(f'GRANT USAGE ON SCHEMA public TO "{role_name}"'))
+        if graph_schema != "public":
+            admin_session.execute(
+                text(f'GRANT USAGE ON SCHEMA "{graph_schema}" TO "{role_name}"'),
+            )
         admin_session.execute(
             text(
                 f"""
@@ -52,8 +70,8 @@ def rls_query_role(postgres_required) -> str:  # noqa: ARG001
                     public.relations,
                     public.relation_evidence,
                     public.provenance,
-                    public.research_spaces,
-                    public.research_space_memberships
+                    {graph_spaces_table},
+                    {graph_memberships_table}
                 TO "{role_name}"
                 """,
             ),
@@ -92,14 +110,15 @@ def _create_user(session: Session, label: str) -> UserModel:
     return user
 
 
-def _create_space(session: Session, *, owner_id: UUID, slug: str) -> ResearchSpaceModel:
-    space = ResearchSpaceModel(
+def _create_space(session: Session, *, owner_id: UUID, slug: str) -> GraphSpaceModel:
+    space = GraphSpaceModel(
         id=uuid4(),
         slug=slug,
         name=f"Space {slug}",
         description=f"Space {slug}",
         owner_id=owner_id,
-        status="active",
+        status=GraphSpaceStatusEnum.ACTIVE,
+        settings={},
     )
     session.add(space)
     session.flush()

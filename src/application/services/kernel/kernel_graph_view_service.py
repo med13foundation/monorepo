@@ -39,7 +39,7 @@ class KernelGraphViewService:
         self._claim_participants = dependencies.claim_participant_service
         self._claim_relations = dependencies.claim_relation_service
         self._claim_evidence = dependencies.claim_evidence_service
-        self._source_documents = dependencies.source_document_repository
+        self._source_document_lookup = dependencies.source_document_lookup
 
     def build_domain_view(
         self,
@@ -253,7 +253,7 @@ class KernelGraphViewService:
         source_document_id: str,
         claim_limit: int,
     ) -> KernelGraphDomainView:
-        document = self._source_documents.get_by_id(UUID(source_document_id))
+        document = self._source_document_lookup.get_by_id(UUID(source_document_id))
         if document is None:
             msg = f"Source document {source_document_id} not found"
             raise KernelGraphViewNotFoundError(msg)

@@ -10,7 +10,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-CURRENT_HEAD_REVISION = "002_reasoning_paths"
+CURRENT_HEAD_REVISION = "010_graph_kernel_schema"
 _ALEMBIC_SUBPROCESS_TEMPLATE = """
 import os
 import sys
@@ -29,7 +29,7 @@ sys.path = [
 
 from alembic.config import main
 
-main(argv=[{command!r}, {revision!r}])
+main(argv=["-c", "services/graph_api/alembic.ini", {command!r}, {revision!r}])
 """.strip()
 
 
@@ -71,6 +71,9 @@ def test_upgrade_head_creates_current_baseline_schema(tmp_path: Path) -> None:
         "relation_projection_sources",
         "reasoning_paths",
         "reasoning_path_steps",
+        "graph_spaces",
+        "graph_space_memberships",
+        "graph_operation_runs",
         "entity_embeddings",
         "pipeline_run_events",
     }.issubset(table_names)
@@ -85,6 +88,9 @@ def test_upgrade_head_creates_current_baseline_schema(tmp_path: Path) -> None:
     path_columns = {
         column["name"] for column in inspector.get_columns("reasoning_paths")
     }
+    graph_space_columns = {
+        column["name"] for column in inspector.get_columns("graph_spaces")
+    }
 
     assert {
         "evidence_sentence",
@@ -92,11 +98,23 @@ def test_upgrade_head_creates_current_baseline_schema(tmp_path: Path) -> None:
         "evidence_sentence_confidence",
         "evidence_sentence_rationale",
         "agent_run_id",
+        "source_document_ref",
     }.issubset(relation_columns)
-    assert {"projection_origin", "research_space_id", "claim_id"}.issubset(
+    assert {
+        "projection_origin",
+        "research_space_id",
+        "claim_id",
+        "source_document_ref",
+    }.issubset(
         projection_columns,
     )
     assert {"path_kind", "status", "path_signature_hash"}.issubset(path_columns)
+    assert {
+        "sync_source",
+        "sync_fingerprint",
+        "source_updated_at",
+        "last_synced_at",
+    }.issubset(graph_space_columns)
 
     with engine.connect() as connection:
         versions = (

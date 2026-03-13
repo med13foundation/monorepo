@@ -227,7 +227,7 @@ class _PipelineOrchestrationGraphStageHelpers:
             graph_stage_input.should_run_graph
             and can_run_graph
             and graph_requested > 0
-            and self._graph is not None
+            and (self._graph_seed_runner is not None or self._graph is not None)
             and not run_cancelled
         ):
             graph_started_at = datetime.now(UTC)

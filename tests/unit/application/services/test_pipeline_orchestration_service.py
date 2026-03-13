@@ -966,6 +966,47 @@ async def test_run_for_source_records_stage_checkpoints_with_run_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_for_source_uses_graph_seed_runner_without_graph_service() -> None:
+    source_id = uuid4()
+    research_space_id = uuid4()
+    repository = StubPipelineRunRepository()
+    ingestion_service = StubIngestionSchedulingService(
+        StubIngestionSummary(source_id=source_id),
+    )
+    enrichment_service = StubContentEnrichmentService(StubEnrichmentSummary())
+    extraction_service = StubEntityRecognitionService(StubExtractionSummary())
+    graph_runner_calls: list[dict[str, object]] = []
+
+    async def graph_seed_runner(**kwargs: object) -> StubGraphOutcome:
+        graph_runner_calls.append(kwargs)
+        return StubGraphOutcome(persisted_relations_count=2)
+
+    service = PipelineOrchestrationService(
+        dependencies=PipelineOrchestrationDependencies(
+            ingestion_scheduling_service=ingestion_service,
+            content_enrichment_service=enrichment_service,
+            entity_recognition_service=extraction_service,
+            graph_connection_service=None,
+            graph_connection_seed_runner=graph_seed_runner,
+            pipeline_run_repository=repository,
+        ),
+    )
+
+    summary = await service.run_for_source(
+        source_id=source_id,
+        research_space_id=research_space_id,
+        run_id="run-http-graph-001",
+        source_type="clinvar",
+        graph_seed_entity_ids=["seed-1"],
+    )
+
+    assert summary.status == "completed"
+    assert summary.graph_status == "completed"
+    assert summary.graph_processed == 1
+    assert graph_runner_calls[0]["pipeline_run_id"] == "run-http-graph-001"
+
+
+@pytest.mark.asyncio
 async def test_run_for_source_persists_ingestion_progress_before_stage_completion() -> (
     None
 ):

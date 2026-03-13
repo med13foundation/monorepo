@@ -20,10 +20,6 @@ if TYPE_CHECKING:
     )
     from src.application.agents.services.graph_connection_service import (
         GraphConnectionOutcome,
-        GraphConnectionService,
-    )
-    from src.application.agents.services.graph_search_service import (
-        GraphSearchService,
     )
     from src.application.services._pipeline_orchestration_contracts import (
         PipelineStageName,
@@ -32,6 +28,10 @@ if TYPE_CHECKING:
     from src.application.services._pipeline_orchestration_graph_stage_helpers import (
         _GraphStageInput,
         _GraphStageOutput,
+    )
+    from src.application.services._pipeline_orchestration_queue_types import (
+        GraphConnectionExecutor,
+        GraphSearchExecutor,
     )
     from src.application.services.ingestion_scheduling_service import (
         IngestionSchedulingService,
@@ -56,9 +56,9 @@ class _PipelineExecutionSelf(Protocol):
     _extraction_stage_runner: (
         Callable[..., Awaitable[EntityRecognitionRunSummary]] | None
     )
-    _graph: GraphConnectionService | None
+    _graph: GraphConnectionExecutor | None
     _graph_seed_runner: Callable[..., Awaitable[GraphConnectionOutcome]] | None
-    _graph_search: GraphSearchService | None
+    _graph_search: GraphSearchExecutor | None
     _research_spaces: ResearchSpaceRepository | None
     _pipeline_trace: PipelineRunTraceService | None
 

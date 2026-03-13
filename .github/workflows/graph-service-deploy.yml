@@ -1,0 +1,460 @@
+name: Graph Service Deploy
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Optional deployment target for manual runs"
+        required: false
+        default: "none"
+        type: choice
+        options:
+          - none
+          - dev
+          - staging
+          - production
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGION: us-central1
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+  GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+  PYTHON_VERSION: "3.12"
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+  graph-checks:
+    name: Graph Service Quality Gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: med13_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d med13_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/med13_ci
+      ASYNC_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/med13_ci
+      GRAPH_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/med13_ci
+      MED13_ENABLE_DISTRIBUTED_RATE_LIMIT: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Graph-service lint
+        run: make graph-service-lint
+
+      - name: Graph-service type-check
+        run: make graph-service-type-check
+
+      - name: Graph-service contract artifacts up to date
+        run: make graph-service-contract-check
+
+      - name: Graph-service runtime tests
+        run: |
+          make graph-service-test
+
+      - name: Graph invariant suite
+        run: |
+          python scripts/run_isolated_postgres_tests.py \
+            tests/unit/application/services/test_kernel_relation_projection_materialization_service.py \
+            tests/unit/application/services/test_kernel_relation_projection_invariant_service.py \
+            tests/unit/application/services/test_kernel_claim_projection_readiness_service.py \
+            tests/unit/application/services/test_check_claim_projection_readiness_script.py \
+            tests/unit/application/services/test_rebuild_reasoning_paths_script.py \
+            tests/unit/application/services/test_kernel_reasoning_path_service.py \
+            tests/unit/application/services/test_hypothesis_generation_service.py \
+            tests/unit/infrastructure/test_graph_query_repository.py \
+            tests/integration/graph_service/test_graph_api.py \
+            tests/integration/api/test_hypothesis_routes_api.py \
+            tests/integration/api/test_kernel_graph_view_api.py \
+            tests/integration/api/test_kernel_reasoning_path_api.py \
+            tests/integration/api/test_kernel_routes_api.py \
+            tests/integration/kernel/test_graph_dictionary_hard_guarantees.py \
+            -m "graph and not performance"
+
+      - name: Graph performance suite
+        run: |
+          python scripts/run_isolated_postgres_tests.py \
+            tests/performance/test_graph_query_performance.py \
+            -m "graph and performance"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build graph-service image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/graph_api/Dockerfile
+          load: true
+          tags: med13-graph-api:test
+          cache-from: type=gha,scope=graph-service
+          cache-to: type=gha,mode=max,scope=graph-service
+
+      - name: Container scan graph-service (Trivy)
+        uses: aquasecurity/trivy-action@0.34.2
+        with:
+          image-ref: med13-graph-api:test
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: 1
+
+  deploy-dev:
+    name: Deploy Graph Service to Dev
+    needs: graph-checks
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
+    environment:
+      name: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Google Cloud deploy config
+        run: |
+          missing=()
+          [ -n "${PROJECT_ID}" ] || missing+=("secrets.GCP_PROJECT_ID")
+          [ -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ] || missing+=("vars.GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [ -n "${GCP_DEPLOYER_SERVICE_ACCOUNT}" ] || missing+=("vars.GCP_DEPLOYER_SERVICE_ACCOUNT")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub Actions deploy configuration:\n' >&2
+            printf ' - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push graph-service image (Dev)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/graph_api/Dockerfile
+          push: true
+          tags: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-graph-api-dev:${{ github.sha }}
+          cache-from: type=gha,scope=graph-service
+          cache-to: type=gha,mode=max,scope=graph-service
+
+      - name: Deploy graph-service to Cloud Run (Dev)
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: med13-graph-api-dev
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-graph-api-dev:${{ github.sha }}
+          region: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+          flags: --no-allow-unauthenticated
+
+      - name: Sync graph-service runtime config (Dev)
+        env:
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          GRAPH_SERVICE: med13-graph-api-dev
+          DATABASE_URL_SECRET_NAME: ${{ vars.DATABASE_URL_SECRET_NAME_DEV }}
+          GRAPH_CLOUDSQL_CONNECTION_NAME: ${{ vars.GRAPH_CLOUDSQL_CONNECTION_NAME_DEV }}
+          GRAPH_DATABASE_URL_SECRET_NAME: ${{ vars.GRAPH_DATABASE_URL_SECRET_NAME_DEV }}
+          GRAPH_JWT_SECRET_NAME: ${{ vars.GRAPH_JWT_SECRET_NAME_DEV }}
+          OPENAI_API_KEY_SECRET_NAME: ${{ vars.OPENAI_API_KEY_SECRET_NAME_DEV }}
+          GRAPH_MIN_INSTANCES: ${{ vars.GRAPH_MIN_INSTANCES_DEV }}
+          GRAPH_PUBLIC: ${{ vars.GRAPH_PUBLIC_DEV }}
+          GRAPH_SERVICE_NAME: MED13 Graph Service (Dev)
+          GRAPH_DB_POOL_SIZE: ${{ vars.GRAPH_DB_POOL_SIZE_DEV }}
+          GRAPH_DB_MAX_OVERFLOW: ${{ vars.GRAPH_DB_MAX_OVERFLOW_DEV }}
+          GRAPH_DB_POOL_TIMEOUT_SECONDS: ${{ vars.GRAPH_DB_POOL_TIMEOUT_SECONDS_DEV }}
+          GRAPH_DB_POOL_RECYCLE_SECONDS: ${{ vars.GRAPH_DB_POOL_RECYCLE_SECONDS_DEV }}
+          GRAPH_DB_POOL_USE_LIFO: ${{ vars.GRAPH_DB_POOL_USE_LIFO_DEV }}
+          GRAPH_MIGRATION_JOB_NAME: ${{ vars.GRAPH_MIGRATION_JOB_NAME_DEV }}
+          MED13_ENABLE_GRAPH_SEARCH_AGENT: ${{ vars.MED13_ENABLE_GRAPH_SEARCH_AGENT_DEV }}
+          MED13_ENABLE_RELATION_SUGGESTIONS: ${{ vars.MED13_ENABLE_RELATION_SUGGESTIONS_DEV }}
+          MED13_ENABLE_HYPOTHESIS_GENERATION: ${{ vars.MED13_ENABLE_HYPOTHESIS_GENERATION_DEV }}
+          MED13_ARTANA_POOL_MIN_SIZE: ${{ vars.MED13_ARTANA_POOL_MIN_SIZE_DEV }}
+          MED13_ARTANA_POOL_MAX_SIZE: ${{ vars.MED13_ARTANA_POOL_MAX_SIZE_DEV }}
+          MED13_ARTANA_COMMAND_TIMEOUT_SECONDS: ${{ vars.MED13_ARTANA_COMMAND_TIMEOUT_SECONDS_DEV }}
+        run: bash scripts/deploy/sync_graph_cloud_run_runtime_config.sh
+
+      - name: Validate shared-instance graph topology (Dev)
+        env:
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          GRAPH_SERVICE: med13-graph-api-dev
+          API_SERVICE: med13-resource-library-dev
+          ADMIN_SERVICE: med13-admin-dev
+          GRAPH_SERVICE_URL: ${{ vars.GRAPH_PUBLIC_URL_DEV }}
+          GRAPH_PUBLIC_URL: ${{ vars.GRAPH_PUBLIC_URL_DEV }}
+          CLOUDSQL_CONNECTION_NAME: ${{ vars.CLOUDSQL_CONNECTION_NAME_DEV }}
+          GRAPH_CLOUDSQL_CONNECTION_NAME: ${{ vars.GRAPH_CLOUDSQL_CONNECTION_NAME_DEV }}
+          GRAPH_MIGRATION_JOB_NAME: ${{ vars.GRAPH_MIGRATION_JOB_NAME_DEV }}
+        run: |
+          validation_log="$(mktemp)"
+          python3 scripts/deploy/validate_shared_instance_graph_topology.py | tee "${validation_log}"
+          {
+            echo "## Shared-instance topology validation (Dev)"
+            echo
+            echo '```text'
+            cat "${validation_log}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  deploy-staging:
+    name: Deploy Graph Service to Staging
+    needs: graph-checks
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment:
+      name: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Google Cloud deploy config
+        run: |
+          missing=()
+          [ -n "${PROJECT_ID}" ] || missing+=("secrets.GCP_PROJECT_ID")
+          [ -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ] || missing+=("vars.GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [ -n "${GCP_DEPLOYER_SERVICE_ACCOUNT}" ] || missing+=("vars.GCP_DEPLOYER_SERVICE_ACCOUNT")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub Actions deploy configuration:\n' >&2
+            printf ' - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push graph-service image (Staging)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/graph_api/Dockerfile
+          push: true
+          tags: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-graph-api-staging:${{ github.sha }}
+          cache-from: type=gha,scope=graph-service
+          cache-to: type=gha,mode=max,scope=graph-service
+
+      - name: Deploy graph-service to Cloud Run (Staging)
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: med13-graph-api-staging
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-graph-api-staging:${{ github.sha }}
+          region: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+          flags: --no-allow-unauthenticated
+
+      - name: Sync graph-service runtime config (Staging)
+        env:
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          GRAPH_SERVICE: med13-graph-api-staging
+          DATABASE_URL_SECRET_NAME: ${{ vars.DATABASE_URL_SECRET_NAME_STAGING }}
+          GRAPH_CLOUDSQL_CONNECTION_NAME: ${{ vars.GRAPH_CLOUDSQL_CONNECTION_NAME_STAGING }}
+          GRAPH_DATABASE_URL_SECRET_NAME: ${{ vars.GRAPH_DATABASE_URL_SECRET_NAME_STAGING }}
+          GRAPH_JWT_SECRET_NAME: ${{ vars.GRAPH_JWT_SECRET_NAME_STAGING }}
+          OPENAI_API_KEY_SECRET_NAME: ${{ vars.OPENAI_API_KEY_SECRET_NAME_STAGING }}
+          GRAPH_MIN_INSTANCES: ${{ vars.GRAPH_MIN_INSTANCES_STAGING }}
+          GRAPH_PUBLIC: ${{ vars.GRAPH_PUBLIC_STAGING }}
+          GRAPH_SERVICE_NAME: MED13 Graph Service (Staging)
+          GRAPH_DB_POOL_SIZE: ${{ vars.GRAPH_DB_POOL_SIZE_STAGING }}
+          GRAPH_DB_MAX_OVERFLOW: ${{ vars.GRAPH_DB_MAX_OVERFLOW_STAGING }}
+          GRAPH_DB_POOL_TIMEOUT_SECONDS: ${{ vars.GRAPH_DB_POOL_TIMEOUT_SECONDS_STAGING }}
+          GRAPH_DB_POOL_RECYCLE_SECONDS: ${{ vars.GRAPH_DB_POOL_RECYCLE_SECONDS_STAGING }}
+          GRAPH_DB_POOL_USE_LIFO: ${{ vars.GRAPH_DB_POOL_USE_LIFO_STAGING }}
+          GRAPH_MIGRATION_JOB_NAME: ${{ vars.GRAPH_MIGRATION_JOB_NAME_STAGING }}
+          MED13_ENABLE_GRAPH_SEARCH_AGENT: ${{ vars.MED13_ENABLE_GRAPH_SEARCH_AGENT_STAGING }}
+          MED13_ENABLE_RELATION_SUGGESTIONS: ${{ vars.MED13_ENABLE_RELATION_SUGGESTIONS_STAGING }}
+          MED13_ENABLE_HYPOTHESIS_GENERATION: ${{ vars.MED13_ENABLE_HYPOTHESIS_GENERATION_STAGING }}
+          MED13_ARTANA_POOL_MIN_SIZE: ${{ vars.MED13_ARTANA_POOL_MIN_SIZE_STAGING }}
+          MED13_ARTANA_POOL_MAX_SIZE: ${{ vars.MED13_ARTANA_POOL_MAX_SIZE_STAGING }}
+          MED13_ARTANA_COMMAND_TIMEOUT_SECONDS: ${{ vars.MED13_ARTANA_COMMAND_TIMEOUT_SECONDS_STAGING }}
+        run: bash scripts/deploy/sync_graph_cloud_run_runtime_config.sh
+
+      - name: Validate shared-instance graph topology (Staging)
+        env:
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          GRAPH_SERVICE: med13-graph-api-staging
+          API_SERVICE: med13-resource-library-staging
+          ADMIN_SERVICE: med13-admin-staging
+          GRAPH_SERVICE_URL: ${{ vars.GRAPH_PUBLIC_URL_STAGING }}
+          GRAPH_PUBLIC_URL: ${{ vars.GRAPH_PUBLIC_URL_STAGING }}
+          CLOUDSQL_CONNECTION_NAME: ${{ vars.CLOUDSQL_CONNECTION_NAME_STAGING }}
+          GRAPH_CLOUDSQL_CONNECTION_NAME: ${{ vars.GRAPH_CLOUDSQL_CONNECTION_NAME_STAGING }}
+          GRAPH_MIGRATION_JOB_NAME: ${{ vars.GRAPH_MIGRATION_JOB_NAME_STAGING }}
+        run: |
+          validation_log="$(mktemp)"
+          python3 scripts/deploy/validate_shared_instance_graph_topology.py | tee "${validation_log}"
+          {
+            echo "## Shared-instance topology validation (Staging)"
+            echo
+            echo '```text'
+            cat "${validation_log}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  deploy-production:
+    name: Deploy Graph Service to Production
+    needs: graph-checks
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'release' && github.event.action == 'published') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Google Cloud deploy config
+        run: |
+          missing=()
+          [ -n "${PROJECT_ID}" ] || missing+=("secrets.GCP_PROJECT_ID")
+          [ -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ] || missing+=("vars.GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [ -n "${GCP_DEPLOYER_SERVICE_ACCOUNT}" ] || missing+=("vars.GCP_DEPLOYER_SERVICE_ACCOUNT")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub Actions deploy configuration:\n' >&2
+            printf ' - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push graph-service image (Production)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./services/graph_api/Dockerfile
+          push: true
+          tags: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-graph-api:${{ github.sha }}
+          cache-from: type=gha,scope=graph-service
+          cache-to: type=gha,mode=max,scope=graph-service
+
+      - name: Deploy graph-service to Cloud Run (Production)
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: med13-graph-api
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/med13-graph-api:${{ github.sha }}
+          region: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+          flags: --no-allow-unauthenticated
+
+      - name: Sync graph-service runtime config (Production)
+        env:
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          GRAPH_SERVICE: med13-graph-api
+          DATABASE_URL_SECRET_NAME: ${{ vars.DATABASE_URL_SECRET_NAME_PROD }}
+          GRAPH_CLOUDSQL_CONNECTION_NAME: ${{ vars.GRAPH_CLOUDSQL_CONNECTION_NAME_PROD }}
+          GRAPH_DATABASE_URL_SECRET_NAME: ${{ vars.GRAPH_DATABASE_URL_SECRET_NAME_PROD }}
+          GRAPH_JWT_SECRET_NAME: ${{ vars.GRAPH_JWT_SECRET_NAME_PROD }}
+          OPENAI_API_KEY_SECRET_NAME: ${{ vars.OPENAI_API_KEY_SECRET_NAME_PROD }}
+          GRAPH_MIN_INSTANCES: ${{ vars.GRAPH_MIN_INSTANCES_PROD }}
+          GRAPH_PUBLIC: ${{ vars.GRAPH_PUBLIC_PROD }}
+          GRAPH_SERVICE_NAME: MED13 Graph Service
+          GRAPH_DB_POOL_SIZE: ${{ vars.GRAPH_DB_POOL_SIZE_PROD }}
+          GRAPH_DB_MAX_OVERFLOW: ${{ vars.GRAPH_DB_MAX_OVERFLOW_PROD }}
+          GRAPH_DB_POOL_TIMEOUT_SECONDS: ${{ vars.GRAPH_DB_POOL_TIMEOUT_SECONDS_PROD }}
+          GRAPH_DB_POOL_RECYCLE_SECONDS: ${{ vars.GRAPH_DB_POOL_RECYCLE_SECONDS_PROD }}
+          GRAPH_DB_POOL_USE_LIFO: ${{ vars.GRAPH_DB_POOL_USE_LIFO_PROD }}
+          GRAPH_MIGRATION_JOB_NAME: ${{ vars.GRAPH_MIGRATION_JOB_NAME_PROD }}
+          MED13_ENABLE_GRAPH_SEARCH_AGENT: ${{ vars.MED13_ENABLE_GRAPH_SEARCH_AGENT_PROD }}
+          MED13_ENABLE_RELATION_SUGGESTIONS: ${{ vars.MED13_ENABLE_RELATION_SUGGESTIONS_PROD }}
+          MED13_ENABLE_HYPOTHESIS_GENERATION: ${{ vars.MED13_ENABLE_HYPOTHESIS_GENERATION_PROD }}
+          MED13_ARTANA_POOL_MIN_SIZE: ${{ vars.MED13_ARTANA_POOL_MIN_SIZE_PROD }}
+          MED13_ARTANA_POOL_MAX_SIZE: ${{ vars.MED13_ARTANA_POOL_MAX_SIZE_PROD }}
+          MED13_ARTANA_COMMAND_TIMEOUT_SECONDS: ${{ vars.MED13_ARTANA_COMMAND_TIMEOUT_SECONDS_PROD }}
+        run: bash scripts/deploy/sync_graph_cloud_run_runtime_config.sh
+
+      - name: Validate shared-instance graph topology (Production)
+        env:
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          GRAPH_SERVICE: med13-graph-api
+          API_SERVICE: med13-resource-library
+          ADMIN_SERVICE: med13-admin
+          GRAPH_SERVICE_URL: ${{ vars.GRAPH_PUBLIC_URL_PROD }}
+          GRAPH_PUBLIC_URL: ${{ vars.GRAPH_PUBLIC_URL_PROD }}
+          CLOUDSQL_CONNECTION_NAME: ${{ vars.CLOUDSQL_CONNECTION_NAME_PROD }}
+          GRAPH_CLOUDSQL_CONNECTION_NAME: ${{ vars.GRAPH_CLOUDSQL_CONNECTION_NAME_PROD }}
+          GRAPH_MIGRATION_JOB_NAME: ${{ vars.GRAPH_MIGRATION_JOB_NAME_PROD }}
+        run: |
+          validation_log="$(mktemp)"
+          python3 scripts/deploy/validate_shared_instance_graph_topology.py | tee "${validation_log}"
+          {
+            echo "## Shared-instance topology validation (Production)"
+            echo
+            echo '```text'
+            cat "${validation_log}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"

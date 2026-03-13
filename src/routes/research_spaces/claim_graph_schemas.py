@@ -73,6 +73,7 @@ class ClaimParticipantBackfillResponse(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
+    operation_run_id: UUID = Field(..., strict=False)
     scanned_claims: int
     created_participants: int
     skipped_existing: int
@@ -104,6 +105,7 @@ class ClaimRelationCreateRequest(BaseModel):
     relation_type: str = Field(..., min_length=1, max_length=32)
     agent_run_id: str | None = Field(default=None, min_length=1, max_length=255)
     source_document_id: UUID | None = Field(default=None, strict=False)
+    source_document_ref: str | None = Field(default=None, max_length=512)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0, strict=False)
     review_status: str = Field(default="PROPOSED", min_length=1, max_length=32)
     evidence_summary: str | None = Field(default=None, max_length=8000)
@@ -129,7 +131,8 @@ class ClaimRelationResponse(BaseModel):
     target_claim_id: UUID
     relation_type: str
     agent_run_id: str | None
-    source_document_id: UUID | None
+    source_document_id: UUID | None = None
+    source_document_ref: str | None = None
     confidence: float
     review_status: str
     evidence_summary: str | None
@@ -150,6 +153,7 @@ class ClaimRelationResponse(BaseModel):
                 if model.source_document_id is not None
                 else None
             ),
+            source_document_ref=model.source_document_ref,
             confidence=float(model.confidence),
             review_status=str(model.review_status),
             evidence_summary=model.evidence_summary,

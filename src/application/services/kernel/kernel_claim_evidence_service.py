@@ -39,12 +39,14 @@ class KernelClaimEvidenceService:
         figure_reference: str | None,
         table_reference: str | None,
         confidence: float,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelClaimEvidence:
         """Create one claim evidence row."""
         return self._claim_evidence.create(
             claim_id=claim_id,
             source_document_id=source_document_id,
+            source_document_ref=source_document_ref,
             agent_run_id=agent_run_id,
             sentence=sentence,
             sentence_source=sentence_source,

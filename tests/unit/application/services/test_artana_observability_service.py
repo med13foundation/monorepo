@@ -42,6 +42,10 @@ from src.models.database.user_data_source import (
 )
 
 
+def _iso_timestamp() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _build_trace_record(
     *,
     run_id: str = "run-1",
@@ -223,10 +227,10 @@ def test_load_linked_records_resolves_documents_extractions_and_provenance(
         job_kind=IngestionJobKindEnum.PIPELINE_ORCHESTRATION,
         trigger=IngestionTriggerEnum.MANUAL,
         triggered_by=str(user.id),
-        triggered_at=datetime.now(UTC).isoformat(),
+        triggered_at=_iso_timestamp(),
         status=IngestionStatusEnum.COMPLETED,
-        started_at=datetime.now(UTC).isoformat(),
-        completed_at=datetime.now(UTC).isoformat(),
+        started_at=_iso_timestamp(),
+        completed_at=_iso_timestamp(),
         metrics={},
         errors=[],
         provenance={},

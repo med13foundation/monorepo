@@ -25,6 +25,10 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from src.database.graph_schema import (
+    graph_table_options,
+    qualify_graph_foreign_key_target,
+)
 from src.models.database.base import Base
 from src.type_definitions.common import JSONValue  # noqa: TC001
 
@@ -50,19 +54,21 @@ class ObservationModel(Base):
     )
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
         doc="Owning research space",
     )
     subject_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("entities.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("entities.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
         doc="Entity this observation belongs to",
     )
     variable_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("variable_definitions.id"),
+        ForeignKey(qualify_graph_foreign_key_target("variable_definitions.id")),
         nullable=False,
         doc="What was measured, FK to dictionary",
     )
@@ -114,7 +120,7 @@ class ObservationModel(Base):
     # Provenance and confidence
     provenance_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("provenance.id"),
+        ForeignKey(qualify_graph_foreign_key_target("provenance.id")),
         nullable=True,
         doc="Extraction/ingestion provenance chain",
     )
@@ -147,7 +153,9 @@ class ObservationModel(Base):
         Index("idx_obs_space_created_at", "research_space_id", "created_at"),
         Index("idx_obs_subject_time", "subject_id", "observed_at"),
         Index("idx_obs_provenance", "provenance_id"),
-        {"comment": "Typed observations (EAV with dictionary validation)"},
+        graph_table_options(
+            comment="Typed observations (EAV with dictionary validation)",
+        ),
     )
 
     def __repr__(self) -> str:

@@ -102,7 +102,7 @@ Conflict detection is claim-driven and relation-scoped:
 - Canonical explainability key: `relation_projection_sources`
 - Compatibility pointer: `linked_relation_id`
 - Conflict condition (v1): at least one `SUPPORT` claim and one `REFUTE` claim linked to the same canonical relation
-- Exposed API: `GET /research-spaces/{space_id}/relations/conflicts`
+- Exposed API: `GET /v1/spaces/{space_id}/relations/conflicts`
 - Returned summary includes counts and claim IDs by polarity for curation triage
 
 This keeps the canonical graph stable as a projection while allowing richer scientific disagreement modeling in claim space. `relation_evidence` is a derived cache built from linked support-claim evidence, not a separate truth store.

@@ -5,8 +5,11 @@ Orchestrates domain services and repositories to implement
 research space management use cases with proper business logic.
 """
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from src.domain.entities.research_space import ResearchSpace, SpaceStatus
@@ -15,6 +18,9 @@ from src.domain.repositories.research_space_repository import (
     ResearchSpaceRepository,
 )
 from src.type_definitions.common import JSONObject
+
+if TYPE_CHECKING:
+    from src.domain.ports.space_lifecycle_sync_port import SpaceLifecycleSyncPort
 
 
 @dataclass
@@ -65,6 +71,7 @@ class ResearchSpaceManagementService:
     def __init__(
         self,
         research_space_repository: ResearchSpaceRepository,
+        space_lifecycle_sync: SpaceLifecycleSyncPort | None = None,
     ):
         """
         Initialize the research space management service.
@@ -73,6 +80,12 @@ class ResearchSpaceManagementService:
             research_space_repository: Repository for research spaces
         """
         self._space_repository = research_space_repository
+        self._space_lifecycle_sync = space_lifecycle_sync
+
+    def _sync_space(self, space: ResearchSpace) -> None:
+        if self._space_lifecycle_sync is None:
+            return
+        self._space_lifecycle_sync.sync_space(space)
 
     def create_space(self, request: CreateSpaceRequest) -> ResearchSpace:
         """
@@ -105,8 +118,9 @@ class ResearchSpaceManagementService:
             tags=request.tags or [],
         )
 
-        # Save to repository
-        return self._space_repository.save(space)
+        saved_space = self._space_repository.save(space)
+        self._sync_space(saved_space)
+        return saved_space
 
     def get_space(
         self,
@@ -206,7 +220,9 @@ class ResearchSpaceManagementService:
         # Update timestamp
         updated_space = updated_space.with_updated_at()
 
-        return self._space_repository.save(updated_space)
+        saved_space = self._space_repository.save(updated_space)
+        self._sync_space(saved_space)
+        return saved_space
 
     def delete_space(self, space_id: UUID, user_id: UUID) -> bool:
         """
@@ -227,7 +243,12 @@ class ResearchSpaceManagementService:
         if not space.can_be_modified_by(user_id):
             return False
 
-        return self._space_repository.delete(space_id)
+        deleted = self._space_repository.delete(space_id)
+        if not deleted:
+            return False
+
+        self._sync_space(space.with_status(SpaceStatus.ARCHIVED))
+        return True
 
     def archive_space(self, space_id: UUID, user_id: UUID) -> ResearchSpace | None:
         """
@@ -245,7 +266,9 @@ class ResearchSpaceManagementService:
             return None
 
         archived_space = space.with_status(SpaceStatus.ARCHIVED)
-        return self._space_repository.save(archived_space)
+        saved_space = self._space_repository.save(archived_space)
+        self._sync_space(saved_space)
+        return saved_space
 
     def activate_space(self, space_id: UUID, user_id: UUID) -> ResearchSpace | None:
         """
@@ -263,7 +286,9 @@ class ResearchSpaceManagementService:
             return None
 
         activated_space = space.with_status(SpaceStatus.ACTIVE)
-        return self._space_repository.save(activated_space)
+        saved_space = self._space_repository.save(activated_space)
+        self._sync_space(saved_space)
+        return saved_space
 
     def get_active_spaces(
         self,

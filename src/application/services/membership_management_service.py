@@ -5,8 +5,11 @@ Orchestrates domain services and repositories to implement
 membership management use cases with proper business logic.
 """
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
-from uuid import UUID
+from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
 
 from src.domain.entities.research_space_membership import (
     MembershipRole,
@@ -16,6 +19,10 @@ from src.domain.repositories.research_space_repository import (
     ResearchSpaceMembershipRepository,
     ResearchSpaceRepository,
 )
+
+if TYPE_CHECKING:
+    from src.domain.entities.research_space import ResearchSpace
+    from src.domain.ports.space_lifecycle_sync_port import SpaceLifecycleSyncPort
 
 
 class InviteMemberRequest:
@@ -56,6 +63,7 @@ class MembershipManagementService:
         self,
         membership_repository: ResearchSpaceMembershipRepository,
         research_space_repository: ResearchSpaceRepository,
+        space_lifecycle_sync: SpaceLifecycleSyncPort | None = None,
     ):
         """
         Initialize the membership management service.
@@ -66,6 +74,19 @@ class MembershipManagementService:
         """
         self._membership_repository = membership_repository
         self._space_repository = research_space_repository
+        self._space_lifecycle_sync = space_lifecycle_sync
+
+    def _load_space(self, space_id: UUID) -> ResearchSpace:
+        space = self._space_repository.find_by_id(space_id)
+        if space is None:
+            msg = f"Research space {space_id} not found"
+            raise ValueError(msg)
+        return space
+
+    def _sync_space(self, space_id: UUID) -> None:
+        if self._space_lifecycle_sync is None:
+            return
+        self._space_lifecycle_sync.sync_space(self._load_space(space_id))
 
     def _get_requester_membership(
         self,
@@ -102,10 +123,7 @@ class MembershipManagementService:
             ValueError: If validation fails or user is already a member
         """
         # Check if space exists
-        space = self._space_repository.find_by_id(request.space_id)
-        if not space:
-            msg = f"Research space {request.space_id} not found"
-            raise ValueError(msg)
+        self._load_space(request.space_id)
 
         # Check if user is already a member
         existing = self._membership_repository.find_by_space_and_user(
@@ -129,7 +147,7 @@ class MembershipManagementService:
         # Create the membership entity with invitation
         now = datetime.now(UTC)
         membership = ResearchSpaceMembership(
-            id=UUID(),  # Will be set by repository
+            id=uuid4(),  # Repository may replace this during persistence.
             space_id=request.space_id,
             user_id=request.user_id,
             role=request.role,
@@ -140,7 +158,9 @@ class MembershipManagementService:
         )
 
         # Save to repository
-        return self._membership_repository.save(membership)
+        saved_membership = self._membership_repository.save(membership)
+        self._sync_space(saved_membership.space_id)
+        return saved_membership
 
     def accept_invitation(
         self,
@@ -173,7 +193,9 @@ class MembershipManagementService:
         now = datetime.now(UTC)
         accepted_membership = membership.with_joined_at(now).with_status(is_active=True)
 
-        return self._membership_repository.save(accepted_membership)
+        saved_membership = self._membership_repository.save(accepted_membership)
+        self._sync_space(saved_membership.space_id)
+        return saved_membership
 
     def get_membership(
         self,
@@ -326,7 +348,9 @@ class MembershipManagementService:
 
         # Update the role
         updated_membership = membership.with_role(request.role)
-        return self._membership_repository.save(updated_membership)
+        saved_membership = self._membership_repository.save(updated_membership)
+        self._sync_space(saved_membership.space_id)
+        return saved_membership
 
     def remove_member(
         self,
@@ -364,7 +388,8 @@ class MembershipManagementService:
 
         # Deactivate membership instead of deleting (soft delete)
         deactivated_membership = membership.with_status(is_active=False)
-        self._membership_repository.save(deactivated_membership)
+        saved_membership = self._membership_repository.save(deactivated_membership)
+        self._sync_space(saved_membership.space_id)
         return True
 
     def get_user_role(

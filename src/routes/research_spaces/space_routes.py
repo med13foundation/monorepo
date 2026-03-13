@@ -9,18 +9,17 @@ from fastapi import Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from src.application.curation.services.review_service import ReviewQuery, ReviewService
-from src.application.services.membership_management_service import (
-    MembershipManagementService,
-)
-from src.application.services.research_space_management_service import (
-    CreateSpaceRequest,
-    ResearchSpaceManagementService,
-    UpdateSpaceRequest,
+from src.application.services import (
+    membership_management_service,
+    research_space_management_service,
 )
 from src.database.session import get_session
-from src.domain.entities.research_space import SpaceStatus
-from src.domain.entities.research_space_membership import MembershipRole
-from src.domain.entities.user import User, UserRole
+from src.domain.entities import (
+    research_space,
+    research_space_membership,
+    user,
+)
+from src.infrastructure.graph_service.errors import GraphServiceClientError
 from src.infrastructure.repositories.user_data_source_repository import (
     SqlAlchemyUserDataSourceRepository,
 )
@@ -60,14 +59,14 @@ logger = logging.getLogger(__name__)
 
 def _build_admin_membership_response(
     space_id: UUID,
-    current_user: User,
+    current_user: user.User,
 ) -> MembershipResponse:
     """Return synthetic membership for platform admins."""
     return MembershipResponse(
         id=UUID(int=0),
         space_id=space_id,
         user_id=current_user.id,
-        role=MembershipRole.ADMIN.value,
+        role=research_space_membership.MembershipRole.ADMIN.value,
         invited_by=None,
         invited_at=None,
         joined_at=None,
@@ -79,11 +78,14 @@ def _build_admin_membership_response(
 
 def _can_manage_members(
     *,
-    role: MembershipRole,
+    role: research_space_membership.MembershipRole,
     is_platform_admin: bool,
 ) -> bool:
     """Role check for membership-management capabilities."""
-    return is_platform_admin or role in {MembershipRole.OWNER, MembershipRole.ADMIN}
+    return is_platform_admin or role in {
+        research_space_membership.MembershipRole.OWNER,
+        research_space_membership.MembershipRole.ADMIN,
+    }
 
 
 def get_space_overview_limits(
@@ -103,12 +105,14 @@ def get_space_overview_limits(
 )
 def create_space(
     request: CreateSpaceRequestModel,
-    current_user: User = Depends(get_current_active_user),
-    service: ResearchSpaceManagementService = Depends(get_research_space_service),
+    current_user: user.User = Depends(get_current_active_user),
+    service: research_space_management_service.ResearchSpaceManagementService = Depends(
+        get_research_space_service,
+    ),
 ) -> ResearchSpaceResponse:
     """Create a new research space."""
     try:
-        create_request = CreateSpaceRequest(
+        create_request = research_space_management_service.CreateSpaceRequest(
             owner_id=current_user.id,
             name=request.name,
             slug=request.slug,
@@ -116,7 +120,16 @@ def create_space(
             settings=request.settings,
             tags=request.tags,
         )
-        space = service.create_space(create_request)
+        try:
+            space = service.create_space(create_request)
+        except GraphServiceClientError as exc:
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "Research space was created but graph-space sync failed: "
+                    + (exc.detail or str(exc))
+                ),
+            ) from exc
         return ResearchSpaceResponse.from_entity(space)
     except ValueError as e:
         raise HTTPException(
@@ -135,8 +148,10 @@ def list_spaces(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records"),
     owner_id: UUID | None = Query(None, description="Filter by owner"),
-    current_user: User = Depends(get_current_active_user),
-    service: ResearchSpaceManagementService = Depends(get_research_space_service),
+    current_user: user.User = Depends(get_current_active_user),
+    service: research_space_management_service.ResearchSpaceManagementService = Depends(
+        get_research_space_service,
+    ),
 ) -> ResearchSpaceListResponse:
     """List research spaces with pagination."""
     try:
@@ -166,8 +181,10 @@ def list_spaces(
 )
 def get_space(
     space_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    service: ResearchSpaceManagementService = Depends(get_research_space_service),
+    current_user: user.User = Depends(get_current_active_user),
+    service: research_space_management_service.ResearchSpaceManagementService = Depends(
+        get_research_space_service,
+    ),
 ) -> ResearchSpaceResponse:
     """Get a research space by ID."""
     space = service.get_space(space_id, current_user.id)
@@ -191,9 +208,13 @@ def get_space(
 def get_space_overview(
     space_id: UUID,
     limits: tuple[int, int] = Depends(get_space_overview_limits),
-    current_user: User = Depends(get_current_active_user),
-    space_service: ResearchSpaceManagementService = Depends(get_research_space_service),
-    membership_service: MembershipManagementService = Depends(get_membership_service),
+    current_user: user.User = Depends(get_current_active_user),
+    space_service: research_space_management_service.ResearchSpaceManagementService = Depends(
+        get_research_space_service,
+    ),
+    membership_service: membership_management_service.MembershipManagementService = Depends(
+        get_membership_service,
+    ),
     curation_service: ReviewService = Depends(get_curation_service),
     session: Session = Depends(get_session),
 ) -> SpaceOverviewResponse:
@@ -215,23 +236,23 @@ def get_space_overview(
             detail=f"Research space {space_id} not found",
         )
 
-    is_platform_admin = current_user.role == UserRole.ADMIN
+    is_platform_admin = current_user.role == user.UserRole.ADMIN
     membership = membership_service.get_membership_for_user(space_id, current_user.id)
 
     membership_response: MembershipResponse | None
-    effective_role: MembershipRole
+    effective_role: research_space_membership.MembershipRole
     if membership is not None:
         membership_response = MembershipResponse.from_entity(membership)
         effective_role = membership.role
     elif is_platform_admin:
         membership_response = _build_admin_membership_response(space_id, current_user)
-        effective_role = MembershipRole.ADMIN
+        effective_role = research_space_membership.MembershipRole.ADMIN
     else:
         membership_response = None
-        effective_role = MembershipRole.VIEWER
+        effective_role = research_space_membership.MembershipRole.VIEWER
 
     has_space_access = is_platform_admin or membership is not None
-    is_owner = effective_role == MembershipRole.OWNER
+    is_owner = effective_role == research_space_membership.MembershipRole.OWNER
     can_manage_members = _can_manage_members(
         role=effective_role,
         is_platform_admin=is_platform_admin,
@@ -333,8 +354,10 @@ def get_space_overview(
 )
 def get_space_by_slug(
     slug: str,
-    current_user: User = Depends(get_current_active_user),
-    service: ResearchSpaceManagementService = Depends(get_research_space_service),
+    current_user: user.User = Depends(get_current_active_user),
+    service: research_space_management_service.ResearchSpaceManagementService = Depends(
+        get_research_space_service,
+    ),
 ) -> ResearchSpaceResponse:
     """Get a research space by slug."""
     space = service.get_space_by_slug(slug, current_user.id)
@@ -355,29 +378,42 @@ def get_space_by_slug(
 def update_space(
     space_id: UUID,
     request: UpdateSpaceRequestModel,
-    current_user: User = Depends(get_current_active_user),
-    service: ResearchSpaceManagementService = Depends(get_research_space_service),
+    current_user: user.User = Depends(get_current_active_user),
+    service: research_space_management_service.ResearchSpaceManagementService = Depends(
+        get_research_space_service,
+    ),
 ) -> ResearchSpaceResponse:
     """Update a research space."""
     try:
         status_enum = None
         if request.status:
             try:
-                status_enum = SpaceStatus(request.status.lower())
+                status_enum = research_space.SpaceStatus(
+                    request.status.lower(),
+                )
             except ValueError:
                 raise HTTPException(
                     status_code=HTTP_400_BAD_REQUEST,
                     detail=f"Invalid status: {request.status}",
                 ) from None
 
-        update_request = UpdateSpaceRequest(
+        update_request = research_space_management_service.UpdateSpaceRequest(
             name=request.name,
             description=request.description,
             settings=request.settings,
             tags=request.tags,
             status=status_enum,
         )
-        space = service.update_space(space_id, update_request, current_user)
+        try:
+            space = service.update_space(space_id, update_request, current_user)
+        except GraphServiceClientError as exc:
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "Research space was updated but graph-space sync failed: "
+                    + (exc.detail or str(exc))
+                ),
+            ) from exc
         if not space:
             raise HTTPException(
                 status_code=HTTP_404_NOT_FOUND,
@@ -401,11 +437,28 @@ def update_space(
 )
 def delete_space(
     space_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    service: ResearchSpaceManagementService = Depends(get_research_space_service),
+    current_user: user.User = Depends(get_current_active_user),
+    service: research_space_management_service.ResearchSpaceManagementService = Depends(
+        get_research_space_service,
+    ),
 ) -> None:
     """Delete a research space."""
-    success = service.delete_space(space_id, current_user.id)
+    existing_space = service.get_space(space_id, current_user.id)
+    if existing_space is None:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail=f"Research space {space_id} not found or access denied",
+        )
+    try:
+        success = service.delete_space(space_id, current_user.id)
+    except GraphServiceClientError as exc:
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Research space was deleted but graph-space archival sync failed: "
+                + (exc.detail or str(exc))
+            ),
+        ) from exc
     if not success:
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,

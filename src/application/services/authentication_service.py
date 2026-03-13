@@ -19,7 +19,7 @@ from src.application.services.authentication_session_manager import (
     SessionLifecycleManager,
 )
 from src.domain.entities.session import UserSession
-from src.domain.entities.user import User, UserStatus
+from src.domain.entities.user import User, UserRole, UserStatus
 from src.domain.repositories.session_repository import SessionRepository
 from src.domain.repositories.user_repository import UserRepository
 from src.domain.services.security.jwt_provider import JWTProviderService
@@ -96,6 +96,11 @@ class AuthenticationService:
             refresh_token_expiry_days=self.REFRESH_TOKEN_EXPIRY_DAYS,
         )
 
+    @staticmethod
+    def _access_token_extra_claims(user: User) -> dict[str, object]:
+        """Emit graph-service claims needed by direct standalone-service callers."""
+        return {"graph_admin": user.role == UserRole.ADMIN}
+
     async def authenticate_user(
         self,
         request: LoginRequest,
@@ -150,7 +155,11 @@ class AuthenticationService:
         await self.user_repository.update(user)
 
         # Generate tokens first
-        access_token = self.jwt_provider.create_access_token(user.id, user.role.value)
+        access_token = self.jwt_provider.create_access_token(
+            user.id,
+            user.role.value,
+            extra_claims=self._access_token_extra_claims(user),
+        )
         refresh_token = self.jwt_provider.create_refresh_token(user.id)
 
         # Create session with tokens
@@ -204,6 +213,7 @@ class AuthenticationService:
             new_access_token = self.jwt_provider.create_access_token(
                 user.id,
                 user.role.value,
+                extra_claims=self._access_token_extra_claims(user),
             )
             new_refresh_token = self.jwt_provider.create_refresh_token(user.id)
 

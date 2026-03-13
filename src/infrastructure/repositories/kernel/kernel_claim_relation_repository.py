@@ -65,6 +65,7 @@ class SqlAlchemyKernelClaimRelationRepository(KernelClaimRelationRepository):
         confidence: float,
         review_status: ClaimRelationReviewStatus,
         evidence_summary: str | None,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelClaimRelation:
         model = ClaimRelationModel(
@@ -75,6 +76,7 @@ class SqlAlchemyKernelClaimRelationRepository(KernelClaimRelationRepository):
             relation_type=relation_type,
             agent_run_id=_normalize_optional_text(agent_run_id),
             source_document_id=_try_as_uuid(source_document_id),
+            source_document_ref=_normalize_optional_text(source_document_ref),
             confidence=max(0.0, min(1.0, float(confidence))),
             review_status=review_status,
             evidence_summary=_normalize_optional_text(evidence_summary),

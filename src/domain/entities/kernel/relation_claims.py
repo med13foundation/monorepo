@@ -31,6 +31,7 @@ class KernelRelationClaim(BaseModel):
     id: UUID
     research_space_id: UUID
     source_document_id: UUID | None = None
+    source_document_ref: str | None = Field(default=None, max_length=512)
     agent_run_id: str | None = Field(default=None, max_length=255)
     source_type: str = Field(..., min_length=1, max_length=64)
     relation_type: str = Field(..., min_length=1, max_length=64)

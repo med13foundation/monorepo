@@ -1,4 +1,5 @@
 import { apiGet, apiPatch, apiPost, apiPut, type ApiRequestOptions } from '@/lib/api/client'
+import { resolveGraphApiBaseUrl } from '@/lib/api/graph-base-url'
 import type {
   ConceptAliasCreateRequest,
   ConceptAliasListResponse,
@@ -17,6 +18,8 @@ import type {
   ConceptSetListResponse,
   ConceptSetResponse,
 } from '@/types/concepts'
+
+const GRAPH_API_BASE_URL = resolveGraphApiBaseUrl()
 
 export interface ConceptSetListParams {
   include_inactive?: boolean
@@ -42,6 +45,19 @@ export interface ConceptDecisionListParams {
   limit?: number
 }
 
+function withGraphApiOptions<TResponse>(
+  options: ApiRequestOptions<TResponse>,
+): ApiRequestOptions<TResponse> {
+  return {
+    ...options,
+    baseURL: GRAPH_API_BASE_URL,
+  }
+}
+
+function graphSpacePath(spaceId: string, path: string): string {
+  return `/v1/spaces/${spaceId}${path}`
+}
+
 export async function fetchSpaceConceptSets(
   spaceId: string,
   params: ConceptSetListParams = {},
@@ -58,7 +74,10 @@ export async function fetchSpaceConceptSets(
     },
   }
 
-  return apiGet<ConceptSetListResponse>(`/research-spaces/${spaceId}/concepts/sets`, options)
+  return apiGet<ConceptSetListResponse>(
+    graphSpacePath(spaceId, '/concepts/sets'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function fetchSpaceConceptMembers(
@@ -80,7 +99,10 @@ export async function fetchSpaceConceptMembers(
     },
   }
 
-  return apiGet<ConceptMemberListResponse>(`/research-spaces/${spaceId}/concepts/members`, options)
+  return apiGet<ConceptMemberListResponse>(
+    graphSpacePath(spaceId, '/concepts/members'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function fetchSpaceConceptAliases(
@@ -102,7 +124,10 @@ export async function fetchSpaceConceptAliases(
     },
   }
 
-  return apiGet<ConceptAliasListResponse>(`/research-spaces/${spaceId}/concepts/aliases`, options)
+  return apiGet<ConceptAliasListResponse>(
+    graphSpacePath(spaceId, '/concepts/aliases'),
+    withGraphApiOptions(options),
+  )
 }
 
 export async function fetchSpaceConceptPolicy(
@@ -112,9 +137,10 @@ export async function fetchSpaceConceptPolicy(
   if (!token) {
     throw new Error('Authentication token is required for fetchSpaceConceptPolicy')
   }
-  return apiGet<ConceptPolicyResponse | null>(`/research-spaces/${spaceId}/concepts/policy`, {
-    token,
-  })
+  return apiGet<ConceptPolicyResponse | null>(
+    graphSpacePath(spaceId, '/concepts/policy'),
+    withGraphApiOptions({ token }),
+  )
 }
 
 export async function fetchSpaceConceptDecisions(
@@ -136,8 +162,8 @@ export async function fetchSpaceConceptDecisions(
   }
 
   return apiGet<ConceptDecisionListResponse>(
-    `/research-spaces/${spaceId}/concepts/decisions`,
-    options,
+    graphSpacePath(spaceId, '/concepts/decisions'),
+    withGraphApiOptions(options),
   )
 }
 
@@ -149,9 +175,11 @@ export async function createSpaceConceptSet(
   if (!token) {
     throw new Error('Authentication token is required for createSpaceConceptSet')
   }
-  return apiPost<ConceptSetResponse>(`/research-spaces/${spaceId}/concepts/sets`, payload, {
-    token,
-  })
+  return apiPost<ConceptSetResponse>(
+    graphSpacePath(spaceId, '/concepts/sets'),
+    payload,
+    withGraphApiOptions({ token }),
+  )
 }
 
 export async function createSpaceConceptMember(
@@ -163,9 +191,9 @@ export async function createSpaceConceptMember(
     throw new Error('Authentication token is required for createSpaceConceptMember')
   }
   return apiPost<ConceptMemberResponse>(
-    `/research-spaces/${spaceId}/concepts/members`,
+    graphSpacePath(spaceId, '/concepts/members'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -178,9 +206,9 @@ export async function createSpaceConceptAlias(
     throw new Error('Authentication token is required for createSpaceConceptAlias')
   }
   return apiPost<ConceptAliasResponse>(
-    `/research-spaces/${spaceId}/concepts/aliases`,
+    graphSpacePath(spaceId, '/concepts/aliases'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -192,9 +220,11 @@ export async function upsertSpaceConceptPolicy(
   if (!token) {
     throw new Error('Authentication token is required for upsertSpaceConceptPolicy')
   }
-  return apiPut<ConceptPolicyResponse>(`/research-spaces/${spaceId}/concepts/policy`, payload, {
-    token,
-  })
+  return apiPut<ConceptPolicyResponse>(
+    graphSpacePath(spaceId, '/concepts/policy'),
+    payload,
+    withGraphApiOptions({ token }),
+  )
 }
 
 export async function proposeSpaceConceptDecision(
@@ -206,9 +236,9 @@ export async function proposeSpaceConceptDecision(
     throw new Error('Authentication token is required for proposeSpaceConceptDecision')
   }
   return apiPost<ConceptDecisionResponse>(
-    `/research-spaces/${spaceId}/concepts/decisions/propose`,
+    graphSpacePath(spaceId, '/concepts/decisions/propose'),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }
 
@@ -222,8 +252,8 @@ export async function setSpaceConceptDecisionStatus(
     throw new Error('Authentication token is required for setSpaceConceptDecisionStatus')
   }
   return apiPatch<ConceptDecisionResponse>(
-    `/research-spaces/${spaceId}/concepts/decisions/${decisionId}/status`,
+    graphSpacePath(spaceId, `/concepts/decisions/${decisionId}/status`),
     payload,
-    { token },
+    withGraphApiOptions({ token }),
   )
 }

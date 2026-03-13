@@ -295,6 +295,7 @@ class _KernelDictionaryRepositoryConstraintsMergeMixin:
             select(EntityModel).where(EntityModel.entity_type == source.id),
         ).all():
             entity.entity_type = target.id
+        self._session.flush()
 
         before_snapshot = _snapshot_model(source)
         source.review_status = "REVOKED"

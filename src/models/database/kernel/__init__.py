@@ -34,11 +34,21 @@ from .dictionary import (
 )
 from .entities import EntityEmbeddingModel, EntityIdentifierModel, EntityModel
 from .observations import ObservationModel
+from .operation_runs import (
+    GraphOperationRunModel,
+    GraphOperationRunStatusEnum,
+    GraphOperationRunTypeEnum,
+)
 from .provenance import ProvenanceModel
 from .reasoning_paths import ReasoningPathModel, ReasoningPathStepModel
 from .relation_claims import RelationClaimModel
 from .relation_projection_sources import RelationProjectionSourceModel
 from .relations import RelationEvidenceModel, RelationModel
+from .space_memberships import (
+    GraphSpaceMembershipModel,
+    GraphSpaceMembershipRoleEnum,
+)
+from .spaces import GraphSpaceModel, GraphSpaceStatusEnum
 
 __all__ = [
     # Dictionary (Layer 1)
@@ -71,6 +81,9 @@ __all__ = [
     "EntityModel",
     "EntityIdentifierModel",
     "EntityEmbeddingModel",
+    "GraphOperationRunModel",
+    "GraphOperationRunStatusEnum",
+    "GraphOperationRunTypeEnum",
     "ObservationModel",
     "RelationEvidenceModel",
     "RelationClaimModel",
@@ -79,4 +92,8 @@ __all__ = [
     "ProvenanceModel",
     "ReasoningPathModel",
     "ReasoningPathStepModel",
+    "GraphSpaceMembershipModel",
+    "GraphSpaceMembershipRoleEnum",
+    "GraphSpaceModel",
+    "GraphSpaceStatusEnum",
 ]

@@ -30,8 +30,10 @@ from src.application.services._artana_observability_support import (
     _serialize_datetime,
 )
 from src.application.services._source_workflow_monitor_shared import coerce_json_object
-from src.models.database.kernel.provenance import ProvenanceModel
-from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
+from src.infrastructure.repositories.graph_observability_repository import (
+    load_linked_provenance_rows,
+    load_linked_relation_evidence_rows,
+)
 from src.models.database.publication_extraction import PublicationExtractionModel
 from src.models.database.source_document import SourceDocumentModel
 from src.models.database.user_data_source import UserDataSourceModel
@@ -341,43 +343,33 @@ def _load_linked_relation_evidence(
     run_id: str,
     research_space_id: str | None,
 ) -> list[JSONObject]:
-    statement = select(RelationEvidenceModel, RelationModel).join(
-        RelationModel,
-        RelationModel.id == RelationEvidenceModel.relation_id,
-    )
-    statement = statement.where(RelationEvidenceModel.agent_run_id == run_id)
     parsed_space_id = _parse_uuid(research_space_id)
-    if parsed_space_id is not None:
-        statement = statement.where(RelationModel.research_space_id == parsed_space_id)
-    rows = session.execute(statement).all()
-    records: list[JSONObject] = []
-    for evidence, relation in rows:
-        records.append(
-            {
-                "record_type": "relation_evidence",
-                "record_id": str(evidence.id),
-                "research_space_id": str(relation.research_space_id),
-                "source_id": None,
-                "document_id": (
-                    str(evidence.source_document_id)
-                    if evidence.source_document_id is not None
-                    else None
-                ),
-                "source_type": None,
-                "status": relation.curation_status,
-                "label": relation.relation_type,
-                "created_at": _serialize_datetime(evidence.created_at),
-                "updated_at": _serialize_datetime(relation.updated_at),
-                "metadata": {
-                    "relation_id": str(relation.id),
-                    "relation_type": relation.relation_type,
-                    "source_entity_id": str(relation.source_id),
-                    "target_entity_id": str(relation.target_id),
-                    "evidence_tier": evidence.evidence_tier,
-                },
+    return [
+        {
+            "record_type": "relation_evidence",
+            "record_id": row.evidence_id,
+            "research_space_id": row.research_space_id,
+            "source_id": None,
+            "document_id": row.source_document_id,
+            "source_type": None,
+            "status": row.curation_status,
+            "label": row.relation_type,
+            "created_at": _serialize_datetime(row.created_at),
+            "updated_at": _serialize_datetime(row.relation_updated_at),
+            "metadata": {
+                "relation_id": row.relation_id,
+                "relation_type": row.relation_type,
+                "source_entity_id": row.source_entity_id,
+                "target_entity_id": row.target_entity_id,
+                "evidence_tier": row.evidence_tier,
             },
+        }
+        for row in load_linked_relation_evidence_rows(
+            session,
+            run_id=run_id,
+            research_space_id=parsed_space_id,
         )
-    return records
+    ]
 
 
 def _load_linked_provenance(
@@ -386,20 +378,12 @@ def _load_linked_provenance(
     run_id: str,
     research_space_id: str | None,
 ) -> list[JSONObject]:
-    statement: Select[tuple[ProvenanceModel]] = select(ProvenanceModel).where(
-        ProvenanceModel.extraction_run_id == run_id,
-    )
     parsed_space_id = _parse_uuid(research_space_id)
-    if parsed_space_id is not None:
-        statement = statement.where(
-            ProvenanceModel.research_space_id == parsed_space_id,
-        )
-    rows = session.execute(statement).scalars().all()
     return [
         {
             "record_type": "provenance",
-            "record_id": str(row.id),
-            "research_space_id": str(row.research_space_id),
+            "record_id": row.provenance_id,
+            "research_space_id": row.research_space_id,
             "source_id": None,
             "document_id": None,
             "source_type": row.source_type,
@@ -413,7 +397,11 @@ def _load_linked_provenance(
                 "source_ref": row.source_ref,
             },
         }
-        for row in rows
+        for row in load_linked_provenance_rows(
+            session,
+            run_id=run_id,
+            research_space_id=parsed_space_id,
+        )
     ]
 
 

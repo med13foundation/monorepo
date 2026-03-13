@@ -57,6 +57,7 @@ class JWTProvider(JWTProviderService):
         user_id: UUID,
         role: str,
         expires_delta: timedelta | None = None,
+        extra_claims: Mapping[str, object] | None = None,
     ) -> str:
         """
         Create a JWT access token.
@@ -74,7 +75,7 @@ class JWTProvider(JWTProviderService):
 
         expire = datetime.now(UTC) + expires_delta
 
-        to_encode: TokenPayload = {
+        base_payload: TokenPayload = {
             "sub": str(user_id),
             "role": role,
             "type": "access",
@@ -83,6 +84,9 @@ class JWTProvider(JWTProviderService):
             "iat": datetime.now(UTC),
             "iss": "med13-resource-library",
         }
+        to_encode: dict[str, object] = dict(base_payload)
+        if extra_claims is not None:
+            to_encode.update(dict(extra_claims))
 
         return self._encode_token(to_encode)
 
@@ -242,7 +246,7 @@ class JWTProvider(JWTProviderService):
             "role": role,
         }
 
-    def _encode_token(self, payload: TokenPayload) -> str:
+    def _encode_token(self, payload: Mapping[str, object]) -> str:
         """
         Encode payload into JWT token.
 
@@ -348,6 +352,9 @@ class JWTProvider(JWTProviderService):
         role = payload.get("role")
         if isinstance(role, str):
             result["role"] = role
+        graph_admin = payload.get("graph_admin")
+        if isinstance(graph_admin, bool):
+            result["graph_admin"] = graph_admin
         issuer = payload.get("iss")
         if isinstance(issuer, str):
             result["iss"] = issuer

@@ -22,6 +22,7 @@ class KernelClaimEvidence(BaseModel):
     id: UUID
     claim_id: UUID
     source_document_id: UUID | None = None
+    source_document_ref: str | None = Field(default=None, max_length=512)
     agent_run_id: str | None = Field(default=None, max_length=255)
     sentence: str | None = None
     sentence_source: ClaimEvidenceSentenceSource | None = None

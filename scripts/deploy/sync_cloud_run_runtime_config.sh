@@ -169,6 +169,7 @@ require_var "PROJECT_ID"
 require_var "REGION"
 require_var "API_SERVICE"
 require_var "ADMIN_SERVICE"
+require_var "GRAPH_SERVICE_URL"
 
 log "Syncing runtime config for project=${PROJECT_ID} region=${REGION}"
 
@@ -235,6 +236,7 @@ fi
 if [[ -n "${MED13_RUNTIME_ROLE:-}" ]]; then
   backend_env_pairs+=("MED13_RUNTIME_ROLE=${MED13_RUNTIME_ROLE}")
 fi
+backend_env_pairs+=("GRAPH_SERVICE_URL=${GRAPH_SERVICE_URL}")
 if [[ -n "${MED13_DISABLE_INGESTION_SCHEDULER:-}" ]]; then
   backend_env_pairs+=(
     "MED13_DISABLE_INGESTION_SCHEDULER=${MED13_DISABLE_INGESTION_SCHEDULER}"
@@ -321,6 +323,10 @@ if [[ -z "${API_PUBLIC_WS_URL:-}" ]]; then
   API_PUBLIC_WS_URL="$(to_websocket_url "${API_PUBLIC_URL}")"
 fi
 
+if [[ -z "${GRAPH_PUBLIC_URL:-}" ]]; then
+  GRAPH_PUBLIC_URL="${GRAPH_SERVICE_URL:-}"
+fi
+
 declare -a admin_update_args=()
 if [[ -n "${ADMIN_MIN_INSTANCES:-}" ]]; then
   admin_update_args+=(--min-instances "${ADMIN_MIN_INSTANCES}")
@@ -329,6 +335,12 @@ if is_true "${SYNC_ADMIN_URLS:-}"; then
   admin_update_args+=(
     --update-env-vars
     "^@^NEXT_PUBLIC_API_URL=${API_PUBLIC_URL}@NEXT_PUBLIC_WS_URL=${API_PUBLIC_WS_URL}@NEXTAUTH_URL=${ADMIN_PUBLIC_URL}@API_BASE_URL=${API_PUBLIC_URL}"
+  )
+fi
+if is_true "${SYNC_ADMIN_GRAPH_URLS:-}" && [[ -n "${GRAPH_PUBLIC_URL:-}" ]]; then
+  admin_update_args+=(
+    --update-env-vars
+    "^@^GRAPH_API_BASE_URL=${GRAPH_PUBLIC_URL}@INTERNAL_GRAPH_API_URL=${GRAPH_PUBLIC_URL}@NEXT_PUBLIC_GRAPH_API_URL=${GRAPH_PUBLIC_URL}"
   )
 fi
 if [[ -n "${NEXT_PUBLIC_WORKFLOW_SSE_ENABLED:-}" ]]; then

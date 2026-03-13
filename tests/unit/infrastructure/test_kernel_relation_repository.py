@@ -16,8 +16,10 @@ from src.infrastructure.repositories.kernel.kernel_relation_repository import (
 from src.models.database.kernel.entities import EntityModel
 from src.models.database.kernel.provenance import ProvenanceModel
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
+from src.models.database.kernel.spaces import GraphSpaceModel, GraphSpaceStatusEnum
 from src.models.database.research_space import ResearchSpaceModel, SpaceStatusEnum
 from src.models.database.user import UserModel
+from tests.graph_seed_helpers import ensure_relation_constraint, ensure_relation_types
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -139,6 +141,19 @@ def _seed_space_and_entities(
     *,
     settings: dict[str, object] | None = None,
 ) -> tuple[UUID, UUID, UUID]:
+    ensure_relation_constraint(
+        db_session,
+        source_type="GENE",
+        relation_type="ASSOCIATED_WITH",
+        target_type="PHENOTYPE",
+    )
+    ensure_relation_constraint(
+        db_session,
+        source_type="GENE",
+        relation_type="SUPPORTS",
+        target_type="PHENOTYPE",
+    )
+    ensure_relation_types(db_session, "SUPPORTS", "CAUSES")
     owner_id = uuid4()
     db_session.add(
         UserModel(
@@ -164,6 +179,17 @@ def _seed_space_and_entities(
             status=SpaceStatusEnum.ACTIVE,
             settings=settings or {},
             tags=[],
+        ),
+    )
+    db_session.add(
+        GraphSpaceModel(
+            id=research_space_id,
+            slug=f"graph-space-{str(research_space_id).replace('-', '')[:8]}",
+            name="Graph Test Space",
+            description="Graph registry entry for relation repository tests",
+            owner_id=owner_id,
+            status=GraphSpaceStatusEnum.ACTIVE,
+            settings=settings or {},
         ),
     )
 

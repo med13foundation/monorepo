@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
-
-from sqlalchemy import not_, or_, select
+from typing import TYPE_CHECKING, Literal, Protocol, TypeGuard
 
 from src.database.session import set_session_rls_context
-from src.models.database.kernel.entities import EntityIdentifierModel
+from src.infrastructure.queries.graph_security_queries import (
+    load_phi_identifier_backfill_batch,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -20,7 +20,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_BACKFILL_CIPHERTEXT_PREFIX = "med13phi:%"
+
+class _MutablePHIIdentifierRow(Protocol):
+    id: int
+    identifier_value: str
+    identifier_blind_index: str | None
+    encryption_key_version: str | None
+    blind_index_version: str | None
+
+
+def _is_mutable_phi_identifier_row(row: object) -> TypeGuard[_MutablePHIIdentifierRow]:
+    return (
+        isinstance(getattr(row, "id", None), int)
+        and isinstance(getattr(row, "identifier_value", None), str)
+        and (
+            getattr(row, "identifier_blind_index", None) is None
+            or isinstance(getattr(row, "identifier_blind_index", None), str)
+        )
+        and (
+            getattr(row, "encryption_key_version", None) is None
+            or isinstance(getattr(row, "encryption_key_version", None), str)
+        )
+        and (
+            getattr(row, "blind_index_version", None) is None
+            or isinstance(getattr(row, "blind_index_version", None), str)
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,32 +208,20 @@ class PHIIdentifierBackfillRunner:
         *,
         last_seen_id: int,
         limit: int,
-    ) -> list[EntityIdentifierModel]:
-        candidate_conditions = or_(
-            EntityIdentifierModel.identifier_blind_index.is_(None),
-            EntityIdentifierModel.encryption_key_version.is_(None),
-            EntityIdentifierModel.blind_index_version.is_(None),
-            not_(
-                EntityIdentifierModel.identifier_value.like(
-                    _BACKFILL_CIPHERTEXT_PREFIX,
-                ),
-            ),
-        )
-        statement = (
-            select(EntityIdentifierModel)
-            .where(
-                EntityIdentifierModel.id > last_seen_id,
-                EntityIdentifierModel.sensitivity == "PHI",
-                candidate_conditions,
+    ) -> list[_MutablePHIIdentifierRow]:
+        return [
+            row
+            for row in load_phi_identifier_backfill_batch(
+                session,
+                last_seen_id=last_seen_id,
+                limit=limit,
             )
-            .order_by(EntityIdentifierModel.id.asc())
-            .limit(limit)
-        )
-        return list(session.scalars(statement).all())
+            if _is_mutable_phi_identifier_row(row)
+        ]
 
     def _process_row(
         self,
-        row: EntityIdentifierModel,
+        row: _MutablePHIIdentifierRow,
     ) -> Literal["updated", "skipped", "failed"]:
         original_value = row.identifier_value
         is_encrypted = self._encryption_service.is_encrypted_identifier(original_value)

@@ -76,6 +76,82 @@ class TestAuthenticationService:
             email_verified=True,
         )
 
+    @pytest.fixture
+    def admin_user(self):
+        """Create sample admin user for testing."""
+        return User(
+            id=uuid4(),
+            email="admin@example.com",
+            username="adminuser",
+            full_name="Admin User",
+            hashed_password="hashed_password_for_testing",
+            role=UserRole.ADMIN,
+            status=UserStatus.ACTIVE,
+            email_verified=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_authenticate_user_mints_graph_admin_claim_for_admins(
+        self,
+        auth_service,
+        mock_user_repository,
+        mock_jwt_provider,
+        mock_password_hasher,
+        admin_user,
+    ):
+        from src.application.dto.auth_requests import LoginRequest
+
+        mock_user_repository.get_by_email.return_value = admin_user
+        mock_user_repository.update = AsyncMock()
+        mock_password_hasher.verify_password.return_value = True
+        mock_jwt_provider.create_access_token.return_value = "access-token"
+        mock_jwt_provider.create_refresh_token.return_value = "refresh-token"
+        auth_service.session_lifecycle.create_session = AsyncMock()
+
+        response = await auth_service.authenticate_user(
+            LoginRequest(email=admin_user.email, password="correct-password"),
+        )
+
+        mock_jwt_provider.create_access_token.assert_called_once_with(
+            admin_user.id,
+            admin_user.role.value,
+            extra_claims={"graph_admin": True},
+        )
+        assert response.access_token == "access-token"
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_preserves_graph_admin_claim_for_admins(
+        self,
+        auth_service,
+        mock_user_repository,
+        mock_session_repository,
+        mock_jwt_provider,
+        admin_user,
+    ):
+        refresh_token = "refresh-token"
+        session = UserSession(
+            user_id=admin_user.id,
+            session_token="old-access-token",
+            refresh_token=refresh_token,
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+            refresh_expires_at=datetime.now(UTC) + timedelta(days=7),
+            status=SessionStatus.ACTIVE,
+        )
+        mock_session_repository.get_active_by_refresh_token.return_value = session
+        mock_session_repository.update = AsyncMock()
+        mock_user_repository.get_by_id.return_value = admin_user
+        mock_jwt_provider.create_access_token.return_value = "new-access-token"
+        mock_jwt_provider.create_refresh_token.return_value = "new-refresh-token"
+
+        response = await auth_service.refresh_token(refresh_token)
+
+        mock_jwt_provider.create_access_token.assert_called_once_with(
+            admin_user.id,
+            admin_user.role.value,
+            extra_claims={"graph_admin": True},
+        )
+        assert response.access_token == "new-access-token"
+
     @pytest.mark.asyncio
     async def test_validate_token_success_with_timezone_aware_session(
         self,

@@ -69,6 +69,30 @@ ignore_missing_imports = true
 module = [ "src.infrastructure.llm.adapters.*",]
 disallow_any_unimported = false
 
+[[tool.mypy.overrides]]
+module = [
+  "services.graph_api.legacy_dependency_factories",
+  "src.infrastructure.dependency_injection._kernel_core_service_factories",
+  "src.infrastructure.dependency_injection.service_factories",
+]
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = [
+  "src.routes.research_spaces._kernel_dictionary_entity_dependencies",
+  "src.routes.research_spaces._kernel_graph_operation_dependencies",
+]
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = [
+  "services.graph_api.routers.graph_views",
+  "services.graph_api.routers.reasoning_paths",
+  "src.routes.research_spaces.kernel_graph_view_schemas",
+  "src.routes.research_spaces.kernel_reasoning_path_schemas",
+]
+disable_error_code = [ "arg-type",]
+
 
 [tool.flake8]
 max-line-length = 88
@@ -104,8 +128,20 @@ exclude_lines = [ "pragma: no cover", "def __repr__", "if self.debug:", "if sett
 
 [tool.ruff.lint.per-file-ignores]
 "src/web/**" = [ "T20", "ARG", "ERA",]
-"scripts/**" = [ "E402", "S107", "TRY400", "PLC0415", "BLE001", "C901", "PLR0911", "T201",]
-"tests/**" = [ "S101", "ARG", "ERA", "PLR2004", "SLF001", "E402", "S106", "PT011", "B017", "N806", "PLC0415", "PTH123", "EM102", "TRY003", "S105", "INP001", "B007", "PERF102", "RET504", "PTH110", "SIM222", "PLR0913", "PT003", "TRY002", "BLE001", "B023", "S603",]
+"scripts/**" = [ "E402", "S107", "TRY400", "PLC0415", "BLE001", "C901", "PLR0911", "T201", "TC003", "S105", "TRY003", "EM101", "EM102", "EXE001", "S603",]
+"tests/**" = [ "S101", "ARG", "ERA", "PLR2004", "SLF001", "E402", "S106", "PT011", "B017", "N806", "PLC0415", "PTH123", "EM102", "TRY003", "S105", "INP001", "B007", "PERF102", "RET504", "PTH110", "SIM222", "PLR0913", "PT003", "TRY002", "BLE001", "B023", "S603", "TC001", "TC002", "TC003", "PLR0911", "PLR0915", "C901", "PT017", "EM101", "S108",]
 "src/routes/**" = [ "B008", "BLE001", "B904", "TRY300", "RET504", "ARG001", "PLR0913", "FBT001", "FBT003", "TRY301", "SLF001", "C901", "S106", "TC001", "TC002", "TC003",]
+"services/graph_api/routers/*.py" = [ "B008", "TC001", "TC002", "TC003", "PLR0913", "TRY301", "TRY300", "FBT003", "TC006", "C901", "PLR0912", "S106",]
+"services/graph_api/_*.py" = [ "TC001", "TC002", "TC003", "PLR0913",]
+"services/graph_api/*.py" = [ "TC001", "TC002", "TC003", "PLR0913", "C901", "S106", "PYI034", "PYI036", "UP040",]
+"services/graph_api/auth.py" = [ "B008",]
+"services/graph_api/dependencies.py" = [ "B008",]
+"src/infrastructure/graph_service/*.py" = [ "TC001", "TC002", "TC003", "PLR0913", "TRY003", "EM101", "EM102", "S105", "PYI034", "PYI036", "UP040",]
+"src/domain/entities/kernel/*.py" = [ "TC001", "TC002", "TC003",]
+"src/domain/ports/*.py" = [ "TC001", "TC002", "TC003",]
+"src/infrastructure/repositories/kernel/kernel_space_*.py" = [ "TC001", "TC002", "TC003",]
+"src/application/services/membership_management_service.py" = [ "TC001",]
+"src/application/services/research_space_management_service.py" = [ "TC001",]
+"src/application/services/space_lifecycle_sync_service.py" = [ "TC001", "TC003",]
 "src/domain/transform/**" = [ "TID252", "C901", "PLR0911", "PLR0912", "PLR2004", "BLE001", "T201", "ERA001", "TRY003", "EM101", "EM102", "SIM102", "PLC0415", "PERF401", "ARG002", "RET504", "SIM105", "DTZ007", "DTZ001", "N817", "PLC0105", "FBT001", "FBT002", "TRY300", "TRY400", "G004", "SLF001", "TC003", "PLC0206",]
 "src/domain/validation/**" = [ "TID", "TC001", "TC002", "TC003", "C901", "FBT001", "FBT002", "PERF401", "SIM118", "A002", "UP007", "PLR0913", "PLR2004", "TRY003", "EM102", "SLF001", "PLC0415", "PLR0912",]

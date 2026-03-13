@@ -19,6 +19,7 @@ from src.domain.entities.research_space_membership import (
     ResearchSpaceMembership,
 )
 from src.domain.entities.user import User, UserRole, UserStatus
+from src.infrastructure.graph_service.errors import GraphServiceClientError
 from src.models.database.research_space import (
     ResearchSpaceMembershipModel,
     ResearchSpaceModel,
@@ -43,6 +44,7 @@ from .router import (
     HTTP_201_CREATED,
     HTTP_400_BAD_REQUEST,
     HTTP_404_NOT_FOUND,
+    HTTP_500_INTERNAL_SERVER_ERROR,
     research_spaces_router,
 )
 
@@ -128,7 +130,16 @@ def invite_member(
             invited_by=current_user.id,
             invited_by_is_platform_admin=current_user.role == UserRole.ADMIN,
         )
-        membership = service.invite_member(invite_request)
+        try:
+            membership = service.invite_member(invite_request)
+        except GraphServiceClientError as exc:
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "Member invitation was saved but graph-space sync failed: "
+                    + (exc.detail or str(exc))
+                ),
+            ) from exc
         users_by_id = _build_membership_user_map(session, [membership])
         return MembershipResponse.from_entity(
             membership,
@@ -286,12 +297,21 @@ def update_member_role(
             ) from None
 
         update_request = UpdateMemberRoleRequest(role=role)
-        membership = service.update_member_role(
-            membership_id,
-            update_request,
-            current_user.id,
-            requester_is_platform_admin=current_user.role == UserRole.ADMIN,
-        )
+        try:
+            membership = service.update_member_role(
+                membership_id,
+                update_request,
+                current_user.id,
+                requester_is_platform_admin=current_user.role == UserRole.ADMIN,
+            )
+        except GraphServiceClientError as exc:
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "Member role update was saved but graph-space sync failed: "
+                    + (exc.detail or str(exc))
+                ),
+            ) from exc
         if not membership:
             raise HTTPException(
                 status_code=HTTP_404_NOT_FOUND,
@@ -323,11 +343,20 @@ def remove_member(
     service: MembershipManagementService = Depends(get_membership_service),
 ) -> None:
     """Remove a member from a research space."""
-    success = service.remove_member(
-        membership_id,
-        current_user.id,
-        requester_is_platform_admin=current_user.role == UserRole.ADMIN,
-    )
+    try:
+        success = service.remove_member(
+            membership_id,
+            current_user.id,
+            requester_is_platform_admin=current_user.role == UserRole.ADMIN,
+        )
+    except GraphServiceClientError as exc:
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Member removal was saved but graph-space sync failed: "
+                + (exc.detail or str(exc))
+            ),
+        ) from exc
     if not success:
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,
@@ -342,13 +371,23 @@ def remove_member(
     description="Accept a pending research space invitation",
 )
 def accept_invitation(
+    space_id: UUID,
     membership_id: UUID,
     current_user: User = Depends(get_current_active_user),
     service: MembershipManagementService = Depends(get_membership_service),
     session: Session = Depends(get_session),
 ) -> MembershipResponse:
     """Accept a pending invitation."""
-    membership = service.accept_invitation(membership_id, current_user.id)
+    try:
+        membership = service.accept_invitation(membership_id, current_user.id)
+    except GraphServiceClientError as exc:
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Invitation acceptance was saved but graph-space sync failed: "
+                + (exc.detail or str(exc))
+            ),
+        ) from exc
     if not membership:
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,

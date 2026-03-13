@@ -17,6 +17,7 @@ from src.infrastructure.security.phi_encryption import PHIEncryptionService
 from src.models.database.kernel.entities import EntityIdentifierModel, EntityModel
 from src.models.database.research_space import ResearchSpaceModel, SpaceStatusEnum
 from src.models.database.user import UserModel
+from tests.graph_seed_helpers import ensure_entity_types
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -43,6 +44,7 @@ def _build_phi_encryption_service() -> PHIEncryptionService:
 
 
 def _seed_space_and_entity(db_session: Session) -> tuple[UUID, UUID]:
+    ensure_entity_types(db_session, "PATIENT")
     owner_id = uuid4()
     db_session.add(
         UserModel(

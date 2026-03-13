@@ -29,6 +29,10 @@ from src.infrastructure.dependency_injection.dependencies import (
 from src.infrastructure.factories.ingestion_scheduler_factory import (
     ingestion_scheduling_service_context,
 )
+from src.infrastructure.graph_service.pipeline import (
+    build_graph_connection_seed_runner_for_service,
+    build_graph_search_service_for_service,
+)
 from src.infrastructure.repositories import SqlAlchemyResearchSpaceRepository
 from src.models.database.ingestion_job import IngestionJobModel
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
@@ -928,6 +932,7 @@ async def _run_workflow_once(  # noqa: PLR0913
             session=session,
         ) as scheduling_service,
     ):
+        graph_search_service = build_graph_search_service_for_service()
         orchestration_service = PipelineOrchestrationService(
             dependencies=PipelineOrchestrationDependencies(
                 ingestion_scheduling_service=scheduling_service,
@@ -937,10 +942,11 @@ async def _run_workflow_once(  # noqa: PLR0913
                 entity_recognition_service=container.create_entity_recognition_service(
                     session,
                 ),
-                graph_connection_service=container.create_graph_connection_service(
-                    session,
+                graph_connection_service=None,
+                graph_connection_seed_runner=(
+                    build_graph_connection_seed_runner_for_service()
                 ),
-                graph_search_service=container.create_graph_search_service(session),
+                graph_search_service=graph_search_service,
                 research_space_repository=SqlAlchemyResearchSpaceRepository(
                     session,
                 ),

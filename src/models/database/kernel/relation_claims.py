@@ -10,6 +10,10 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from src.database.graph_schema import (
+    graph_table_options,
+    qualify_graph_foreign_key_target,
+)
 from src.models.database.base import Base
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
@@ -26,12 +30,16 @@ class RelationClaimModel(Base):
     )
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     source_document_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         nullable=True,
+    )
+    source_document_ref: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+        doc="Graph-owned external document reference without platform identity coupling",
     )
     agent_run_id: Mapped[str | None] = mapped_column(
         String(255),
@@ -64,7 +72,10 @@ class RelationClaimModel(Base):
     claim_section: Mapped[str | None] = mapped_column(String(64), nullable=True)
     linked_relation_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("relations.id", ondelete="SET NULL"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("relations.id"),
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     metadata_payload: Mapped[JSONObject] = mapped_column(
@@ -74,8 +85,8 @@ class RelationClaimModel(Base):
     )
     triaged_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("users.id"),
         nullable=True,
+        doc="External actor identifier recorded without platform user FK coupling",
     )
     triaged_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -105,13 +116,16 @@ class RelationClaimModel(Base):
         Index("idx_relation_claims_validation_state", "validation_state"),
         Index("idx_relation_claims_persistability", "persistability"),
         Index("idx_relation_claims_source_document_id", "source_document_id"),
+        Index("idx_relation_claims_source_document_ref", "source_document_ref"),
         Index("idx_relation_claims_linked_relation_id", "linked_relation_id"),
         Index(
             "idx_relation_claims_space_created_at",
             "research_space_id",
             "created_at",
         ),
-        {"comment": "Extracted relation candidate ledger for claim-first curation"},
+        graph_table_options(
+            comment="Extracted relation candidate ledger for claim-first curation",
+        ),
     )
 
 

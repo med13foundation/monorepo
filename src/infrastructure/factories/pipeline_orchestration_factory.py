@@ -19,6 +19,10 @@ from src.infrastructure.dependency_injection.dependencies import (
 from src.infrastructure.factories.ingestion_scheduler_factory import (
     build_ingestion_scheduling_service,
 )
+from src.infrastructure.graph_service.pipeline import (
+    build_graph_connection_seed_runner_for_service,
+    build_graph_search_service_for_service,
+)
 from src.infrastructure.repositories import (
     SqlAlchemyPipelineRunEventRepository,
     SqlAlchemyResearchSpaceRepository,
@@ -34,10 +38,6 @@ if TYPE_CHECKING:
     from src.application.agents.services.entity_recognition_service import (
         EntityRecognitionRunSummary,
     )
-    from src.application.agents.services.graph_connection_service import (
-        GraphConnectionOutcome,
-    )
-    from src.domain.agents.contracts.graph_connection import ProposedRelation
 
 
 @asynccontextmanager
@@ -50,8 +50,7 @@ async def pipeline_orchestration_service_context() -> (  # noqa: PLR0915
     container = get_legacy_dependency_container()
     content_enrichment_service = None
     entity_recognition_service = None
-    graph_connection_service = None
-    graph_search_service = None
+    graph_search_service = build_graph_search_service_for_service()
     try:
         scheduling_service = build_ingestion_scheduling_service(session=session)
         content_enrichment_service = container.create_content_enrichment_service(
@@ -60,8 +59,7 @@ async def pipeline_orchestration_service_context() -> (  # noqa: PLR0915
         entity_recognition_service = container.create_entity_recognition_service(
             session,
         )
-        graph_connection_service = container.create_graph_connection_service(session)
-        graph_search_service = container.create_graph_search_service(session)
+        run_graph_seed_isolated_uow = build_graph_connection_seed_runner_for_service()
 
         async def run_enrichment_stage_isolated_uow(  # noqa: PLR0913
             *,
@@ -125,41 +123,6 @@ async def pipeline_orchestration_service_context() -> (  # noqa: PLR0915
                 # Keep the shared Artana store alive for the process lifetime.
                 isolated_session.close()
 
-        async def run_graph_seed_isolated_uow(  # noqa: PLR0913
-            *,
-            source_id: str,
-            research_space_id: str,
-            seed_entity_id: str,
-            source_type: str,
-            model_id: str | None,
-            relation_types: list[str] | None,
-            max_depth: int,
-            shadow_mode: bool | None,
-            pipeline_run_id: str | None,
-            fallback_relations: tuple[ProposedRelation, ...] | None,
-        ) -> GraphConnectionOutcome:
-            isolated_session = SessionLocal()
-            set_session_rls_context(isolated_session, bypass_rls=True)
-            isolated_service = container.create_graph_connection_service(
-                isolated_session,
-            )
-            try:
-                return await isolated_service.discover_connections_for_seed(
-                    research_space_id=research_space_id,
-                    seed_entity_id=seed_entity_id,
-                    source_id=source_id,
-                    source_type=source_type,
-                    model_id=model_id,
-                    relation_types=relation_types,
-                    max_depth=max_depth,
-                    shadow_mode=shadow_mode,
-                    pipeline_run_id=pipeline_run_id,
-                    fallback_relations=fallback_relations,
-                )
-            finally:
-                # Keep the shared Artana store alive for the process lifetime.
-                isolated_session.close()
-
         yield PipelineOrchestrationService(
             dependencies=PipelineOrchestrationDependencies(
                 ingestion_scheduling_service=scheduling_service,
@@ -167,7 +130,7 @@ async def pipeline_orchestration_service_context() -> (  # noqa: PLR0915
                 entity_recognition_service=entity_recognition_service,
                 content_enrichment_stage_runner=run_enrichment_stage_isolated_uow,
                 entity_recognition_stage_runner=run_extraction_stage_isolated_uow,
-                graph_connection_service=graph_connection_service,
+                graph_connection_service=None,
                 graph_connection_seed_runner=run_graph_seed_isolated_uow,
                 graph_search_service=graph_search_service,
                 research_space_repository=SqlAlchemyResearchSpaceRepository(session),

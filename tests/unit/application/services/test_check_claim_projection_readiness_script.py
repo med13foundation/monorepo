@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
 from dataclasses import dataclass
 
 import pytest
@@ -18,6 +17,13 @@ class _IssueStub:
     count: int
     samples: tuple[object, ...] = ()
 
+    def model_dump(self, *, mode: str = "python") -> dict[str, object]:
+        del mode
+        return {
+            "count": self.count,
+            "samples": list(self.samples),
+        }
+
 
 @dataclass(frozen=True)
 class _ReportStub:
@@ -28,6 +34,23 @@ class _ReportStub:
     linked_relation_mismatches: _IssueStub
     invalid_projection_relations: _IssueStub
 
+    def model_dump(self, *, mode: str = "python") -> dict[str, object]:
+        del mode
+        return {
+            "ready": self.ready,
+            "orphan_relations": self.orphan_relations.model_dump(),
+            "missing_claim_participants": (
+                self.missing_claim_participants.model_dump()
+            ),
+            "missing_claim_evidence": self.missing_claim_evidence.model_dump(),
+            "linked_relation_mismatches": (
+                self.linked_relation_mismatches.model_dump()
+            ),
+            "invalid_projection_relations": (
+                self.invalid_projection_relations.model_dump()
+            ),
+        }
+
 
 @dataclass(frozen=True)
 class _RepairSummaryStub:
@@ -37,8 +60,18 @@ class _RepairSummaryStub:
     unresolved_claims: int
     dry_run: bool
 
+    def model_dump(self, *, mode: str = "python") -> dict[str, object]:
+        del mode
+        return {
+            "participant_backfill": dict(self.participant_backfill),
+            "materialized_claims": self.materialized_claims,
+            "detached_claims": self.detached_claims,
+            "unresolved_claims": self.unresolved_claims,
+            "dry_run": self.dry_run,
+        }
 
-class _ReadinessServiceStub:
+
+class _ReadinessClientStub:
     def __init__(
         self,
         *,
@@ -48,37 +81,22 @@ class _ReadinessServiceStub:
         self._report = report
         self._repair_summary = repair_summary
         self.repair_calls: list[bool] = []
+        self.sample_limits: list[int] = []
+        self.closed = False
 
-    def repair_global(self, *, dry_run: bool) -> _RepairSummaryStub:
+    def repair_projections(self, *, dry_run: bool) -> _RepairSummaryStub:
         self.repair_calls.append(dry_run)
         if self._repair_summary is None:
-            msg = "repair_global should not have been called"
+            msg = "repair_projections should not have been called"
             raise AssertionError(msg)
         return self._repair_summary
 
-    def audit(self, *, sample_limit: int = 10) -> _ReportStub:
-        assert sample_limit == 10
+    def get_projection_readiness(self, *, sample_limit: int = 10) -> _ReportStub:
+        self.sample_limits.append(sample_limit)
         return self._report
 
-
-class _SessionStub:
-    committed: bool
-    rolled_back: bool
-
-    def __init__(self) -> None:
-        self.committed = False
-        self.rolled_back = False
-
-    def commit(self) -> None:
-        self.committed = True
-
-    def rollback(self) -> None:
-        self.rolled_back = True
-
-
-@contextmanager
-def _session_factory() -> _SessionStub:
-    yield _SessionStub()
+    def close(self) -> None:
+        self.closed = True
 
 
 def _args(*, repair: bool = False, dry_run: bool = False) -> argparse.Namespace:
@@ -102,21 +120,16 @@ def test_run_readiness_check_returns_non_zero_when_not_ready(
         linked_relation_mismatches=_IssueStub(count=0),
         invalid_projection_relations=_IssueStub(count=0),
     )
-    service = _ReadinessServiceStub(report=report)
-
-    monkeypatch.setattr(readiness_script, "_build_service", lambda session: service)
-    monkeypatch.setattr(
-        readiness_script,
-        "set_session_rls_context",
-        lambda *args, **kwargs: None,
-    )
+    client = _ReadinessClientStub(report=report)
+    monkeypatch.setattr(readiness_script, "_build_client", lambda args: client)
 
     exit_code = readiness_script.run_readiness_check(
         _args(),
-        session_factory=_session_factory,
     )
 
     assert exit_code == 1
+    assert client.sample_limits == [10]
+    assert client.closed is True
     output = capsys.readouterr().out
     assert "ready=False" in output
     assert "orphan_relations=1" in output
@@ -148,25 +161,21 @@ def test_run_readiness_check_repairs_and_returns_zero_when_ready(
         unresolved_claims=0,
         dry_run=False,
     )
-    service = _ReadinessServiceStub(
+    client = _ReadinessClientStub(
         report=report,
         repair_summary=repair_summary,
     )
 
-    monkeypatch.setattr(readiness_script, "_build_service", lambda session: service)
-    monkeypatch.setattr(
-        readiness_script,
-        "set_session_rls_context",
-        lambda *args, **kwargs: None,
-    )
+    monkeypatch.setattr(readiness_script, "_build_client", lambda args: client)
 
     exit_code = readiness_script.run_readiness_check(
         _args(repair=True, dry_run=False),
-        session_factory=_session_factory,
     )
 
     assert exit_code == 0
-    assert service.repair_calls == [False]
+    assert client.repair_calls == [False]
+    assert client.sample_limits == [10]
+    assert client.closed is True
     output = capsys.readouterr().out
     assert "ready=True" in output
     assert "repair=dry_run=False materialized=1 detached=0 unresolved=0" in output

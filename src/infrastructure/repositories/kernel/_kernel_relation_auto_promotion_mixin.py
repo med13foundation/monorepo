@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
-from src.models.database.research_space import ResearchSpaceModel
 
 from ._kernel_relation_repository_shared import (
     _DEFAULT_EVIDENCE_TIER,
@@ -27,6 +26,7 @@ from ._kernel_relation_repository_shared import (
     _parse_int_setting,
     _tier_rank,
 )
+from .kernel_space_registry_repository import SqlAlchemyKernelSpaceRegistryRepository
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -137,21 +137,21 @@ class _KernelRelationAutoPromotionMixin:
         *,
         research_space_id: UUID,
     ) -> dict[str, object]:
-        model = self._session.get(ResearchSpaceModel, research_space_id)
-        if model is None or not isinstance(model.settings, dict):
+        space = SqlAlchemyKernelSpaceRegistryRepository(self._session).get_by_id(
+            research_space_id,
+        )
+        if space is None:
             return {}
 
         settings_payload: dict[str, object] = {}
-        raw_policy = model.settings.get(_SPACE_POLICY_SETTINGS_KEY)
+        raw_policy = space.settings.get(_SPACE_POLICY_SETTINGS_KEY)
         if isinstance(raw_policy, dict):
             for key, value in raw_policy.items():
                 settings_payload[str(key)] = value
 
-        custom_settings = model.settings.get("custom")
+        custom_settings = space.settings.get("custom")
         if isinstance(custom_settings, dict):
             for key, value in custom_settings.items():
-                if not isinstance(key, str):
-                    continue
                 if not key.startswith(_SPACE_POLICY_CUSTOM_PREFIX):
                     continue
                 normalized_key = key.removeprefix(_SPACE_POLICY_CUSTOM_PREFIX)
@@ -392,6 +392,8 @@ class _KernelRelationAutoPromotionMixin:
                 distinct_sources.add(f"provenance:{evidence.provenance_id}")
             elif evidence.source_document_id is not None:
                 distinct_sources.add(f"document:{evidence.source_document_id}")
+            elif evidence.source_document_ref is not None:
+                distinct_sources.add(f"document_ref:{evidence.source_document_ref}")
             elif evidence.agent_run_id is not None:
                 distinct_sources.add(f"run:{evidence.agent_run_id}")
             else:
@@ -400,11 +402,12 @@ class _KernelRelationAutoPromotionMixin:
 
     @staticmethod
     def _count_distinct_documents(evidences: list[RelationEvidenceModel]) -> int:
-        distinct_documents = {
-            evidence.source_document_id
-            for evidence in evidences
-            if evidence.source_document_id is not None
-        }
+        distinct_documents: set[str] = set()
+        for evidence in evidences:
+            if evidence.source_document_id is not None:
+                distinct_documents.add(f"id:{evidence.source_document_id}")
+            elif evidence.source_document_ref is not None:
+                distinct_documents.add(f"ref:{evidence.source_document_ref}")
         return len(distinct_documents)
 
     @staticmethod

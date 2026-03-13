@@ -315,7 +315,7 @@ class DependencyValidator:
                 if file_layer in ALLOWED_CROSS_LAYER_IMPORTS:
                     for allowed_pattern in ALLOWED_CROSS_LAYER_IMPORTS[file_layer]:
                         # Convert pattern to file path format
-                        pattern_path = allowed_pattern.replace("src.", "src/")
+                        pattern_path = allowed_pattern.replace(".", "/")
                         # Check if imported module matches the pattern
                         if imported_module.startswith(pattern_path):
                             is_allowed = True

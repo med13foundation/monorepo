@@ -8,7 +8,9 @@ from uuid import UUID, uuid4
 from src.application.services.research_space_management_service import (
     CreateSpaceRequest,
     ResearchSpaceManagementService,
+    UpdateSpaceRequest,
 )
+from src.domain.entities.user import User, UserRole, UserStatus
 
 if TYPE_CHECKING:
     from src.domain.entities.research_space import ResearchSpace, SpaceStatus
@@ -77,8 +79,19 @@ class StubResearchSpaceRepository:
         return 0
 
     def delete(self, space_id: UUID) -> bool:
-        _ = space_id
+        for index, space in enumerate(self.saved_spaces):
+            if space.id == space_id:
+                self.saved_spaces.pop(index)
+                return True
         return False
+
+
+class RecordingSpaceLifecycleSync:
+    def __init__(self) -> None:
+        self.spaces: list[ResearchSpace] = []
+
+    def sync_space(self, space: ResearchSpace) -> None:
+        self.spaces.append(space)
 
 
 def test_create_space_defaults_relation_auto_promotion_disabled() -> None:
@@ -113,3 +126,87 @@ def test_create_space_preserves_explicit_relation_auto_promotion_setting() -> No
     )
 
     assert created.settings["relation_auto_promotion"]["enabled"] is True
+
+
+def test_create_space_syncs_graph_tenant_snapshot() -> None:
+    repository = StubResearchSpaceRepository()
+    sync = RecordingSpaceLifecycleSync()
+    service = ResearchSpaceManagementService(
+        repository,
+        space_lifecycle_sync=sync,
+    )
+
+    created = service.create_space(
+        CreateSpaceRequest(
+            owner_id=uuid4(),
+            name="Graph Sync",
+            slug="graph-sync",
+            settings={},
+            tags=[],
+        ),
+    )
+
+    assert sync.spaces == [created]
+
+
+def test_update_space_syncs_saved_snapshot() -> None:
+    repository = StubResearchSpaceRepository()
+    sync = RecordingSpaceLifecycleSync()
+    service = ResearchSpaceManagementService(
+        repository,
+        space_lifecycle_sync=sync,
+    )
+    created = service.create_space(
+        CreateSpaceRequest(
+            owner_id=uuid4(),
+            name="Original",
+            slug="graph-sync",
+            settings={},
+            tags=[],
+        ),
+    )
+    sync.spaces.clear()
+
+    updated = service.update_space(
+        created.id,
+        UpdateSpaceRequest(name="Updated"),
+        User(
+            id=created.owner_id,
+            email="owner@example.com",
+            username="owner",
+            full_name="Owner",
+            hashed_password="hashed",
+            role=UserRole.RESEARCHER,
+            status=UserStatus.ACTIVE,
+        ),
+    )
+
+    assert updated is not None
+    assert updated.name == "Updated"
+    assert sync.spaces == [updated]
+
+
+def test_delete_space_syncs_archived_snapshot() -> None:
+    repository = StubResearchSpaceRepository()
+    sync = RecordingSpaceLifecycleSync()
+    service = ResearchSpaceManagementService(
+        repository,
+        space_lifecycle_sync=sync,
+    )
+    created = service.create_space(
+        CreateSpaceRequest(
+            owner_id=uuid4(),
+            name="Delete Me",
+            slug="delete-me",
+            settings={},
+            tags=[],
+        ),
+    )
+    sync.spaces.clear()
+
+    deleted = service.delete_space(created.id, created.owner_id)
+
+    assert deleted is True
+    assert len(sync.spaces) == 1
+    assert sync.spaces[0].id == created.id
+    assert sync.spaces[0].status.value == "archived"

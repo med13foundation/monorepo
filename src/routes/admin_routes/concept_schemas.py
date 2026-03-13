@@ -22,7 +22,7 @@ from src.type_definitions.common import JSONObject
 class ConceptSetCreateRequest(BaseModel):
     """Request payload for creating a concept set."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=False)
 
     research_space_id: UUID
     name: str = Field(..., min_length=1, max_length=128)
@@ -67,7 +67,7 @@ class ConceptSetListResponse(BaseModel):
 class ConceptMemberCreateRequest(BaseModel):
     """Request payload for creating one concept member."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=False)
 
     concept_set_id: UUID
     research_space_id: UUID
@@ -122,7 +122,7 @@ class ConceptMemberListResponse(BaseModel):
 class ConceptAliasCreateRequest(BaseModel):
     """Request payload for creating one concept alias."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=False)
 
     concept_member_id: UUID
     research_space_id: UUID
@@ -169,7 +169,7 @@ class ConceptAliasListResponse(BaseModel):
 class ConceptPolicyUpsertRequest(BaseModel):
     """Request payload for upserting active concept policy."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=False)
 
     research_space_id: UUID
     mode: Literal["PRECISION", "BALANCED", "DISCOVERY"]
@@ -209,7 +209,7 @@ class ConceptPolicyResponse(BaseModel):
 class ConceptDecisionProposeRequest(BaseModel):
     """Request payload for proposing a concept decision."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=False)
 
     research_space_id: UUID
     decision_type: Literal[

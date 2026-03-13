@@ -18,7 +18,7 @@ from src.models.database.user import UserModel
 
 
 def _create_space_and_claim(db_session) -> tuple[str, str]:
-    suffix = uuid4().hex
+    suffix = uuid4().hex[:12]
     user = UserModel(
         email=f"claim-evidence-repo-{suffix}@example.com",
         username=f"claim-evidence-repo-{suffix}",

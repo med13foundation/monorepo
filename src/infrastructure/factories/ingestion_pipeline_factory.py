@@ -6,12 +6,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.application.services.kernel.dictionary_management_service import (
-    DictionaryManagementService,
-)
-from src.application.services.kernel.kernel_observation_service import (
-    KernelObservationService,
-)
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 from src.infrastructure.ingestion.mapping import (
     ExactMapper,
@@ -29,16 +23,6 @@ from src.infrastructure.ingestion.provenance.tracker import ProvenanceTracker
 from src.infrastructure.ingestion.resolution.entity_resolver import EntityResolver
 from src.infrastructure.ingestion.validation.observation_validator import (
     ObservationValidator,
-)
-from src.infrastructure.repositories.kernel import (
-    SqlAlchemyDictionaryRepository,
-    SqlAlchemyKernelEntityRepository,
-    SqlAlchemyKernelObservationRepository,
-    SqlAlchemyProvenanceRepository,
-)
-from src.infrastructure.security.phi_encryption import (
-    build_phi_encryption_service_from_env,
-    is_phi_encryption_enabled,
 )
 
 if TYPE_CHECKING:
@@ -60,6 +44,11 @@ def create_ingestion_pipeline(
     """
     Create a fully wired ingestion pipeline.
     """
+    from src.infrastructure.dependency_injection.dependencies import (
+        get_legacy_dependency_container,
+    )
+
+    legacy_container = get_legacy_dependency_container()
     active_mapping_judge_agent = mapping_judge_agent
     if active_mapping_judge_agent is None:
         from src.infrastructure.llm.adapters.mapping_judge_agent_adapter import (
@@ -71,7 +60,7 @@ def create_ingestion_pipeline(
         resolve_artana_state_uri()
         active_mapping_judge_agent = ArtanaMappingJudgeAdapter()
 
-    dictionary_repo = SqlAlchemyDictionaryRepository(session)
+    dictionary_repo = legacy_container.build_dictionary_repository(session)
     embedding_provider = HybridTextEmbeddingProvider()
     active_dictionary_search_harness = dictionary_search_harness
     if active_dictionary_search_harness is None:
@@ -84,22 +73,13 @@ def create_ingestion_pipeline(
             embedding_provider=embedding_provider,
             mapping_judge_agent=active_mapping_judge_agent,
         )
-    dictionary_service = DictionaryManagementService(
-        dictionary_repo=dictionary_repo,
+    dictionary_service = legacy_container.build_dictionary_service(
+        session,
         dictionary_search_harness=active_dictionary_search_harness,
         embedding_provider=embedding_provider,
     )
-    enable_phi_encryption = is_phi_encryption_enabled()
-    phi_encryption_service = (
-        build_phi_encryption_service_from_env() if enable_phi_encryption else None
-    )
-    entity_repo = SqlAlchemyKernelEntityRepository(
-        session,
-        phi_encryption_service=phi_encryption_service,
-        enable_phi_encryption=enable_phi_encryption,
-    )
-    observation_repo = SqlAlchemyKernelObservationRepository(session)
-    provenance_repo = SqlAlchemyProvenanceRepository(session)
+    entity_repo = legacy_container.build_entity_repository(session)
+    provenance_repo = legacy_container.build_provenance_repository(session)
 
     # Mapper
     exact_mapper = ExactMapper(dictionary_service)
@@ -129,10 +109,10 @@ def create_ingestion_pipeline(
     validator = ObservationValidator(dictionary_service)
 
     # Services
-    observation_service = KernelObservationService(
-        observation_repo,
-        entity_repo,
-        dictionary_service,
+    observation_service = legacy_container.create_kernel_observation_service(
+        session,
+        dictionary_service=dictionary_service,
+        entity_repository=entity_repo,
     )
     provenance_tracker = ProvenanceTracker(provenance_repo)
 

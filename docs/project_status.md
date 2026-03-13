@@ -56,17 +56,17 @@ This document summarizes the project based on repository documentation and highl
 
 - Clean Architecture foundation is documented as complete and stable.
 - Data Sources module is implemented across domain, application, infrastructure, and UI layers.
-- A consolidated baseline migration exists (`alembic/versions/001_current_baseline.py`) creating the current schema from scratch:
+- A consolidated baseline migration exists (`services/graph_api/alembic/versions/001_current_baseline.py`) creating the current schema from scratch:
   - dictionary tables (`variable_definitions`, `variable_synonyms`, `transform_registry`, `entity_resolution_policies`, `relation_constraints`)
   - fact tables (`entities`, `entity_identifiers`, `observations`, `relations`, `provenance`)
   - workspace tables (`research_spaces`, `research_space_memberships`)
-- Kernel services and routes exist for space-scoped CRUD:
-  - `/research-spaces/{space_id}/entities`
-  - `/research-spaces/{space_id}/observations`
-  - `/research-spaces/{space_id}/relations`
-  - `/research-spaces/{space_id}/provenance`
-  - `/research-spaces/{space_id}/ingest`
-  - `/research-spaces/{space_id}/graph/export`
+- The standalone graph service now owns the space-scoped graph API surface:
+  - `/v1/spaces/{space_id}/entities`
+  - `/v1/spaces/{space_id}/observations`
+  - `/v1/spaces/{space_id}/relations`
+  - `/v1/spaces/{space_id}/provenance`
+  - `/v1/spaces/{space_id}/graph/export`
+- The platform app still owns orchestration endpoints such as `/research-spaces/{space_id}/ingest`.
 - Authentication, authorization, rate limiting, and baseline audit logging are implemented.
 - Legacy entity-specific endpoints (`/genes`, `/variants`, `/phenotypes`, `/evidence`) are being retired in favor of kernel endpoints.
 - Artana-based PubMed **query generation** remains implemented; PubMed ingestion writes extracted facts into the kernel (entities/observations/relations) with provenance.
@@ -77,7 +77,7 @@ This document summarizes the project based on repository documentation and highl
 - The frontend follows a server-orchestrated pattern with dumb client components and server actions.
 - Data discovery workflows are refactored to align with backend orchestration DTOs.
 - Design system and component library are in place (shadcn/ui with documented typography and theme choices).
-- Knowledge Graph UI exists as a space-scoped route and now sources its data from kernel graph export endpoints.
+- Knowledge Graph UI exists as a space-scoped route and now sources its data from the standalone graph-service endpoints.
 - Kernel workflows are represented in the UI via dictionary browsing/editing, ingestion, and observations pages (space-scoped).
 
 ### Infrastructure and operations

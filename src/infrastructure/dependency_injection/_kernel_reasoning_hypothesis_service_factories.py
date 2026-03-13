@@ -4,30 +4,25 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import src.infrastructure.repositories.kernel as kernel_repositories
-from src.application.services.kernel.kernel_claim_participant_backfill_service import (
-    KernelClaimParticipantBackfillService,
-)
-from src.application.services.kernel.kernel_claim_projection_readiness_service import (
-    KernelClaimProjectionReadinessService,
-)
-from src.application.services.kernel.kernel_graph_view_service import (
-    KernelGraphViewService,
-)
-from src.application.services.kernel.kernel_reasoning_path_service import (
-    KernelReasoningPathService,
-)
-from src.domain.agents.models import ModelCapability
-from src.infrastructure.llm.config.model_registry import get_model_registry
-from src.infrastructure.repositories.source_document_repository import (
-    SqlAlchemySourceDocumentRepository,
-)
+from src.infrastructure.dependency_injection import graph_runtime_factories
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from src.application.agents.services.hypothesis_generation_service import (
         HypothesisGenerationService,
+    )
+    from src.application.services.kernel.kernel_claim_participant_backfill_service import (
+        KernelClaimParticipantBackfillService,
+    )
+    from src.application.services.kernel.kernel_claim_projection_readiness_service import (
+        KernelClaimProjectionReadinessService,
+    )
+    from src.application.services.kernel.kernel_graph_view_service import (
+        KernelGraphViewService,
+    )
+    from src.application.services.kernel.kernel_reasoning_path_service import (
+        KernelReasoningPathService,
     )
 
 
@@ -60,28 +55,10 @@ class KernelReasoningHypothesisServiceFactoryMixin:
     ) -> KernelGraphViewService:
         core_factory = self._require_core_factory()
         projection_factory = self._require_projection_factory()
-        from src.application.services.kernel._kernel_graph_view_support import (
-            KernelGraphViewServiceDependencies,
-        )
-
-        return KernelGraphViewService(
-            KernelGraphViewServiceDependencies(
-                entity_service=core_factory.create_kernel_entity_service(session),  # type: ignore[attr-defined]
-                relation_service=core_factory.create_kernel_relation_service(session),  # type: ignore[attr-defined]
-                relation_claim_service=projection_factory.create_kernel_relation_claim_service(  # type: ignore[attr-defined]
-                    session,
-                ),
-                claim_participant_service=projection_factory.create_kernel_claim_participant_service(  # type: ignore[attr-defined]
-                    session,
-                ),
-                claim_relation_service=projection_factory.create_kernel_claim_relation_service(  # type: ignore[attr-defined]
-                    session,
-                ),
-                claim_evidence_service=projection_factory.create_kernel_claim_evidence_service(  # type: ignore[attr-defined]
-                    session,
-                ),
-                source_document_repository=SqlAlchemySourceDocumentRepository(session),
-            ),
+        return graph_runtime_factories.create_kernel_graph_view_service(
+            core_factory,
+            projection_factory,
+            session,
         )
 
     def create_kernel_reasoning_path_service(
@@ -90,20 +67,10 @@ class KernelReasoningHypothesisServiceFactoryMixin:
     ) -> KernelReasoningPathService:
         core_factory = self._require_core_factory()
         projection_factory = self._require_projection_factory()
-        return KernelReasoningPathService(
-            reasoning_path_repo=kernel_repositories.SqlAlchemyKernelReasoningPathRepository(
-                session,
-            ),
-            relation_claim_service=projection_factory.create_kernel_relation_claim_service(  # type: ignore[attr-defined]
-                session,
-            ),
-            claim_participant_service=projection_factory.create_kernel_claim_participant_service(  # type: ignore[attr-defined]
-                session,
-            ),
-            claim_evidence_service=projection_factory.create_kernel_claim_evidence_service(session),  # type: ignore[attr-defined]
-            claim_relation_service=projection_factory.create_kernel_claim_relation_service(session),  # type: ignore[attr-defined]
-            relation_service=core_factory.create_kernel_relation_service(session),  # type: ignore[attr-defined]
-            session=session,
+        return graph_runtime_factories.create_kernel_reasoning_path_service(
+            core_factory,
+            projection_factory,
+            session,
         )
 
     def create_kernel_claim_projection_readiness_service(
@@ -111,21 +78,9 @@ class KernelReasoningHypothesisServiceFactoryMixin:
         session: Session,
     ) -> KernelClaimProjectionReadinessService:
         projection_factory = self._require_projection_factory()
-        return KernelClaimProjectionReadinessService(
-            session=session,
-            relation_projection_invariant_service=(
-                projection_factory.create_kernel_relation_projection_invariant_service(  # type: ignore[attr-defined]
-                    session,
-                )
-            ),
-            relation_projection_materialization_service=(
-                projection_factory.create_kernel_relation_projection_materialization_service(  # type: ignore[attr-defined]
-                    session,
-                )
-            ),
-            claim_participant_backfill_service=self.create_kernel_claim_participant_backfill_service(
-                session,
-            ),
+        return graph_runtime_factories.create_kernel_claim_projection_readiness_service(
+            projection_factory,
+            session,
         )
 
     def create_kernel_claim_participant_backfill_service(
@@ -134,17 +89,10 @@ class KernelReasoningHypothesisServiceFactoryMixin:
     ) -> KernelClaimParticipantBackfillService:
         core_factory = self._require_core_factory()
         projection_factory = self._require_projection_factory()
-        return KernelClaimParticipantBackfillService(
-            session=session,
-            relation_claim_service=projection_factory.create_kernel_relation_claim_service(  # type: ignore[attr-defined]
-                session,
-            ),
-            claim_participant_service=projection_factory.create_kernel_claim_participant_service(  # type: ignore[attr-defined]
-                session,
-            ),
-            entity_repository=core_factory._build_entity_repository(session),  # type: ignore[attr-defined]  # noqa: SLF001
-            concept_service=core_factory.create_concept_management_service(session),  # type: ignore[attr-defined]
-            reasoning_path_service=self.create_kernel_reasoning_path_service(session),
+        return graph_runtime_factories.create_kernel_claim_participant_backfill_service(
+            core_factory,
+            projection_factory,
+            session,
         )
 
     def create_hypothesis_generation_service(
@@ -153,49 +101,10 @@ class KernelReasoningHypothesisServiceFactoryMixin:
     ) -> HypothesisGenerationService:
         core_factory = self._require_core_factory()
         projection_factory = self._require_projection_factory()
-        from src.application.agents.services.hypothesis_generation_service import (
-            HypothesisGenerationService,
-            HypothesisGenerationServiceDependencies,
-        )
-        from src.infrastructure.llm.adapters import ArtanaGraphConnectionAdapter
-
-        dictionary_service = core_factory.create_dictionary_management_service(session)  # type: ignore[attr-defined]
-        relation_repository = kernel_repositories.SqlAlchemyKernelRelationRepository(
+        return graph_runtime_factories.create_hypothesis_generation_service(
+            core_factory,
+            projection_factory,
             session,
-        )
-        graph_query_service = kernel_repositories.SqlAlchemyGraphQueryRepository(
-            session,
-        )
-        model_spec = get_model_registry().get_default_model(
-            ModelCapability.EVIDENCE_EXTRACTION,
-        )
-        graph_connection_agent = ArtanaGraphConnectionAdapter(
-            model=model_spec.model_id,
-            dictionary_service=dictionary_service,
-            graph_query_service=graph_query_service,
-            relation_repository=relation_repository,
-        )
-        return HypothesisGenerationService(
-            dependencies=HypothesisGenerationServiceDependencies(
-                graph_connection_agent=graph_connection_agent,
-                relation_claim_service=projection_factory.create_kernel_relation_claim_service(  # type: ignore[attr-defined]
-                    session,
-                ),
-                claim_participant_service=projection_factory.create_kernel_claim_participant_service(  # type: ignore[attr-defined]
-                    session,
-                ),
-                claim_evidence_service=projection_factory.create_kernel_claim_evidence_service(  # type: ignore[attr-defined]
-                    session,
-                ),
-                entity_repository=core_factory._build_entity_repository(  # type: ignore[attr-defined]  # noqa: SLF001
-                    session,
-                ),
-                relation_repository=relation_repository,
-                dictionary_service=dictionary_service,
-                reasoning_path_service=self.create_kernel_reasoning_path_service(
-                    session,
-                ),
-            ),
         )
 
 

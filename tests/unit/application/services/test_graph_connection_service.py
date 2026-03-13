@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from src.domain.agents.contexts.graph_connection_context import (
         GraphConnectionContext,
     )
+    from src.type_definitions.common import ResearchSpaceSettings
 
 
 class StubGraphConnectionAgent(GraphConnectionPort):
@@ -94,6 +95,18 @@ class StubEntityRepository:
 
     def get_by_id(self, entity_id: str) -> object | None:
         return self.entities.get(entity_id)
+
+
+@dataclass
+class StubSpaceSettingsPort:
+    settings_by_space_id: dict[str, ResearchSpaceSettings]
+
+    def __post_init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get_settings(self, space_id) -> ResearchSpaceSettings | None:
+        self.calls.append(str(space_id))
+        return self.settings_by_space_id.get(str(space_id))
 
 
 @dataclass
@@ -670,6 +683,47 @@ async def test_discover_connections_for_seed_uses_relation_type_thresholds() -> 
     assert outcome.wrote_to_graph is True
     assert outcome.review_required is True
     assert outcome.reason == "processed"
+    assert len(relation_repository.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_connections_for_seed_uses_space_settings_port() -> None:
+    contract = _build_contract(confidence_score=0.86, relation_type="CAUSES")
+    relation_repository = StubRelationRepository()
+    projection_dependencies = _build_claim_backed_projection_dependencies(
+        contract,
+        relation_repository=relation_repository,
+    )
+    space_settings_port = StubSpaceSettingsPort(
+        settings_by_space_id={
+            contract.research_space_id: {
+                "review_threshold": 0.6,
+                "relation_review_thresholds": {"CAUSES": 0.9},
+            },
+        },
+    )
+    service = GraphConnectionService(
+        dependencies=GraphConnectionServiceDependencies(
+            graph_connection_agent=StubGraphConnectionAgent(contract),
+            relation_repository=relation_repository,
+            governance_service=_build_governance_service(),
+            space_settings_port=space_settings_port,
+            **projection_dependencies,
+        ),
+    )
+
+    outcome = await service.discover_connections_for_seed(
+        research_space_id=contract.research_space_id,
+        seed_entity_id=contract.seed_entity_id,
+        source_type="clinvar",
+        shadow_mode=False,
+    )
+
+    assert outcome.status == "discovered"
+    assert outcome.wrote_to_graph is True
+    assert outcome.review_required is True
+    assert outcome.reason == "processed"
+    assert space_settings_port.calls == [contract.research_space_id]
     assert len(relation_repository.calls) == 1
 
 

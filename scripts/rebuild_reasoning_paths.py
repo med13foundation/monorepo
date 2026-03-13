@@ -4,24 +4,17 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
 from typing import TYPE_CHECKING
-
-from src.database.session import SessionLocal, set_session_rls_context
-from src.infrastructure.dependency_injection.service_factories import (
-    ApplicationServiceFactoryMixin,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from sqlalchemy.orm import Session
+    from src.infrastructure.graph_service import GraphServiceClient
 
-    from src.application.services.kernel import KernelReasoningPathService
-
-
-class _ScriptServiceFactory(ApplicationServiceFactoryMixin):
-    """Minimal service factory wrapper for operational scripts."""
+from scripts._graph_service_client_support import (
+    add_graph_service_connection_args,
+    build_graph_service_client,
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -45,42 +38,31 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Emit machine-readable JSON output.",
     )
+    add_graph_service_connection_args(parser)
     return parser.parse_args()
 
 
-def _build_service(session: Session) -> KernelReasoningPathService:
-    factory = _ScriptServiceFactory()
-    return factory.create_kernel_reasoning_path_service(session)
+def _build_client(args: argparse.Namespace) -> GraphServiceClient:
+    return build_graph_service_client(args)
 
 
 def run_rebuild(
     args: argparse.Namespace,
     *,
-    session_factory: Callable[[], Session] = SessionLocal,
+    client_factory: Callable[[argparse.Namespace], GraphServiceClient] | None = None,
 ) -> int:
-    with session_factory() as session:
-        set_session_rls_context(
-            session,
-            has_phi_access=True,
-            is_admin=True,
-            bypass_rls=True,
+    effective_client_factory = client_factory or _build_client
+    client = effective_client_factory(args)
+    try:
+        response = client.rebuild_reasoning_paths(
+            space_id=args.space_id,
+            max_depth=max(1, min(4, int(args.max_depth))),
+            replace_existing=True,
         )
-        service = _build_service(session)
-        if args.space_id:
-            summaries = [
-                service.rebuild_for_space(
-                    args.space_id,
-                    max_depth=max(1, min(4, int(args.max_depth))),
-                    replace_existing=True,
-                ),
-            ]
-        else:
-            summaries = service.rebuild_global(
-                max_depth=max(1, min(4, int(args.max_depth))),
-            )
-        session.commit()
+    finally:
+        client.close()
 
-    payload = [asdict(summary) for summary in summaries]
+    payload = response.model_dump(mode="json")["summaries"]
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:

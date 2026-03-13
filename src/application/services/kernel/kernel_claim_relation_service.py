@@ -34,6 +34,7 @@ class KernelClaimRelationService:
         confidence: float,
         review_status: ClaimRelationReviewStatus,
         evidence_summary: str | None,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelClaimRelation:
         """Create one claim relation row."""
@@ -44,6 +45,7 @@ class KernelClaimRelationService:
             relation_type=relation_type,
             agent_run_id=agent_run_id,
             source_document_id=source_document_id,
+            source_document_ref=source_document_ref,
             confidence=confidence,
             review_status=review_status,
             evidence_summary=evidence_summary,

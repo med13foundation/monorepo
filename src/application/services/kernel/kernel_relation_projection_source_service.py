@@ -33,6 +33,7 @@ class KernelRelationProjectionSourceService:
         projection_origin: RelationProjectionOrigin,
         source_document_id: str | None,
         agent_run_id: str | None,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelRelationProjectionSource:
         """Create or return one claim-backed projection lineage row."""
@@ -42,6 +43,7 @@ class KernelRelationProjectionSourceService:
             claim_id=claim_id,
             projection_origin=projection_origin,
             source_document_id=source_document_id,
+            source_document_ref=source_document_ref,
             agent_run_id=agent_run_id,
             metadata=metadata,
         )

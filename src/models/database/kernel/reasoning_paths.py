@@ -18,6 +18,10 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from src.database.graph_schema import (
+    graph_table_options,
+    qualify_graph_foreign_key_target,
+)
 from src.models.database.base import Base
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
@@ -34,7 +38,6 @@ class ReasoningPathModel(Base):
     )
     research_space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("research_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     path_kind: Mapped[str] = mapped_column(
@@ -95,19 +98,28 @@ class ReasoningPathModel(Base):
         ),
         ForeignKeyConstraint(
             ["start_entity_id", "research_space_id"],
-            ["entities.id", "entities.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("entities.id"),
+                qualify_graph_foreign_key_target("entities.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_reasoning_paths_start_entity_space",
         ),
         ForeignKeyConstraint(
             ["end_entity_id", "research_space_id"],
-            ["entities.id", "entities.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("entities.id"),
+                qualify_graph_foreign_key_target("entities.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_reasoning_paths_end_entity_space",
         ),
         ForeignKeyConstraint(
             ["root_claim_id", "research_space_id"],
-            ["relation_claims.id", "relation_claims.research_space_id"],
+            [
+                qualify_graph_foreign_key_target("relation_claims.id"),
+                qualify_graph_foreign_key_target("relation_claims.research_space_id"),
+            ],
             ondelete="CASCADE",
             name="fk_reasoning_paths_root_claim_space",
         ),
@@ -128,9 +140,9 @@ class ReasoningPathModel(Base):
             "start_entity_id",
             "end_entity_id",
         ),
-        {
-            "comment": "Derived reasoning paths rebuilt from grounded support-claim chains",
-        },
+        graph_table_options(
+            comment="Derived reasoning paths rebuilt from grounded support-claim chains",
+        ),
     )
 
 
@@ -146,28 +158,43 @@ class ReasoningPathStepModel(Base):
     )
     path_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("reasoning_paths.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("reasoning_paths.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     step_index: Mapped[int] = mapped_column(Integer, nullable=False)
     source_claim_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("relation_claims.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("relation_claims.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     target_claim_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("relation_claims.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("relation_claims.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     claim_relation_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("claim_relations.id", ondelete="CASCADE"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("claim_relations.id"),
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     canonical_relation_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("relations.id", ondelete="SET NULL"),
+        ForeignKey(
+            qualify_graph_foreign_key_target("relations.id"),
+            ondelete="SET NULL",
+        ),
         nullable=True,
     )
     metadata_payload: Mapped[JSONObject] = mapped_column(
@@ -201,9 +228,9 @@ class ReasoningPathStepModel(Base):
         Index("idx_reasoning_path_steps_source_claim", "source_claim_id"),
         Index("idx_reasoning_path_steps_target_claim", "target_claim_id"),
         Index("idx_reasoning_path_steps_claim_relation", "claim_relation_id"),
-        {
-            "comment": "Ordered claim-to-claim edges explaining one reasoning path",
-        },
+        graph_table_options(
+            comment="Ordered claim-to-claim edges explaining one reasoning path",
+        ),
     )
 
 

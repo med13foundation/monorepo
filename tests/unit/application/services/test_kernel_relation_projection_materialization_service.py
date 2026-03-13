@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 
 from src.application.services.kernel.dictionary_management_service import (
     DictionaryManagementService,
@@ -30,7 +31,6 @@ from src.infrastructure.repositories.kernel import (
 )
 from src.models.database.kernel.claim_evidence import ClaimEvidenceModel
 from src.models.database.kernel.dictionary import DictionaryDomainContextModel
-from src.models.database.kernel.entities import EntityModel
 from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
@@ -96,6 +96,7 @@ class _ProjectionFixture:
 
 def _build_fixture(db_session: Session) -> _ProjectionFixture:
     domain_context_id = f"projection_materializer_{uuid4().hex[:12]}"
+    user_suffix = uuid4().hex[:10]
     db_session.add(
         DictionaryDomainContextModel(
             id=domain_context_id,
@@ -106,8 +107,8 @@ def _build_fixture(db_session: Session) -> _ProjectionFixture:
     db_session.flush()
 
     user = UserModel(
-        email=f"projection-materializer-{uuid4().hex}@example.com",
-        username=f"projection-materializer-{uuid4().hex}",
+        email=f"pm-{user_suffix}@example.com",
+        username=f"pm-{user_suffix}",
         full_name="Projection Materializer Tester",
         hashed_password="hashed",
         role=UserRole.RESEARCHER,
@@ -215,10 +216,12 @@ def _create_claim(
     persistability: RelationClaimPersistability = "PERSISTABLE",
     with_participants: bool = True,
     evidence_seeds: list[_EvidenceSeed] | None = None,
+    source_document_ref: str | None = None,
 ) -> str:
     claim = fixture.claim_repo.create(
         research_space_id=fixture.research_space_id,
         source_document_id=None,
+        source_document_ref=source_document_ref,
         agent_run_id="projection-test-run",
         source_type="GENE",
         relation_type="ASSOCIATED_WITH",
@@ -262,6 +265,7 @@ def _create_claim(
         fixture.claim_evidence_repo.create(
             claim_id=claim_id,
             source_document_id=None,
+            source_document_ref=source_document_ref,
             agent_run_id=f"projection-evidence-{index}",
             sentence=evidence_seed.sentence,
             sentence_source="verbatim_span",
@@ -337,6 +341,46 @@ def test_materialize_support_claim_creates_claim_backed_relation_and_derived_evi
     assert evidence_rows[0].evidence_sentence == (
         "MED13 variants were associated with cardiomyopathy in cohort A."
     )
+
+
+@pytest.mark.database
+def test_materialize_support_claim_preserves_external_document_refs(
+    db_session: Session,
+) -> None:
+    fixture = _build_fixture(db_session)
+    external_document_ref = "https://example.org/papers/materialized-evidence"
+    claim_id = _create_claim(
+        fixture,
+        source_document_ref=external_document_ref,
+        evidence_seeds=[
+            _EvidenceSeed(
+                summary="External document reference is preserved across projection.",
+                confidence=0.71,
+                tier="LITERATURE",
+                sentence="Evidence with an external document reference was retained.",
+            ),
+        ],
+    )
+
+    result = fixture.service.materialize_support_claim(
+        claim_id=claim_id,
+        research_space_id=fixture.research_space_id,
+        projection_origin="CLAIM_RESOLUTION",
+    )
+
+    assert result.relation is not None
+    projection_rows = fixture.projection_repo.find_by_relation_id(
+        str(result.relation.id),
+    )
+    assert len(projection_rows) == 1
+    assert projection_rows[0].source_document_ref == external_document_ref
+
+    evidence_rows = fixture.relation_repo.list_evidence_for_relation(
+        research_space_id=fixture.research_space_id,
+        relation_id=str(result.relation.id),
+    )
+    assert len(evidence_rows) == 1
+    assert evidence_rows[0].source_document_ref == external_document_ref
 
 
 @pytest.mark.database
@@ -609,9 +653,30 @@ def test_materialize_support_claim_rejects_unresolved_endpoint_entities(
         ],
     )
 
-    source_entity = db_session.get(EntityModel, UUID(fixture.source_entity_id))
-    assert source_entity is not None
-    db_session.delete(source_entity)
+    missing_entity_id = str(uuid4())
+    is_postgres = (
+        db_session.bind is not None and db_session.bind.dialect.name == "postgresql"
+    )
+    if is_postgres:
+        db_session.execute(text("SET session_replication_role = replica"))
+    try:
+        db_session.execute(
+            text(
+                """
+                UPDATE claim_participants
+                SET entity_id = :entity_id
+                WHERE claim_id = :claim_id
+                  AND role = 'SUBJECT'
+                """,
+            ),
+            {
+                "entity_id": missing_entity_id,
+                "claim_id": claim_id,
+            },
+        )
+    finally:
+        if is_postgres:
+            db_session.execute(text("SET session_replication_role = DEFAULT"))
     db_session.flush()
 
     with pytest.raises(

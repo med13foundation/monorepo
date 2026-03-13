@@ -5,15 +5,17 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
-from sqlalchemy.orm import aliased
 
+from src.infrastructure.repositories.graph_observability_repository import (
+    count_open_relation_claims_for_source_documents,
+    count_pending_relation_reviews_for_source_documents,
+    load_source_document_relation_rows,
+    load_space_graph_summary_metrics,
+)
 from src.models.database.extraction_queue import (
     ExtractionQueueItemModel,
     ExtractionStatusEnum,
 )
-from src.models.database.kernel.entities import EntityModel
-from src.models.database.kernel.relation_claims import RelationClaimModel
-from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
 from src.models.database.review import ReviewRecord
 from src.models.database.source_document import SourceDocumentModel
 
@@ -117,45 +119,20 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
         }
         if not document_uuid_to_id:
             return []
-
-        source_entity = aliased(EntityModel)
-        target_entity = aliased(EntityModel)
-        statement = (
-            select(
-                RelationEvidenceModel.source_document_id,
-                RelationModel.id,
-                RelationModel.relation_type,
-                RelationModel.curation_status,
-                RelationModel.aggregate_confidence,
-                RelationModel.source_id,
-                RelationModel.target_id,
-                RelationEvidenceModel.id,
-                RelationEvidenceModel.confidence,
-                RelationEvidenceModel.evidence_summary,
-                RelationEvidenceModel.evidence_sentence,
-                RelationEvidenceModel.evidence_sentence_source,
-                RelationEvidenceModel.evidence_sentence_confidence,
-                RelationEvidenceModel.evidence_sentence_rationale,
-                RelationEvidenceModel.agent_run_id,
-                source_entity.display_label,
-                target_entity.display_label,
-            )
-            .join(
-                RelationModel,
-                RelationModel.id == RelationEvidenceModel.relation_id,
-            )
-            .outerjoin(source_entity, source_entity.id == RelationModel.source_id)
-            .outerjoin(target_entity, target_entity.id == RelationModel.target_id)
-            .where(RelationEvidenceModel.source_document_id.in_(document_uuid_to_id))
-            .where(RelationModel.research_space_id == space_id)
-            .order_by(desc(RelationEvidenceModel.created_at))
+        rows = load_source_document_relation_rows(
+            self._session,
+            space_id=space_id,
+            source_document_ids=list(document_uuid_to_id),
+            limit=limit,
         )
-        if limit is not None:
-            statement = statement.limit(max(limit, 1) * 20)
-        rows = self._session.execute(statement).all()
         payload_rows: list[JSONObject] = []
         for row in rows:
-            document_id = document_uuid_to_id.get(row[0], str(row[0]))
+            parsed_document_uuid = parse_uuid_runtime(row.source_document_id)
+            document_id = (
+                document_uuid_to_id.get(parsed_document_uuid, row.source_document_id)
+                if parsed_document_uuid is not None
+                else row.source_document_id
+            )
             document_context = coerce_json_object(
                 document_context_by_id.get(document_id),
             )
@@ -173,22 +150,22 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
                 {
                     "document_id": document_id,
                     "external_record_id": external_record_id,
-                    "relation_id": str(row[1]),
-                    "relation_type": row[2],
-                    "curation_status": row[3],
-                    "aggregate_confidence": float(row[4] or 0.0),
-                    "source_entity_id": str(row[5]),
-                    "target_entity_id": str(row[6]),
-                    "evidence_id": str(row[7]),
-                    "evidence_confidence": float(row[8] or 0.0),
-                    "evidence_summary": row[9],
-                    "evidence_sentence": row[10],
-                    "evidence_sentence_source": row[11],
-                    "evidence_sentence_confidence": row[12],
-                    "evidence_sentence_rationale": row[13],
-                    "agent_run_id": row[14],
-                    "source_entity_label": row[15],
-                    "target_entity_label": row[16],
+                    "relation_id": row.relation_id,
+                    "relation_type": row.relation_type,
+                    "curation_status": row.curation_status,
+                    "aggregate_confidence": row.aggregate_confidence,
+                    "source_entity_id": row.source_entity_id,
+                    "target_entity_id": row.target_entity_id,
+                    "evidence_id": row.evidence_id,
+                    "evidence_confidence": row.evidence_confidence,
+                    "evidence_summary": row.evidence_summary,
+                    "evidence_sentence": row.evidence_sentence,
+                    "evidence_sentence_source": row.evidence_sentence_source,
+                    "evidence_sentence_confidence": row.evidence_sentence_confidence,
+                    "evidence_sentence_rationale": row.evidence_sentence_rationale,
+                    "agent_run_id": row.agent_run_id,
+                    "source_entity_label": row.source_entity_label,
+                    "target_entity_label": row.target_entity_label,
                     "paper_links": paper_links,
                 },
             )
@@ -290,53 +267,20 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
         space_id: UUID,
         source_id: UUID,
     ) -> JSONObject:
-        node_count_stmt = (
-            select(func.count())
-            .select_from(EntityModel)
-            .where(EntityModel.research_space_id == space_id)
-        )
-        edge_count_stmt = (
-            select(func.count())
-            .select_from(RelationModel)
-            .where(RelationModel.research_space_id == space_id)
-        )
-        top_types_stmt = (
-            select(RelationModel.relation_type, func.count(RelationModel.id))
-            .where(RelationModel.research_space_id == space_id)
-            .group_by(RelationModel.relation_type)
-            .order_by(desc(func.count(RelationModel.id)))
-            .limit(10)
-        )
-
-        node_count = int(self._session.execute(node_count_stmt).scalar_one() or 0)
-        edge_count = int(self._session.execute(edge_count_stmt).scalar_one() or 0)
         source_document_ids = self._load_source_document_uuid_ids(source_id=source_id)
-        if source_document_ids:
-            source_edge_stmt = (
-                select(func.count(func.distinct(RelationModel.id)))
-                .select_from(RelationModel)
-                .join(
-                    RelationEvidenceModel,
-                    RelationEvidenceModel.relation_id == RelationModel.id,
-                )
-                .where(RelationModel.research_space_id == space_id)
-                .where(
-                    RelationEvidenceModel.source_document_id.in_(source_document_ids),
-                )
-            )
-            source_edge_count = int(
-                self._session.execute(source_edge_stmt).scalar_one() or 0,
-            )
-        else:
-            source_edge_count = 0
-        top_relation_types = [
+        summary_metrics = load_space_graph_summary_metrics(
+            self._session,
+            space_id=space_id,
+            source_document_ids=source_document_ids,
+        )
+        top_relation_types: list[JSONObject] = [
             {"relation_type": relation_type, "count": int(count)}
-            for relation_type, count in self._session.execute(top_types_stmt).all()
+            for relation_type, count in summary_metrics.top_relation_types
         ]
         return {
-            "node_count": node_count,
-            "edge_count": edge_count,
-            "source_edge_count": source_edge_count,
+            "node_count": summary_metrics.node_count,
+            "edge_count": summary_metrics.edge_count,
+            "source_edge_count": summary_metrics.source_edge_count,
             "top_relation_types": top_relation_types,
         }
 
@@ -443,20 +387,12 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
         source_id: UUID,
     ) -> int:
         source_document_ids = self._load_source_document_uuid_ids(source_id=source_id)
-        if not source_document_ids:
-            return 0
-        statement = (
-            select(func.count(func.distinct(RelationModel.id)))
-            .select_from(RelationModel)
-            .join(
-                RelationEvidenceModel,
-                RelationEvidenceModel.relation_id == RelationModel.id,
-            )
-            .where(RelationModel.research_space_id == space_id)
-            .where(RelationModel.curation_status.in_(PENDING_RELATION_STATUSES))
-            .where(RelationEvidenceModel.source_document_id.in_(source_document_ids))
+        pending_relations = count_pending_relation_reviews_for_source_documents(
+            self._session,
+            space_id=space_id,
+            source_document_ids=source_document_ids,
+            pending_relation_statuses=PENDING_RELATION_STATUSES,
         )
-        pending_relations = int(self._session.execute(statement).scalar_one() or 0)
         pending_claims = self._count_open_relation_claims_for_source_document_ids(
             space_id=space_id,
             source_document_ids=source_document_ids,
@@ -487,16 +423,11 @@ class SourceWorkflowMonitorRelationsMixin(SourceWorkflowMonitorQualityMixin):
         space_id: UUID,
         source_document_ids: list[UUID],
     ) -> int:
-        if not source_document_ids:
-            return 0
-        statement = (
-            select(func.count())
-            .select_from(RelationClaimModel)
-            .where(RelationClaimModel.research_space_id == space_id)
-            .where(RelationClaimModel.claim_status == "OPEN")
-            .where(RelationClaimModel.source_document_id.in_(source_document_ids))
+        return count_open_relation_claims_for_source_documents(
+            self._session,
+            space_id=space_id,
+            source_document_ids=source_document_ids,
         )
-        return int(self._session.execute(statement).scalar_one() or 0)
 
     def _load_source_document_uuid_ids(self, *, source_id: UUID) -> list[UUID]:
         statement = select(SourceDocumentModel.id).where(

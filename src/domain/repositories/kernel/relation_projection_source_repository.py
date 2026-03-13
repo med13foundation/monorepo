@@ -29,6 +29,7 @@ class KernelRelationProjectionSourceRepository(ABC):
         projection_origin: RelationProjectionOrigin,
         source_document_id: str | None,
         agent_run_id: str | None,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelRelationProjectionSource:
         """Create or return one projection-lineage row."""

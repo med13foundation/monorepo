@@ -17,6 +17,12 @@ def _run_alembic_upgrade(*, database_url: str) -> None:
     subprocess.run(
         [
             REPOSITORY_ROOT.joinpath("venv", "bin", "alembic").as_posix(),
+            "-c",
+            REPOSITORY_ROOT.joinpath(
+                "services",
+                "graph_api",
+                "alembic.ini",
+            ).as_posix(),
             "upgrade",
             "head",
         ],

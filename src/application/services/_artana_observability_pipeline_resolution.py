@@ -15,8 +15,10 @@ from src.application.services._source_workflow_monitor_shared import (
     coerce_json_object,
     normalize_optional_string,
 )
+from src.infrastructure.repositories.graph_observability_repository import (
+    load_relation_evidence_agent_run_ids_for_document_ids,
+)
 from src.models.database.ingestion_job import IngestionJobKindEnum, IngestionJobModel
-from src.models.database.kernel.relations import RelationEvidenceModel
 from src.models.database.publication_extraction import PublicationExtractionModel
 from src.models.database.source_document import SourceDocumentModel
 from src.models.database.user_data_source import UserDataSourceModel
@@ -128,20 +130,12 @@ def load_relation_evidence_run_ids(
     *,
     pipeline_document_ids: list[str],
 ) -> list[str]:
-    if not pipeline_document_ids:
-        return []
-    relation_rows = (
-        session.execute(
-            select(RelationEvidenceModel).where(
-                RelationEvidenceModel.source_document_id.in_(pipeline_document_ids),
-            ),
-        )
-        .scalars()
-        .all()
-    )
     run_ids: list[str] = []
-    for relation_row in relation_rows:
-        _append_unique(run_ids, relation_row.agent_run_id)
+    for run_id in load_relation_evidence_agent_run_ids_for_document_ids(
+        session,
+        document_ids=pipeline_document_ids,
+    ):
+        _append_unique(run_ids, run_id)
     return run_ids
 
 

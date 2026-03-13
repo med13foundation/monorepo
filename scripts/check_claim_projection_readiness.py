@@ -4,24 +4,17 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
 from typing import TYPE_CHECKING
-
-from src.database.session import SessionLocal, set_session_rls_context
-from src.infrastructure.dependency_injection.service_factories import (
-    ApplicationServiceFactoryMixin,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from sqlalchemy.orm import Session
+    from src.infrastructure.graph_service import GraphServiceClient
 
-    from src.application.services.kernel import KernelClaimProjectionReadinessService
-
-
-class _ScriptServiceFactory(ApplicationServiceFactoryMixin):
-    """Minimal service factory wrapper for operational scripts."""
+from scripts._graph_service_client_support import (
+    add_graph_service_connection_args,
+    build_graph_service_client,
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -51,47 +44,35 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Emit machine-readable JSON output.",
     )
+    add_graph_service_connection_args(parser)
     return parser.parse_args()
 
 
-def _build_service(session: Session) -> KernelClaimProjectionReadinessService:
-    factory = _ScriptServiceFactory()
-    return factory.create_kernel_claim_projection_readiness_service(session)
+def _build_client(args: argparse.Namespace) -> GraphServiceClient:
+    return build_graph_service_client(args)
 
 
 def run_readiness_check(
     args: argparse.Namespace,
     *,
-    session_factory: Callable[[], Session] = SessionLocal,
+    client_factory: Callable[[argparse.Namespace], GraphServiceClient] | None = None,
 ) -> int:
-    with session_factory() as session:
-        set_session_rls_context(
-            session,
-            has_phi_access=True,
-            is_admin=True,
-            bypass_rls=True,
-        )
-        service = _build_service(session)
+    effective_client_factory = client_factory or _build_client
+    client = effective_client_factory(args)
+    try:
         repair_summary = None
         if args.repair:
-            repair_summary = service.repair_global(dry_run=args.dry_run)
-            if args.dry_run:
-                session.rollback()
-            else:
-                session.commit()
-        report = service.audit(sample_limit=max(1, int(args.sample_limit)))
+            repair_summary = client.repair_projections(dry_run=args.dry_run)
+        report = client.get_projection_readiness(
+            sample_limit=max(1, int(args.sample_limit)),
+        )
+    finally:
+        client.close()
 
-    payload = {
-        "ready": report.ready,
-        "orphan_relations": asdict(report.orphan_relations),
-        "missing_claim_participants": asdict(report.missing_claim_participants),
-        "missing_claim_evidence": asdict(report.missing_claim_evidence),
-        "linked_relation_mismatches": asdict(report.linked_relation_mismatches),
-        "invalid_projection_relations": asdict(report.invalid_projection_relations),
-        "repair_summary": (
-            asdict(repair_summary) if repair_summary is not None else None
-        ),
-    }
+    payload = report.model_dump(mode="json")
+    payload["repair_summary"] = (
+        repair_summary.model_dump(mode="json") if repair_summary is not None else None
+    )
 
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))

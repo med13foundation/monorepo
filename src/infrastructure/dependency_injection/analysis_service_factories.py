@@ -16,6 +16,12 @@ if TYPE_CHECKING:
         StorageConfigurationService,
     )
     from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
+    from src.domain.repositories.kernel.observation_repository import (
+        KernelObservationRepository,
+    )
+    from src.domain.repositories.kernel.relation_repository import (
+        KernelRelationRepository,
+    )
 
 
 class AnalysisServiceFactoryMixin:
@@ -33,22 +39,26 @@ class AnalysisServiceFactoryMixin:
             session: Session,
         ) -> KernelEntityRepository: ...
 
+        def _build_observation_repository(
+            self,
+            session: Session,
+        ) -> KernelObservationRepository: ...
+
+        def _build_relation_repository(
+            self,
+            session: Session,
+        ) -> KernelRelationRepository: ...
+
     def create_export_service(
         self,
         session: Session,
     ) -> BulkExportService:
         from src.application import export as export_module
-        from src.infrastructure.repositories.kernel.kernel_observation_repository import (
-            SqlAlchemyKernelObservationRepository,
-        )
-        from src.infrastructure.repositories.kernel.kernel_relation_repository import (
-            SqlAlchemyKernelRelationRepository,
-        )
 
         return export_module.BulkExportService(
             entity_repo=self._build_entity_repository(session),
-            observation_repo=SqlAlchemyKernelObservationRepository(session),
-            relation_repo=SqlAlchemyKernelRelationRepository(session),
+            observation_repo=self._build_observation_repository(session),
+            relation_repo=self._build_relation_repository(session),
             storage_service=self.create_storage_configuration_service(session),
         )
 
@@ -57,17 +67,11 @@ class AnalysisServiceFactoryMixin:
         session: Session,
     ) -> UnifiedSearchService:
         from src.application import search as search_module
-        from src.infrastructure.repositories.kernel.kernel_observation_repository import (
-            SqlAlchemyKernelObservationRepository,
-        )
-        from src.infrastructure.repositories.kernel.kernel_relation_repository import (
-            SqlAlchemyKernelRelationRepository,
-        )
 
         return search_module.UnifiedSearchService(
             entity_repo=self._build_entity_repository(session),
-            observation_repo=SqlAlchemyKernelObservationRepository(session),
-            relation_repo=SqlAlchemyKernelRelationRepository(session),
+            observation_repo=self._build_observation_repository(session),
+            relation_repo=self._build_relation_repository(session),
         )
 
     def create_dashboard_service(self, session: Session) -> DashboardService:

@@ -324,6 +324,7 @@ class KernelRelationCreateRequest(BaseModel):
     evidence_sentence_rationale: str | None = Field(default=None, max_length=2000)
     evidence_tier: str | None = Field(None, max_length=32)
     provenance_id: UUID | None = None
+    source_document_ref: str | None = Field(default=None, max_length=512)
 
 
 class KernelRelationCurationUpdateRequest(BaseModel):
@@ -452,8 +453,9 @@ class KernelRelationClaimResponse(BaseModel):
 
     id: UUID
     research_space_id: UUID
-    source_document_id: UUID | None
-    agent_run_id: str | None
+    source_document_id: UUID | None = None
+    source_document_ref: str | None = None
+    agent_run_id: str | None = None
     source_type: str
     relation_type: str
     target_type: str
@@ -488,6 +490,7 @@ class KernelRelationClaimResponse(BaseModel):
                 if source_document_id_raw is not None
                 else None
             ),
+            source_document_ref=getattr(model, "source_document_ref", None),
             agent_run_id=model.agent_run_id,
             source_type=str(model.source_type),
             relation_type=str(model.relation_type),
@@ -535,8 +538,9 @@ class KernelClaimEvidenceResponse(BaseModel):
 
     id: UUID
     claim_id: UUID
-    source_document_id: UUID | None
-    agent_run_id: str | None
+    source_document_id: UUID | None = None
+    source_document_ref: str | None = None
+    agent_run_id: str | None = None
     sentence: str | None
     sentence_source: str | None
     sentence_confidence: str | None
@@ -565,6 +569,7 @@ class KernelClaimEvidenceResponse(BaseModel):
                 if source_document_id_raw is not None
                 else None
             ),
+            source_document_ref=getattr(model, "source_document_ref", None),
             agent_run_id=model.agent_run_id,
             sentence=model.sentence,
             sentence_source=model.sentence_source,

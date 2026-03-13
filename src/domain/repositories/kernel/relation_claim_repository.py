@@ -42,6 +42,7 @@ class KernelRelationClaimRepository(ABC):
         claim_text: str | None = None,
         claim_section: str | None = None,
         linked_relation_id: str | None = None,
+        source_document_ref: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelRelationClaim:
         """Create one relation-claim row."""

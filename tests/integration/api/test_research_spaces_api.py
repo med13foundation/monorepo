@@ -6,6 +6,7 @@ Tests API routes, authentication, authorization, and data persistence.
 
 import os
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from src.models.database.research_space import (
     ResearchSpaceModel,
 )
 from src.models.database.user import UserModel
+from tests.db_reset import reset_database
 
 
 def _using_postgres() -> bool:
@@ -61,19 +63,53 @@ def _auth_headers(user: UserModel) -> dict[str, str]:
     }
 
 
+@dataclass
+class _RecordingGraphServiceClient:
+    """Minimal graph-service client stub for tenant-sync integration coverage."""
+
+    sync_calls: list[dict[str, object]] = field(default_factory=list)
+    closed: bool = False
+
+    def sync_space(self, **payload: object) -> dict[str, object]:
+        self.sync_calls.append(payload)
+        return {
+            "space_id": payload["space_id"],
+            "status": payload["status"],
+            "membership_count": len(payload.get("memberships", [])),
+        }
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.fixture(autouse=True)
+def wire_graph_space_sync_stub(monkeypatch) -> None:
+    """Keep the graph sync stub local to research-space API coverage only."""
+
+    from src.infrastructure.graph_service import space_sync as graph_space_sync
+
+    def _build_service_client(**_kwargs: object) -> _RecordingGraphServiceClient:
+        return _RecordingGraphServiceClient()
+
+    monkeypatch.setattr(
+        graph_space_sync,
+        "build_graph_service_client_for_service",
+        _build_service_client,
+    )
+
+
 @pytest.fixture(scope="function")
 def test_client(test_engine):
     """Create a test client for API testing."""
-    # Reset schema for clean tests
-    Base.metadata.drop_all(bind=test_engine)
-    Base.metadata.create_all(bind=test_engine)
+    # Reset schema for clean tests in both SQLite and migrated Postgres schemas.
+    reset_database(test_engine, Base.metadata)
 
     app = create_app()
     client = TestClient(app)
     yield client
 
     # Cleanup
-    Base.metadata.drop_all(bind=test_engine)
+    reset_database(test_engine, Base.metadata)
 
 
 @pytest.fixture

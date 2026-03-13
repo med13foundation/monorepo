@@ -1,11 +1,11 @@
-"""Queue config, DTOs, and errors for pipeline orchestration."""
+"""Queue config, DTOs, protocols, and errors for pipeline orchestration."""
 
 from __future__ import annotations
 
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -24,10 +24,6 @@ if TYPE_CHECKING:
     )
     from src.application.agents.services.graph_connection_service import (
         GraphConnectionOutcome,
-        GraphConnectionService,
-    )
-    from src.application.agents.services.graph_search_service import (
-        GraphSearchService,
     )
     from src.application.services._pipeline_orchestration_contracts import (
         PipelineStageName,
@@ -38,6 +34,8 @@ if TYPE_CHECKING:
     from src.application.services.pipeline_run_trace_service import (
         PipelineRunTraceService,
     )
+    from src.domain.agents.contracts.graph_connection import ProposedRelation
+    from src.domain.agents.contracts.graph_search import GraphSearchContract
     from src.domain.repositories.ingestion_job_repository import IngestionJobRepository
     from src.domain.repositories.research_space_repository import (
         ResearchSpaceRepository,
@@ -53,6 +51,42 @@ ENV_PIPELINE_RETRY_MAX_ATTEMPTS = "MED13_PIPELINE_RETRY_MAX_ATTEMPTS"
 DEFAULT_PIPELINE_RETRY_MAX_ATTEMPTS = 5
 ENV_PIPELINE_RETRY_BASE_DELAY_SECONDS = "MED13_PIPELINE_RETRY_BASE_DELAY_SECONDS"
 DEFAULT_PIPELINE_RETRY_BASE_DELAY_SECONDS = 30
+
+
+class GraphConnectionExecutor(Protocol):
+    """Minimal graph-connection interface needed by pipeline orchestration."""
+
+    async def discover_connections_for_seed(  # noqa: PLR0913
+        self,
+        *,
+        research_space_id: str,
+        seed_entity_id: str,
+        source_id: str | None = None,
+        source_type: str,
+        model_id: str | None = None,
+        relation_types: list[str] | None = None,
+        max_depth: int = 2,
+        shadow_mode: bool | None = None,
+        pipeline_run_id: str | None = None,
+        fallback_relations: tuple[ProposedRelation, ...] | None = None,
+    ) -> GraphConnectionOutcome: ...
+
+
+class GraphSearchExecutor(Protocol):
+    """Minimal graph-search interface needed by pipeline orchestration."""
+
+    async def search(  # noqa: PLR0913
+        self,
+        *,
+        question: str,
+        research_space_id: str,
+        max_depth: int = 2,
+        top_k: int = 25,
+        curation_statuses: list[str] | None = None,
+        include_evidence_chains: bool = True,
+        force_agent: bool = False,
+        model_id: str | None = None,
+    ) -> GraphSearchContract: ...
 
 
 def read_positive_int_env(env_name: str, *, default_value: int) -> int:
@@ -142,11 +176,11 @@ class PipelineOrchestrationDependencies:
     entity_recognition_stage_runner: (
         Callable[..., Awaitable[EntityRecognitionRunSummary]] | None
     ) = None
-    graph_connection_service: GraphConnectionService | None = None
+    graph_connection_service: GraphConnectionExecutor | None = None
     graph_connection_seed_runner: (
         Callable[..., Awaitable[GraphConnectionOutcome]] | None
     ) = None
-    graph_search_service: GraphSearchService | None = None
+    graph_search_service: GraphSearchExecutor | None = None
     research_space_repository: ResearchSpaceRepository | None = None
     pipeline_run_repository: IngestionJobRepository | None = None
     pipeline_trace_service: PipelineRunTraceService | None = None
@@ -162,6 +196,8 @@ __all__ = [
     "ENV_PIPELINE_QUEUE_RETRY_AFTER_SECONDS",
     "ENV_PIPELINE_RETRY_BASE_DELAY_SECONDS",
     "ENV_PIPELINE_RETRY_MAX_ATTEMPTS",
+    "GraphConnectionExecutor",
+    "GraphSearchExecutor",
     "PipelineOrchestrationDependencies",
     "PipelineQueueFullError",
     "PipelineRunEnqueueResult",
