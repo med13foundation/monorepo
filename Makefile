@@ -181,40 +181,76 @@ GRAPH_FAST_TEST_PATHS := \
 	tests/unit/infrastructure/test_graph_query_repository.py \
 	tests/integration/graph_service/test_graph_api.py
 GRAPH_SERVICE_LINT_PATHS := \
+	src/application/services/kernel/kernel_entity_errors.py \
+	src/application/services/kernel/kernel_entity_service.py \
 	src/database/graph_schema.py \
+	src/domain/entities/kernel/entities.py \
+	src/domain/repositories/kernel/entity_repository.py \
+	src/domain/value_objects/entity_resolution.py \
 	src/infrastructure/dependency_injection/graph_runtime_factories.py \
 	src/infrastructure/graph_governance \
 	src/infrastructure/repositories/graph_observability_repository.py \
+	src/infrastructure/repositories/kernel/kernel_entity_repository.py \
 	src/infrastructure/queries/graph_security_queries.py \
+	src/models/database/kernel/entities.py \
 	src/type_definitions/graph_api_schemas \
 	src/type_definitions/graph_service_contracts.py \
+	services/graph_api/_dictionary_relation_types.py \
 	services/graph_api/alembic \
 	services/graph_api/__main__.py \
 	services/graph_api/config.py \
 	services/graph_api/database.py \
 	services/graph_api/manage.py \
+	services/graph_api/routers/claims.py \
+	services/graph_api/routers/entities.py \
+	services/graph_api/routers/relations.py \
 	src/infrastructure/dependency_injection/service_factories.py \
 	scripts/export_graph_openapi.py \
+	tests/graph_service_support.py \
+	tests/e2e/graph_service/test_user_flows.py \
+	tests/integration/graph_service/test_entity_resolution_api.py \
+	tests/security/test_graph_service_schemathesis_contracts.py \
+	tests/unit/database/test_023_graph_external_fk_decoupling_contract.py \
+	tests/unit/infrastructure/test_kernel_entity_repository.py \
 	tests/unit/scripts/test_export_graph_openapi.py \
 	tests/unit/scripts/test_generate_ts_types.py \
-	tests/unit/infrastructure/dependency_injection/test_graph_service_factory_delegation.py
+	tests/unit/infrastructure/dependency_injection/test_graph_service_factory_delegation.py \
+	tests/unit/kernel/test_kernel_services.py \
+	tests/unit/services/graph_api/test_entity_resolution.py
 GRAPH_SERVICE_TYPE_PATHS := \
+	src/application/services/kernel/kernel_entity_errors.py \
+	src/application/services/kernel/kernel_entity_service.py \
 	src/database/graph_schema.py \
+	src/domain/entities/kernel/entities.py \
+	src/domain/repositories/kernel/entity_repository.py \
+	src/domain/value_objects/entity_resolution.py \
 	src/infrastructure/dependency_injection/graph_runtime_factories.py \
 	src/infrastructure/graph_governance \
 	src/infrastructure/repositories/graph_observability_repository.py \
+	src/infrastructure/repositories/kernel/kernel_entity_repository.py \
 	src/infrastructure/queries/graph_security_queries.py \
+	src/models/database/kernel/entities.py \
 	src/type_definitions/graph_api_schemas \
 	src/type_definitions/graph_service_contracts.py \
+	services/graph_api/_dictionary_relation_types.py \
 	services/graph_api/__main__.py \
 	services/graph_api/config.py \
 	services/graph_api/database.py \
 	services/graph_api/manage.py \
+	services/graph_api/routers/claims.py \
+	services/graph_api/routers/entities.py \
+	services/graph_api/routers/relations.py \
 	scripts/export_graph_openapi.py
 GRAPH_SERVICE_TEST_PATHS := \
+	tests/e2e/graph_service \
+	tests/integration/graph_service/test_entity_resolution_api.py \
 	tests/unit/services/graph_api \
+	tests/unit/database/test_023_graph_external_fk_decoupling_contract.py \
+	tests/unit/infrastructure/test_kernel_entity_repository.py \
 	tests/unit/infrastructure/graph_service \
-	tests/integration/graph_service
+	tests/unit/kernel/test_kernel_services.py \
+	tests/integration/graph_service \
+	tests/security/test_graph_service_schemathesis_contracts.py
 GRAPH_PHASE2_BIOMEDICAL_PACK_TEST_PATHS := \
 	tests/unit/graph/test_pack_registry.py \
 	tests/unit/application/services/test_graph_connection_service.py \

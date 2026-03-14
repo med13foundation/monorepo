@@ -821,6 +821,7 @@ export interface KernelClaimMechanismChainResponse {
 export interface KernelEntityCreateRequest {
   entity_type: string;
   display_label?: string | null;
+  aliases?: string[];
   metadata?: Record<string, unknown>;
   identifiers?: Record<string, string>;
 }
@@ -852,6 +853,7 @@ export interface KernelEntityResponse {
   research_space_id: string;
   entity_type: string;
   display_label: string | null;
+  aliases?: string[];
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -880,6 +882,7 @@ export interface KernelEntitySimilarityScoreBreakdownResponse {
 
 export interface KernelEntityUpdateRequest {
   display_label?: string | null;
+  aliases?: string[] | null;
   metadata?: Record<string, unknown> | null;
   identifiers?: Record<string, string> | null;
 }
@@ -1127,6 +1130,22 @@ export interface KernelReasoningPathStepResponse {
   canonical_relation_id: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
+}
+
+export interface KernelRelationClaimCreateRequest {
+  source_entity_id: string;
+  target_entity_id: string;
+  relation_type: string;
+  confidence?: number;
+  claim_text?: string | null;
+  evidence_summary?: string | null;
+  evidence_sentence?: string | null;
+  evidence_sentence_source?: string | null;
+  evidence_sentence_confidence?: string | null;
+  evidence_sentence_rationale?: string | null;
+  source_document_ref?: string | null;
+  agent_run_id?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface KernelRelationClaimListResponse {

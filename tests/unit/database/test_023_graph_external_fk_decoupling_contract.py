@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect
@@ -11,12 +12,24 @@ from sqlalchemy import create_engine, inspect
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _resolve_alembic_binary() -> str:
+    candidate_paths = (
+        Path(sys.executable).resolve().parent / "alembic",
+        REPOSITORY_ROOT / ".venv" / "bin" / "alembic",
+        REPOSITORY_ROOT / "venv" / "bin" / "alembic",
+    )
+    for candidate_path in candidate_paths:
+        if candidate_path.exists():
+            return candidate_path.as_posix()
+    return "alembic"
+
+
 def _run_alembic_upgrade(*, database_url: str) -> None:
     env = dict(os.environ)
     env["ALEMBIC_DATABASE_URL"] = database_url
     subprocess.run(
         [
-            REPOSITORY_ROOT.joinpath("venv", "bin", "alembic").as_posix(),
+            _resolve_alembic_binary(),
             "-c",
             REPOSITORY_ROOT.joinpath(
                 "services",
@@ -35,17 +48,25 @@ def _run_alembic_upgrade(*, database_url: str) -> None:
 
 
 def _foreign_key_targets(database_url: str, table_name: str) -> set[str]:
-    inspector = inspect(create_engine(database_url, future=True))
-    return {
-        foreign_key["referred_table"]
-        for foreign_key in inspector.get_foreign_keys(table_name)
-        if foreign_key.get("referred_table")
-    }
+    engine = create_engine(database_url, future=True)
+    try:
+        inspector = inspect(engine)
+        return {
+            foreign_key["referred_table"]
+            for foreign_key in inspector.get_foreign_keys(table_name)
+            if foreign_key.get("referred_table")
+        }
+    finally:
+        engine.dispose()
 
 
 def _column_names(database_url: str, table_name: str) -> set[str]:
-    inspector = inspect(create_engine(database_url, future=True))
-    return {column["name"] for column in inspector.get_columns(table_name)}
+    engine = create_engine(database_url, future=True)
+    try:
+        inspector = inspect(engine)
+        return {column["name"] for column in inspector.get_columns(table_name)}
+    finally:
+        engine.dispose()
 
 
 def test_graph_schema_does_not_fk_to_users_for_actor_tracking(
@@ -97,6 +118,7 @@ def test_graph_kernel_tables_do_not_fk_to_platform_space_tables(
 
     graph_owned_tables = (
         "entities",
+        "entity_aliases",
         "entity_embeddings",
         "observations",
         "provenance",

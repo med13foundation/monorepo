@@ -14,8 +14,13 @@ from services.graph_api._claim_paper_links import (
     resolve_claim_evidence_paper_links,
 )
 from services.graph_api._claim_relation_normalization import (
-    normalize_relation_type,
+    normalize_relation_type as normalize_claim_relation_type,
+)
+from services.graph_api._claim_relation_normalization import (
     normalize_review_status,
+)
+from services.graph_api._dictionary_relation_types import (
+    canonicalize_dictionary_relation_type,
 )
 from services.graph_api.auth import get_current_active_user
 from services.graph_api.database import get_session
@@ -408,7 +413,10 @@ def create_claim(  # noqa: PLR0915
                 detail="Source or target entity not found",
             )
 
-        normalized_relation_type = request.relation_type.strip()
+        normalized_relation_type = canonicalize_dictionary_relation_type(
+            dictionary_service,
+            request.relation_type,
+        )
         if not normalized_relation_type:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -908,7 +916,7 @@ def list_claim_relations(
     )
     try:
         normalized_relation_type = (
-            normalize_relation_type(relation_type)
+            normalize_claim_relation_type(relation_type)
             if relation_type is not None and relation_type.strip()
             else None
         )
@@ -995,7 +1003,7 @@ def create_claim_relation(
             research_space_id=str(space_id),
             source_claim_id=str(request.source_claim_id),
             target_claim_id=str(request.target_claim_id),
-            relation_type=normalize_relation_type(request.relation_type),
+            relation_type=normalize_claim_relation_type(request.relation_type),
             agent_run_id=request.agent_run_id,
             source_document_id=(
                 str(request.source_document_id)

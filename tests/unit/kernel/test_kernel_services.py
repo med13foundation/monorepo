@@ -9,6 +9,9 @@ from unittest.mock import Mock
 
 import pytest
 
+from src.application.services.kernel.kernel_entity_errors import (
+    KernelEntityConflictError,
+)
 from src.application.services.kernel.kernel_entity_service import KernelEntityService
 from src.application.services.kernel.kernel_observation_service import (
     KernelObservationService,
@@ -81,11 +84,13 @@ def test_create_entity_without_resolution_policy_match_creates_entity(
     policy.policy_strategy = "NONE"
     policy.required_anchors = []
     mock_dictionary_repo.get_resolution_policy.return_value = policy
-    mock_entity_repo.create.return_value = EntityModel(
+    created_entity = EntityModel(
         id="ent-1",
         research_space_id=research_space_id,
         entity_type="GENE",
     )
+    mock_entity_repo.create.return_value = created_entity
+    mock_entity_repo.get_by_id.return_value = created_entity
 
     # Execute
     entity, created = service.create_or_resolve(
@@ -98,7 +103,12 @@ def test_create_entity_without_resolution_policy_match_creates_entity(
     assert created is True
     assert entity.id == "ent-1"
     mock_entity_repo.create.assert_called_once()
-    mock_entity_repo.resolve.assert_not_called()
+    mock_entity_repo.resolve_candidates.assert_not_called()
+    mock_entity_repo.add_alias.assert_called_once_with(
+        entity_id="ent-1",
+        alias_label="BRCA1",
+        source="entity_write",
+    )
 
 
 def test_create_entity_with_resolution_match(mock_entity_repo, mock_dictionary_repo):
@@ -118,9 +128,10 @@ def test_create_entity_with_resolution_match(mock_entity_repo, mock_dictionary_r
     # Mock policy
     policy = Mock(spec=EntityResolutionPolicyModel)
     policy.policy_strategy = "STRICT_MATCH"
+    policy.required_anchors = []
     mock_dictionary_repo.get_resolution_policy.return_value = policy
 
-    mock_entity_repo.resolve.return_value = existing_entity
+    mock_entity_repo.resolve_candidates.return_value = [existing_entity]
 
     # Execute
     entity, created = service.create_or_resolve(
@@ -132,8 +143,153 @@ def test_create_entity_with_resolution_match(mock_entity_repo, mock_dictionary_r
     # Verify
     assert created is False
     assert entity.id == "existing-1"
-    mock_entity_repo.resolve.assert_called_once()
+    mock_entity_repo.resolve_candidates.assert_called_once()
     mock_entity_repo.create.assert_not_called()
+
+
+def test_create_entity_strict_match_requires_required_anchors(
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelEntityService(mock_entity_repo, mock_dictionary_repo)
+
+    policy = Mock(spec=EntityResolutionPolicyModel)
+    policy.policy_strategy = "STRICT_MATCH"
+    policy.required_anchors = ["hgnc_id"]
+    mock_dictionary_repo.get_resolution_policy.return_value = policy
+
+    with pytest.raises(ValueError, match="Missing required anchors"):
+        service.create_or_resolve(
+            research_space_id="space-123",
+            entity_type="GENE",
+            identifiers={"symbol": "MED13"},
+            display_label="MED13",
+        )
+
+
+def test_create_entity_lookup_resolves_by_display_label(
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelEntityService(mock_entity_repo, mock_dictionary_repo)
+
+    policy = Mock(spec=EntityResolutionPolicyModel)
+    policy.policy_strategy = "LOOKUP"
+    policy.required_anchors = []
+    mock_dictionary_repo.get_resolution_policy.return_value = policy
+    mock_entity_repo.resolve_candidates.return_value = []
+    existing_entity = EntityModel(
+        id="existing-display",
+        research_space_id="space-123",
+        entity_type="GENE",
+        display_label="MED13",
+    )
+    mock_entity_repo.find_display_label_candidates.return_value = [existing_entity]
+
+    entity, created = service.create_or_resolve(
+        research_space_id="space-123",
+        entity_type="GENE",
+        display_label=" med13 ",
+    )
+
+    assert created is False
+    assert entity.id == "existing-display"
+    mock_entity_repo.find_display_label_candidates.assert_called_once()
+    mock_entity_repo.find_alias_candidates.assert_not_called()
+
+
+def test_create_entity_lookup_resolves_by_alias(
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelEntityService(mock_entity_repo, mock_dictionary_repo)
+
+    policy = Mock(spec=EntityResolutionPolicyModel)
+    policy.policy_strategy = "FUZZY"
+    policy.required_anchors = []
+    mock_dictionary_repo.get_resolution_policy.return_value = policy
+    mock_entity_repo.resolve_candidates.return_value = []
+    mock_entity_repo.find_display_label_candidates.return_value = []
+    existing_entity = EntityModel(
+        id="existing-alias",
+        research_space_id="space-123",
+        entity_type="GENE",
+        display_label="MED13",
+    )
+    mock_entity_repo.find_alias_candidates.return_value = [existing_entity]
+
+    entity, created = service.create_or_resolve(
+        research_space_id="space-123",
+        entity_type="GENE",
+        aliases=["THRAP1"],
+    )
+
+    assert created is False
+    assert entity.id == "existing-alias"
+    mock_entity_repo.find_display_label_candidates.assert_not_called()
+    mock_entity_repo.find_alias_candidates.assert_called_once()
+
+
+def test_create_entity_rejects_conflicting_identifier_anchor_matches(
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelEntityService(mock_entity_repo, mock_dictionary_repo)
+
+    policy = Mock(spec=EntityResolutionPolicyModel)
+    policy.policy_strategy = "LOOKUP"
+    policy.required_anchors = []
+    mock_dictionary_repo.get_resolution_policy.return_value = policy
+    first = EntityModel(
+        id="existing-1",
+        research_space_id="space-123",
+        entity_type="GENE",
+    )
+    second = EntityModel(
+        id="existing-2",
+        research_space_id="space-123",
+        entity_type="GENE",
+    )
+    mock_entity_repo.resolve_candidates.return_value = [first, second]
+
+    with pytest.raises(KernelEntityConflictError, match="Ambiguous exact match"):
+        service.create_or_resolve(
+            research_space_id="space-123",
+            entity_type="GENE",
+            identifiers={"HGNC": "HGNC:1234", "ENSEMBL": "ENSG000001"},
+        )
+
+
+def test_create_entity_rejects_conflicting_alias_anchor_matches(
+    mock_entity_repo,
+    mock_dictionary_repo,
+):
+    service = KernelEntityService(mock_entity_repo, mock_dictionary_repo)
+
+    policy = Mock(spec=EntityResolutionPolicyModel)
+    policy.policy_strategy = "LOOKUP"
+    policy.required_anchors = []
+    mock_dictionary_repo.get_resolution_policy.return_value = policy
+    mock_entity_repo.resolve_candidates.return_value = []
+    mock_entity_repo.find_display_label_candidates.return_value = []
+    first = EntityModel(
+        id="existing-1",
+        research_space_id="space-123",
+        entity_type="GENE",
+    )
+    second = EntityModel(
+        id="existing-2",
+        research_space_id="space-123",
+        entity_type="GENE",
+    )
+    mock_entity_repo.find_alias_candidates.side_effect = ([first], [second])
+
+    with pytest.raises(KernelEntityConflictError, match="Ambiguous exact match"):
+        service.create_or_resolve(
+            research_space_id="space-123",
+            entity_type="GENE",
+            aliases=["THRAP1", "TRAPPC9"],
+        )
 
 
 # ── Kernel Observation Service Tests ──────────────────────────────────────────

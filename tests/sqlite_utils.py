@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
+from datetime import date, datetime
+from functools import lru_cache
 from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import event
@@ -24,6 +27,32 @@ class SQLiteConnection(Protocol):
     def cursor(self) -> SQLiteCursor: ...
 
 
+def _adapt_sqlite_date(value: date) -> str:
+    return value.isoformat()
+
+
+def _adapt_sqlite_datetime(value: datetime) -> str:
+    return value.isoformat(sep=" ")
+
+
+def _convert_sqlite_date(value: bytes) -> date:
+    return date.fromisoformat(value.decode())
+
+
+def _convert_sqlite_datetime(value: bytes) -> datetime:
+    return datetime.fromisoformat(value.decode())
+
+
+@lru_cache(maxsize=1)
+def register_sqlite_datetime_adapters() -> None:
+    """Register explicit sqlite3 adapters so Python 3.12+ emits no deprecations."""
+    sqlite3.register_adapter(date, _adapt_sqlite_date)
+    sqlite3.register_adapter(datetime, _adapt_sqlite_datetime)
+    sqlite3.register_converter("date", _convert_sqlite_date)
+    sqlite3.register_converter("datetime", _convert_sqlite_datetime)
+    sqlite3.register_converter("timestamp", _convert_sqlite_datetime)
+
+
 def configure_sqlite_engine(
     engine: "Engine",  # noqa: UP037
     *,
@@ -31,6 +60,7 @@ def configure_sqlite_engine(
     synchronous_level: str = "NORMAL",
 ) -> None:
     """Attach pragmas needed by SQLite-based test engines."""
+    register_sqlite_datetime_adapters()
 
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragmas(
@@ -58,4 +88,8 @@ def build_sqlite_connect_args(
     return connect_args
 
 
-__all__ = ["build_sqlite_connect_args", "configure_sqlite_engine"]
+__all__ = [
+    "build_sqlite_connect_args",
+    "configure_sqlite_engine",
+    "register_sqlite_datetime_adapters",
+]

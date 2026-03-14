@@ -66,3 +66,21 @@ def test_migrate_graph_database_uses_graph_database_url(
     assert env["ALEMBIC_DATABASE_URL"] == graph_database_url
     assert env["GRAPH_DB_SCHEMA"] == "graph_runtime"
     assert env["ALEMBIC_GRAPH_DB_SCHEMA"] == "graph_runtime"
+
+
+def test_resolve_alembic_binary_prefers_current_interpreter_venv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    current_venv_bin = tmp_path / "current-venv" / "bin"
+    current_venv_bin.mkdir(parents=True)
+    python_executable = current_venv_bin / "python3"
+    python_executable.touch()
+    expected = current_venv_bin / "alembic"
+    expected.touch()
+
+    monkeypatch.setattr(manage, "_REPO_ROOT", tmp_path / "repo")
+    monkeypatch.setattr(manage.sys, "executable", str(python_executable))
+    monkeypatch.setattr(manage.shutil, "which", lambda _: "/usr/local/bin/alembic")
+
+    assert manage._resolve_alembic_binary() == str(expected)

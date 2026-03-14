@@ -104,10 +104,11 @@ def _seed_entity(session: Session) -> tuple[UUID, UUID]:
 
 def test_backfill_updates_plaintext_phi_rows(db_session: Session) -> None:
     encryption_service = _build_encryption_service()
-    _space_id, entity_id = _seed_entity(db_session)
+    space_id, entity_id = _seed_entity(db_session)
     db_session.add(
         EntityIdentifierModel(
             entity_id=entity_id,
+            research_space_id=space_id,
             namespace="MRN",
             identifier_value="PLAIN-123",
             identifier_blind_index=None,
@@ -138,10 +139,11 @@ def test_backfill_updates_plaintext_phi_rows(db_session: Session) -> None:
 
 def test_backfill_dry_run_rolls_back_changes(db_session: Session) -> None:
     encryption_service = _build_encryption_service()
-    _space_id, entity_id = _seed_entity(db_session)
+    space_id, entity_id = _seed_entity(db_session)
     db_session.add(
         EntityIdentifierModel(
             entity_id=entity_id,
+            research_space_id=space_id,
             namespace="MRN",
             identifier_value="PLAIN-DRY-RUN",
             identifier_blind_index=None,
@@ -174,10 +176,11 @@ def test_backfill_skips_rows_without_pending_work(db_session: Session) -> None:
     encrypted_value = encryption_service.encrypt("ALREADY-MIGRATED")
     blind_index = encryption_service.blind_index("ALREADY-MIGRATED")
 
-    _space_id, entity_id = _seed_entity(db_session)
+    space_id, entity_id = _seed_entity(db_session)
     db_session.add(
         EntityIdentifierModel(
             entity_id=entity_id,
+            research_space_id=space_id,
             namespace="MRN",
             identifier_value=encrypted_value,
             identifier_blind_index=blind_index,
@@ -203,10 +206,11 @@ def test_backfill_completes_encrypted_rows_missing_blind_index(
     encryption_service = _build_encryption_service()
     encrypted_value = encryption_service.encrypt("MISSING-BLIND")
 
-    _space_id, entity_id = _seed_entity(db_session)
+    space_id, entity_id = _seed_entity(db_session)
     db_session.add(
         EntityIdentifierModel(
             entity_id=entity_id,
+            research_space_id=space_id,
             namespace="MRN",
             identifier_value=encrypted_value,
             identifier_blind_index=None,

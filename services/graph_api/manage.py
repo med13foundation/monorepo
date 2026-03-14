@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import TypedDict
 
-import psycopg2
+import psycopg2  # type: ignore[import-untyped]
 from psycopg2 import OperationalError
 from sqlalchemy.engine.url import URL, make_url
 
@@ -86,9 +86,14 @@ def wait_for_graph_database(*, timeout: int, interval: float) -> None:
 
 
 def _resolve_alembic_binary() -> str:
-    venv_alembic = _REPO_ROOT / "venv" / "bin" / "alembic"
-    if venv_alembic.exists():
-        return str(venv_alembic)
+    candidate_paths = [
+        Path(sys.executable).resolve().parent / "alembic",
+        _REPO_ROOT / ".venv" / "bin" / "alembic",
+        _REPO_ROOT / "venv" / "bin" / "alembic",
+    ]
+    for candidate_path in candidate_paths:
+        if candidate_path.exists():
+            return str(candidate_path)
     resolved = shutil.which("alembic")
     if resolved is not None:
         return resolved

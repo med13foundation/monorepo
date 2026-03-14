@@ -94,18 +94,27 @@ def _drop_database(admin_sync_url: str, database_name: str) -> None:
         engine.dispose()
 
 
-def _run_alembic_migrations(env: dict[str, str]) -> None:
+def _resolve_alembic_binary() -> str:
     candidate_bins = (
-        REPO_ROOT / "venv" / "bin" / "alembic",
         Path(sys.executable).resolve().parent / "alembic",
+        REPO_ROOT / ".venv" / "bin" / "alembic",
+        REPO_ROOT / "venv" / "bin" / "alembic",
     )
-    alembic_cmd = "alembic"
     for bin_path in candidate_bins:
         if bin_path.exists():
-            alembic_cmd = str(bin_path)
-            break
+            return str(bin_path)
+    return "alembic"
+
+
+def _run_alembic_migrations(env: dict[str, str]) -> None:
     subprocess.run(  # noqa: S603
-        [alembic_cmd, "-c", str(GRAPH_ALEMBIC_CONFIG), "upgrade", "heads"],
+        [
+            _resolve_alembic_binary(),
+            "-c",
+            str(GRAPH_ALEMBIC_CONFIG),
+            "upgrade",
+            "heads",
+        ],
         check=True,
         env=env,
     )

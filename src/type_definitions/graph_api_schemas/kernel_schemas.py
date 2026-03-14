@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -25,6 +25,14 @@ def _to_uuid(value: str | UUID) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
 
 
+def _to_utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
 class KernelEntityCreateRequest(BaseModel):
     """Request model for creating (or resolving) a kernel entity."""
 
@@ -32,6 +40,7 @@ class KernelEntityCreateRequest(BaseModel):
 
     entity_type: str = Field(..., min_length=1, max_length=64)
     display_label: str | None = Field(None, max_length=512)
+    aliases: list[str] = Field(default_factory=list)
     metadata: JSONObject = Field(default_factory=dict)
     identifiers: dict[str, str] = Field(
         default_factory=dict,
@@ -45,6 +54,7 @@ class KernelEntityUpdateRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
     display_label: str | None = Field(None, max_length=512)
+    aliases: list[str] | None = None
     metadata: JSONObject | None = None
     identifiers: dict[str, str] | None = Field(
         default=None,
@@ -61,6 +71,7 @@ class KernelEntityResponse(BaseModel):
     research_space_id: UUID
     entity_type: str
     display_label: str | None
+    aliases: list[str] = Field(default_factory=list)
     metadata: JSONObject
     created_at: datetime
     updated_at: datetime
@@ -75,9 +86,14 @@ class KernelEntityResponse(BaseModel):
             research_space_id=space_id,
             entity_type=str(model.entity_type),
             display_label=str(model.display_label) if model.display_label else None,
+            aliases=[
+                str(alias)
+                for alias in model.aliases
+                if isinstance(alias, str) and alias.strip()
+            ],
             metadata=dict(metadata_payload),
-            created_at=model.created_at,
-            updated_at=model.updated_at,
+            created_at=_to_utc_datetime(model.created_at),
+            updated_at=_to_utc_datetime(model.updated_at),
         )
 
 
@@ -284,16 +300,16 @@ class KernelObservationResponse(BaseModel):
             variable_id=str(model.variable_id),
             value_numeric=value_numeric,
             value_text=model.value_text,
-            value_date=model.value_date,
+            value_date=_to_utc_datetime(model.value_date),
             value_coded=model.value_coded,
             value_boolean=model.value_boolean,
             value_json=model.value_json,
             unit=model.unit,
-            observed_at=model.observed_at,
+            observed_at=_to_utc_datetime(model.observed_at),
             provenance_id=provenance_id,
             confidence=float(model.confidence),
-            created_at=model.created_at,
-            updated_at=model.updated_at,
+            created_at=_to_utc_datetime(model.created_at),
+            updated_at=_to_utc_datetime(model.updated_at),
         )
 
 
@@ -451,9 +467,9 @@ class KernelRelationResponse(BaseModel):
             reviewed_by=(
                 _to_uuid(reviewed_by_raw) if reviewed_by_raw is not None else None
             ),
-            reviewed_at=model.reviewed_at,
-            created_at=model.created_at,
-            updated_at=model.updated_at,
+            reviewed_at=_to_utc_datetime(model.reviewed_at),
+            created_at=_to_utc_datetime(model.created_at),
+            updated_at=_to_utc_datetime(model.updated_at),
         )
 
 
@@ -536,9 +552,9 @@ class KernelRelationClaimResponse(BaseModel):
             triaged_by=(
                 _to_uuid(triaged_by_raw) if triaged_by_raw is not None else None
             ),
-            triaged_at=model.triaged_at,
-            created_at=model.created_at,
-            updated_at=model.updated_at,
+            triaged_at=_to_utc_datetime(model.triaged_at),
+            created_at=_to_utc_datetime(model.created_at),
+            updated_at=_to_utc_datetime(model.updated_at),
         )
 
 
@@ -602,7 +618,7 @@ class KernelClaimEvidenceResponse(BaseModel):
             confidence=float(model.confidence),
             metadata=dict(metadata_payload),
             paper_links=[] if paper_links is None else paper_links,
-            created_at=model.created_at,
+            created_at=_to_utc_datetime(model.created_at),
         )
 
 
@@ -685,8 +701,8 @@ class KernelProvenanceResponse(BaseModel):
             mapping_confidence=model.mapping_confidence,
             agent_model=model.agent_model,
             raw_input=dict(model.raw_input) if model.raw_input else None,
-            created_at=model.created_at,
-            updated_at=model.updated_at,
+            created_at=_to_utc_datetime(model.created_at),
+            updated_at=_to_utc_datetime(model.updated_at),
         )
 
 

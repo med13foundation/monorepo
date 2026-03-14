@@ -247,12 +247,14 @@ def test_rls_hides_phi_identifiers_without_phi_access(rls_query_role: str) -> No
             [
                 EntityIdentifierModel(
                     entity_id=entity.id,
+                    research_space_id=space.id,
                     namespace="INTERNAL_ID",
                     identifier_value="internal-1",
                     sensitivity="INTERNAL",
                 ),
                 EntityIdentifierModel(
                     entity_id=entity.id,
+                    research_space_id=space.id,
                     namespace="MRN",
                     identifier_value="mrn-phi-1",
                     sensitivity="PHI",

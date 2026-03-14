@@ -27,7 +27,26 @@ class KernelEntity(BaseModel):
     research_space_id: UUID
     entity_type: str = Field(..., min_length=1, max_length=64)
     display_label: str | None = Field(None, max_length=512)
+    aliases: list[str] = Field(default_factory=list)
     metadata: JSONObject = Field(default_factory=dict, alias="metadata_payload")
+    created_at: datetime
+    updated_at: datetime
+
+
+class KernelEntityAlias(BaseModel):
+    """Domain representation of one normalized alias attached to an entity."""
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: int
+    entity_id: UUID
+    research_space_id: UUID
+    entity_type: str = Field(..., min_length=1, max_length=64)
+    alias_label: str = Field(..., min_length=1, max_length=512)
+    alias_normalized: str = Field(..., min_length=1, max_length=512)
+    source: str | None = Field(None, max_length=64)
+    review_status: str = Field(..., min_length=1, max_length=32)
+    is_active: bool
     created_at: datetime
     updated_at: datetime
 
@@ -49,4 +68,4 @@ class KernelEntityIdentifier(BaseModel):
     updated_at: datetime
 
 
-__all__ = ["KernelEntity", "KernelEntityIdentifier"]
+__all__ = ["KernelEntity", "KernelEntityAlias", "KernelEntityIdentifier"]

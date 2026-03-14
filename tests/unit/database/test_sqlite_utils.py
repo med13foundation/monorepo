@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -36,3 +38,28 @@ def test_configure_sqlite_engine_sets_pragmas(tmp_path: Path) -> None:
     # NORMAL synchronous level is 1
     assert synchronous_level == 1
     assert foreign_keys == 1
+
+
+def test_configure_sqlite_engine_registers_datetime_adapters(tmp_path: Path) -> None:
+    db_path = tmp_path / "datetime.db"
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args=build_sqlite_connect_args(),
+        poolclass=NullPool,
+    )
+    configure_sqlite_engine(engine)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "error",
+            message="The default datetime adapter is deprecated.*",
+            category=DeprecationWarning,
+        )
+        with engine.connect() as connection:
+            result = connection.execute(
+                text("SELECT :moment"),
+                {"moment": datetime(2026, 3, 14, 12, 30, tzinfo=UTC)},
+            )
+            scalar_value = result.scalar()
+
+    assert str(scalar_value) == "2026-03-14 12:30:00+00:00"

@@ -39,6 +39,15 @@ def _has_index(
     )
 
 
+def _has_table(
+    inspector: sa.Inspector,
+    table_name: str,
+    *,
+    schema: str | None,
+) -> bool:
+    return inspector.has_table(table_name, schema=schema)
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -56,6 +65,8 @@ def upgrade() -> None:
         ("relation_evidence", "idx_relation_evidence_source_document_ref"),
     )
     for table_name, index_name in additions:
+        if not _has_table(inspector, table_name, schema=schema):
+            continue
         if not _has_column(
             inspector,
             table_name,

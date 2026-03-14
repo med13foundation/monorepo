@@ -16,6 +16,10 @@ from services.graph_api.dependencies import (
     require_space_role,
     verify_space_membership,
 )
+from src.application.services.kernel.kernel_entity_errors import (
+    KernelEntityConflictError,
+    KernelEntityValidationError,
+)
 from src.application.services.kernel.kernel_entity_service import KernelEntityService
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import User
@@ -162,9 +166,22 @@ def create_entity(
             entity_type=request.entity_type,
             identifiers=request.identifiers or None,
             display_label=request.display_label,
+            aliases=request.aliases,
             metadata=request.metadata,
         )
         session.commit()
+    except KernelEntityConflictError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except KernelEntityValidationError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(
@@ -254,10 +271,15 @@ def update_entity(
 
     try:
         updated_entity = entity
-        if request.display_label is not None or request.metadata is not None:
+        if (
+            request.display_label is not None
+            or request.aliases is not None
+            or request.metadata is not None
+        ):
             maybe_updated = entity_service.update_entity(
                 str(entity_id),
                 display_label=request.display_label,
+                aliases=request.aliases,
                 metadata=request.metadata,
             )
             if maybe_updated is None:
@@ -274,12 +296,27 @@ def update_entity(
                     namespace=namespace,
                     identifier_value=value,
                 )
+            refreshed_entity = entity_service.get_entity(str(entity_id))
+            if refreshed_entity is not None:
+                updated_entity = refreshed_entity
 
         session.commit()
         return KernelEntityResponse.from_model(updated_entity)
     except HTTPException:
         session.rollback()
         raise
+    except KernelEntityConflictError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except KernelEntityValidationError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(

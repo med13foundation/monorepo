@@ -9,6 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from services.graph_api._dictionary_relation_types import (
+    canonicalize_dictionary_relation_type,
+)
 from services.graph_api._relation_evidence_presenter import (
     load_relation_evidence_presentation,
 )
@@ -24,6 +27,7 @@ from services.graph_api.auth import (
 )
 from services.graph_api.database import get_session
 from services.graph_api.dependencies import (
+    get_dictionary_service,
     get_kernel_claim_evidence_service,
     get_kernel_claim_participant_service,
     get_kernel_entity_service,
@@ -56,6 +60,7 @@ from src.application.services.kernel.kernel_relation_service import (
 )
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import User
+from src.domain.ports.dictionary_port import DictionaryPort
 from src.domain.ports.space_access_port import SpaceAccessPort
 from src.type_definitions.graph_service_contracts import (
     KernelGraphExportResponse,
@@ -421,6 +426,7 @@ def create_relation(
     claim_evidence_service: KernelClaimEvidenceService = Depends(
         get_kernel_claim_evidence_service,
     ),
+    dictionary_service: DictionaryPort = Depends(get_dictionary_service),
     relation_projection_materialization_service: KernelRelationProjectionMaterializationService = Depends(
         get_kernel_relation_projection_materialization_service,
     ),
@@ -453,13 +459,17 @@ def create_relation(
             msg = "Source or target entity not found"
             raise ValueError(msg)
 
+        canonical_relation_type = canonicalize_dictionary_relation_type(
+            dictionary_service,
+            request.relation_type,
+        )
         manual_claim = relation_claim_service.create_claim(
             research_space_id=str(space_id),
             source_document_id=None,
             source_document_ref=request.source_document_ref,
             agent_run_id=None,
             source_type=source_entity.entity_type,
-            relation_type=request.relation_type,
+            relation_type=canonical_relation_type,
             target_type=target_entity.entity_type,
             source_label=source_entity.display_label,
             target_label=target_entity.display_label,
@@ -472,7 +482,7 @@ def create_relation(
             claim_text=_manual_relation_claim_text(
                 evidence_summary=request.evidence_summary,
                 evidence_sentence=request.evidence_sentence,
-                relation_type=request.relation_type,
+                relation_type=canonical_relation_type,
                 source_label=source_entity.display_label,
                 target_label=target_entity.display_label,
             ),

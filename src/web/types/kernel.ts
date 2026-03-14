@@ -3,12 +3,14 @@ import type { JSONValue, JSONObject } from '@/types/generated'
 export interface KernelEntityCreateRequest {
   entity_type: string
   display_label?: string | null
+  aliases?: string[]
   metadata?: JSONObject
   identifiers?: Record<string, string>
 }
 
 export interface KernelEntityUpdateRequest {
   display_label?: string | null
+  aliases?: string[] | null
   metadata?: JSONObject | null
   identifiers?: Record<string, string> | null
 }
@@ -18,6 +20,7 @@ export interface KernelEntityResponse {
   research_space_id: string
   entity_type: string
   display_label: string | null
+  aliases: string[]
   metadata: JSONObject
   created_at: string
   updated_at: string

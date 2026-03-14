@@ -4133,6 +4133,13 @@
       "KernelEntityCreateRequest": {
         "description": "Request model for creating (or resolving) a kernel entity.",
         "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
           "display_label": {
             "anyOf": [
               {
@@ -4208,6 +4215,13 @@
       "KernelEntityResponse": {
         "description": "Response model for a kernel entity.",
         "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -4266,6 +4280,20 @@
       "KernelEntityUpdateRequest": {
         "description": "Request model for updating a kernel entity.",
         "properties": {
+          "aliases": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aliases"
+          },
           "display_label": {
             "anyOf": [
               {
@@ -5865,6 +5893,144 @@
         "title": "KernelReasoningPathStepResponse",
         "type": "object"
       },
+      "KernelRelationClaimCreateRequest": {
+        "description": "Request model for creating a relation claim without materializing it.",
+        "properties": {
+          "agent_run_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Run Id"
+          },
+          "claim_text": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Text"
+          },
+          "confidence": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "evidence_sentence": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Sentence"
+          },
+          "evidence_sentence_confidence": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Sentence Confidence"
+          },
+          "evidence_sentence_rationale": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Sentence Rationale"
+          },
+          "evidence_sentence_source": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Sentence Source"
+          },
+          "evidence_summary": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Summary"
+          },
+          "metadata": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JSONValue-Input"
+            },
+            "title": "Metadata",
+            "type": "object"
+          },
+          "relation_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Relation Type",
+            "type": "string"
+          },
+          "source_document_ref": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Document Ref"
+          },
+          "source_entity_id": {
+            "format": "uuid",
+            "title": "Source Entity Id",
+            "type": "string"
+          },
+          "target_entity_id": {
+            "format": "uuid",
+            "title": "Target Entity Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_entity_id",
+          "target_entity_id",
+          "relation_type"
+        ],
+        "title": "KernelRelationClaimCreateRequest",
+        "type": "object"
+      },
       "KernelRelationClaimListResponse": {
         "description": "List response for relation claims in one research space.",
         "properties": {
@@ -6585,6 +6751,219 @@
           "updated_at"
         ],
         "title": "KernelRelationResponse",
+        "type": "object"
+      },
+      "KernelRelationSuggestionConstraintCheckResponse": {
+        "description": "Constraint trace proving dictionary validation for a suggestion row.",
+        "properties": {
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "relation_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Relation Type",
+            "type": "string"
+          },
+          "source_entity_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Source Entity Type",
+            "type": "string"
+          },
+          "target_entity_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Target Entity Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "passed",
+          "source_entity_type",
+          "relation_type",
+          "target_entity_type"
+        ],
+        "title": "KernelRelationSuggestionConstraintCheckResponse",
+        "type": "object"
+      },
+      "KernelRelationSuggestionListResponse": {
+        "description": "List response for constrained relation suggestions.",
+        "properties": {
+          "limit_per_source": {
+            "title": "Limit Per Source",
+            "type": "integer"
+          },
+          "min_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Min Score",
+            "type": "number"
+          },
+          "suggestions": {
+            "items": {
+              "$ref": "#/components/schemas/KernelRelationSuggestionResponse"
+            },
+            "title": "Suggestions",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "suggestions",
+          "total",
+          "limit_per_source",
+          "min_score"
+        ],
+        "title": "KernelRelationSuggestionListResponse",
+        "type": "object"
+      },
+      "KernelRelationSuggestionRequest": {
+        "description": "Request payload for dictionary-constrained relation suggestion runs.",
+        "properties": {
+          "allowed_relation_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Relation Types"
+          },
+          "exclude_existing_relations": {
+            "default": true,
+            "title": "Exclude Existing Relations",
+            "type": "boolean"
+          },
+          "limit_per_source": {
+            "default": 10,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Limit Per Source",
+            "type": "integer"
+          },
+          "min_score": {
+            "default": 0.7,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Min Score",
+            "type": "number"
+          },
+          "source_entity_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Source Entity Ids",
+            "type": "array"
+          },
+          "target_entity_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Entity Types"
+          }
+        },
+        "required": [
+          "source_entity_ids"
+        ],
+        "title": "KernelRelationSuggestionRequest",
+        "type": "object"
+      },
+      "KernelRelationSuggestionResponse": {
+        "description": "One relation suggestion row.",
+        "properties": {
+          "constraint_check": {
+            "$ref": "#/components/schemas/KernelRelationSuggestionConstraintCheckResponse"
+          },
+          "final_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Final Score",
+            "type": "number"
+          },
+          "relation_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Relation Type",
+            "type": "string"
+          },
+          "score_breakdown": {
+            "$ref": "#/components/schemas/KernelRelationSuggestionScoreBreakdownResponse"
+          },
+          "source_entity_id": {
+            "format": "uuid",
+            "title": "Source Entity Id",
+            "type": "string"
+          },
+          "target_entity_id": {
+            "format": "uuid",
+            "title": "Target Entity Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_entity_id",
+          "target_entity_id",
+          "relation_type",
+          "final_score",
+          "score_breakdown",
+          "constraint_check"
+        ],
+        "title": "KernelRelationSuggestionResponse",
+        "type": "object"
+      },
+      "KernelRelationSuggestionScoreBreakdownResponse": {
+        "description": "Score components for one relation suggestion row.",
+        "properties": {
+          "graph_overlap_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Graph Overlap Score",
+            "type": "number"
+          },
+          "relation_prior_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Relation Prior Score",
+            "type": "number"
+          },
+          "vector_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Vector Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "vector_score",
+          "graph_overlap_score",
+          "relation_prior_score"
+        ],
+        "title": "KernelRelationSuggestionScoreBreakdownResponse",
         "type": "object"
       },
       "KernelReviewStatus": {
@@ -11661,6 +12040,62 @@
         "tags": [
           "claims"
         ]
+      },
+      "post": {
+        "operationId": "create_claim_v1_spaces__space_id__claims_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KernelRelationClaimCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KernelRelationClaimResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create one unresolved relation claim",
+        "tags": [
+          "claims"
+        ]
       }
     },
     "/v1/spaces/{space_id}/claims/by-entity/{entity_id}": {
@@ -14441,6 +14876,64 @@
         "summary": "List mixed-polarity canonical relation conflicts",
         "tags": [
           "claims"
+        ]
+      }
+    },
+    "/v1/spaces/{space_id}/relations/suggestions": {
+      "post": {
+        "operationId": "suggest_relations_v1_spaces__space_id__relations_suggestions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KernelRelationSuggestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KernelRelationSuggestionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Suggest missing dictionary-constrained relations in one graph space",
+        "tags": [
+          "relations"
         ]
       }
     },

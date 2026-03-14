@@ -11,7 +11,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.domain.entities.kernel.entities import KernelEntity, KernelEntityIdentifier
+    from src.domain.entities.kernel.entities import (
+        KernelEntity,
+        KernelEntityAlias,
+        KernelEntityIdentifier,
+    )
     from src.type_definitions.common import JSONObject
 
 
@@ -91,7 +95,7 @@ class KernelEntityRepository(ABC):
         entity_type: str | None = None,
         limit: int = 20,
     ) -> list[KernelEntity]:
-        """Full-text search on display_label within a research space."""
+        """Search canonical labels and aliases within a research space."""
 
     @abstractmethod
     def count_by_type(self, research_space_id: str) -> dict[str, int]:
@@ -126,9 +130,96 @@ class KernelEntityRepository(ABC):
         identifier_value: str,
         research_space_id: str | None = None,
     ) -> KernelEntity | None:
-        """Look up an entity by a specific namespace + value pair."""
+        """Look up one entity by a specific namespace + value pair."""
+
+    @abstractmethod
+    def find_identifier_candidates(
+        self,
+        *,
+        namespace: str,
+        identifier_value: str,
+        research_space_id: str | None = None,
+        entity_type: str | None = None,
+    ) -> list[KernelEntity]:
+        """Return all exact identifier matches within the optional scope."""
+
+    @abstractmethod
+    def find_by_display_label(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str,
+        display_label: str,
+    ) -> KernelEntity | None:
+        """Look up one entity by exact normalized canonical display label."""
+
+    @abstractmethod
+    def find_display_label_candidates(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str,
+        display_label: str,
+    ) -> list[KernelEntity]:
+        """Return all exact canonical-label matches within one space + type."""
+
+    @abstractmethod
+    def add_alias(
+        self,
+        *,
+        entity_id: str,
+        alias_label: str,
+        source: str | None = None,
+        review_status: str = "ACTIVE",
+    ) -> KernelEntityAlias:
+        """Attach one normalized alias to an entity."""
+
+    @abstractmethod
+    def list_aliases(
+        self,
+        *,
+        entity_id: str,
+        include_inactive: bool = False,
+    ) -> list[KernelEntityAlias]:
+        """List aliases attached to one entity."""
+
+    @abstractmethod
+    def find_by_alias(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str,
+        alias_label: str,
+    ) -> KernelEntity | None:
+        """Look up one entity by exact normalized active alias."""
+
+    @abstractmethod
+    def find_alias_candidates(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str,
+        alias_label: str,
+    ) -> list[KernelEntity]:
+        """Return all exact active-alias matches within one space + type."""
 
     # ── Resolution ────────────────────────────────────────────────────
+
+    @abstractmethod
+    def resolve_candidates(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str,
+        identifiers: dict[str, str],
+    ) -> list[KernelEntity]:
+        """
+        Return the deduplicated exact-match candidate set across all anchors.
+
+        Implementations must not silently pick the first anchor match. The
+        application layer decides whether multiple exact candidates are
+        acceptable or should fail with a conflict.
+        """
 
     @abstractmethod
     def resolve(
@@ -142,7 +233,9 @@ class KernelEntityRepository(ABC):
         Attempt to find an existing entity matching the given identifiers.
 
         Uses the entity resolution policy for ``entity_type`` to determine
-        the matching strategy (STRICT_MATCH, LOOKUP, FUZZY, NONE).
+        the matching strategy (STRICT_MATCH, LOOKUP, FUZZY, NONE). When more
+        than one exact candidate exists across the provided anchors, the
+        implementation should raise a conflict instead of silently choosing one.
 
         Returns the matched entity or ``None`` if no match is found.
         """

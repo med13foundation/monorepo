@@ -32,7 +32,12 @@ from .dictionary import (
     VariableDefinitionModel,
     VariableSynonymModel,
 )
-from .entities import EntityEmbeddingModel, EntityIdentifierModel, EntityModel
+from .entities import (
+    EntityAliasModel,
+    EntityEmbeddingModel,
+    EntityIdentifierModel,
+    EntityModel,
+)
 from .observations import ObservationModel
 from .operation_runs import (
     GraphOperationRunModel,
@@ -85,6 +90,7 @@ __all__ = [
     "ClaimRelationModel",
     # Core Data (Layer 2)
     "EntityModel",
+    "EntityAliasModel",
     "EntityIdentifierModel",
     "EntityEmbeddingModel",
     "GraphOperationRunModel",

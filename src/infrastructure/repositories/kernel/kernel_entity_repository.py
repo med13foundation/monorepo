@@ -15,14 +15,30 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy import insert as sa_insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from src.domain.entities.kernel.entities import KernelEntity, KernelEntityIdentifier
+from src.application.services.kernel.kernel_entity_errors import (
+    KernelEntityConflictError,
+    KernelEntityValidationError,
+)
+from src.domain.entities.kernel.entities import (
+    KernelEntity,
+    KernelEntityAlias,
+    KernelEntityIdentifier,
+)
 from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
+from src.domain.value_objects.entity_resolution import (
+    canonicalize_entity_match_text,
+    normalize_entity_match_text,
+)
 from src.infrastructure.security.phi_encryption import (
     PHIEncryptionService,
     build_phi_encryption_service_from_env,
     is_phi_encryption_enabled,
 )
-from src.models.database.kernel.entities import EntityIdentifierModel, EntityModel
+from src.models.database.kernel.entities import (
+    EntityAliasModel,
+    EntityIdentifierModel,
+    EntityModel,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -66,20 +82,22 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         display_label: str | None = None,
         metadata: JSONObject | None = None,
     ) -> KernelEntity:
+        canonical_label, normalized_label = self._normalize_display_label(display_label)
         entity = EntityModel(
             id=uuid4(),
             research_space_id=_as_uuid(research_space_id),
             entity_type=entity_type,
-            display_label=display_label,
+            display_label=canonical_label,
+            display_label_normalized=normalized_label,
             metadata_payload=metadata or {},
         )
         self._session.add(entity)
         self._session.flush()
-        return KernelEntity.model_validate(entity)
+        return self._to_domain_entity(entity)
 
     def get_by_id(self, entity_id: str) -> KernelEntity | None:
         model = self._session.get(EntityModel, _as_uuid(entity_id))
-        return KernelEntity.model_validate(model) if model is not None else None
+        return self._to_domain_entity(model) if model is not None else None
 
     def update(
         self,
@@ -93,7 +111,11 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             return None
 
         if display_label is not None:
-            entity_model.display_label = display_label
+            canonical_label, normalized_label = self._normalize_display_label(
+                display_label,
+            )
+            entity_model.display_label = canonical_label
+            entity_model.display_label_normalized = normalized_label
 
         if metadata is not None:
             merged = dict(entity_model.metadata_payload or {})
@@ -101,7 +123,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             entity_model.metadata_payload = merged
 
         self._session.flush()
-        return KernelEntity.model_validate(entity_model)
+        return self._to_domain_entity(entity_model)
 
     def find_by_type(
         self,
@@ -123,10 +145,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return [
-            KernelEntity.model_validate(model)
-            for model in self._session.scalars(stmt).all()
-        ]
+        return self._to_domain_entities(self._session.scalars(stmt).all())
 
     def find_by_research_space(
         self,
@@ -146,10 +165,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             stmt = stmt.limit(limit)
         if offset is not None:
             stmt = stmt.offset(offset)
-        return [
-            KernelEntity.model_validate(model)
-            for model in self._session.scalars(stmt).all()
-        ]
+        return self._to_domain_entities(self._session.scalars(stmt).all())
 
     def search(
         self,
@@ -159,16 +175,41 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         entity_type: str | None = None,
         limit: int = 20,
     ) -> list[KernelEntity]:
-        stmt = select(EntityModel).where(
-            EntityModel.research_space_id == _as_uuid(research_space_id),
-            EntityModel.display_label.ilike(f"%{query}%"),
+        canonical_query = canonicalize_entity_match_text(query)
+        if not canonical_query:
+            return []
+        normalized_query = normalize_entity_match_text(canonical_query)
+        stmt = (
+            select(EntityModel.id)
+            .outerjoin(
+                EntityAliasModel,
+                and_(
+                    EntityAliasModel.entity_id == EntityModel.id,
+                    EntityAliasModel.is_active.is_(True),
+                ),
+            )
+            .where(
+                EntityModel.research_space_id == _as_uuid(research_space_id),
+                or_(
+                    EntityModel.display_label.ilike(f"%{canonical_query}%"),
+                    EntityModel.display_label_normalized.like(f"%{normalized_query}%"),
+                    EntityAliasModel.alias_label.ilike(f"%{canonical_query}%"),
+                    EntityAliasModel.alias_normalized.like(f"%{normalized_query}%"),
+                ),
+            )
+            .order_by(EntityModel.created_at.desc())
         )
         if entity_type is not None:
             stmt = stmt.where(EntityModel.entity_type == entity_type)
-        return [
-            KernelEntity.model_validate(model)
-            for model in self._session.scalars(stmt.limit(limit)).all()
-        ]
+        entity_ids = self._dedupe_entity_ids(self._session.scalars(stmt).all())[:limit]
+        if not entity_ids:
+            return []
+        models = self._session.scalars(
+            select(EntityModel)
+            .where(EntityModel.id.in_(entity_ids))
+            .order_by(EntityModel.created_at.desc()),
+        ).all()
+        return self._to_domain_entities(models)
 
     def count_by_type(self, research_space_id: str) -> dict[str, int]:
         rows = self._session.execute(
@@ -196,7 +237,7 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
 
     # ── Identifiers ───────────────────────────────────────────────────
 
-    def add_identifier(
+    def add_identifier(  # noqa: C901, PLR0912, PLR0915
         self,
         *,
         entity_id: str,
@@ -205,10 +246,25 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         sensitivity: str = "INTERNAL",
     ) -> KernelEntityIdentifier:
         entity_uuid = _as_uuid(entity_id)
+        entity_model = self._session.get(EntityModel, entity_uuid)
+        if entity_model is None:
+            msg = f"Entity '{entity_id}' does not exist."
+            raise KernelEntityValidationError(msg)
+
+        normalized_namespace = namespace.strip()
+        if not normalized_namespace:
+            msg = "namespace is required"
+            raise KernelEntityValidationError(msg)
+        canonical_identifier_value = canonicalize_entity_match_text(identifier_value)
+        if not canonical_identifier_value:
+            msg = "identifier_value is required"
+            raise KernelEntityValidationError(msg)
+
         normalized_sensitivity = sensitivity.strip().upper() or "INTERNAL"
         uses_phi_encryption = self._uses_phi_encryption(normalized_sensitivity)
         blind_index: str | None = None
-        stored_identifier_value = identifier_value
+        normalized_identifier: str | None = None
+        stored_identifier_value = canonical_identifier_value
         encryption_key_version: str | None = None
         blind_index_version: str | None = None
 
@@ -216,37 +272,46 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             if self._phi_encryption_service is None:
                 message = "PHI encryption is enabled but encryption service is missing"
                 raise RuntimeError(message)
-            blind_index = self._phi_encryption_service.blind_index(identifier_value)
-            existing_row = self._find_existing_phi_identifier(
-                entity_id=entity_uuid,
-                namespace=namespace,
-                plaintext_identifier_value=identifier_value,
-                blind_index=blind_index,
+            blind_index = self._phi_encryption_service.blind_index(
+                canonical_identifier_value,
             )
-            if existing_row is not None:
-                return self._to_domain_identifier(existing_row)
             stored_identifier_value = self._phi_encryption_service.encrypt(
-                identifier_value,
+                canonical_identifier_value,
             )
             encryption_key_version = self._phi_encryption_service.key_version
             blind_index_version = self._phi_encryption_service.blind_index_version
         else:
-            existing_row = self._find_existing_identifier(
-                entity_id=entity_uuid,
-                namespace=namespace,
-                identifier_value=identifier_value,
+            normalized_identifier = normalize_entity_match_text(
+                canonical_identifier_value,
             )
-            if existing_row is not None:
+
+        existing_row = self._find_identifier_conflict(
+            entity_id=entity_uuid,
+            research_space_id=entity_model.research_space_id,
+            namespace=normalized_namespace,
+            canonical_identifier_value=canonical_identifier_value,
+            normalized_identifier=normalized_identifier,
+            blind_index=blind_index,
+        )
+        if existing_row is not None:
+            if existing_row.entity_id == entity_uuid:
                 return self._to_domain_identifier(existing_row)
+            msg = (
+                f"Identifier '{canonical_identifier_value}' in namespace "
+                f"'{normalized_namespace}' is already assigned to another entity."
+            )
+            raise KernelEntityConflictError(msg)
 
         # Upsert — skip if already exists.
         bind = self._session.get_bind()
         dialect_name = getattr(bind.dialect, "name", "")
         values = {
             "entity_id": entity_uuid,
-            "namespace": namespace,
+            "research_space_id": entity_model.research_space_id,
+            "namespace": normalized_namespace,
             "identifier_value": stored_identifier_value,
             "identifier_blind_index": blind_index,
+            "identifier_normalized": normalized_identifier,
             "encryption_key_version": encryption_key_version,
             "blind_index_version": blind_index_version,
             "sensitivity": normalized_sensitivity,
@@ -278,15 +343,15 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
                 raise RuntimeError(message)
             lookup = select(EntityIdentifierModel).where(
                 EntityIdentifierModel.entity_id == entity_uuid,
-                EntityIdentifierModel.namespace == namespace,
+                EntityIdentifierModel.namespace == normalized_namespace,
                 EntityIdentifierModel.identifier_blind_index == blind_index,
                 EntityIdentifierModel.sensitivity == "PHI",
             )
         else:
             lookup = select(EntityIdentifierModel).where(
                 EntityIdentifierModel.entity_id == entity_uuid,
-                EntityIdentifierModel.namespace == namespace,
-                EntityIdentifierModel.identifier_value == identifier_value,
+                EntityIdentifierModel.namespace == normalized_namespace,
+                EntityIdentifierModel.identifier_normalized == normalized_identifier,
             )
         model = self._session.scalars(lookup).one()
         return self._to_domain_identifier(model)
@@ -298,44 +363,206 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         identifier_value: str,
         research_space_id: str | None = None,
     ) -> KernelEntity | None:
-        stmt = (
-            select(EntityModel)
-            .join(EntityIdentifierModel)
-            .where(
-                EntityIdentifierModel.namespace == namespace,
-            )
+        candidates = self.find_identifier_candidates(
+            namespace=namespace,
+            identifier_value=identifier_value,
+            research_space_id=research_space_id,
         )
-        if self._phi_encryption_enabled and self._phi_encryption_service is not None:
-            blind_index = self._phi_encryption_service.blind_index(identifier_value)
-            stmt = stmt.where(
-                or_(
-                    and_(
-                        EntityIdentifierModel.sensitivity == "PHI",
-                        EntityIdentifierModel.identifier_blind_index == blind_index,
-                    ),
-                    and_(
-                        EntityIdentifierModel.sensitivity == "PHI",
-                        EntityIdentifierModel.identifier_blind_index.is_(None),
-                        EntityIdentifierModel.identifier_value == identifier_value,
-                    ),
-                    and_(
-                        EntityIdentifierModel.sensitivity != "PHI",
-                        EntityIdentifierModel.identifier_value == identifier_value,
-                    ),
-                ),
-            )
-        else:
-            stmt = stmt.where(
-                EntityIdentifierModel.identifier_value == identifier_value,
-            )
-        if research_space_id is not None:
-            stmt = stmt.where(
+        return self._resolve_single_candidate(
+            candidates,
+            match_description=(
+                f"identifier '{identifier_value}' in namespace '{namespace.strip()}'"
+            ),
+        )
+
+    def find_identifier_candidates(
+        self,
+        *,
+        namespace: str,
+        identifier_value: str,
+        research_space_id: str | None = None,
+        entity_type: str | None = None,
+    ) -> list[KernelEntity]:
+        normalized_namespace = namespace.strip()
+        if not normalized_namespace:
+            return []
+        models = self._find_identifier_matches(
+            namespace=normalized_namespace,
+            identifier_value=identifier_value,
+            research_space_id=research_space_id,
+            entity_type=entity_type,
+        )
+        return self._to_domain_entities(models)
+
+    def find_by_display_label(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str,
+        display_label: str,
+    ) -> KernelEntity | None:
+        candidates = self.find_display_label_candidates(
+            research_space_id=research_space_id,
+            entity_type=entity_type,
+            display_label=display_label,
+        )
+        return self._resolve_single_candidate(
+            candidates,
+            match_description=f"display label '{display_label}'",
+        )
+
+    def find_display_label_candidates(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str,
+        display_label: str,
+    ) -> list[KernelEntity]:
+        normalized_display_label = normalize_entity_match_text(display_label)
+        if not normalized_display_label:
+            return []
+        models = self._session.scalars(
+            select(EntityModel).where(
                 EntityModel.research_space_id == _as_uuid(research_space_id),
+                EntityModel.entity_type == entity_type,
+                EntityModel.display_label_normalized == normalized_display_label,
+            ),
+        ).all()
+        return self._to_domain_entities(self._dedupe_entity_models(models))
+
+    def add_alias(
+        self,
+        *,
+        entity_id: str,
+        alias_label: str,
+        source: str | None = None,
+        review_status: str = "ACTIVE",
+    ) -> KernelEntityAlias:
+        entity_model = self._session.get(EntityModel, _as_uuid(entity_id))
+        if entity_model is None:
+            msg = f"Entity '{entity_id}' does not exist."
+            raise KernelEntityValidationError(msg)
+
+        canonical_alias = canonicalize_entity_match_text(alias_label)
+        if not canonical_alias:
+            msg = "alias_label is required"
+            raise KernelEntityValidationError(msg)
+        normalized_alias = normalize_entity_match_text(canonical_alias)
+        existing_models = self._session.scalars(
+            select(EntityAliasModel).where(
+                EntityAliasModel.research_space_id == entity_model.research_space_id,
+                EntityAliasModel.entity_type == entity_model.entity_type,
+                EntityAliasModel.alias_normalized == normalized_alias,
+                EntityAliasModel.is_active.is_(True),
+            ),
+        ).all()
+        for existing_model in existing_models:
+            if existing_model.entity_id == entity_model.id:
+                return self._to_domain_alias(existing_model)
+            msg = (
+                f"Alias '{canonical_alias}' is already assigned to another "
+                "entity in this research space."
             )
-        model = self._session.scalars(stmt).first()
-        return KernelEntity.model_validate(model) if model is not None else None
+            raise KernelEntityConflictError(msg)
+
+        same_entity_alias = self._session.scalars(
+            select(EntityAliasModel).where(
+                EntityAliasModel.entity_id == entity_model.id,
+                EntityAliasModel.alias_normalized == normalized_alias,
+            ),
+        ).first()
+        if same_entity_alias is not None:
+            return self._to_domain_alias(same_entity_alias)
+
+        alias_model = EntityAliasModel(
+            entity_id=entity_model.id,
+            research_space_id=entity_model.research_space_id,
+            entity_type=entity_model.entity_type,
+            alias_label=canonical_alias,
+            alias_normalized=normalized_alias,
+            source=source,
+            created_by="system:kernel_entity_repository",
+            review_status=review_status,
+        )
+        self._session.add(alias_model)
+        self._session.flush()
+        return self._to_domain_alias(alias_model)
+
+    def list_aliases(
+        self,
+        *,
+        entity_id: str,
+        include_inactive: bool = False,
+    ) -> list[KernelEntityAlias]:
+        stmt = select(EntityAliasModel).where(
+            EntityAliasModel.entity_id == _as_uuid(entity_id),
+        )
+        if not include_inactive:
+            stmt = stmt.where(EntityAliasModel.is_active.is_(True))
+        stmt = stmt.order_by(
+            EntityAliasModel.created_at.asc(),
+            EntityAliasModel.id.asc(),
+        )
+        return [self._to_domain_alias(model) for model in self._session.scalars(stmt)]
+
+    def find_by_alias(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str,
+        alias_label: str,
+    ) -> KernelEntity | None:
+        candidates = self.find_alias_candidates(
+            research_space_id=research_space_id,
+            entity_type=entity_type,
+            alias_label=alias_label,
+        )
+        return self._resolve_single_candidate(
+            candidates,
+            match_description=f"alias '{alias_label}'",
+        )
+
+    def find_alias_candidates(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str,
+        alias_label: str,
+    ) -> list[KernelEntity]:
+        normalized_alias = normalize_entity_match_text(alias_label)
+        if not normalized_alias:
+            return []
+        models = self._session.scalars(
+            select(EntityModel)
+            .join(EntityAliasModel, EntityAliasModel.entity_id == EntityModel.id)
+            .where(
+                EntityAliasModel.research_space_id == _as_uuid(research_space_id),
+                EntityAliasModel.entity_type == entity_type,
+                EntityAliasModel.alias_normalized == normalized_alias,
+                EntityAliasModel.is_active.is_(True),
+            ),
+        ).all()
+        return self._to_domain_entities(self._dedupe_entity_models(models))
 
     # ── Resolution ────────────────────────────────────────────────────
+
+    def resolve_candidates(
+        self,
+        *,
+        research_space_id: str,
+        entity_type: str,
+        identifiers: dict[str, str],
+    ) -> list[KernelEntity]:
+        candidate_by_id: dict[UUID, KernelEntity] = {}
+        for namespace, value in identifiers.items():
+            for candidate in self.find_identifier_candidates(
+                namespace=namespace,
+                identifier_value=value,
+                research_space_id=research_space_id,
+                entity_type=entity_type,
+            ):
+                candidate_by_id[candidate.id] = candidate
+        return list(candidate_by_id.values())
 
     def resolve(
         self,
@@ -347,18 +574,19 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
         """
         Try to match an existing entity using its identifiers.
 
-        For each namespace→value pair, check ``entity_identifiers``.
-        Return the first entity that matches within the research space + type scope.
+        Aggregate exact matches across all provided anchors. When more than one
+        distinct entity matches, raise a deterministic conflict instead of
+        silently picking the first hit.
         """
-        for namespace, value in identifiers.items():
-            entity = self.find_by_identifier(
-                namespace=namespace,
-                identifier_value=value,
-                research_space_id=research_space_id,
-            )
-            if entity is not None and entity.entity_type == entity_type:
-                return entity
-        return None
+        candidates = self.resolve_candidates(
+            research_space_id=research_space_id,
+            entity_type=entity_type,
+            identifiers=identifiers,
+        )
+        return self._resolve_single_candidate(
+            candidates,
+            match_description="identifier anchors",
+        )
 
     def _uses_phi_encryption(self, sensitivity: str) -> bool:
         return (
@@ -367,42 +595,236 @@ class SqlAlchemyKernelEntityRepository(KernelEntityRepository):
             and sensitivity == "PHI"
         )
 
-    def _find_existing_identifier(
+    @staticmethod
+    def _normalize_display_label(
+        display_label: str | None,
+    ) -> tuple[str | None, str | None]:
+        if display_label is None:
+            return None, None
+        canonical_label = canonicalize_entity_match_text(display_label)
+        if not canonical_label:
+            return None, None
+        return canonical_label, normalize_entity_match_text(canonical_label)
+
+    def _find_identifier_conflict(  # noqa: PLR0913
         self,
         *,
         entity_id: UUID,
+        research_space_id: UUID,
+        namespace: str,
+        canonical_identifier_value: str,
+        normalized_identifier: str | None,
+        blind_index: str | None,
+    ) -> EntityIdentifierModel | None:
+        stmt = select(EntityIdentifierModel).where(
+            EntityIdentifierModel.research_space_id == research_space_id,
+            EntityIdentifierModel.namespace == namespace,
+        )
+        if blind_index is not None:
+            stmt = stmt.where(
+                or_(
+                    and_(
+                        EntityIdentifierModel.sensitivity == "PHI",
+                        EntityIdentifierModel.identifier_blind_index == blind_index,
+                    ),
+                    and_(
+                        EntityIdentifierModel.sensitivity == "PHI",
+                        EntityIdentifierModel.identifier_blind_index.is_(None),
+                        EntityIdentifierModel.identifier_value
+                        == canonical_identifier_value,
+                    ),
+                ),
+            )
+        else:
+            stmt = stmt.where(
+                and_(
+                    EntityIdentifierModel.sensitivity != "PHI",
+                    or_(
+                        EntityIdentifierModel.identifier_normalized
+                        == normalized_identifier,
+                        and_(
+                            EntityIdentifierModel.identifier_normalized.is_(None),
+                            EntityIdentifierModel.identifier_value
+                            == canonical_identifier_value,
+                        ),
+                    ),
+                ),
+            )
+        models = self._session.scalars(stmt).all()
+        if not models:
+            return None
+        for model in models:
+            if model.entity_id == entity_id:
+                return model
+        return models[0]
+
+    def _find_identifier_matches(
+        self,
+        *,
         namespace: str,
         identifier_value: str,
-    ) -> EntityIdentifierModel | None:
-        lookup = select(EntityIdentifierModel).where(
-            EntityIdentifierModel.entity_id == entity_id,
-            EntityIdentifierModel.namespace == namespace,
-            EntityIdentifierModel.identifier_value == identifier_value,
+        research_space_id: str | None = None,
+        entity_type: str | None = None,
+    ) -> list[EntityModel]:
+        canonical_identifier_value = canonicalize_entity_match_text(identifier_value)
+        if not canonical_identifier_value:
+            return []
+        normalized_identifier = normalize_entity_match_text(canonical_identifier_value)
+        stmt = (
+            select(EntityModel)
+            .join(EntityIdentifierModel)
+            .where(EntityIdentifierModel.namespace == namespace)
         )
-        return self._session.scalars(lookup).first()
+        blind_index: str | None = None
+        if self._phi_encryption_enabled and self._phi_encryption_service is not None:
+            blind_index = self._phi_encryption_service.blind_index(
+                canonical_identifier_value,
+            )
 
-    def _find_existing_phi_identifier(
-        self,
-        *,
-        entity_id: UUID,
-        namespace: str,
-        plaintext_identifier_value: str,
-        blind_index: str,
-    ) -> EntityIdentifierModel | None:
-        lookup = select(EntityIdentifierModel).where(
-            EntityIdentifierModel.entity_id == entity_id,
-            EntityIdentifierModel.namespace == namespace,
-            EntityIdentifierModel.sensitivity == "PHI",
+        non_phi_match = and_(
+            EntityIdentifierModel.sensitivity != "PHI",
             or_(
-                EntityIdentifierModel.identifier_blind_index == blind_index,
+                EntityIdentifierModel.identifier_normalized == normalized_identifier,
                 and_(
-                    EntityIdentifierModel.identifier_blind_index.is_(None),
+                    EntityIdentifierModel.identifier_normalized.is_(None),
                     EntityIdentifierModel.identifier_value
-                    == plaintext_identifier_value,
+                    == canonical_identifier_value,
                 ),
             ),
         )
-        return self._session.scalars(lookup).first()
+        conditions = [
+            and_(
+                EntityIdentifierModel.sensitivity == "PHI",
+                EntityIdentifierModel.identifier_blind_index.is_(None),
+                EntityIdentifierModel.identifier_value == canonical_identifier_value,
+            ),
+            non_phi_match,
+        ]
+        if blind_index is not None:
+            conditions.insert(
+                0,
+                and_(
+                    EntityIdentifierModel.sensitivity == "PHI",
+                    EntityIdentifierModel.identifier_blind_index == blind_index,
+                ),
+            )
+        stmt = stmt.where(or_(*conditions))
+        if research_space_id is not None:
+            stmt = stmt.where(
+                EntityModel.research_space_id == _as_uuid(research_space_id),
+            )
+        if entity_type is not None:
+            stmt = stmt.where(EntityModel.entity_type == entity_type)
+        return self._dedupe_entity_models(self._session.scalars(stmt).all())
+
+    def _resolve_single_candidate(
+        self,
+        candidates: list[KernelEntity],
+        *,
+        match_description: str,
+    ) -> KernelEntity | None:
+        if not candidates:
+            return None
+        unique_candidates = self._dedupe_domain_entities(candidates)
+        if len(unique_candidates) > 1:
+            msg = f"Ambiguous exact match for {match_description}."
+            raise KernelEntityConflictError(msg)
+        return unique_candidates[0]
+
+    @staticmethod
+    def _dedupe_entity_models(models: list[EntityModel]) -> list[EntityModel]:
+        deduped: list[EntityModel] = []
+        seen: set[UUID] = set()
+        for model in models:
+            if model.id in seen:
+                continue
+            seen.add(model.id)
+            deduped.append(model)
+        return deduped
+
+    @staticmethod
+    def _dedupe_entity_ids(entity_ids: list[UUID]) -> list[UUID]:
+        deduped: list[UUID] = []
+        seen: set[UUID] = set()
+        for entity_id in entity_ids:
+            if entity_id in seen:
+                continue
+            seen.add(entity_id)
+            deduped.append(entity_id)
+        return deduped
+
+    @staticmethod
+    def _dedupe_domain_entities(
+        entities: list[KernelEntity],
+    ) -> list[KernelEntity]:
+        deduped: list[KernelEntity] = []
+        seen: set[UUID] = set()
+        for entity in entities:
+            if entity.id in seen:
+                continue
+            seen.add(entity.id)
+            deduped.append(entity)
+        return deduped
+
+    def _alias_map_for_entity_ids(
+        self,
+        entity_ids: list[UUID],
+    ) -> dict[UUID, list[str]]:
+        if not entity_ids:
+            return {}
+        rows = self._session.execute(
+            select(EntityAliasModel.entity_id, EntityAliasModel.alias_label)
+            .where(
+                EntityAliasModel.entity_id.in_(entity_ids),
+                EntityAliasModel.is_active.is_(True),
+            )
+            .order_by(EntityAliasModel.created_at.asc(), EntityAliasModel.id.asc()),
+        ).all()
+        alias_map: dict[UUID, list[str]] = {entity_id: [] for entity_id in entity_ids}
+        for entity_id, alias_label in rows:
+            labels = alias_map.setdefault(entity_id, [])
+            if alias_label in labels:
+                continue
+            labels.append(alias_label)
+        return alias_map
+
+    def _to_domain_entity(self, model: EntityModel) -> KernelEntity:
+        alias_map = self._alias_map_for_entity_ids([model.id])
+        return KernelEntity.model_validate(
+            {
+                "id": model.id,
+                "research_space_id": model.research_space_id,
+                "entity_type": model.entity_type,
+                "display_label": model.display_label,
+                "aliases": alias_map.get(model.id, []),
+                "metadata_payload": model.metadata_payload or {},
+                "created_at": model.created_at,
+                "updated_at": model.updated_at,
+            },
+        )
+
+    def _to_domain_entities(self, models: list[EntityModel]) -> list[KernelEntity]:
+        entity_ids = [model.id for model in models]
+        alias_map = self._alias_map_for_entity_ids(entity_ids)
+        return [
+            KernelEntity.model_validate(
+                {
+                    "id": model.id,
+                    "research_space_id": model.research_space_id,
+                    "entity_type": model.entity_type,
+                    "display_label": model.display_label,
+                    "aliases": alias_map.get(model.id, []),
+                    "metadata_payload": model.metadata_payload or {},
+                    "created_at": model.created_at,
+                    "updated_at": model.updated_at,
+                },
+            )
+            for model in models
+        ]
+
+    @staticmethod
+    def _to_domain_alias(model: EntityAliasModel) -> KernelEntityAlias:
+        return KernelEntityAlias.model_validate(model)
 
     def _to_domain_identifier(
         self,
