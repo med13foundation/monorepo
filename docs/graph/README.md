@@ -8,9 +8,18 @@ The same service is used by different layers of users:
 - developers who need to build against it or change it
 - maintainers who need exact contract and architecture references
 
-In simple terms, this service is the backend that stores and serves MED13's
-connected knowledge: entities, claims, canonical relations, evidence,
-reasoning-paths, graph search, and graph-specific operational workflows.
+In simple terms, this service is the backend that stores and serves
+claim-backed graph knowledge: entities, claims, canonical relations, evidence,
+reasoning paths, graph search, read models, and graph-specific operational
+workflows.
+
+Current status:
+
+- the graph service is implemented as `graph-core` plus domain packs
+- the built-in packs are `biomedical` and `sports`
+- `biomedical` remains the primary production pack
+- `sports` is the first non-biomedical proof pack used to validate the shared
+  pack model
 
 ## Choose Your Path
 
@@ -52,6 +61,15 @@ Read [history/README.md](history/README.md).
 The platform app no longer owns graph routes. Platform callers use this service
 over HTTP.
 
+The service is no longer just a MED13-specific extraction boundary. It now has:
+
+- neutral runtime naming
+- explicit pack registration and selection
+- graph-core auth and tenancy abstractions
+- physical read models and rebuild flows
+- release/versioning policy and generated-client ownership
+- cross-domain proof across the built-in packs
+
 ## Folder Layout
 
 - [overview/](overview/)
@@ -61,8 +79,8 @@ over HTTP.
 - [developers/](developers/)
   Developer onboarding, runtime model, contracts, and local workflow guidance.
 - [reference/](reference/)
-  Exact reference docs: architecture, endpoints, deployment topology, examples,
-  use cases, and inventory.
+  Exact reference docs: architecture, endpoints, deployment topology, domain
+  packs, read models, release policy, examples, use cases, and inventory.
 - [history/](history/)
   Historical extraction and migration planning documents.
 

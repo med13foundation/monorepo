@@ -4,6 +4,12 @@ This document defines the supported deployment topologies for the standalone
 graph service and the forward migration path from a shared Postgres instance to
 a dedicated graph database.
 
+It also reflects the current pack-aware runtime contract:
+
+- the graph service starts through explicit pack registration
+- the active pack is selected with `GRAPH_DOMAIN_PACK`
+- the built-in packs are `biomedical` and `sports`
+
 ## Supported topologies
 
 ### Shared-instance topology
@@ -59,12 +65,12 @@ This is the target topology for future isolation.
 - `GRAPH_DB_SCHEMA`
 - `GRAPH_JWT_SECRET`
 - optional `GRAPH_ALLOW_TEST_AUTH_HEADERS`
+- `GRAPH_DOMAIN_PACK`
 - `GRAPH_DB_POOL_SIZE`
 - `GRAPH_DB_MAX_OVERFLOW`
 - `GRAPH_DB_POOL_TIMEOUT_SECONDS`
 - `GRAPH_DB_POOL_RECYCLE_SECONDS`
 - `GRAPH_DB_POOL_USE_LIFO`
-- `GRAPH_DOMAIN_PACK`
 
 ### Platform backend
 
@@ -148,6 +154,12 @@ Use this when validating outside the GitHub workflow:
   - admin/web runtime graph URLs point at that graph URL
   - platform and graph services share the expected Cloud SQL instance
   - the configured graph migration job exists when specified
+
+For current product-boundary validation beyond topology, also use:
+
+- `make graph-service-checks`
+- `make graph-phase6-release-check`
+- `make graph-phase7-cross-domain-check`
 
 ### Rollback trigger
 

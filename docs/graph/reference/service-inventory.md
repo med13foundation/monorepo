@@ -48,10 +48,19 @@ the public contract.
 
 ### Neutral shared graph-runtime helpers used by the service
 
+- `src/graph/core/`
+- `src/graph/runtime.py`
+- `src/graph/product_contract.py`
+- `src/graph/pack_registry.py`
 - `src/database/graph_schema.py`
 - `src/infrastructure/dependency_injection/graph_runtime_factories.py`
 - `src/infrastructure/repositories/graph_observability_repository.py`
 - `src/infrastructure/queries/graph_security_queries.py`
+
+### Built-in domain packs
+
+- `src/graph/domain_biomedical/`
+- `src/graph/domain_sports/`
 
 ### Generated service contract artifact
 
@@ -142,12 +151,25 @@ bridge modules.
 ### Graph boundary and contract tooling
 
 - `scripts/validate_graph_service_boundary.py`
+- `scripts/validate_graph_phase1_alias_policy.py`
+- `scripts/validate_graph_phase2_boundary.py`
+- `scripts/validate_graph_phase3_invariants.py`
+- `scripts/validate_graph_phase4_read_models.py`
+- `scripts/validate_graph_phase6_release_contract.py`
+- `scripts/validate_graph_phase7_cross_domain.py`
 - `scripts/export_graph_openapi.py`
 - `scripts/generate_ts_types.py`
 - `make graph-service-openapi`
 - `make graph-service-client-types`
 - `make graph-service-sync-contracts`
 - `make graph-service-contract-check`
+- `make graph-phase1-alias-check`
+- `make graph-phase2-boundary-check`
+- `make graph-phase2-biomedical-pack-check`
+- `make graph-phase3-invariant-check`
+- `make graph-phase4-read-model-check`
+- `make graph-phase6-release-check`
+- `make graph-phase7-cross-domain-check`
 - `make graph-service-lint`
 - `make graph-service-type-check`
 - `make graph-service-test`

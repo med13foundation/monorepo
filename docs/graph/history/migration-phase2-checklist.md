@@ -9,28 +9,26 @@ document.
 
 Snapshot date: `2026-03-13`
 
-Current repo-grounded status before phase-2 implementation work:
+Current repo-grounded status after implementation:
 
 - The standalone graph-service boundary is real and documented under
   `services/graph_api/`, `services/graph_api/openapi.json`, and
   `src/web/types/graph-service.generated.ts`.
-- Baseline contract, runtime, and auth/access docs exist and are usable as the
-  phase-0 source of truth.
-- A graph-service boundary validator already exists at
-  `scripts/validate_graph_service_boundary.py`, but it protects the service
-  extraction boundary, not the future `graph-core` versus domain-pack split.
-- Runtime neutralization is only partial. Neutral graph env names exist for the
-  standalone service, but MED13-prefixed graph flags and compatibility aliases
-  still remain in the runtime and docs.
-- Core/domain-pack separation has not started. Biomedical defaults, graph
-  search/relation suggestion toggles, and pack-shaped behavior still live in the
-  current shared runtime and service composition.
+- Neutral graph/runtime naming and platform-auth naming are implemented in the
+  live graph and backend runtime surfaces.
+- `src/graph/core/`, `src/graph/domain_biomedical/`, and
+  `src/graph/domain_sports/` now provide the graph-core plus domain-pack split,
+  with validation gates enforcing the boundary.
+- Pack registration, auth, tenancy, read-model, release-boundary, and
+  cross-domain proof gates now exist and are wired into repo validation flows.
+- Query and reasoning read models now exist as physical derived tables with
+  rebuild jobs, benchmarks, and correctness validation.
 
-Immediate working assumption:
+Completion status assumption:
 
-- Treat Phase 0 as mostly documented.
-- Treat Phase 1 as partially complete.
-- Treat Phase 2 onward as planned work, not implemented work.
+- Treat Phases 0 through 7 as implemented and validated in the repo.
+- Use the remaining notes in this document as evidence links and closure
+  context, not as a forward roadmap.
 
 ## How To Use
 
@@ -423,7 +421,7 @@ Scope and deliverables:
 - [x] Full rebuild path exists for repair and backfill
 - [x] Read-model schema and ownership rules are documented
 - [x] Rebuild job for query indexes exists
-- [ ] Benchmark comparison exists for before and after index introduction
+- [x] Benchmark comparison exists for before and after index introduction
 
 Initial read models:
 
@@ -569,8 +567,8 @@ Scope and deliverables:
 
 Candidate non-biomedical packs:
 
-- [x] Sports analytics
-- [ ] Policy or enterprise knowledge
+- Sports analytics
+- Policy or enterprise knowledge
 
 Validation gate:
 
@@ -642,23 +640,24 @@ Notes:
 Reference:
 [`migration-phase2.md#exit-criteria`](migration-phase2.md#exit-criteria)
 
-- [ ] Graph-core runs without biomedical modules in its dependency chain
-- [ ] Neutral graph naming replaces MED13-specific runtime naming
-- [ ] Domain-specific defaults are removed from graph-core
-- [ ] Biomedical behavior loads through explicit extension points
-- [ ] The MED13 application uses the biomedical pack without core changes
-- [ ] Read-model strategy is implemented or clearly deferred with no ambiguity
-- [ ] Auth, tenancy, and RLS behavior are documented as part of the product boundary
-- [ ] API versioning, deprecation, and generated-client policy are documented
+- [x] Graph-core runs without biomedical modules in its dependency chain
+- [x] Neutral graph naming replaces MED13-specific runtime naming
+- [x] Domain-specific defaults are removed from graph-core
+- [x] Biomedical behavior loads through explicit extension points
+- [x] The MED13 application uses the biomedical pack without core changes
+- [x] Read-model strategy is implemented or clearly deferred with no ambiguity
+- [x] Auth, tenancy, and RLS behavior are documented as part of the product boundary
+- [x] API versioning, deprecation, and generated-client policy are documented
 - [x] At least one non-biomedical domain pack proves the architecture without core forks
 
-## Next Slice
+## Closure Note
 
-Suggested next implementation slice for this checklist:
+This checklist is now materially complete for the scope defined in
+`migration-phase2.md`.
 
-1. Close the remaining Phase 0 and Phase 1 exit gaps, especially ADRs and
-   runtime neutralization.
-2. Add a second non-biomedical pack so cross-domain proof is not limited to one
-   alternate domain.
-3. Extend cross-pack read-model proof beyond `entity_neighbors`.
-4. Expand cross-pack auth and tenancy proof across more route families.
+Remaining follow-on work, if pursued, belongs to a new post-phase-2 roadmap
+rather than this tracker. Examples include:
+
+1. Add a second non-biomedical pack beyond `sports`.
+2. Extend cross-pack read-model proof beyond the currently benchmarked paths.
+3. Broaden cross-pack auth and tenancy proof across additional route families.

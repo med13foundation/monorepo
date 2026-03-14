@@ -20,6 +20,17 @@ The important distinction is:
 - `src/...`
   shared domain/application/repository code reused by the graph service
 
+Current implementation status:
+
+- `graph-core` now lives under `src/graph/core/`
+- built-in domain packs now live under `src/graph/domain_biomedical/` and
+  `src/graph/domain_sports/`
+- pack registration and active-pack selection are owned by
+  `src/graph/pack_registry.py` and `src/graph/runtime.py`
+- the migration and product-boundary work tracked in
+  `docs/graph/history/migration-phase2*.md` is implemented and validated in the
+  repo
+
 ## What To Read First
 
 1. [../overview/what-this-service-does.md](../overview/what-this-service-does.md)
@@ -27,6 +38,8 @@ The important distinction is:
 3. [../reference/architecture.md](../reference/architecture.md)
 4. [../reference/domain-pack-lifecycle.md](../reference/domain-pack-lifecycle.md)
 5. [../reference/service-inventory.md](../reference/service-inventory.md)
+6. [../reference/read-model-ownership.md](../reference/read-model-ownership.md)
+7. [../reference/release-policy.md](../reference/release-policy.md)
 
 Use [../history/service-migration-plan.md](../history/service-migration-plan.md)
 only when you need extraction history or rationale for why the boundary looks
@@ -63,6 +76,9 @@ make graph-service-openapi
 make graph-service-client-types
 make graph-service-sync-contracts
 make graph-service-checks
+make graph-phase4-read-model-check
+make graph-phase6-release-check
+make graph-phase7-cross-domain-check
 ```
 
 These cover:
@@ -92,6 +108,11 @@ Common optional env:
 - `GRAPH_SERVICE_RELOAD`
 - optional `GRAPH_DOMAIN_PACK`
   Defaults to `biomedical` today and controls pack-provided runtime defaults
+
+Built-in pack values today:
+
+- `biomedical`
+- `sports`
 
 Pack lifecycle reference:
 
@@ -148,6 +169,16 @@ Important nuance:
 - graph connections still exist even if the Artana runtime is unavailable; the
   service falls back instead of removing the endpoint
 
+Pack-owned behavior now includes:
+
+- graph view types
+- graph-search prompt and step-key behavior
+- graph-connection prompt/default-source behavior
+- relation-suggestion thresholds
+- dictionary-loading defaults
+- domain-context policy
+- read-side heuristics and bootstrap content
+
 ## How A Typical Request Flows
 
 1. A caller reaches a graph-service route in `services/graph_api/routers/`.
@@ -166,6 +197,9 @@ Useful runtime files:
 - `services/graph_api/composition.py`
 - `src/graph/pack_registry.py`
 - `src/graph/runtime.py`
+- `src/graph/core/`
+- `src/graph/domain_biomedical/`
+- `src/graph/domain_sports/`
 
 ## Where To Find Things
 
@@ -191,6 +225,9 @@ Useful runtime files:
 
 ### Shared Graph Runtime Reused By The Service
 
+- `src/graph/core/`
+- `src/graph/runtime.py`
+- `src/graph/product_contract.py`
 - `src/application/services/kernel/`
 - `src/application/agents/services/graph_search_service.py`
 - `src/application/agents/services/graph_connection_service.py`
@@ -204,7 +241,8 @@ At a high level:
 - claims are the detailed ledger
 - canonical relations are the stable projection
 - evidence and provenance explain what exists
-- reasoning paths are derived read models, not canonical truth
+- generic and reasoning read models accelerate supported reads, but remain
+  derived and rebuildable
 - hypotheses stay in claim space unless explicitly curated into stronger states
 
 For the exact rules, read
@@ -224,6 +262,12 @@ For the exact rules, read
   When you need to find runtime modules, callers, scripts, and tests
 - [../reference/deployment-topology.md](../reference/deployment-topology.md)
   When you need runtime env, deploy, or topology details
+- [../reference/read-model-ownership.md](../reference/read-model-ownership.md)
+  When you need truth-boundary and rebuild rules for read models
+- [../reference/release-policy.md](../reference/release-policy.md)
+  When you need API versioning and generated-client ownership rules
+- [../reference/cross-domain-validation-matrix.md](../reference/cross-domain-validation-matrix.md)
+  When you need proof that the shared model works across the built-in packs
 
 ## What To Validate Before Shipping
 

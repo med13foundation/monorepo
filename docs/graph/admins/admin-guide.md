@@ -11,6 +11,7 @@ platform.
 That usually means:
 
 - ensuring the graph service is reachable and correctly configured
+- selecting and validating the intended built-in domain pack for the runtime
 - keeping graph-space registry and membership state aligned with platform truth
 - checking graph readiness before or after rollout
 - running repair and rebuild workflows when graph state drifts
@@ -82,14 +83,23 @@ Check the required runtime contract:
 - optional `GRAPH_DB_SCHEMA`
 - `GRAPH_JWT_SECRET`
 - optional `GRAPH_ALLOW_TEST_AUTH_HEADERS`
+- `GRAPH_DOMAIN_PACK`
 - graph DB pool env vars when explicitly configured
 - `GRAPH_SERVICE_URL` in backend/runtime callers
 - `INTERNAL_GRAPH_API_URL` or `GRAPH_API_BASE_URL`
 - `NEXT_PUBLIC_GRAPH_API_URL`
 
+Built-in pack values today:
+
+- `biomedical`
+- `sports`
+
 For deployment and promotion checks, use:
 
 - `make graph-topology-validate`
+- `make graph-service-checks`
+- `make graph-phase6-release-check`
+- `make graph-phase7-cross-domain-check`
 - `.github/workflows/graph-service-deploy.yml`
 - `scripts/deploy/validate_shared_instance_graph_topology.py`
 
@@ -170,6 +180,14 @@ Use this after:
 - claim-relation review updates
 - bulk ingestion that materially changes grounded support paths
 
+If graph-query latency regresses or rebuild/consistency behavior is in doubt,
+also use the read-model validation material:
+
+- `make graph-phase4-read-model-check`
+- `make graph-read-model-benchmark`
+- `docs/graph/reference/read-model-ownership.md`
+- `docs/graph/reference/read-model-benchmarks.md`
+
 ## 7. Inspect Operation History
 
 Use:
@@ -210,6 +228,8 @@ Important distinctions:
 - graph-space membership alone is not enough for `/v1/dictionary/...`
 - `POST /v1/spaces/{space_id}/relations` also requires `graph_admin`, even
   though it is a space-scoped route
+- auth and tenancy semantics are pack-neutral; current cross-pack proof exists
+  for both `biomedical` and `sports`
 
 Reference:
 [../developers/developer-guide.md](../developers/developer-guide.md)

@@ -153,7 +153,23 @@ Typical response contents:
 - claim-to-claim edges for overlay and mechanism context
 - claim evidence rows for those claims
 
-## 8. Paper view example
+## 8. Sports match view example
+
+Example request:
+
+```text
+GET /v1/spaces/{space_id}/graph/views/match/{entity_id}
+```
+
+Typical response contents under `GRAPH_DOMAIN_PACK=sports`:
+
+- focal `MATCH` entity
+- canonical relations touching that match
+- claims mentioning the match, teams, or athletes through `claim_participants`
+- claim-to-claim edges for competition context
+- claim evidence rows drawn from match reports or related records
+
+## 9. Paper view example
 
 Example request:
 
@@ -169,7 +185,7 @@ Typical response contents:
 - claim evidence rows from that paper
 - any claim-backed canonical relations materialized from those claims
 
-## 9. Persisted reasoning path example
+## 10. Persisted reasoning path example
 
 ```text
 Claim A: MED13 is part of the mediator complex
@@ -200,7 +216,7 @@ Interpretation:
 - it is reusable for search, explanation, and hypothesis suggestion
 - it is not canonical truth
 
-## 10. Path-backed hypothesis example
+## 11. Path-backed hypothesis example
 
 Generated hypothesis metadata can now look like:
 
@@ -222,7 +238,7 @@ Interpretation:
 - the supporting path is explicit
 - the reasoning artifact remains rebuildable from claims
 
-## 11. Transfer-backed mechanism hypothesis example
+## 12. Transfer-backed mechanism hypothesis example
 
 Generated hypothesis metadata can also combine direct seed support with nearby
 biology:

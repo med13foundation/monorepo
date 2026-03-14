@@ -12,6 +12,13 @@ Use this folder when you need to understand:
 
 For day-to-day usage, start at [../README.md](../README.md) instead.
 
+Current note:
+
+- the migration tracked in `migration-phase2*.md` is now implemented and
+  validated in the repo
+- this folder should be treated as historical rationale and closure context,
+  not as the primary current-state reference
+
 ## Files
 
 - [migration-phase2-checklist.md](migration-phase2-checklist.md)

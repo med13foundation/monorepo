@@ -89,15 +89,20 @@ Feature-flagged routes:
 | `POST` | `/v1/spaces/{space_id}/graph/subgraph` | `member` | Build a bounded graph subgraph for rendering or inspection. |
 | `GET` | `/v1/spaces/{space_id}/graph/neighborhood/{entity_id}` | `member` | Fetch one entity neighborhood subgraph. |
 | `POST` | `/v1/spaces/{space_id}/graph/document` | `member` | Build a unified graph document with canonical, claim, and evidence overlays. |
-| `GET` | `/v1/spaces/{space_id}/graph/views/{view_type}/{resource_id}` | `member` | Build one claim-aware domain view. Supported view types are `gene`, `variant`, `phenotype`, `paper`, and `claim`. |
+| `GET` | `/v1/spaces/{space_id}/graph/views/{view_type}/{resource_id}` | `member` | Build one claim-aware domain view. Supported view types are pack-dependent. |
+
+Current built-in pack view types:
+
+- `biomedical`: `gene`, `variant`, `phenotype`, `paper`, `claim`
+- `sports`: `team`, `athlete`, `match`, `report`, `claim`
 
 ## Search, Discovery, Reasoning, And Hypotheses
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
 | `POST` | `/v1/spaces/{space_id}/graph/search` | `member` | Run natural-language graph search. Agent augmentation is optional and controlled by `GRAPH_ENABLE_SEARCH_AGENT`. |
-| `POST` | `/v1/spaces/{space_id}/graph/connections/discover` | `member` | Discover graph connections for one or more seed entities. |
-| `POST` | `/v1/spaces/{space_id}/entities/{entity_id}/connections` | `member` | Discover graph connections for a single seed entity. |
+| `POST` | `/v1/spaces/{space_id}/graph/connections/discover` | `member` | Discover graph connections for one or more seed entities. Default source dispatch is pack-owned. |
+| `POST` | `/v1/spaces/{space_id}/entities/{entity_id}/connections` | `member` | Discover graph connections for a single seed entity. Default source dispatch is pack-owned. |
 | `POST` | `/v1/spaces/{space_id}/graph/relation-suggestions` | `researcher+` | Suggest constrained missing relations using hybrid graph plus embeddings. Requires `GRAPH_ENABLE_RELATION_SUGGESTIONS=1`. |
 | `GET` | `/v1/spaces/{space_id}/reasoning-paths` | `member` | List persisted reasoning paths in a graph space. |
 | `GET` | `/v1/spaces/{space_id}/reasoning-paths/{path_id}` | `member` | Retrieve one expanded reasoning path with linked claims and evidence. |

@@ -4,8 +4,8 @@ This document explains the graph service in plain language.
 
 ## Short Version
 
-The graph service is the backend that turns MED13 research data into connected,
-explainable knowledge.
+The graph service is the backend that turns source records and curation input
+into connected, explainable graph knowledge.
 
 Instead of only storing isolated rows such as "this paper mentioned X", it lets
 the system store and query:
@@ -99,22 +99,23 @@ The key idea is:
 
 ## Is It MED13-Specific?
 
-Partly.
+The surrounding application is still MED13-first, but the graph service itself
+now implements a pack-driven graph platform.
 
-The service is graph-generic in structure:
+Current state:
 
-- it works with entities, claims, relations, evidence, provenance, search,
-  reasoning, and governance
-- it has a clean service boundary and its own runtime contract
+- graph-core owns the claim-first model, auth/tenancy abstractions, read-model
+  framework, release contract, and runtime helpers
+- domain packs supply domain-shaped behavior such as view types, prompts,
+  dictionary seeding, connector defaults, and heuristics
+- the built-in packs are `biomedical` and `sports`
+- `biomedical` remains the primary production pack
+- `sports` proves that the same runtime, auth, contract, and read-model
+  framework work without core forks
 
-But it is currently MED13-shaped in content and defaults:
-
-- many examples and view types are biomedical
-- some source types and feature flags use MED13 naming
-- the surrounding product and UI are MED13
-
-So the service is not just a one-off MED13 script, but it is also not yet a
-fully generic productized graph platform.
+The examples in these docs remain mostly biomedical because MED13 is still the
+main product context, but the implemented service is no longer only a
+biomedical runtime.
 
 ## What To Read Next
 
@@ -122,3 +123,4 @@ fully generic productized graph platform.
 - If you develop against it: [../developers/developer-guide.md](../developers/developer-guide.md)
 - If you need exact API routes: [../reference/endpoints.md](../reference/endpoints.md)
 - If you need the graph model and invariants: [../reference/architecture.md](../reference/architecture.md)
+- If you need to understand the pack model: [../reference/domain-pack-lifecycle.md](../reference/domain-pack-lifecycle.md)

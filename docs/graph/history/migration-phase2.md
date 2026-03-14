@@ -36,6 +36,18 @@ The current source of truth for the live graph-service contract remains:
 If this design doc disagrees with those artifacts, treat the generated contract
 and route implementation as authoritative for current behavior.
 
+## Implementation Status
+
+As of `2026-03-13`, the implementation tracked by this plan is closed in the
+repo and validated through the graph-service, boundary, release, and
+cross-domain quality gates.
+
+Use [`migration-phase2-checklist.md`](migration-phase2-checklist.md) as the
+implementation ledger for what landed and which validation gates prove it.
+This document remains a mixed design-and-state record: it still describes
+`Current state`, `Target state`, and `Proposed` architecture to explain the
+rationale behind the implemented result.
+
 ## Current Implemented Baseline
 
 The graph service already has a strong standalone boundary.

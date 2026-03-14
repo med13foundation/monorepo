@@ -166,7 +166,8 @@ Actors:
 
 Flow:
 
-1. The user requests a `gene`, `variant`, `phenotype`, `paper`, or `claim` view.
+1. The user requests a pack-owned view type such as `gene`, `paper`, `team`,
+   or `report`.
 2. The route loads the focal resource.
 3. Related claims, claim-to-claim edges, participants, and claim evidence are assembled.
 4. Claim-backed canonical relations are included where they exist.
@@ -238,6 +239,27 @@ Actors:
 - researcher or AI agent
 - hypothesis generation service
 - reasoning path service
+
+## 14. Switch the same runtime onto a different built-in pack
+
+Actors:
+
+- operator
+- graph service startup/runtime
+
+Flow:
+
+1. The operator sets `GRAPH_DOMAIN_PACK` to `biomedical` or `sports`.
+2. Startup bootstraps the built-in packs and resolves the active one.
+3. Runtime identity, graph views, connector defaults, dictionary seeding,
+   auth/tenancy-neutral behavior, and read-model framework continue unchanged.
+4. Pack-owned behavior changes without requiring core forks or API contract
+   rewrites.
+
+Outcome:
+
+- one graph-core runtime supports multiple domains through explicit pack-owned
+  extension points
 - claim ledger
 
 Flow:
