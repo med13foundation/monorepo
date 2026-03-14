@@ -237,6 +237,9 @@ if [[ -n "${MED13_RUNTIME_ROLE:-}" ]]; then
   backend_env_pairs+=("MED13_RUNTIME_ROLE=${MED13_RUNTIME_ROLE}")
 fi
 backend_env_pairs+=("GRAPH_SERVICE_URL=${GRAPH_SERVICE_URL}")
+if [[ -n "${GRAPH_HARNESS_SERVICE_URL:-}" ]]; then
+  backend_env_pairs+=("GRAPH_HARNESS_SERVICE_URL=${GRAPH_HARNESS_SERVICE_URL}")
+fi
 if [[ -n "${MED13_DISABLE_INGESTION_SCHEDULER:-}" ]]; then
   backend_env_pairs+=(
     "MED13_DISABLE_INGESTION_SCHEDULER=${MED13_DISABLE_INGESTION_SCHEDULER}"
@@ -327,6 +330,10 @@ if [[ -z "${GRAPH_PUBLIC_URL:-}" ]]; then
   GRAPH_PUBLIC_URL="${GRAPH_SERVICE_URL:-}"
 fi
 
+if [[ -z "${GRAPH_HARNESS_PUBLIC_URL:-}" ]]; then
+  GRAPH_HARNESS_PUBLIC_URL="${GRAPH_HARNESS_SERVICE_URL:-}"
+fi
+
 declare -a admin_update_args=()
 if [[ -n "${ADMIN_MIN_INSTANCES:-}" ]]; then
   admin_update_args+=(--min-instances "${ADMIN_MIN_INSTANCES}")
@@ -341,6 +348,12 @@ if is_true "${SYNC_ADMIN_GRAPH_URLS:-}" && [[ -n "${GRAPH_PUBLIC_URL:-}" ]]; the
   admin_update_args+=(
     --update-env-vars
     "^@^GRAPH_API_BASE_URL=${GRAPH_PUBLIC_URL}@INTERNAL_GRAPH_API_URL=${GRAPH_PUBLIC_URL}@NEXT_PUBLIC_GRAPH_API_URL=${GRAPH_PUBLIC_URL}"
+  )
+fi
+if is_true "${SYNC_ADMIN_HARNESS_URLS:-}" && [[ -n "${GRAPH_HARNESS_PUBLIC_URL:-}" ]]; then
+  admin_update_args+=(
+    --update-env-vars
+    "^@^GRAPH_HARNESS_API_BASE_URL=${GRAPH_HARNESS_PUBLIC_URL}@INTERNAL_GRAPH_HARNESS_API_URL=${GRAPH_HARNESS_PUBLIC_URL}@NEXT_PUBLIC_GRAPH_HARNESS_API_URL=${GRAPH_HARNESS_PUBLIC_URL}"
   )
 fi
 if [[ -n "${NEXT_PUBLIC_WORKFLOW_SSE_ENABLED:-}" ]]; then

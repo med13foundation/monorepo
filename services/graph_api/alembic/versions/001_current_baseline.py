@@ -47,6 +47,15 @@ _EXCLUDED_FROM_BASELINE: frozenset[str] = frozenset(
         "entity_claim_summary",
         "entity_neighbors",
         "entity_mechanism_paths",
+        "harness_runs",
+        "harness_run_intents",
+        "harness_run_approvals",
+        "harness_proposals",
+        "harness_chat_sessions",
+        "harness_chat_messages",
+        "harness_schedules",
+        "harness_research_state",
+        "harness_graph_snapshots",
     },
 )
 

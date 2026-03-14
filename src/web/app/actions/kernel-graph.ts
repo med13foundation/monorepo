@@ -1,6 +1,7 @@
 'use server'
 
 import { getActionErrorMessage, getActionErrorStatus, requireAccessToken } from '@/app/actions/action-utils'
+import { searchKernelGraph } from '@/lib/api/graph-harness'
 import {
   fetchClaimParticipants,
   fetchKernelGraphDocument,
@@ -10,7 +11,6 @@ import {
   fetchRelationClaimEvidence,
   fetchRelationClaims,
   fetchRelationConflicts,
-  searchKernelGraph,
   type RelationClaimListParams,
   type RelationConflictListParams,
 } from '@/lib/api/kernel'

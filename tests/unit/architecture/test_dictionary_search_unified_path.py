@@ -12,6 +12,7 @@ ALLOWED_DIRECT_CALLERS: frozenset[str] = frozenset(
     {
         "src/infrastructure/llm/adapters/deterministic_dictionary_search_harness_adapter.py",
         "src/infrastructure/llm/adapters/dictionary_search_harness_adapter.py",
+        "src/infrastructure/graph_governance/deterministic_dictionary_search_harness.py",
     },
 )
 

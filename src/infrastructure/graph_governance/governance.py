@@ -10,12 +10,11 @@ from src.application.services.kernel.concept_management_service import (
 from src.application.services.kernel.dictionary_management_service import (
     DictionaryManagementService,
 )
-from src.infrastructure.embeddings import HybridTextEmbeddingProvider
-from src.infrastructure.factories.dictionary_search_harness_factory import (
-    create_dictionary_search_harness,
-)
 from src.infrastructure.graph_governance.concept_repository import (
     GraphConceptRepository,
+)
+from src.infrastructure.graph_governance.deterministic_dictionary_search_harness import (
+    GraphDeterministicDictionarySearchHarness,
 )
 from src.infrastructure.graph_governance.dictionary_repository import (
     GraphDictionaryRepository,
@@ -35,6 +34,9 @@ if TYPE_CHECKING:
     )
     from src.graph.core.dictionary_loading_extension import (
         GraphDictionaryLoadingExtension,
+    )
+    from src.infrastructure.embeddings.text_embedding_provider import (
+        HybridTextEmbeddingProvider,
     )
 
 
@@ -62,19 +64,16 @@ def build_dictionary_service(
     embedding_provider: HybridTextEmbeddingProvider | None = None,
 ) -> DictionaryPort:
     """Build the graph-service dictionary service from local governance adapters."""
-    active_embedding_provider = embedding_provider or HybridTextEmbeddingProvider()
     dictionary_repo = build_dictionary_repository(
         session,
         dictionary_loading_extension=dictionary_loading_extension,
     )
-    search_harness = create_dictionary_search_harness(
-        dictionary_repo=dictionary_repo,
-        embedding_provider=active_embedding_provider,
-    )
     return DictionaryManagementService(
         dictionary_repo=dictionary_repo,
-        dictionary_search_harness=search_harness,
-        embedding_provider=active_embedding_provider,
+        dictionary_search_harness=GraphDeterministicDictionarySearchHarness(
+            dictionary_repo=dictionary_repo,
+        ),
+        embedding_provider=embedding_provider,
     )
 
 

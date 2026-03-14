@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -12,17 +11,12 @@ from services.graph_api.auth import get_current_active_user
 from services.graph_api.database import get_session
 from services.graph_api.dependencies import (
     get_concept_service,
-    get_hypothesis_generation_flag,
-    get_hypothesis_generation_service_provider,
     get_kernel_claim_participant_service,
     get_kernel_entity_service,
     get_kernel_relation_claim_service,
     get_space_access_port,
     require_space_role,
     verify_space_membership,
-)
-from src.application.agents.services.hypothesis_generation_service import (
-    HypothesisGenerationService,
 )
 from src.application.services.claim_first_metrics import increment_metric
 from src.application.services.kernel.kernel_claim_participant_service import (
@@ -36,12 +30,9 @@ from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import User
 from src.domain.ports import ConceptPort
 from src.domain.ports.space_access_port import SpaceAccessPort
-from src.graph.core.feature_flags import FeatureFlagDefinition, is_flag_enabled
 from src.type_definitions.common import JSONObject
 from src.type_definitions.graph_service_contracts import (
     CreateManualHypothesisRequest,
-    GenerateHypothesesRequest,
-    GenerateHypothesesResponse,
     HypothesisListResponse,
     HypothesisResponse,
 )
@@ -262,91 +253,6 @@ def create_manual_hypothesis(  # noqa: PLR0912,PLR0915
         ) from exc
 
 
-@router.post(
-    "/{space_id}/hypotheses/generate",
-    response_model=GenerateHypothesesResponse,
-    summary="Auto-generate hypotheses from graph exploration",
-)
-async def generate_hypotheses(
-    space_id: UUID,
-    request: GenerateHypothesesRequest,
-    *,
-    current_user: User = Depends(get_current_active_user),
-    space_access: SpaceAccessPort = Depends(get_space_access_port),
-    hypothesis_generation_flag: FeatureFlagDefinition = Depends(
-        get_hypothesis_generation_flag,
-    ),
-    hypothesis_generation_service_provider: Callable[
-        [],
-        HypothesisGenerationService,
-    ] = Depends(get_hypothesis_generation_service_provider),
-    session: Session = Depends(get_session),
-) -> GenerateHypothesesResponse:
-    if not is_flag_enabled(hypothesis_generation_flag):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "FEATURE_DISABLED",
-                "message": (
-                    "Hypothesis generation is disabled. Enable "
-                    f"{hypothesis_generation_flag.env_display_name} to use this "
-                    "endpoint."
-                ),
-            },
-        )
-    require_space_role(
-        space_id=space_id,
-        current_user=current_user,
-        space_access=space_access,
-        session=session,
-        required_role=MembershipRole.RESEARCHER,
-    )
-    try:
-        hypothesis_generation_service = hypothesis_generation_service_provider()
-        result = await hypothesis_generation_service.generate_hypotheses(
-            research_space_id=str(space_id),
-            seed_entity_ids=request.seed_entity_ids,
-            source_type=request.source_type,
-            relation_types=request.relation_types,
-            max_depth=request.max_depth,
-            max_hypotheses=request.max_hypotheses,
-            model_id=request.model_id,
-        )
-        session.commit()
-        return GenerateHypothesesResponse(
-            run_id=result.run_id,
-            requested_seed_count=result.requested_seed_count,
-            used_seed_count=result.used_seed_count,
-            candidates_seen=result.candidates_seen,
-            created_count=result.created_count,
-            deduped_count=result.deduped_count,
-            errors=list(result.errors),
-            hypotheses=[
-                HypothesisResponse.from_claim(claim) for claim in result.hypotheses
-            ],
-        )
-    except ValueError as exc:
-        session.rollback()
-        increment_metric(
-            "hypotheses_generation_failed_total",
-            tags={"research_space_id": str(space_id)},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:  # noqa: BLE001
-        session.rollback()
-        increment_metric(
-            "hypotheses_generation_failed_total",
-            tags={"research_space_id": str(space_id)},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Hypothesis generation failed: {exc!s}",
-        ) from exc
-
-
 def _normalize_seed_entity_ids(seed_entity_ids: list[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -398,7 +304,6 @@ def _resolve_seed_entities_for_participants(
 
 __all__ = [
     "create_manual_hypothesis",
-    "generate_hypotheses",
     "list_hypotheses",
     "router",
 ]

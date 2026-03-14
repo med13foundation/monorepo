@@ -110,10 +110,9 @@ export function HypothesisComposer({
 
       {model.lastGeneration ? (
         <div className="rounded-md border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
-          Run {model.lastGeneration.run_id.slice(0, 8)}... • Seeds used{' '}
-          {model.lastGeneration.used_seed_count}/{model.lastGeneration.requested_seed_count} •
-          Candidates {model.lastGeneration.candidates_seen} • Created{' '}
-          {model.lastGeneration.created_count} • Deduped {model.lastGeneration.deduped_count}
+          Run {model.lastGeneration.run_id.slice(0, 8)}... • Seeds requested{' '}
+          {model.lastGeneration.requested_seed_count} • Candidates staged{' '}
+          {model.lastGeneration.created_count}
         </div>
       ) : null}
     </>

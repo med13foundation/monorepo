@@ -22,6 +22,11 @@ Current scope:
 - standalone runtime now uses graph-local DB pool settings under `GRAPH_DB_*` instead of the platform `MED13_DB_*` pool env contract
 - service-local DB operations now exist under `python -m services.graph_api.manage` and back the dedicated `make graph-db-wait` / `make graph-db-migrate` commands
 - service-local container packaging now exists under `services/graph_api/Dockerfile`
+- service-local runtime dependencies now live in
+  `services/graph_api/requirements.txt` so the graph container does not install
+  the shared root package or Artana runtime
+- entity similarity, embedding refresh, and relation suggestions no longer live
+  in the graph service; those heuristic workflows belong in the harness layer
 - graph-service Cloud Run runtime sync now exists under `scripts/deploy/sync_graph_cloud_run_runtime_config.sh`
 - graph-service promotion now has a dedicated GitHub Actions workflow in `.github/workflows/graph-service-deploy.yml`
 - service-local composition for graph, dictionary, and concept services
@@ -40,15 +45,12 @@ Current scope:
 - claim-ledger reads and claim-status mutation endpoints
 - claim-relation write and review endpoints
 - graph-view and mechanism-chain endpoints
-- graph-search endpoints under `/v1/spaces/{space_id}/graph/search`
-- graph-connection discovery endpoints under `/v1/spaces/{space_id}/graph/connections/...`
-- relation-suggestion endpoint under `/v1/spaces/{space_id}/graph/relation-suggestions`
 - service-owned maintenance endpoints for participant backfill, projection readiness, projection repair, and reasoning-path rebuilds
 - service-owned operation history endpoints under `/v1/admin/operations/runs` for readiness, repair, backfill, and rebuild workflows
 - service-owned graph-space registry endpoints under `/v1/admin/spaces/...`
 - service-owned graph-space sync endpoint under `/v1/admin/spaces/{space_id}/sync`
 - service-owned graph-space membership endpoints under `/v1/admin/spaces/{space_id}/memberships/...`
-- service-owned dictionary governance endpoints under `/v1/dictionary/...`, including revoke, merge, changelog, reembed, domain search, and transform registry workflows
+- service-owned dictionary governance endpoints under `/v1/dictionary/...`, including revoke, merge, changelog, deterministic domain listing, and transform registry workflows
 - service-owned concept governance endpoints under `/v1/spaces/{space_id}/concepts/...`
 - service-owned hypothesis workflow endpoints under `/v1/spaces/{space_id}/hypotheses/...`
 - first typed platform HTTP client under `src/infrastructure/graph_service/`, including graph-space registry and membership management

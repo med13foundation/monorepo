@@ -3,10 +3,10 @@
 import { revalidatePath } from 'next/cache'
 
 import { getActionErrorMessage, requireAccessToken } from '@/app/actions/action-utils'
+import { generateHypotheses } from '@/lib/api/graph-harness'
 import {
   createManualHypothesis,
   fetchHypotheses,
-  generateHypotheses,
 } from '@/lib/api/kernel'
 import type {
   GenerateHypothesesRequest,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -30,6 +30,7 @@ from services.graph_api.dependencies import (
     get_kernel_relation_claim_service,
     get_kernel_relation_projection_materialization_service,
     get_kernel_relation_service,
+    get_kernel_relation_suggestion_service,
     get_space_access_port,
     require_space_role,
     verify_space_membership,
@@ -65,7 +66,15 @@ from src.type_definitions.graph_service_contracts import (
     KernelRelationCurationUpdateRequest,
     KernelRelationListResponse,
     KernelRelationResponse,
+    KernelRelationSuggestionListResponse,
+    KernelRelationSuggestionRequest,
+    KernelRelationSuggestionResponse,
 )
+
+if TYPE_CHECKING:
+    from src.application.services.kernel.kernel_relation_suggestion_service import (
+        KernelRelationSuggestionService,
+    )
 
 router = APIRouter(prefix="/v1/spaces", tags=["relations"])
 
@@ -327,6 +336,66 @@ def list_relations(
         total=total,
         offset=offset,
         limit=limit,
+    )
+
+
+@router.post(
+    "/{space_id}/relations/suggestions",
+    response_model=KernelRelationSuggestionListResponse,
+    summary="Suggest missing dictionary-constrained relations in one graph space",
+)
+def suggest_relations(
+    space_id: UUID,
+    request: KernelRelationSuggestionRequest,
+    *,
+    current_user: User = Depends(get_current_active_user),
+    space_access: SpaceAccessPort = Depends(get_space_access_port),
+    relation_suggestion_service: KernelRelationSuggestionService = Depends(
+        get_kernel_relation_suggestion_service,
+    ),
+    session: Session = Depends(get_session),
+) -> KernelRelationSuggestionListResponse:
+    verify_space_membership(
+        space_id=space_id,
+        current_user=current_user,
+        space_access=space_access,
+        session=session,
+    )
+
+    try:
+        suggestions = relation_suggestion_service.suggest_relations(
+            research_space_id=str(space_id),
+            source_entity_ids=[
+                str(entity_id) for entity_id in request.source_entity_ids
+            ],
+            limit_per_source=request.limit_per_source,
+            min_score=request.min_score,
+            allowed_relation_types=request.allowed_relation_types,
+            target_entity_types=request.target_entity_types,
+            exclude_existing_relations=request.exclude_existing_relations,
+        )
+    except ValueError as exc:
+        error_code = getattr(exc, "code", None)
+        if error_code == "EMBEDDING_NOT_READY":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return KernelRelationSuggestionListResponse(
+        suggestions=[
+            KernelRelationSuggestionResponse.model_validate(
+                suggestion.model_dump(mode="json"),
+            )
+            for suggestion in suggestions
+        ],
+        total=len(suggestions),
+        limit_per_source=request.limit_per_source,
+        min_score=request.min_score,
     )
 
 

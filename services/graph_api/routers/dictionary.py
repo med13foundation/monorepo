@@ -27,8 +27,6 @@ from src.type_definitions.graph_service_contracts import (
     DictionaryEntityTypeListResponse,
     DictionaryEntityTypeResponse,
     DictionaryMergeRequest,
-    DictionaryReembedRequest,
-    DictionaryReembedResponse,
     DictionaryRelationSynonymCreateRequest,
     DictionaryRelationSynonymListResponse,
     DictionaryRelationSynonymResponse,
@@ -39,7 +37,6 @@ from src.type_definitions.graph_service_contracts import (
     DictionarySearchResultResponse,
     EntityResolutionPolicyListResponse,
     EntityResolutionPolicyResponse,
-    KernelDictionaryDimension,
     RelationConstraintListResponse,
     RelationConstraintResponse,
     TransformRegistryListResponse,
@@ -92,47 +89,6 @@ def _manual_actor(current_user: User) -> str:
 
 
 @router.get(
-    "/search",
-    response_model=DictionarySearchListResponse,
-    summary="Search graph dictionary entries",
-)
-def search_dictionary_entries(
-    *,
-    terms: list[str] = Query(
-        ...,
-        description="Search terms (repeat parameter for multiple terms)",
-    ),
-    dimensions: list[KernelDictionaryDimension] | None = Query(
-        default=None,
-        description="Optional dictionary dimensions to search",
-    ),
-    domain_context: str | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=500),
-    current_user: User = Depends(get_current_active_user),
-    dictionary_service: DictionaryPort = Depends(get_dictionary_service),
-    session: Session = Depends(get_session),
-) -> DictionarySearchListResponse:
-    _require_graph_admin(current_user=current_user, session=session)
-    requested_dimensions = (
-        [dimension.value for dimension in dimensions]
-        if dimensions is not None
-        else None
-    )
-    results = dictionary_service.dictionary_search(
-        terms=terms,
-        dimensions=requested_dimensions,
-        domain_context=domain_context,
-        limit=limit,
-    )
-    return DictionarySearchListResponse(
-        results=[
-            DictionarySearchResultResponse.from_model(result) for result in results
-        ],
-        total=len(results),
-    )
-
-
-@router.get(
     "/search/by-domain/{domain_context}",
     response_model=DictionarySearchListResponse,
     summary="List graph dictionary entries by domain",
@@ -161,39 +117,6 @@ def search_dictionary_entries_by_domain(
             DictionarySearchResultResponse.from_model(result) for result in results
         ],
         total=len(results),
-    )
-
-
-@router.post(
-    "/reembed",
-    response_model=DictionaryReembedResponse,
-    summary="Recompute graph dictionary description embeddings",
-)
-def reembed_dictionary_descriptions(
-    request: DictionaryReembedRequest,
-    *,
-    current_user: User = Depends(get_current_active_user),
-    dictionary_service: DictionaryPort = Depends(get_dictionary_service),
-    session: Session = Depends(get_session),
-) -> DictionaryReembedResponse:
-    _require_graph_admin(current_user=current_user, session=session)
-    try:
-        updated_records = dictionary_service.reembed_descriptions(
-            model_name=request.model_name,
-            limit_per_dimension=request.limit_per_dimension,
-            changed_by=_manual_actor(current_user),
-            source_ref=request.source_ref,
-        )
-        session.commit()
-    except ValueError as exc:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    return DictionaryReembedResponse(
-        updated_records=updated_records,
-        model_name=request.model_name,
     )
 
 

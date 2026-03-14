@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from services.graph_api._claim_paper_links import (
@@ -23,6 +24,7 @@ from services.graph_api.dependencies import (
     get_kernel_claim_evidence_service,
     get_kernel_claim_participant_service,
     get_kernel_claim_relation_service,
+    get_kernel_entity_service,
     get_kernel_reasoning_path_service,
     get_kernel_relation_claim_service,
     get_kernel_relation_projection_materialization_service,
@@ -40,6 +42,7 @@ from src.application.services.kernel.kernel_claim_participant_service import (
 from src.application.services.kernel.kernel_claim_relation_service import (
     KernelClaimRelationService,
 )
+from src.application.services.kernel.kernel_entity_service import KernelEntityService
 from src.application.services.kernel.kernel_reasoning_path_service import (
     KernelReasoningPathService,
 )
@@ -66,6 +69,7 @@ from src.type_definitions.graph_service_contracts import (
     ClaimRelationReviewUpdateRequest,
     KernelClaimEvidenceListResponse,
     KernelClaimEvidenceResponse,
+    KernelRelationClaimCreateRequest,
     KernelRelationClaimListResponse,
     KernelRelationClaimResponse,
     KernelRelationClaimTriageRequest,
@@ -195,6 +199,28 @@ def _normalize_certainty_band(value: str | None) -> _CertaintyBand | None:
     if normalized == "MEDIUM":
         return "MEDIUM"
     return "LOW"
+
+
+def _normalize_claim_evidence_sentence_source(
+    value: str | None,
+) -> Literal["verbatim_span", "artana_generated"] | None:
+    if value == "verbatim_span":
+        return "verbatim_span"
+    if value == "artana_generated":
+        return "artana_generated"
+    return None
+
+
+def _normalize_claim_evidence_sentence_confidence(
+    value: str | None,
+) -> Literal["low", "medium", "high"] | None:
+    if value == "low":
+        return "low"
+    if value == "medium":
+        return "medium"
+    if value == "high":
+        return "high"
+    return None
 
 
 def _activate_dictionary_dependencies_for_claim(  # noqa: PLR0913
@@ -334,6 +360,192 @@ def list_claims(
         offset=offset,
         limit=limit,
     )
+
+
+@router.post(
+    "/{space_id}/claims",
+    response_model=KernelRelationClaimResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create one unresolved relation claim",
+)
+def create_claim(  # noqa: PLR0915
+    space_id: UUID,
+    request: KernelRelationClaimCreateRequest,
+    *,
+    current_user: User = Depends(get_current_active_user),
+    space_access: SpaceAccessPort = Depends(get_space_access_port),
+    entity_service: KernelEntityService = Depends(get_kernel_entity_service),
+    relation_claim_service: KernelRelationClaimService = Depends(
+        get_kernel_relation_claim_service,
+    ),
+    claim_participant_service: KernelClaimParticipantService = Depends(
+        get_kernel_claim_participant_service,
+    ),
+    claim_evidence_service: KernelClaimEvidenceService = Depends(
+        get_kernel_claim_evidence_service,
+    ),
+    dictionary_service: DictionaryPort = Depends(get_dictionary_service),
+    session: Session = Depends(get_session),
+) -> KernelRelationClaimResponse:
+    require_space_role(
+        space_id=space_id,
+        current_user=current_user,
+        space_access=space_access,
+        session=session,
+        required_role=MembershipRole.RESEARCHER,
+    )
+    try:
+        source_entity = entity_service.get_entity(str(request.source_entity_id))
+        target_entity = entity_service.get_entity(str(request.target_entity_id))
+        if (
+            source_entity is None
+            or target_entity is None
+            or str(source_entity.research_space_id) != str(space_id)
+            or str(target_entity.research_space_id) != str(space_id)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source or target entity not found",
+            )
+
+        normalized_relation_type = request.relation_type.strip()
+        if not normalized_relation_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="relation_type is required",
+            )
+
+        relation_definition = dictionary_service.get_relation_type(
+            normalized_relation_type,
+            include_inactive=True,
+        )
+        has_evidence = any(
+            (
+                request.evidence_summary,
+                request.evidence_sentence,
+                request.source_document_ref,
+            ),
+        )
+        if relation_definition is None:
+            validation_state: _ClaimValidationState = "UNDEFINED"
+            persistability: _ClaimPersistability = "NON_PERSISTABLE"
+            validation_reason = "relation_type_not_found_in_dictionary"
+        else:
+            is_allowed = dictionary_service.is_relation_allowed(
+                source_entity.entity_type,
+                normalized_relation_type,
+                target_entity.entity_type,
+            )
+            if not is_allowed:
+                validation_state = "FORBIDDEN"
+                persistability = "NON_PERSISTABLE"
+                validation_reason = "relation_not_allowed_by_active_constraints"
+            elif (
+                dictionary_service.requires_evidence(
+                    source_entity.entity_type,
+                    normalized_relation_type,
+                    target_entity.entity_type,
+                )
+                and not has_evidence
+            ):
+                validation_state = "INVALID_COMPONENTS"
+                persistability = "NON_PERSISTABLE"
+                validation_reason = "relation_requires_evidence"
+            else:
+                validation_state = "ALLOWED"
+                persistability = "PERSISTABLE"
+                validation_reason = "created_via_claim_api"
+
+        claim = relation_claim_service.create_claim(
+            research_space_id=str(space_id),
+            source_document_id=None,
+            source_document_ref=request.source_document_ref,
+            agent_run_id=request.agent_run_id,
+            source_type=source_entity.entity_type,
+            relation_type=normalized_relation_type,
+            target_type=target_entity.entity_type,
+            source_label=source_entity.display_label,
+            target_label=target_entity.display_label,
+            confidence=request.confidence,
+            validation_state=validation_state,
+            validation_reason=validation_reason,
+            persistability=persistability,
+            claim_status="OPEN",
+            polarity="SUPPORT",
+            claim_text=request.claim_text,
+            claim_section=None,
+            linked_relation_id=None,
+            metadata={
+                **request.metadata,
+                "origin": "claim_api",
+                "source_entity_id": str(source_entity.id),
+                "target_entity_id": str(target_entity.id),
+            },
+        )
+        claim_id = str(claim.id)
+        claim_participant_service.create_participant(
+            claim_id=claim_id,
+            research_space_id=str(space_id),
+            role="SUBJECT",
+            label=source_entity.display_label,
+            entity_id=str(source_entity.id),
+            position=0,
+            qualifiers={"origin": "claim_api"},
+        )
+        claim_participant_service.create_participant(
+            claim_id=claim_id,
+            research_space_id=str(space_id),
+            role="OBJECT",
+            label=target_entity.display_label,
+            entity_id=str(target_entity.id),
+            position=1,
+            qualifiers={"origin": "claim_api"},
+        )
+        if has_evidence:
+            claim_evidence_service.create_evidence(
+                claim_id=claim_id,
+                source_document_id=None,
+                source_document_ref=request.source_document_ref,
+                agent_run_id=request.agent_run_id,
+                sentence=request.evidence_sentence,
+                sentence_source=_normalize_claim_evidence_sentence_source(
+                    request.evidence_sentence_source,
+                ),
+                sentence_confidence=_normalize_claim_evidence_sentence_confidence(
+                    request.evidence_sentence_confidence,
+                ),
+                sentence_rationale=request.evidence_sentence_rationale,
+                figure_reference=None,
+                table_reference=None,
+                confidence=request.confidence,
+                metadata={
+                    "origin": "claim_api",
+                    "evidence_summary": request.evidence_summary,
+                },
+            )
+        session.commit()
+        return KernelRelationClaimResponse.from_model(claim)
+    except HTTPException:
+        session.rollback()
+        raise
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Claim write conflicts with graph integrity constraints",
+        ) from exc
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create relation claim: {exc!s}",
+        ) from exc
 
 
 @router.get(

@@ -10,7 +10,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-CURRENT_HEAD_REVISION = "014_entity_mechanism_paths"
+CURRENT_HEAD_REVISION = "021_harness_artana_cleanup"
 _ALEMBIC_SUBPROCESS_TEMPLATE = """
 import os
 import sys
@@ -79,7 +79,20 @@ def test_upgrade_head_creates_current_baseline_schema(tmp_path: Path) -> None:
         "entity_claim_summary",
         "entity_neighbors",
         "pipeline_run_events",
+        "harness_runs",
+        "harness_run_intents",
+        "harness_run_approvals",
+        "harness_proposals",
+        "harness_chat_sessions",
+        "harness_chat_messages",
+        "harness_schedules",
+        "harness_research_state",
+        "harness_graph_snapshots",
     }.issubset(table_names)
+    assert "harness_run_artifacts" not in table_names
+    assert "harness_run_workspaces" not in table_names
+    assert "harness_run_progress" not in table_names
+    assert "harness_run_events" not in table_names
 
     relation_columns = {
         column["name"] for column in inspector.get_columns("relation_evidence")

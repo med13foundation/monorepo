@@ -42,17 +42,6 @@ jest.mock('@/app/actions/kernel-hypotheses', () => ({
   listHypothesesAction: (...args: unknown[]) => listHypothesesActionMock(...args),
 }))
 
-jest.mock('@/app/actions/kernel-hybrid-duplicates', () => ({
-  listHypothesisClaimsAction: jest.fn().mockResolvedValue({
-    success: true,
-    data: [],
-  }),
-  createUserHypothesisAction: jest.fn().mockResolvedValue({
-    success: true,
-    data: { decisionId: 'decision-1' },
-  }),
-}))
-
 jest.mock('@/app/(dashboard)/spaces/[spaceId]/curation/curation-hypotheses-card', () => ({
   __esModule: true,
   default: () => <div>Hypotheses</div>,

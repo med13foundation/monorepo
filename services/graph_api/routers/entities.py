@@ -11,49 +11,24 @@ from sqlalchemy.orm import Session
 from services.graph_api.auth import get_current_active_user
 from services.graph_api.database import get_session
 from services.graph_api.dependencies import (
-    get_entity_embeddings_flag,
     get_kernel_entity_service,
-    get_kernel_entity_similarity_service,
     get_space_access_port,
     require_space_role,
     verify_space_membership,
 )
-from src.application.services.kernel.hybrid_graph_errors import EmbeddingNotReadyError
 from src.application.services.kernel.kernel_entity_service import KernelEntityService
-from src.application.services.kernel.kernel_entity_similarity_service import (
-    KernelEntitySimilarityService,
-)
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import User
 from src.domain.ports.space_access_port import SpaceAccessPort
-from src.graph.core.feature_flags import FeatureFlagDefinition, is_flag_enabled
 from src.type_definitions.graph_service_contracts import (
     KernelEntityCreateRequest,
-    KernelEntityEmbeddingRefreshRequest,
-    KernelEntityEmbeddingRefreshResponse,
     KernelEntityListResponse,
     KernelEntityResponse,
-    KernelEntitySimilarityListResponse,
-    KernelEntitySimilarityResponse,
-    KernelEntitySimilarityScoreBreakdownResponse,
     KernelEntityUpdateRequest,
     KernelEntityUpsertResponse,
 )
 
 router = APIRouter(prefix="/v1/spaces", tags=["entities"])
-
-
-def _feature_disabled_error(flag_name: str) -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail={
-            "code": "FEATURE_DISABLED",
-            "message": (
-                "This endpoint is disabled. "
-                f"Enable {flag_name} to use hybrid graph embeddings."
-            ),
-        },
-    )
 
 
 def _parse_entity_ids_param(
@@ -357,147 +332,11 @@ def delete_entity(
     session.commit()
 
 
-@router.get(
-    "/{space_id}/entities/{entity_id}/similar",
-    response_model=KernelEntitySimilarityListResponse,
-    summary="Find similar entities using hybrid graph + embedding scoring",
-)
-def list_similar_entities(
-    space_id: UUID,
-    entity_id: UUID,
-    *,
-    limit: int = Query(default=20, ge=1, le=100),
-    min_similarity: float = Query(default=0.72, ge=0.0, le=1.0),
-    target_entity_types: list[str] | None = Query(default=None),
-    current_user: User = Depends(get_current_active_user),
-    space_access: SpaceAccessPort = Depends(get_space_access_port),
-    entity_embeddings_flag: FeatureFlagDefinition = Depends(
-        get_entity_embeddings_flag,
-    ),
-    similarity_service: KernelEntitySimilarityService = Depends(
-        get_kernel_entity_similarity_service,
-    ),
-    session: Session = Depends(get_session),
-) -> KernelEntitySimilarityListResponse:
-    """Find similar entities in one graph space."""
-    verify_space_membership(
-        space_id=space_id,
-        current_user=current_user,
-        space_access=space_access,
-        session=session,
-    )
-
-    if not is_flag_enabled(entity_embeddings_flag):
-        raise _feature_disabled_error(entity_embeddings_flag.env_display_name)
-
-    try:
-        similar_entities = similarity_service.get_similar_entities(
-            research_space_id=str(space_id),
-            entity_id=str(entity_id),
-            limit=limit,
-            min_similarity=min_similarity,
-            target_entity_types=target_entity_types,
-        )
-    except EmbeddingNotReadyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "EMBEDDING_NOT_READY", "message": str(exc)},
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-
-    results = [
-        KernelEntitySimilarityResponse(
-            entity_id=row.entity_id,
-            entity_type=row.entity_type,
-            display_label=row.display_label,
-            similarity_score=row.similarity_score,
-            score_breakdown=KernelEntitySimilarityScoreBreakdownResponse(
-                vector_score=row.score_breakdown.vector_score,
-                graph_overlap_score=row.score_breakdown.graph_overlap_score,
-            ),
-        )
-        for row in similar_entities
-    ]
-    return KernelEntitySimilarityListResponse(
-        source_entity_id=entity_id,
-        results=results,
-        total=len(results),
-        limit=limit,
-        min_similarity=min_similarity,
-    )
-
-
-@router.post(
-    "/{space_id}/entities/embeddings/refresh",
-    response_model=KernelEntityEmbeddingRefreshResponse,
-    summary="Refresh entity embeddings for one graph space",
-)
-def refresh_entity_embeddings(
-    space_id: UUID,
-    request: KernelEntityEmbeddingRefreshRequest,
-    *,
-    current_user: User = Depends(get_current_active_user),
-    space_access: SpaceAccessPort = Depends(get_space_access_port),
-    entity_embeddings_flag: FeatureFlagDefinition = Depends(
-        get_entity_embeddings_flag,
-    ),
-    similarity_service: KernelEntitySimilarityService = Depends(
-        get_kernel_entity_similarity_service,
-    ),
-    session: Session = Depends(get_session),
-) -> KernelEntityEmbeddingRefreshResponse:
-    """Refresh entity embeddings in one graph space."""
-    require_space_role(
-        space_id=space_id,
-        current_user=current_user,
-        space_access=space_access,
-        session=session,
-        required_role=MembershipRole.RESEARCHER,
-    )
-
-    if not is_flag_enabled(entity_embeddings_flag):
-        raise _feature_disabled_error(entity_embeddings_flag.env_display_name)
-
-    try:
-        summary = similarity_service.refresh_embeddings(
-            research_space_id=str(space_id),
-            entity_ids=(
-                [str(entity_id) for entity_id in request.entity_ids]
-                if request.entity_ids is not None
-                else None
-            ),
-            limit=request.limit,
-            model_name=request.model_name,
-            embedding_version=request.embedding_version,
-        )
-        session.commit()
-    except Exception as exc:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to refresh entity embeddings: {exc!s}",
-        ) from exc
-
-    return KernelEntityEmbeddingRefreshResponse(
-        requested=summary.requested,
-        processed=summary.processed,
-        refreshed=summary.refreshed,
-        unchanged=summary.unchanged,
-        missing_entities=list(summary.missing_entities),
-    )
-
-
 __all__ = [
     "router",
     "create_entity",
     "delete_entity",
     "get_entity",
     "list_entities",
-    "list_similar_entities",
-    "refresh_entity_embeddings",
     "update_entity",
 ]

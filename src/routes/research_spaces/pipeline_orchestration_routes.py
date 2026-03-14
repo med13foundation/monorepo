@@ -23,7 +23,7 @@ from src.application.services.pipeline_run_trace_service import (
 from src.database.session import get_session
 from src.domain.entities.ingestion_job import IngestionStatus
 from src.domain.entities.user import UserRole
-from src.infrastructure.graph_service.pipeline import (
+from src.infrastructure.graph_harness.pipeline import (
     build_graph_connection_seed_runner_for_user,
     build_graph_search_service_for_user,
 )

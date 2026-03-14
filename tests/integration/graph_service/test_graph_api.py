@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,22 +9,8 @@ from fastapi.testclient import TestClient
 
 from services.graph_api import database as graph_database
 from services.graph_api.app import create_app
-from services.graph_api.dependencies import (
-    get_graph_connection_service,
-    get_hypothesis_generation_service_provider,
-    get_kernel_entity_similarity_service,
-    get_kernel_relation_suggestion_service,
-)
-from src.application.agents.services.graph_connection_service import (
-    GraphConnectionOutcome,
-    GraphConnectionService,
-    GraphConnectionServiceDependencies,
-)
 from src.application.services.kernel.kernel_entity_neighbors_projector import (
     KernelEntityNeighborsProjector,
-)
-from src.application.services.kernel.kernel_entity_similarity_service import (
-    EntityEmbeddingRefreshSummary,
 )
 from src.application.services.kernel.kernel_relation_claim_service import (
     KernelRelationClaimService,
@@ -37,22 +22,9 @@ from src.database.seeds.seeder import (
     seed_entity_resolution_policies,
     seed_relation_constraints,
 )
-from src.domain.agents.contracts.base import EvidenceItem
-from src.domain.agents.contracts.graph_connection import (
-    GraphConnectionContract,
-    ProposedRelation,
-)
-from src.domain.entities.kernel.embeddings import (
-    KernelEntitySimilarityResult,
-    KernelEntitySimilarityScoreBreakdown,
-    KernelRelationSuggestionConstraintCheck,
-    KernelRelationSuggestionResult,
-    KernelRelationSuggestionScoreBreakdown,
-)
 from src.domain.entities.user import UserRole
 from src.graph.core.read_model import NullGraphReadModelUpdateDispatcher
 from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
-from src.graph.domain_sports.pack import SPORTS_GRAPH_CONNECTION_PROMPT_CONFIG
 from src.graph.pack_registry import resolve_graph_domain_pack
 from src.graph.product_contract import GRAPH_SERVICE_VERSION
 from src.infrastructure.repositories.kernel import (
@@ -547,241 +519,6 @@ def _create_hypothesis_claim(
     return claim
 
 
-@dataclass(frozen=True)
-class _FakeHypothesisGenerationResult:
-    run_id: str
-    requested_seed_count: int
-    used_seed_count: int
-    candidates_seen: int
-    created_count: int
-    deduped_count: int
-    errors: tuple[str, ...]
-    hypotheses: tuple[object, ...]
-
-
-class _StubGraphConnectionService:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    async def discover_connections_for_seed(  # noqa: PLR0913
-        self,
-        *,
-        research_space_id: str,
-        seed_entity_id: str,
-        source_id: str | None = None,
-        source_type: str = "clinvar",
-        research_space_settings: dict[str, object] | None = None,
-        model_id: str | None = None,
-        relation_types: list[str] | None = None,
-        max_depth: int = 2,
-        shadow_mode: bool | None = None,
-        pipeline_run_id: str | None = None,
-        fallback_relations: tuple[object, ...] | None = None,
-    ) -> GraphConnectionOutcome:
-        del research_space_settings
-        self.calls.append(
-            {
-                "research_space_id": research_space_id,
-                "seed_entity_id": seed_entity_id,
-                "source_id": source_id,
-                "source_type": source_type,
-                "model_id": model_id,
-                "relation_types": relation_types,
-                "max_depth": max_depth,
-                "shadow_mode": shadow_mode,
-                "pipeline_run_id": pipeline_run_id,
-                "fallback_relations_count": len(fallback_relations or ()),
-            },
-        )
-        return GraphConnectionOutcome(
-            seed_entity_id=seed_entity_id,
-            research_space_id=research_space_id,
-            status="discovered",
-            reason="processed",
-            review_required=False,
-            shadow_mode=bool(shadow_mode),
-            wrote_to_graph=True,
-            run_id="graph-connection-run",
-            proposed_relations_count=3,
-            persisted_relations_count=2,
-            rejected_candidates_count=1,
-            errors=(),
-        )
-
-    async def close(self) -> None:
-        return None
-
-
-class _StubGraphConnectionAgent:
-    def __init__(self, contract: GraphConnectionContract) -> None:
-        self.contract = contract
-        self.calls: list[object] = []
-
-    async def discover(
-        self,
-        context: object,
-        *,
-        model_id: str | None = None,
-    ) -> GraphConnectionContract:
-        del model_id
-        self.calls.append(context)
-        return self.contract
-
-    async def close(self) -> None:
-        return None
-
-
-def _build_graph_connection_contract(
-    *,
-    research_space_id: UUID,
-    seed_entity_id: UUID,
-    target_entity_id: UUID,
-) -> GraphConnectionContract:
-    return GraphConnectionContract(
-        decision="generated",
-        confidence_score=0.91,
-        rationale="Sports-pack runtime proof contract",
-        evidence=[
-            EvidenceItem(
-                source_type="db",
-                locator=f"relation:{uuid4()}",
-                excerpt="Grounded graph evidence",
-                relevance=0.91,
-            ),
-        ],
-        source_type="match_report",
-        research_space_id=str(research_space_id),
-        seed_entity_id=str(seed_entity_id),
-        proposed_relations=[
-            ProposedRelation(
-                source_id=str(seed_entity_id),
-                relation_type="ASSOCIATED_WITH",
-                target_id=str(target_entity_id),
-                confidence=0.87,
-                evidence_summary="Shared graph-space proof relation",
-                evidence_tier="COMPUTATIONAL",
-                supporting_provenance_ids=[str(uuid4())],
-                supporting_document_count=2,
-                reasoning="Used to verify sports-pack default source selection.",
-            ),
-        ],
-        rejected_candidates=[],
-        shadow_mode=False,
-    )
-
-
-class _StubKernelRelationSuggestionService:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    def suggest_relations(  # noqa: PLR0913
-        self,
-        *,
-        research_space_id: str,
-        source_entity_ids: list[str],
-        limit_per_source: int,
-        min_score: float,
-        allowed_relation_types: list[str] | None = None,
-        target_entity_types: list[str] | None = None,
-        exclude_existing_relations: bool = True,
-    ) -> list[KernelRelationSuggestionResult]:
-        self.calls.append(
-            {
-                "research_space_id": research_space_id,
-                "source_entity_ids": source_entity_ids,
-                "limit_per_source": limit_per_source,
-                "min_score": min_score,
-                "allowed_relation_types": allowed_relation_types,
-                "target_entity_types": target_entity_types,
-                "exclude_existing_relations": exclude_existing_relations,
-            },
-        )
-        source_entity_id = UUID(source_entity_ids[0])
-        target_entity_id = uuid4()
-        return [
-            KernelRelationSuggestionResult(
-                source_entity_id=source_entity_id,
-                target_entity_id=target_entity_id,
-                relation_type="ASSOCIATED_WITH",
-                final_score=0.91,
-                score_breakdown=KernelRelationSuggestionScoreBreakdown(
-                    vector_score=0.87,
-                    graph_overlap_score=0.54,
-                    relation_prior_score=0.72,
-                ),
-                constraint_check=KernelRelationSuggestionConstraintCheck(
-                    passed=True,
-                    source_entity_type="GENE",
-                    relation_type="ASSOCIATED_WITH",
-                    target_entity_type="PHENOTYPE",
-                ),
-            ),
-        ]
-
-
-class _StubKernelEntitySimilarityService:
-    def __init__(self) -> None:
-        self.get_calls: list[dict[str, object]] = []
-        self.refresh_calls: list[dict[str, object]] = []
-
-    def get_similar_entities(
-        self,
-        *,
-        research_space_id: str,
-        entity_id: str,
-        limit: int,
-        min_similarity: float,
-        target_entity_types: list[str] | None = None,
-    ) -> list[KernelEntitySimilarityResult]:
-        self.get_calls.append(
-            {
-                "research_space_id": research_space_id,
-                "entity_id": entity_id,
-                "limit": limit,
-                "min_similarity": min_similarity,
-                "target_entity_types": target_entity_types,
-            },
-        )
-        return [
-            KernelEntitySimilarityResult(
-                entity_id=uuid4(),
-                entity_type="GENE",
-                display_label="MED13-like gene",
-                similarity_score=0.89,
-                score_breakdown=KernelEntitySimilarityScoreBreakdown(
-                    vector_score=0.93,
-                    graph_overlap_score=0.54,
-                ),
-            ),
-        ]
-
-    def refresh_embeddings(
-        self,
-        *,
-        research_space_id: str,
-        entity_ids: list[str] | None = None,
-        limit: int = 500,
-        model_name: str | None = None,
-        embedding_version: int | None = None,
-    ) -> EntityEmbeddingRefreshSummary:
-        self.refresh_calls.append(
-            {
-                "research_space_id": research_space_id,
-                "entity_ids": entity_ids,
-                "limit": limit,
-                "model_name": model_name,
-                "embedding_version": embedding_version,
-            },
-        )
-        return EntityEmbeddingRefreshSummary(
-            requested=len(entity_ids or []),
-            processed=len(entity_ids or []),
-            refreshed=len(entity_ids or []),
-            unchanged=0,
-            missing_entities=[],
-        )
-
-
 @pytest.fixture(scope="function")
 def graph_client() -> TestClient:
     reset_database(graph_database.engine, Base.metadata)
@@ -1076,68 +813,6 @@ def test_graph_service_uses_sports_pack_http_boundary(
                 entry["entry_id"] for entry in by_domain_response.json()["results"]
             }
             assert entity_type_id in competition_entry_ids
-
-            fixture = _seed_space_with_projection()
-            session = graph_database.SessionLocal()
-            agent = _StubGraphConnectionAgent(
-                _build_graph_connection_contract(
-                    research_space_id=fixture["space_id"],
-                    seed_entity_id=fixture["source_id"],
-                    target_entity_id=fixture["target_id"],
-                ),
-            )
-            service = GraphConnectionService(
-                dependencies=GraphConnectionServiceDependencies(
-                    graph_connection_agent=agent,
-                    graph_connection_prompt=SPORTS_GRAPH_CONNECTION_PROMPT_CONFIG,
-                    relation_repository=_build_relation_repository(session),
-                    entity_repository=SqlAlchemyKernelEntityRepository(
-                        session,
-                        phi_encryption_service=None,
-                        enable_phi_encryption=False,
-                    ),
-                    relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
-                        session,
-                    ),
-                    claim_participant_repository=(
-                        SqlAlchemyKernelClaimParticipantRepository(session)
-                    ),
-                    claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
-                        session,
-                    ),
-                    relation_projection_source_repository=(
-                        SqlAlchemyKernelRelationProjectionSourceRepository(session)
-                    ),
-                    relation_projection_materialization_service=(
-                        _build_projection_materializer(session)
-                    ),
-                ),
-            )
-            client.app.dependency_overrides[get_graph_connection_service] = (
-                lambda: service
-            )
-            try:
-                connection_response = client.post(
-                    f"/v1/spaces/{fixture['space_id']}/entities/{fixture['source_id']}/connections",
-                    headers=fixture["headers"],
-                    json={
-                        "source_id": str(uuid4()),
-                        "max_depth": 2,
-                        "pipeline_run_id": "sports-pack-runtime-proof",
-                    },
-                )
-                assert connection_response.status_code == 200, connection_response.text
-                payload = connection_response.json()
-                assert payload["seed_entity_id"] == str(fixture["source_id"])
-            finally:
-                client.app.dependency_overrides.pop(
-                    get_graph_connection_service,
-                    None,
-                )
-                session.close()
-
-            assert len(agent.calls) == 1
-            assert agent.calls[0].source_type == "match_report"
     finally:
         reset_database(graph_database.engine, Base.metadata)
 
@@ -1673,155 +1348,6 @@ def test_graph_service_lists_and_gets_provenance(
     assert record_payload["raw_input"]["title"] == "Graph provenance fixture"
 
 
-def test_graph_service_graph_search(graph_client: TestClient) -> None:
-    fixture = _seed_space_with_projection()
-    headers = fixture["headers"]
-    space_id = fixture["space_id"]
-    source_id = fixture["source_id"]
-    relation_id = fixture["relation_id"]
-
-    response = graph_client.post(
-        f"/v1/spaces/{space_id}/graph/search",
-        headers=headers,
-        json={
-            "question": "MED13",
-            "top_k": 5,
-            "max_depth": 2,
-            "include_evidence_chains": True,
-        },
-    )
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["executed_path"] == "deterministic"
-    assert payload["total_results"] >= 1
-    source_results = [
-        result for result in payload["results"] if result["entity_id"] == str(source_id)
-    ]
-    assert source_results
-    assert str(relation_id) in source_results[0]["matching_relation_ids"]
-
-
-def test_graph_service_graph_connection_discovery(graph_client: TestClient) -> None:
-    fixture = _seed_space_with_projection()
-    headers = fixture["headers"]
-    space_id = fixture["space_id"]
-    source_id = fixture["source_id"]
-    target_id = fixture["target_id"]
-    service = _StubGraphConnectionService()
-    graph_client.app.dependency_overrides[get_graph_connection_service] = (
-        lambda: service
-    )
-
-    try:
-        batch_response = graph_client.post(
-            f"/v1/spaces/{space_id}/graph/connections/discover",
-            headers=headers,
-            json={
-                "seed_entity_ids": [str(source_id), str(target_id)],
-                "source_id": str(uuid4()),
-                "source_type": "pubmed",
-                "max_depth": 3,
-                "shadow_mode": True,
-                "pipeline_run_id": "pipeline-run-001",
-                "fallback_relations": [
-                    {
-                        "source_id": str(source_id),
-                        "relation_type": "ASSOCIATED_WITH",
-                        "target_id": str(target_id),
-                        "confidence": 0.55,
-                        "evidence_summary": "Fallback relation",
-                        "supporting_provenance_ids": [],
-                        "supporting_document_count": 0,
-                        "reasoning": "Fallback reasoning",
-                    },
-                ],
-            },
-        )
-        assert batch_response.status_code == 200, batch_response.text
-        batch_payload = batch_response.json()
-        assert batch_payload["requested"] == 2
-        assert batch_payload["persisted_relations_count"] == 4
-
-        single_response = graph_client.post(
-            f"/v1/spaces/{space_id}/entities/{source_id}/connections",
-            headers=headers,
-            json={
-                "source_id": str(uuid4()),
-                "source_type": "clinvar",
-                "max_depth": 2,
-                "pipeline_run_id": "pipeline-run-002",
-            },
-        )
-        assert single_response.status_code == 200, single_response.text
-        single_payload = single_response.json()
-        assert single_payload["seed_entity_id"] == str(source_id)
-        assert single_payload["status"] == "discovered"
-    finally:
-        graph_client.app.dependency_overrides.pop(get_graph_connection_service, None)
-
-    assert len(service.calls) == 3
-    assert service.calls[0]["research_space_id"] == str(space_id)
-    assert service.calls[0]["source_type"] == "pubmed"
-    assert service.calls[0]["pipeline_run_id"] == "pipeline-run-001"
-    assert service.calls[0]["fallback_relations_count"] == 1
-    assert service.calls[2]["seed_entity_id"] == str(source_id)
-
-
-def test_graph_service_relation_suggestions(
-    graph_client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fixture = _seed_space_with_projection()
-    headers = fixture["headers"]
-    space_id = fixture["space_id"]
-    source_id = fixture["source_id"]
-    service = _StubKernelRelationSuggestionService()
-    monkeypatch.setenv("GRAPH_ENABLE_RELATION_SUGGESTIONS", "1")
-    graph_client.app.dependency_overrides[get_kernel_relation_suggestion_service] = (
-        lambda: service
-    )
-
-    try:
-        response = graph_client.post(
-            f"/v1/spaces/{space_id}/graph/relation-suggestions",
-            headers=headers,
-            json={
-                "source_entity_ids": [str(source_id)],
-                "limit_per_source": 5,
-                "min_score": 0.7,
-                "allowed_relation_types": ["ASSOCIATED_WITH"],
-                "target_entity_types": ["PHENOTYPE"],
-                "exclude_existing_relations": True,
-            },
-        )
-    finally:
-        graph_client.app.dependency_overrides.pop(
-            get_kernel_relation_suggestion_service,
-            None,
-        )
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["total"] == 1
-    assert payload["limit_per_source"] == 5
-    assert payload["suggestions"][0]["source_entity_id"] == str(source_id)
-    assert payload["suggestions"][0]["relation_type"] == "ASSOCIATED_WITH"
-    assert payload["suggestions"][0]["constraint_check"]["target_entity_type"] == (
-        "PHENOTYPE"
-    )
-    assert service.calls == [
-        {
-            "research_space_id": str(space_id),
-            "source_entity_ids": [str(source_id)],
-            "limit_per_source": 5,
-            "min_score": 0.7,
-            "allowed_relation_types": ["ASSOCIATED_WITH"],
-            "target_entity_types": ["PHENOTYPE"],
-            "exclude_existing_relations": True,
-        },
-    ]
-
-
 def test_graph_service_entity_and_observation_crud(graph_client: TestClient) -> None:
     fixture = _seed_space_with_projection()
     headers = fixture["headers"]
@@ -1917,76 +1443,6 @@ def test_graph_service_entity_and_observation_crud(graph_client: TestClient) -> 
         headers=headers,
     )
     assert missing_get.status_code == 404, missing_get.text
-
-
-def test_graph_service_entity_similarity_and_refresh(
-    graph_client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fixture = _seed_space_with_projection()
-    headers = fixture["headers"]
-    space_id = fixture["space_id"]
-    source_id = fixture["source_id"]
-    service = _StubKernelEntitySimilarityService()
-    monkeypatch.setenv("GRAPH_ENABLE_ENTITY_EMBEDDINGS", "1")
-    graph_client.app.dependency_overrides[get_kernel_entity_similarity_service] = (
-        lambda: service
-    )
-
-    try:
-        refresh_response = graph_client.post(
-            f"/v1/spaces/{space_id}/entities/embeddings/refresh",
-            headers=headers,
-            json={
-                "entity_ids": [str(source_id)],
-                "limit": 25,
-                "model_name": "test-embedding-model",
-                "embedding_version": 2,
-            },
-        )
-        similar_response = graph_client.get(
-            f"/v1/spaces/{space_id}/entities/{source_id}/similar",
-            headers=headers,
-            params={
-                "limit": 5,
-                "min_similarity": 0.72,
-                "target_entity_types": "GENE",
-            },
-        )
-    finally:
-        graph_client.app.dependency_overrides.pop(
-            get_kernel_entity_similarity_service,
-            None,
-        )
-
-    assert refresh_response.status_code == 200, refresh_response.text
-    refresh_payload = refresh_response.json()
-    assert refresh_payload["requested"] == 1
-    assert refresh_payload["refreshed"] == 1
-
-    assert similar_response.status_code == 200, similar_response.text
-    similar_payload = similar_response.json()
-    assert similar_payload["total"] == 1
-    assert similar_payload["results"][0]["entity_type"] == "GENE"
-
-    assert service.refresh_calls == [
-        {
-            "research_space_id": str(space_id),
-            "entity_ids": [str(source_id)],
-            "limit": 25,
-            "model_name": "test-embedding-model",
-            "embedding_version": 2,
-        },
-    ]
-    assert service.get_calls == [
-        {
-            "research_space_id": str(space_id),
-            "entity_id": str(source_id),
-            "limit": 5,
-            "min_similarity": 0.72,
-            "target_entity_types": ["GENE"],
-        },
-    ]
 
 
 def test_graph_service_reasoning_paths_empty_list(graph_client: TestClient) -> None:
@@ -2438,73 +1894,6 @@ def test_graph_service_hypothesis_list_and_manual_create(
     assert list_payload["hypotheses"][0]["claim_id"] == created_payload["claim_id"]
 
 
-def test_graph_service_generate_hypotheses_with_override(
-    graph_client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fixture = _seed_space_with_open_claims(claim_count=0)
-    space_id = fixture["space_id"]
-    source_id = fixture["source_id"]
-    headers = fixture["headers"]
-
-    with graph_database.SessionLocal() as session:
-        generated_claim = _create_hypothesis_claim(
-            session,
-            space_id=space_id,
-            claim_text="Graph-generated MED13 hypothesis.",
-            metadata={
-                "origin": "graph_agent",
-                "seed_entity_ids": [str(source_id)],
-                "supporting_claim_ids": [],
-            },
-        )
-
-    class _FakeHypothesisGenerationService:
-        async def generate_hypotheses(
-            self,
-            **_: object,
-        ) -> _FakeHypothesisGenerationResult:
-            return _FakeHypothesisGenerationResult(
-                run_id="graph-service-test-run",
-                requested_seed_count=1,
-                used_seed_count=1,
-                candidates_seen=3,
-                created_count=1,
-                deduped_count=0,
-                errors=(),
-                hypotheses=(generated_claim,),
-            )
-
-    graph_client.app.dependency_overrides[
-        get_hypothesis_generation_service_provider
-    ] = lambda: (lambda: _FakeHypothesisGenerationService())
-    monkeypatch.setenv("GRAPH_ENABLE_HYPOTHESIS_GENERATION", "1")
-
-    try:
-        response = graph_client.post(
-            f"/v1/spaces/{space_id}/hypotheses/generate",
-            headers=headers,
-            json={
-                "seed_entity_ids": [str(source_id)],
-                "source_type": "pubmed",
-                "max_depth": 2,
-                "max_hypotheses": 5,
-            },
-        )
-    finally:
-        graph_client.app.dependency_overrides.pop(
-            get_hypothesis_generation_service_provider,
-            None,
-        )
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["run_id"] == "graph-service-test-run"
-    assert payload["created_count"] == 1
-    assert payload["hypotheses"][0]["origin"] == "graph_agent"
-    assert payload["hypotheses"][0]["seed_entity_ids"] == [str(source_id)]
-
-
 def test_graph_service_enforces_space_membership(
     graph_client: TestClient,
 ) -> None:
@@ -2917,14 +2306,6 @@ def test_graph_service_dictionary_governance_routes(
     assert constraints_list_response.status_code == 200, constraints_list_response.text
     assert constraints_list_response.json()["total"] == 1
 
-    search_response = graph_client.get(
-        "/v1/dictionary/search",
-        headers=admin_headers,
-        params=[("terms", source_entity_type_id)],
-    )
-    assert search_response.status_code == 200, search_response.text
-    assert search_response.json()["total"] >= 1
-
     by_domain_response = graph_client.get(
         "/v1/dictionary/search/by-domain/general",
         headers=admin_headers,
@@ -3043,17 +2424,6 @@ def test_graph_service_dictionary_governance_routes(
         str(entry["action"]) for entry in changelog_response.json()["changelog_entries"]
     }
     assert "MERGE" in changelog_actions
-
-    reembed_response = graph_client.post(
-        "/v1/dictionary/reembed",
-        headers=admin_headers,
-        json={
-            "limit_per_dimension": 10,
-            "source_ref": "graph-service-test:reembed",
-        },
-    )
-    assert reembed_response.status_code == 200, reembed_response.text
-    assert reembed_response.json()["updated_records"] >= 3
 
     with graph_database.SessionLocal() as session:
         session.add(

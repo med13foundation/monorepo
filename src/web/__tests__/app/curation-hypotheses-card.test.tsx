@@ -86,7 +86,7 @@ describe('CurationHypothesesCard', () => {
         created_count: 1,
         deduped_count: 0,
         errors: [],
-        hypotheses: [hypothesis],
+        hypotheses: [],
       },
     })
     updateRelationClaimStatusActionMock.mockResolvedValue({
@@ -280,7 +280,7 @@ describe('CurationHypothesesCard', () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/Generation completed but produced no new hypotheses\./),
+        screen.getByText(/Exploration completed but produced no candidate hypotheses\./),
       ).toBeInTheDocument()
     })
     expect(

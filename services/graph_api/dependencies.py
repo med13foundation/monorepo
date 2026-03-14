@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from src.application.agents.services.graph_connection_service import (
-    GraphConnectionService,
-)
-from src.application.agents.services.graph_search_service import GraphSearchService
-from src.application.agents.services.hypothesis_generation_service import (
-    HypothesisGenerationService,
-)
 from src.application.services.kernel.kernel_claim_evidence_service import (
     KernelClaimEvidenceService,
 )
@@ -31,9 +24,6 @@ from src.application.services.kernel.kernel_claim_relation_service import (
     KernelClaimRelationService,
 )
 from src.application.services.kernel.kernel_entity_service import KernelEntityService
-from src.application.services.kernel.kernel_entity_similarity_service import (
-    KernelEntitySimilarityService,
-)
 from src.application.services.kernel.kernel_graph_view_service import (
     KernelGraphViewService,
 )
@@ -55,9 +45,6 @@ from src.application.services.kernel.kernel_relation_projection_source_service i
 from src.application.services.kernel.kernel_relation_service import (
     KernelRelationService,
 )
-from src.application.services.kernel.kernel_relation_suggestion_service import (
-    KernelRelationSuggestionService,
-)
 from src.application.services.kernel.provenance_service import ProvenanceService
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import User
@@ -65,12 +52,12 @@ from src.domain.ports import ConceptPort, DictionaryPort
 from src.domain.ports.space_access_port import SpaceAccessPort
 from src.domain.ports.space_registry_port import SpaceRegistryPort
 from src.graph.core.domain_pack import GraphDomainPack
-from src.graph.core.feature_flags import FeatureFlagDefinition
 from src.graph.core.tenancy import evaluate_graph_tenant_access
 from src.graph.core.view_config import GraphViewExtension
 from src.graph.runtime import create_graph_domain_pack
 from src.infrastructure.dependency_injection.graph_runtime_factories import (
     build_graph_read_model_update_dispatcher,
+    create_kernel_relation_suggestion_service,
 )
 from src.infrastructure.repositories.kernel.kernel_claim_evidence_repository import (
     SqlAlchemyKernelClaimEvidenceRepository,
@@ -117,15 +104,15 @@ from .composition import (
     build_dictionary_repository,
     build_dictionary_service,
     build_entity_repository,
-    build_entity_similarity_service,
-    build_graph_connection_service,
-    build_graph_search_service,
-    build_hypothesis_generation_service,
     build_observation_service,
     build_relation_repository,
-    build_relation_suggestion_service,
 )
 from .database import get_session, set_graph_rls_session_context
+
+if TYPE_CHECKING:
+    from src.application.services.kernel.kernel_relation_suggestion_service import (
+        KernelRelationSuggestionService,
+    )
 
 
 def get_space_registry_port(
@@ -145,27 +132,6 @@ def get_graph_view_extension(
 ) -> GraphViewExtension:
     """Return the active graph view extension."""
     return graph_domain_pack.view_extension
-
-
-def get_entity_embeddings_flag(
-    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
-) -> FeatureFlagDefinition:
-    """Return the active entity-embeddings feature flag."""
-    return graph_domain_pack.feature_flags.entity_embeddings
-
-
-def get_relation_suggestions_flag(
-    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
-) -> FeatureFlagDefinition:
-    """Return the active relation-suggestions feature flag."""
-    return graph_domain_pack.feature_flags.relation_suggestions
-
-
-def get_hypothesis_generation_flag(
-    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
-) -> FeatureFlagDefinition:
-    """Return the active hypothesis-generation feature flag."""
-    return graph_domain_pack.feature_flags.hypothesis_generation
 
 
 def get_space_membership_repository(
@@ -274,13 +240,6 @@ def get_kernel_entity_service(
     )
 
 
-def get_kernel_entity_similarity_service(
-    session: Session = Depends(get_session),
-) -> KernelEntitySimilarityService:
-    """Return entity similarity service bound to the graph service session."""
-    return build_entity_similarity_service(session)
-
-
 def get_kernel_relation_service(
     session: Session = Depends(get_session),
 ) -> KernelRelationService:
@@ -289,6 +248,13 @@ def get_kernel_relation_service(
         build_relation_repository(session),
         build_entity_repository(session),
     )
+
+
+def get_kernel_relation_suggestion_service(
+    session: Session = Depends(get_session),
+) -> KernelRelationSuggestionService:
+    """Return kernel relation suggestion service bound to the graph session."""
+    return create_kernel_relation_suggestion_service(session)
 
 
 def get_kernel_relation_claim_service(
@@ -390,27 +356,6 @@ def get_concept_service(
     return build_concept_service(session)
 
 
-def get_graph_search_service(
-    session: Session = Depends(get_session),
-) -> GraphSearchService:
-    """Return graph-search service bound to the graph service session."""
-    return build_graph_search_service(session)
-
-
-def get_graph_connection_service(
-    session: Session = Depends(get_session),
-) -> GraphConnectionService:
-    """Return graph-connection service bound to the graph service session."""
-    return build_graph_connection_service(session)
-
-
-def get_kernel_relation_suggestion_service(
-    session: Session = Depends(get_session),
-) -> KernelRelationSuggestionService:
-    """Return relation suggestion service bound to the graph service session."""
-    return build_relation_suggestion_service(session)
-
-
 def get_kernel_relation_projection_materialization_service(
     session: Session = Depends(get_session),
     graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
@@ -504,43 +449,24 @@ def get_kernel_claim_projection_readiness_service(
     )
 
 
-def get_hypothesis_generation_service_provider(
-    session: Session = Depends(get_session),
-) -> Callable[[], HypothesisGenerationService]:
-    """Return a lazy hypothesis-generation service provider."""
-
-    def _provider() -> HypothesisGenerationService:
-        return build_hypothesis_generation_service(session)
-
-    return _provider
-
-
 __all__ = [
     "get_concept_service",
     "get_dictionary_service",
-    "get_graph_connection_service",
     "get_graph_domain_pack",
-    "get_graph_search_service",
     "get_graph_view_extension",
-    "get_entity_embeddings_flag",
-    "get_hypothesis_generation_service_provider",
-    "get_hypothesis_generation_flag",
     "get_kernel_claim_evidence_service",
     "get_kernel_claim_participant_backfill_service",
     "get_kernel_claim_participant_service",
     "get_kernel_claim_projection_readiness_service",
     "get_kernel_claim_relation_service",
     "get_kernel_entity_service",
-    "get_kernel_entity_similarity_service",
     "get_kernel_graph_view_service",
     "get_kernel_observation_service",
     "get_kernel_reasoning_path_service",
     "get_kernel_relation_claim_service",
     "get_kernel_relation_projection_materialization_service",
     "get_kernel_relation_projection_source_service",
-    "get_kernel_relation_suggestion_service",
     "get_kernel_relation_service",
-    "get_relation_suggestions_flag",
     "get_space_access_port",
     "get_provenance_service",
     "require_space_role",

@@ -344,6 +344,27 @@ class KernelRelationClaimTriageRequest(BaseModel):
     claim_status: str = Field(..., min_length=1, max_length=32)
 
 
+class KernelRelationClaimCreateRequest(BaseModel):
+    """Request model for creating a relation claim without materializing it."""
+
+    # Incoming JSON provides UUIDs as strings.
+    model_config = ConfigDict(strict=False)
+
+    source_entity_id: UUID
+    target_entity_id: UUID
+    relation_type: str = Field(..., min_length=1, max_length=64)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    claim_text: str | None = Field(default=None, max_length=4000)
+    evidence_summary: str | None = Field(default=None, max_length=2000)
+    evidence_sentence: str | None = Field(default=None, max_length=4000)
+    evidence_sentence_source: str | None = Field(default=None, max_length=32)
+    evidence_sentence_confidence: str | None = Field(default=None, max_length=32)
+    evidence_sentence_rationale: str | None = Field(default=None, max_length=4000)
+    source_document_ref: str | None = Field(default=None, max_length=512)
+    agent_run_id: str | None = Field(default=None, max_length=255)
+    metadata: JSONObject = Field(default_factory=dict)
+
+
 class KernelRelationPaperLinkResponse(BaseModel):
     """One source-paper link for relation evidence review."""
 

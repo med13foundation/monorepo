@@ -147,7 +147,7 @@ define ensure_frontdoor_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-graph test-graph-fast test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate graph-db-wait graph-db-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres run-graph-service graph-service-lint graph-service-type-check graph-service-test graph-service-openapi graph-service-client-types graph-service-sync-contracts graph-service-contract-check graph-phase1-alias-check graph-phase6-release-check graph-phase7-cross-domain-check graph-service-checks graph-topology-validate graph-phase2-boundary-check graph-phase2-biomedical-pack-check graph-phase3-invariant-check graph-phase4-read-model-check graph-read-model-rebuild graph-read-model-benchmark graph-reasoning-index-benchmark test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod deploy-graph-dev deploy-graph-staging deploy-graph-prod graph-docker-build setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit graph-readiness graph-reasoning-rebuild graph-space-sync
+.PHONY: help venv venv-check install install-dev test test-graph test-graph-fast test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate graph-db-wait graph-db-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres run-graph-service graph-service-lint graph-service-type-check graph-service-test graph-service-openapi graph-service-client-types graph-service-sync-contracts graph-service-contract-check graph-harness-openapi graph-harness-contract-check graph-phase1-alias-check graph-phase6-release-check graph-phase7-cross-domain-check graph-service-checks graph-topology-validate graph-phase2-boundary-check graph-phase2-biomedical-pack-check graph-phase3-invariant-check graph-phase4-read-model-check graph-read-model-rebuild graph-read-model-benchmark graph-reasoning-index-benchmark test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod deploy-graph-dev deploy-graph-staging deploy-graph-prod graph-docker-build setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit graph-readiness graph-reasoning-rebuild graph-space-sync
 
 PY_CHECK_PATHS := src tests scripts services/graph_api/alembic
 PY_STRICT_CHECK_PATHS := src
@@ -223,6 +223,7 @@ GRAPH_PHASE2_BIOMEDICAL_PACK_TEST_PATHS := \
 	tests/integration/graph_service/test_graph_api.py
 GRAPH_ALEMBIC_CONFIG := services/graph_api/alembic.ini
 GRAPH_SERVICE_OPENAPI_OUTPUT := services/graph_api/openapi.json
+GRAPH_HARNESS_OPENAPI_OUTPUT := services/graph_harness_api/openapi.json
 GRAPH_SERVICE_TS_TYPES_OUTPUT := src/web/types/graph-service.generated.ts
 
 # Default target
@@ -293,6 +294,14 @@ graph-service-contract-check: ## Verify graph-service OpenAPI and client contrac
 	$(call check_venv)
 	$(USE_PYTHON) scripts/export_graph_openapi.py --output $(GRAPH_SERVICE_OPENAPI_OUTPUT) --check
 	$(USE_PYTHON) scripts/generate_ts_types.py --module src.type_definitions.graph_service_contracts --output $(GRAPH_SERVICE_TS_TYPES_OUTPUT) --check
+
+graph-harness-openapi: ## Export standalone graph-harness-service OpenAPI schema
+	$(call check_venv)
+	$(USE_PYTHON) scripts/export_graph_harness_openapi.py --output $(GRAPH_HARNESS_OPENAPI_OUTPUT)
+
+graph-harness-contract-check: ## Verify graph-harness-service OpenAPI artifact is up to date
+	$(call check_venv)
+	$(USE_PYTHON) scripts/export_graph_harness_openapi.py --output $(GRAPH_HARNESS_OPENAPI_OUTPUT) --check
 
 graph-phase1-alias-check: ## Validate graph runtime alias allowlist and removal policy
 	$(call check_venv)

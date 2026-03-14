@@ -12,8 +12,6 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.domain.agents.contracts.graph_connection import ProposedRelation
-from src.domain.agents.contracts.graph_search import GraphSearchContract
 from src.infrastructure.graph_service.errors import GraphServiceClientError
 from src.type_definitions.common import ResearchSpaceSettings
 from src.type_definitions.graph_service_contracts import (
@@ -40,8 +38,6 @@ from src.type_definitions.graph_service_contracts import (
     DictionaryEntityTypeListResponse,
     DictionaryEntityTypeResponse,
     DictionaryMergeRequest,
-    DictionaryReembedRequest,
-    DictionaryReembedResponse,
     DictionaryRelationSynonymCreateRequest,
     DictionaryRelationSynonymListResponse,
     DictionaryRelationSynonymResponse,
@@ -50,18 +46,13 @@ from src.type_definitions.graph_service_contracts import (
     DictionaryRelationTypeResponse,
     DictionarySearchListResponse,
     EntityResolutionPolicyListResponse,
-    GenerateHypothesesRequest,
-    GenerateHypothesesResponse,
     HypothesisListResponse,
     HypothesisResponse,
     KernelClaimEvidenceListResponse,
     KernelClaimMechanismChainResponse,
     KernelEntityCreateRequest,
-    KernelEntityEmbeddingRefreshRequest,
-    KernelEntityEmbeddingRefreshResponse,
     KernelEntityListResponse,
     KernelEntityResponse,
-    KernelEntitySimilarityListResponse,
     KernelEntityUpdateRequest,
     KernelEntityUpsertResponse,
     KernelGraphDocumentRequest,
@@ -77,6 +68,7 @@ from src.type_definitions.graph_service_contracts import (
     KernelProvenanceResponse,
     KernelReasoningPathDetailResponse,
     KernelReasoningPathListResponse,
+    KernelRelationClaimCreateRequest,
     KernelRelationClaimListResponse,
     KernelRelationClaimResponse,
     KernelRelationClaimTriageRequest,
@@ -105,88 +97,6 @@ from src.type_definitions.graph_service_contracts import (
     VariableDefinitionReviewStatusRequest,
     VariableDefinitionRevokeRequest,
 )
-
-
-class GraphSearchRequestPayload(BaseModel):
-    """Serialized graph-search request payload."""
-
-    model_config = ConfigDict(strict=True)
-
-    question: str
-    model_id: str | None = None
-    max_depth: int = 2
-    top_k: int = 25
-    curation_statuses: list[str] | None = None
-    include_evidence_chains: bool = True
-    force_agent: bool = False
-
-
-class GraphConnectionDiscoverRequestPayload(BaseModel):
-    """Serialized graph-connection batch request payload."""
-
-    model_config = ConfigDict(strict=True)
-
-    seed_entity_ids: list[str]
-    source_type: str | None = None
-    source_id: str | None = None
-    model_id: str | None = None
-    relation_types: list[str] | None = None
-    max_depth: int = 2
-    shadow_mode: bool | None = None
-    pipeline_run_id: str | None = None
-    fallback_relations: list[ProposedRelation] | None = None
-
-
-class GraphConnectionSingleRequestPayload(BaseModel):
-    """Serialized graph-connection single-entity request payload."""
-
-    model_config = ConfigDict(strict=True)
-
-    source_type: str | None = None
-    source_id: str | None = None
-    model_id: str | None = None
-    relation_types: list[str] | None = None
-    max_depth: int = 2
-    shadow_mode: bool | None = None
-    pipeline_run_id: str | None = None
-    fallback_relations: list[ProposedRelation] | None = None
-
-
-class GraphConnectionOutcomeResponse(BaseModel):
-    """One graph-connection discovery outcome."""
-
-    model_config = ConfigDict(strict=True)
-
-    seed_entity_id: str
-    research_space_id: str
-    status: Literal["discovered", "failed"]
-    reason: str
-    review_required: bool
-    shadow_mode: bool
-    wrote_to_graph: bool
-    run_id: str | None = None
-    proposed_relations_count: int
-    persisted_relations_count: int
-    rejected_candidates_count: int
-    errors: list[str]
-
-
-class GraphConnectionDiscoverResponse(BaseModel):
-    """Graph-connection batch discovery summary."""
-
-    model_config = ConfigDict(strict=True)
-
-    requested: int
-    processed: int
-    discovered: int
-    failed: int
-    review_required: int
-    shadow_runs: int
-    proposed_relations_count: int
-    persisted_relations_count: int
-    rejected_candidates_count: int
-    errors: list[str]
-    outcomes: list[GraphConnectionOutcomeResponse]
 
 
 class GraphServiceHealthResponse(BaseModel):
@@ -805,6 +715,22 @@ class GraphServiceClient:
             headers=headers,
         )
 
+    def suggest_relations(
+        self,
+        *,
+        space_id: UUID,
+        request: KernelRelationSuggestionRequest,
+        headers: Mapping[str, str] | None = None,
+    ) -> KernelRelationSuggestionListResponse:
+        """Suggest missing dictionary-constrained relations for one graph space."""
+        return self._request_model(
+            "POST",
+            f"/v1/spaces/{space_id}/relations/suggestions",
+            response_model=KernelRelationSuggestionListResponse,
+            content=request.model_dump_json(),
+            headers=headers,
+        )
+
     def update_relation_curation_status(
         self,
         *,
@@ -911,50 +837,6 @@ class GraphServiceClient:
         self._request(
             "DELETE",
             f"/v1/spaces/{space_id}/entities/{entity_id}",
-            headers=headers,
-        )
-
-    def list_similar_entities(
-        self,
-        *,
-        space_id: UUID,
-        entity_id: UUID,
-        limit: int = 20,
-        min_similarity: float = 0.72,
-        target_entity_types: list[str] | None = None,
-        headers: Mapping[str, str] | None = None,
-    ) -> KernelEntitySimilarityListResponse:
-        """Fetch similar entities from the graph service."""
-        params: list[tuple[str, str]] = [
-            ("limit", str(limit)),
-            ("min_similarity", str(min_similarity)),
-        ]
-        if target_entity_types:
-            params.extend(
-                ("target_entity_types", entity_type)
-                for entity_type in target_entity_types
-            )
-        return self._request_model(
-            "GET",
-            f"/v1/spaces/{space_id}/entities/{entity_id}/similar",
-            response_model=KernelEntitySimilarityListResponse,
-            params=params,
-            headers=headers,
-        )
-
-    def refresh_entity_embeddings(
-        self,
-        *,
-        space_id: UUID,
-        request: KernelEntityEmbeddingRefreshRequest,
-        headers: Mapping[str, str] | None = None,
-    ) -> KernelEntityEmbeddingRefreshResponse:
-        """Refresh entity embeddings through the graph service."""
-        return self._request_model(
-            "POST",
-            f"/v1/spaces/{space_id}/entities/embeddings/refresh",
-            response_model=KernelEntityEmbeddingRefreshResponse,
-            content=request.model_dump_json(),
             headers=headers,
         )
 
@@ -1097,6 +979,22 @@ class GraphServiceClient:
             f"/v1/spaces/{space_id}/claims",
             response_model=KernelRelationClaimListResponse,
             params=params or None,
+            headers=headers,
+        )
+
+    def create_claim(
+        self,
+        *,
+        space_id: UUID,
+        request: KernelRelationClaimCreateRequest,
+        headers: Mapping[str, str] | None = None,
+    ) -> KernelRelationClaimResponse:
+        """Create one unresolved relation claim through the graph service."""
+        return self._request_model(
+            "POST",
+            f"/v1/spaces/{space_id}/claims",
+            response_model=KernelRelationClaimResponse,
+            content=request.model_dump_json(),
             headers=headers,
         )
 
@@ -1392,119 +1290,6 @@ class GraphServiceClient:
             f"/v1/spaces/{space_id}/claims/{claim_id}/mechanism-chain",
             response_model=KernelClaimMechanismChainResponse,
             params={"max_depth": str(max_depth)},
-            headers=headers,
-        )
-
-    def search_graph(
-        self,
-        *,
-        space_id: UUID,
-        question: str,
-        model_id: str | None = None,
-        max_depth: int = 2,
-        top_k: int = 25,
-        curation_statuses: list[str] | None = None,
-        include_evidence_chains: bool = True,
-        force_agent: bool = False,
-        headers: Mapping[str, str] | None = None,
-    ) -> GraphSearchContract:
-        """Execute graph search in one graph space."""
-        return self._request_model(
-            "POST",
-            f"/v1/spaces/{space_id}/graph/search",
-            response_model=GraphSearchContract,
-            content=GraphSearchRequestPayload(
-                question=question,
-                model_id=model_id,
-                max_depth=max_depth,
-                top_k=top_k,
-                curation_statuses=curation_statuses,
-                include_evidence_chains=include_evidence_chains,
-                force_agent=force_agent,
-            ).model_dump_json(),
-            headers=headers,
-        )
-
-    def discover_graph_connections(
-        self,
-        *,
-        space_id: UUID,
-        seed_entity_ids: list[str],
-        source_type: str | None = None,
-        source_id: str | None = None,
-        model_id: str | None = None,
-        relation_types: list[str] | None = None,
-        max_depth: int = 2,
-        shadow_mode: bool | None = None,
-        pipeline_run_id: str | None = None,
-        fallback_relations: list[ProposedRelation] | None = None,
-        headers: Mapping[str, str] | None = None,
-    ) -> GraphConnectionDiscoverResponse:
-        """Discover graph connections for multiple seed entities."""
-        return self._request_model(
-            "POST",
-            f"/v1/spaces/{space_id}/graph/connections/discover",
-            response_model=GraphConnectionDiscoverResponse,
-            content=GraphConnectionDiscoverRequestPayload(
-                seed_entity_ids=seed_entity_ids,
-                source_type=source_type,
-                source_id=source_id,
-                model_id=model_id,
-                relation_types=relation_types,
-                max_depth=max_depth,
-                shadow_mode=shadow_mode,
-                pipeline_run_id=pipeline_run_id,
-                fallback_relations=fallback_relations,
-            ).model_dump_json(),
-            headers=headers,
-        )
-
-    def discover_entity_connections(
-        self,
-        *,
-        space_id: UUID,
-        entity_id: UUID,
-        source_type: str | None = None,
-        source_id: str | None = None,
-        model_id: str | None = None,
-        relation_types: list[str] | None = None,
-        max_depth: int = 2,
-        shadow_mode: bool | None = None,
-        pipeline_run_id: str | None = None,
-        fallback_relations: list[ProposedRelation] | None = None,
-        headers: Mapping[str, str] | None = None,
-    ) -> GraphConnectionOutcomeResponse:
-        """Discover graph connections for one entity."""
-        return self._request_model(
-            "POST",
-            f"/v1/spaces/{space_id}/entities/{entity_id}/connections",
-            response_model=GraphConnectionOutcomeResponse,
-            content=GraphConnectionSingleRequestPayload(
-                source_type=source_type,
-                source_id=source_id,
-                model_id=model_id,
-                relation_types=relation_types,
-                max_depth=max_depth,
-                shadow_mode=shadow_mode,
-                pipeline_run_id=pipeline_run_id,
-                fallback_relations=fallback_relations,
-            ).model_dump_json(),
-            headers=headers,
-        )
-
-    def suggest_relations(
-        self,
-        *,
-        space_id: UUID,
-        request: KernelRelationSuggestionRequest,
-        headers: Mapping[str, str] | None = None,
-    ) -> KernelRelationSuggestionListResponse:
-        """Suggest dictionary-constrained graph relations in one graph space."""
-        return self._request_model(
-            "POST",
-            f"/v1/spaces/{space_id}/graph/relation-suggestions",
-            response_model=KernelRelationSuggestionListResponse,
-            content=request.model_dump_json(),
             headers=headers,
         )
 
@@ -1889,46 +1674,6 @@ class GraphServiceClient:
             headers=headers,
         )
 
-    def generate_hypotheses(
-        self,
-        *,
-        space_id: UUID,
-        request: GenerateHypothesesRequest,
-        headers: Mapping[str, str] | None = None,
-    ) -> GenerateHypothesesResponse:
-        """Generate hypotheses through the graph service."""
-        return self._request_model(
-            "POST",
-            f"/v1/spaces/{space_id}/hypotheses/generate",
-            response_model=GenerateHypothesesResponse,
-            content=request.model_dump_json(),
-            headers=headers,
-        )
-
-    def search_dictionary_entries(
-        self,
-        *,
-        terms: list[str],
-        dimensions: list[str] | None = None,
-        domain_context: str | None = None,
-        limit: int = 50,
-        headers: Mapping[str, str] | None = None,
-    ) -> DictionarySearchListResponse:
-        """Search graph dictionary entries."""
-        params: list[tuple[str, str]] = [("terms", term) for term in terms]
-        if dimensions:
-            params.extend(("dimensions", dimension) for dimension in dimensions)
-        if domain_context is not None:
-            params.append(("domain_context", domain_context))
-        params.append(("limit", str(limit)))
-        return self._request_model(
-            "GET",
-            "/v1/dictionary/search",
-            response_model=DictionarySearchListResponse,
-            params=params,
-            headers=headers,
-        )
-
     def search_dictionary_entries_by_domain(
         self,
         *,
@@ -1942,21 +1687,6 @@ class GraphServiceClient:
             f"/v1/dictionary/search/by-domain/{domain_context}",
             response_model=DictionarySearchListResponse,
             params={"limit": str(limit)},
-            headers=headers,
-        )
-
-    def reembed_dictionary_descriptions(
-        self,
-        *,
-        request: DictionaryReembedRequest,
-        headers: Mapping[str, str] | None = None,
-    ) -> DictionaryReembedResponse:
-        """Trigger a graph dictionary embedding refresh."""
-        return self._request_model(
-            "POST",
-            "/v1/dictionary/reembed",
-            response_model=DictionaryReembedResponse,
-            content=request.model_dump_json(),
             headers=headers,
         )
 
@@ -2622,14 +2352,8 @@ __all__ = [
     "GraphOperationRunListResponse",
     "GraphOperationRunResponse",
     "GraphProjectionRepairSummaryResponse",
-    "GraphConnectionDiscoverRequestPayload",
-    "GraphConnectionDiscoverResponse",
-    "GraphConnectionOutcomeResponse",
-    "GraphConnectionSingleRequestPayload",
     "GraphReasoningPathRebuildResponse",
     "GraphReasoningPathRebuildSummaryResponse",
-    "GraphSearchContract",
-    "GraphSearchRequestPayload",
     "GraphSpaceMembershipListResponse",
     "GraphSpaceMembershipResponse",
     "GraphSpaceSyncMembershipPayload",
@@ -2638,7 +2362,6 @@ __all__ = [
     "GraphSpaceRegistryListResponse",
     "GraphSpaceRegistryResponse",
     "GraphSpaceRegistryUpsertRequestPayload",
-    "GenerateHypothesesResponse",
     "HypothesisListResponse",
     "HypothesisResponse",
 ]

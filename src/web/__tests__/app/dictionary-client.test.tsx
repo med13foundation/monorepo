@@ -42,10 +42,6 @@ jest.mock('@/app/(dashboard)/admin/dictionary/dictionary-curation-card', () => (
   DictionaryCurationCard: () => <div>Dictionary Curation Card</div>,
 }))
 
-jest.mock('@/app/(dashboard)/admin/dictionary/edge-suggestions-card', () => ({
-  EdgeSuggestionsCard: () => <div>Edge Suggestions Card</div>,
-}))
-
 describe('DictionaryClient', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -63,12 +59,12 @@ describe('DictionaryClient', () => {
     errors: {},
   }
 
-  it('renders dictionary tabs including edge suggestions', () => {
+  it('renders dictionary tabs for deterministic governance views', () => {
     render(<DictionaryClient {...baseProps} />)
 
     expect(screen.getByText('Dictionary')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Curation' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Edge Suggestions' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Transforms' })).toBeInTheDocument()
   })
 
   it('refresh button calls router.refresh', () => {

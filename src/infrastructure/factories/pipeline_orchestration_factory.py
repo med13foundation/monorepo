@@ -19,7 +19,7 @@ from src.infrastructure.dependency_injection.dependencies import (
 from src.infrastructure.factories.ingestion_scheduler_factory import (
     build_ingestion_scheduling_service,
 )
-from src.infrastructure.graph_service.pipeline import (
+from src.infrastructure.graph_harness.pipeline import (
     build_graph_connection_seed_runner_for_service,
     build_graph_search_service_for_service,
 )

@@ -5,8 +5,6 @@ import {
   createKernelRelation,
   createManualHypothesis,
   deleteKernelEntity,
-  discoverEntityGraphConnections,
-  discoverGraphConnections,
   fetchKernelEntities,
   fetchKernelEntity,
   fetchKernelGraphDocument,
@@ -16,15 +14,10 @@ import {
   fetchKernelProvenance,
   fetchKernelProvenanceRecord,
   fetchKernelRelations,
-  fetchKernelSimilarEntities,
   fetchKernelSubgraph,
   fetchHypotheses,
   fetchRelationClaimEvidence,
   fetchRelationClaims,
-  generateHypotheses,
-  refreshKernelEntityEmbeddings,
-  searchKernelGraph,
-  suggestKernelRelations,
   updateKernelEntity,
   updateKernelRelationCurationStatus,
   updateRelationClaimStatus,
@@ -274,78 +267,7 @@ describe('kernel api', () => {
     )
   })
 
-  it('routes graph-connection discovery to the standalone graph service', async () => {
-    mockApiPost.mockResolvedValueOnce({
-      requested: 2,
-      processed: 2,
-      discovered: 1,
-      failed: 1,
-      review_required: 1,
-      shadow_runs: 0,
-      proposed_relations_count: 3,
-      persisted_relations_count: 1,
-      rejected_candidates_count: 2,
-      errors: ['fallback'],
-      outcomes: [],
-    })
-    mockApiPost.mockResolvedValueOnce({
-      seed_entity_id: 'entity-a',
-      research_space_id: 'space-1',
-      status: 'discovered',
-      reason: 'processed',
-      review_required: false,
-      shadow_mode: false,
-      wrote_to_graph: true,
-      run_id: 'run-1',
-      proposed_relations_count: 2,
-      persisted_relations_count: 1,
-      rejected_candidates_count: 1,
-      errors: [],
-    })
-
-    await discoverGraphConnections(
-      'space-1',
-      {
-        seed_entity_ids: ['entity-a', 'entity-b'],
-        source_type: 'pubmed',
-        max_depth: 3,
-        shadow_mode: true,
-      },
-      token,
-    )
-    await discoverEntityGraphConnections(
-      'space-1',
-      'entity-a',
-      {
-        source_type: 'clinvar',
-        max_depth: 2,
-      },
-      token,
-    )
-
-    expect(mockApiPost).toHaveBeenNthCalledWith(
-      1,
-      '/v1/spaces/space-1/graph/connections/discover',
-      {
-        seed_entity_ids: ['entity-a', 'entity-b'],
-        source_type: 'pubmed',
-        max_depth: 3,
-        shadow_mode: true,
-      },
-      { token, baseURL: 'https://graph-api.example.com' },
-    )
-    expect(mockApiPost).toHaveBeenNthCalledWith(
-      2,
-      '/v1/spaces/space-1/entities/entity-a/connections',
-      {
-        source_type: 'clinvar',
-        max_depth: 2,
-      },
-      { token, baseURL: 'https://graph-api.example.com' },
-    )
-  })
-
-  it('routes entity reads, writes, and embedding endpoints to the standalone graph service', async () => {
+  it('routes entity reads and writes to the standalone graph service', async () => {
     mockApiGet.mockResolvedValueOnce({
       entities: [],
       total: 0,
@@ -373,20 +295,6 @@ describe('kernel api', () => {
       created_at: '2026-03-12T00:00:00Z',
       updated_at: '2026-03-12T00:00:00Z',
     })
-    mockApiGet.mockResolvedValueOnce({
-      source_entity_id: 'entity-a',
-      results: [],
-      total: 0,
-      limit: 20,
-      min_similarity: 0.72,
-    })
-    mockApiPost.mockResolvedValueOnce({
-      requested: 1,
-      processed: 1,
-      refreshed: 1,
-      unchanged: 0,
-      missing_entities: [],
-    })
     mockApiPut.mockResolvedValueOnce({
       id: 'entity-a',
       research_space_id: 'space-1',
@@ -405,12 +313,6 @@ describe('kernel api', () => {
       token,
     )
     await fetchKernelEntity('space-1', 'entity-a', token)
-    await fetchKernelSimilarEntities('space-1', 'entity-a', { target_entity_types: ['GENE'] }, token)
-    await refreshKernelEntityEmbeddings(
-      'space-1',
-      { entity_ids: ['entity-a'], limit: 20, model_name: 'test-model', embedding_version: 2 },
-      token,
-    )
     await updateKernelEntity(
       'space-1',
       'entity-a',
@@ -433,25 +335,6 @@ describe('kernel api', () => {
     expect(mockApiGet).toHaveBeenNthCalledWith(
       2,
       '/v1/spaces/space-1/entities/entity-a',
-      { token, baseURL: 'https://graph-api.example.com' },
-    )
-    expect(mockApiGet).toHaveBeenNthCalledWith(
-      3,
-      '/v1/spaces/space-1/entities/entity-a/similar',
-      {
-        token,
-        baseURL: 'https://graph-api.example.com',
-        params: {
-          limit: 20,
-          min_similarity: 0.72,
-          target_entity_types: 'GENE',
-        },
-      },
-    )
-    expect(mockApiPost).toHaveBeenNthCalledWith(
-      2,
-      '/v1/spaces/space-1/entities/embeddings/refresh',
-      { entity_ids: ['entity-a'], limit: 20, model_name: 'test-model', embedding_version: 2 },
       { token, baseURL: 'https://graph-api.example.com' },
     )
     expect(mockApiPut).toHaveBeenCalledWith(
@@ -550,41 +433,6 @@ describe('kernel api', () => {
     )
   })
 
-  it('routes relation suggestions to the standalone graph service', async () => {
-    mockApiPost.mockResolvedValue({
-      suggestions: [],
-      total: 0,
-      limit_per_source: 5,
-      min_score: 0.7,
-    })
-
-    await suggestKernelRelations(
-      'space-1',
-      {
-        source_entity_ids: ['entity-a'],
-        limit_per_source: 5,
-        min_score: 0.7,
-        allowed_relation_types: ['ASSOCIATED_WITH'],
-        target_entity_types: ['PHENOTYPE'],
-        exclude_existing_relations: true,
-      },
-      token,
-    )
-
-    expect(mockApiPost).toHaveBeenCalledWith(
-      '/v1/spaces/space-1/graph/relation-suggestions',
-      {
-        source_entity_ids: ['entity-a'],
-        limit_per_source: 5,
-        min_score: 0.7,
-        allowed_relation_types: ['ASSOCIATED_WITH'],
-        target_entity_types: ['PHENOTYPE'],
-        exclude_existing_relations: true,
-      },
-      { token, baseURL: 'https://graph-api.example.com' },
-    )
-  })
-
   it('routes claim-ledger reads and mutations to the standalone graph service', async () => {
     mockApiGet.mockResolvedValueOnce({
       claims: [],
@@ -632,7 +480,7 @@ describe('kernel api', () => {
     )
   })
 
-  it('routes hypothesis workflows to the standalone graph service', async () => {
+  it('routes manual hypothesis workflows to the standalone graph service', async () => {
     mockApiGet.mockResolvedValueOnce({
       hypotheses: [],
       total: 0,
@@ -640,26 +488,11 @@ describe('kernel api', () => {
       limit: 50,
     })
     mockApiPost.mockResolvedValueOnce({ claim_id: 'hyp-1' })
-    mockApiPost.mockResolvedValueOnce({
-      run_id: 'run-1',
-      requested_seed_count: 1,
-      used_seed_count: 1,
-      candidates_seen: 2,
-      created_count: 1,
-      deduped_count: 0,
-      errors: [],
-      hypotheses: [],
-    })
 
     await fetchHypotheses('space-1', { limit: 10 }, token)
     await createManualHypothesis(
       'space-1',
       { statement: 'Hypothesis', rationale: 'Reason' },
-      token,
-    )
-    await generateHypotheses(
-      'space-1',
-      { seed_entity_ids: ['entity-a'], max_hypotheses: 5 },
       token,
     )
 
@@ -676,12 +509,6 @@ describe('kernel api', () => {
       '/v1/spaces/space-1/hypotheses/manual',
       { statement: 'Hypothesis', rationale: 'Reason' },
       { token, baseURL: 'https://graph-api.example.com' },
-    )
-    expect(mockApiPost).toHaveBeenNthCalledWith(
-      2,
-      '/v1/spaces/space-1/hypotheses/generate',
-      { seed_entity_ids: ['entity-a'], max_hypotheses: 5 },
-      { token, timeout: 0, baseURL: 'https://graph-api.example.com' },
     )
   })
 
@@ -752,50 +579,6 @@ describe('kernel api', () => {
         include_evidence: true,
         max_claims: 10,
         evidence_limit_per_claim: 2,
-      },
-      { token, baseURL: 'https://graph-api.example.com' },
-    )
-  })
-
-  it('routes graph search to the standalone graph service', async () => {
-    mockApiPost.mockResolvedValueOnce({
-      confidence_score: 0.87,
-      rationale: 'Deterministic graph search completed with ranked results.',
-      evidence: [],
-      decision: 'generated',
-      research_space_id: 'space-1',
-      original_query: 'MED13',
-      interpreted_intent: 'MED13',
-      query_plan_summary: 'Deterministic plan',
-      total_results: 1,
-      results: [],
-      executed_path: 'deterministic',
-      warnings: [],
-      agent_run_id: null,
-    })
-
-    await searchKernelGraph(
-      'space-1',
-      {
-        question: 'MED13',
-        max_depth: 2,
-        top_k: 5,
-        curation_statuses: ['ACCEPTED'],
-        include_evidence_chains: true,
-        force_agent: false,
-      },
-      token,
-    )
-
-    expect(mockApiPost).toHaveBeenCalledWith(
-      '/v1/spaces/space-1/graph/search',
-      {
-        question: 'MED13',
-        max_depth: 2,
-        top_k: 5,
-        curation_statuses: ['ACCEPTED'],
-        include_evidence_chains: true,
-        force_agent: false,
       },
       { token, baseURL: 'https://graph-api.example.com' },
     )

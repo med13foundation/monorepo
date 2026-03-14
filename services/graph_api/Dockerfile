@@ -8,22 +8,18 @@ ENV PYTHONUNBUFFERED=1 \
     GRAPH_SERVICE_PORT=8080 \
     GRAPH_SERVICE_RELOAD=0
 
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
-
 RUN groupadd --system med13 \
     && useradd --system --gid med13 --create-home med13
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-COPY artana.toml ./
-COPY services ./services
-COPY src ./src
+COPY services/graph_api/requirements.txt /tmp/graph_api_requirements.txt
 
 RUN pip install --upgrade pip \
-    && pip install .
+    && pip install -r /tmp/graph_api_requirements.txt
+
+COPY services ./services
+COPY src ./src
 
 RUN chown -R med13:med13 /app
 

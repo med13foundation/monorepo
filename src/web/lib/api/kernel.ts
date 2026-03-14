@@ -1,12 +1,9 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut, type ApiRequestOptions } from '@/lib/api/client'
 import { resolveGraphApiBaseUrl } from '@/lib/api/graph-base-url'
 import type {
-  KernelEntityEmbeddingRefreshRequest,
-  KernelEntityEmbeddingRefreshResponse,
   KernelEntityCreateRequest,
   KernelEntityListResponse,
   KernelEntityResponse,
-  KernelEntitySimilarityListResponse,
   KernelEntityUpdateRequest,
   KernelEntityUpsertResponse,
   KernelGraphDocumentRequest,
@@ -14,19 +11,11 @@ import type {
   KernelGraphExportResponse,
   KernelGraphSubgraphRequest,
   KernelGraphSubgraphResponse,
-  GraphConnectionDiscoverRequest,
-  GraphConnectionDiscoverResponse,
-  GraphConnectionOutcomeResponse,
-  GraphConnectionSingleRequest,
-  GraphSearchRequest,
-  GraphSearchResponse,
   KernelObservationCreateRequest,
   KernelObservationListResponse,
   KernelObservationResponse,
   ClaimEvidenceListResponse,
   CreateManualHypothesisRequest,
-  GenerateHypothesesRequest,
-  GenerateHypothesesResponse,
   ClaimRelationCreateRequest,
   ClaimRelationListResponse,
   ClaimRelationResponse,
@@ -42,8 +31,6 @@ import type {
   KernelProvenanceListResponse,
   KernelProvenanceResponse,
   KernelRelationCreateRequest,
-  KernelRelationSuggestionListResponse,
-  KernelRelationSuggestionRequest,
   RelationConflictListResponse,
   RelationClaimListResponse,
   RelationClaimResponse,
@@ -142,54 +129,6 @@ export async function fetchKernelEntity(
   }
   return apiGet<KernelEntityResponse>(
     graphSpacePath(spaceId, `/entities/${entityId}`),
-    withGraphApiOptions({ token }),
-  )
-}
-
-export interface KernelEntitySimilarParams {
-  limit?: number
-  min_similarity?: number
-  target_entity_types?: string[]
-}
-
-export async function fetchKernelSimilarEntities(
-  spaceId: string,
-  entityId: string,
-  params: KernelEntitySimilarParams = {},
-  token?: string,
-): Promise<KernelEntitySimilarityListResponse> {
-  if (!token) {
-    throw new Error('Authentication token is required for fetchKernelSimilarEntities')
-  }
-
-  const options: ApiRequestOptions<KernelEntitySimilarityListResponse> = {
-    token,
-    params: {
-      limit: params.limit ?? 20,
-      min_similarity: params.min_similarity ?? 0.72,
-      ...(params.target_entity_types && params.target_entity_types.length > 0
-        ? { target_entity_types: params.target_entity_types.join(',') }
-        : {}),
-    },
-  }
-
-  return apiGet<KernelEntitySimilarityListResponse>(
-    graphSpacePath(spaceId, `/entities/${entityId}/similar`),
-    withGraphApiOptions(options),
-  )
-}
-
-export async function refreshKernelEntityEmbeddings(
-  spaceId: string,
-  payload: KernelEntityEmbeddingRefreshRequest,
-  token?: string,
-): Promise<KernelEntityEmbeddingRefreshResponse> {
-  if (!token) {
-    throw new Error('Authentication token is required for refreshKernelEntityEmbeddings')
-  }
-  return apiPost<KernelEntityEmbeddingRefreshResponse>(
-    graphSpacePath(spaceId, '/entities/embeddings/refresh'),
-    payload,
     withGraphApiOptions({ token }),
   )
 }
@@ -344,52 +283,6 @@ export async function createKernelRelation(
   )
 }
 
-export async function suggestKernelRelations(
-  spaceId: string,
-  payload: KernelRelationSuggestionRequest,
-  token?: string,
-): Promise<KernelRelationSuggestionListResponse> {
-  if (!token) {
-    throw new Error('Authentication token is required for suggestKernelRelations')
-  }
-  return apiPost<KernelRelationSuggestionListResponse>(
-    graphSpacePath(spaceId, '/graph/relation-suggestions'),
-    payload,
-    withGraphApiOptions({ token }),
-  )
-}
-
-export async function discoverGraphConnections(
-  spaceId: string,
-  payload: GraphConnectionDiscoverRequest,
-  token?: string,
-): Promise<GraphConnectionDiscoverResponse> {
-  if (!token) {
-    throw new Error('Authentication token is required for discoverGraphConnections')
-  }
-  return apiPost<GraphConnectionDiscoverResponse>(
-    graphSpacePath(spaceId, '/graph/connections/discover'),
-    payload,
-    withGraphApiOptions({ token }),
-  )
-}
-
-export async function discoverEntityGraphConnections(
-  spaceId: string,
-  entityId: string,
-  payload: GraphConnectionSingleRequest,
-  token?: string,
-): Promise<GraphConnectionOutcomeResponse> {
-  if (!token) {
-    throw new Error('Authentication token is required for discoverEntityGraphConnections')
-  }
-  return apiPost<GraphConnectionOutcomeResponse>(
-    graphSpacePath(spaceId, `/entities/${entityId}/connections`),
-    payload,
-    withGraphApiOptions({ token }),
-  )
-}
-
 export async function updateKernelRelationCurationStatus(
   spaceId: string,
   relationId: string,
@@ -488,21 +381,6 @@ export async function createManualHypothesis(
     graphSpacePath(spaceId, '/hypotheses/manual'),
     payload,
     withGraphApiOptions({ token }),
-  )
-}
-
-export async function generateHypotheses(
-  spaceId: string,
-  payload: GenerateHypothesesRequest,
-  token?: string,
-): Promise<GenerateHypothesesResponse> {
-  if (!token) {
-    throw new Error('Authentication token is required for generateHypotheses')
-  }
-  return apiPost<GenerateHypothesesResponse>(
-    graphSpacePath(spaceId, '/hypotheses/generate'),
-    payload,
-    withGraphApiOptions({ token, timeout: 0 }),
   )
 }
 
@@ -712,21 +590,6 @@ export async function fetchKernelGraphExport(
   }
   return apiGet<KernelGraphExportResponse>(
     graphSpacePath(spaceId, '/graph/export'),
-    withGraphApiOptions({ token }),
-  )
-}
-
-export async function searchKernelGraph(
-  spaceId: string,
-  payload: GraphSearchRequest,
-  token?: string,
-): Promise<GraphSearchResponse> {
-  if (!token) {
-    throw new Error('Authentication token is required for searchKernelGraph')
-  }
-  return apiPost<GraphSearchResponse>(
-    graphSpacePath(spaceId, '/graph/search'),
-    payload,
     withGraphApiOptions({ token }),
   )
 }

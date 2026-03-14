@@ -5,6 +5,16 @@
 Build a new standalone service, `services/graph_harness_api`, that turns a
 research space into a durable AI research workspace.
 
+## Implementation Status
+
+As of 2026-03-14, the service surface described below exists and the runtime
+path is aligned with this plan: the harness service uses an Artana-backed
+runtime for run lifecycle, artifacts, workspace state, progress, events,
+resume points, and worker leases; the runnable harness workflows execute
+through Artana harness wrappers; manual workflow routes queue kernel-backed
+runs and wait on worker-owned execution; and the checked-in harness OpenAPI
+contract plus repo-wide `make type-check` and `make test` gates are green.
+
 The service will:
 
 - bootstrap a research space from PubMed and other sources
@@ -16,6 +26,11 @@ The service will:
 
 The design uses Artana as the durable execution and harness runtime, while
 `services/graph_api` remains the graph system of record.
+
+The old mixed runtime design has been removed: the obsolete SQLAlchemy
+lifecycle tables for artifacts, workspaces, progress, and events were dropped
+after the Artana cutover, while `harness_runs` remains as the persistent run
+catalog and SQLAlchemy keeps only non-kernel domain state.
 
 ## Scope
 
@@ -46,6 +61,7 @@ Admin UI / Research UI
 services/graph_harness_api
         |
         |-- Artana kernel + harness runtime
+        |-- OpenAI / model runtime
         |-- tool registry
         |-- schedules + workers
         |-- artifacts + workspace state
@@ -56,7 +72,8 @@ services/graph_harness_api
         +----> services/graph_api
         |         |
         |         +-- graph system of record
-        |         +-- claims, evidence, relations, views, search
+        |         +-- deterministic graph read/write APIs
+        |         +-- claims, evidence, relations, views, reasoning
         |
         +----> PubMed / external source APIs
         |
@@ -68,12 +85,15 @@ services/graph_harness_api
 `services/graph_api` owns:
 
 - entities, claims, evidence, provenance, canonical relations
-- graph search, graph views, graph documents, reasoning paths
+- dictionary governance and graph mutation validation
+- graph views, graph documents, reasoning paths, and deterministic query primitives
 - graph control-plane and graph repair operations
+- no Artana runtime, no OpenAI client, and no model-selection logic
 
 `services/graph_harness_api` owns:
 
 - Artana run lifecycle
+- OpenAI / model-provider access
 - harness templates
 - chat sessions
 - recurring schedules
@@ -83,6 +103,15 @@ services/graph_harness_api
 - run budgets and ranking logic
 - approvals and policy-gated writes
 - tool orchestration across graph and external sources
+- all AI-backed graph search, graph-connection discovery, and hypothesis-generation orchestration
+
+### Deterministic boundary
+
+The target split is strict:
+
+- `services/graph_api` is deterministic infrastructure that can be controlled by an AI layer, but does not host that AI layer.
+- `services/graph_harness_api` is the only service that should import Artana, instantiate model ports, call OpenAI-compatible providers, or make autonomous run-time decisions.
+- all AI-originated graph changes must flow into `services/graph_api` through typed HTTP endpoints and governed write paths.
 
 ## How Artana Is Used
 
@@ -139,18 +168,19 @@ services/graph_harness_api/
 ├── composition.py
 ├── dependencies.py
 ├── graph_client.py
-├── research_client.py
 ├── tool_registry.py
 ├── harness_registry.py
+├── harness_runtime.py
 ├── research_state.py
 ├── proposal_store.py
 ├── graph_snapshot.py
-├── budgeting.py
+├── run_budget.py
 ├── ranking.py
 ├── policy.py
 ├── scheduler.py
 ├── worker.py
 ├── chat_sessions.py
+├── supervisor_runtime.py
 ├── routers/
 │   ├── health.py
 │   ├── harnesses.py
@@ -160,7 +190,11 @@ services/graph_harness_api/
 │   ├── chat.py
 │   ├── proposals.py
 │   ├── schedules.py
-│   └── agents.py
+│   ├── research_bootstrap_runs.py
+│   ├── continuous_learning_runs.py
+│   ├── mechanism_discovery_runs.py
+│   ├── graph_curation_runs.py
+│   └── supervisor_runs.py
 └── openapi.json
 ```
 
@@ -196,7 +230,7 @@ Purpose:
 
 Typical tools:
 
-- graph search
+- deterministic graph query tools
 - graph document
 - graph views
 - artifact reads
@@ -577,6 +611,8 @@ schedule fires
 | --- | --- | --- |
 | `POST` | `/v1/spaces/{space_id}/agents/research-bootstrap/runs` | Bootstrap a research space. |
 | `POST` | `/v1/spaces/{space_id}/agents/graph-search/runs` | Start graph search run. |
+| `POST` | `/v1/spaces/{space_id}/agents/graph-connections/runs` | Start graph-connection discovery run. |
+| `POST` | `/v1/spaces/{space_id}/agents/hypotheses/runs` | Start hypothesis-generation run. |
 | `POST` | `/v1/spaces/{space_id}/agents/continuous-learning/runs` | Start one learning cycle manually. |
 | `POST` | `/v1/spaces/{space_id}/agents/mechanism-discovery/runs` | Start mechanism discovery run. |
 | `POST` | `/v1/spaces/{space_id}/agents/graph-curation/runs` | Start curation run. |
@@ -641,9 +677,11 @@ Story:
 
 - scaffold `services/graph_harness_api`
 - wire Artana `PostgresStore`
+- move Artana and OpenAI runtime wiring out of `services/graph_api`
 - add `health`, `runs`, `artifacts`, and `harnesses` endpoints
 - add tool registry and graph client adapters
 - add research state model and proposal store schema
+- add architecture checks so `services/graph_api` cannot import Artana or model ports
 - implement `ResearchBootstrapHarness`
 
 ### Phase 2: Chat and memory
@@ -700,6 +738,7 @@ Story:
 - scheduler to worker execution
 - graph snapshot capture
 - proposal promotion into graph claim flow
+- supervisor parent-child pause and resume
 
 ### End-to-end tests
 
@@ -708,6 +747,7 @@ Story:
 - schedule -> delta report
 - mechanism discovery -> ranked candidates
 - curation -> approval -> resume -> apply
+- supervisor -> bootstrap -> chat -> curation
 
 ### Quality gates
 

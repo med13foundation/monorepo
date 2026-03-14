@@ -12,6 +12,7 @@ from . import (
     data_discovery,
     data_source_activation,
     extraction_queue,
+    harness,
     ingestion_job,
     ingestion_scheduler_job,
     ingestion_source_lock,
@@ -69,6 +70,15 @@ from .kernel import (
 # ── Surviving infrastructure models ──
 AuditLog = audit.AuditLog
 Base = base.Base
+HarnessApprovalModel = harness.HarnessApprovalModel
+HarnessChatMessageModel = harness.HarnessChatMessageModel
+HarnessChatSessionModel = harness.HarnessChatSessionModel
+HarnessGraphSnapshotModel = harness.HarnessGraphSnapshotModel
+HarnessIntentModel = harness.HarnessIntentModel
+HarnessProposalModel = harness.HarnessProposalModel
+HarnessResearchStateModel = harness.HarnessResearchStateModel
+HarnessRunModel = harness.HarnessRunModel
+HarnessScheduleModel = harness.HarnessScheduleModel
 SessionModel = session.SessionModel
 SystemStatusModel = system_status.SystemStatusModel
 UserModel = user.UserModel
@@ -153,6 +163,15 @@ __all__ = [
     # Surviving infrastructure
     "AuditLog",
     "SessionModel",
+    "HarnessRunModel",
+    "HarnessIntentModel",
+    "HarnessApprovalModel",
+    "HarnessChatSessionModel",
+    "HarnessChatMessageModel",
+    "HarnessGraphSnapshotModel",
+    "HarnessProposalModel",
+    "HarnessResearchStateModel",
+    "HarnessScheduleModel",
     "SourceTemplateModel",
     "SourceTypeEnum",
     "StorageConfigurationModel",

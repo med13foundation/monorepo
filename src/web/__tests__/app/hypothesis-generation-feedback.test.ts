@@ -24,7 +24,7 @@ describe('buildHypothesisGenerationFeedback', () => {
     )
 
     expect(feedback.tone).toBe('success')
-    expect(feedback.summary).toBe('Generated 3 hypotheses (deduped 2).')
+    expect(feedback.summary).toBe('Staged 3 candidate hypotheses for review.')
     expect(feedback.details).toEqual([])
   })
 
@@ -40,7 +40,7 @@ describe('buildHypothesisGenerationFeedback', () => {
 
     expect(feedback.tone).toBe('error')
     expect(feedback.summary).toBe(
-      'Generation completed but produced no new hypotheses.',
+      'Exploration completed but produced no candidate hypotheses.',
     )
     expect(feedback.details).toEqual(
       expect.arrayContaining([
@@ -54,7 +54,7 @@ describe('buildHypothesisGenerationFeedback', () => {
   it.each([
     {
       code: 'no_candidates_discovered',
-      expected: 'Graph exploration returned no candidate relations.',
+      expected: 'Graph exploration returned no candidate hypotheses.',
     },
     {
       code: 'all_candidates_below_threshold',

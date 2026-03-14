@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = REPO_ROOT / "src"
+GRAPH_SERVICE_ROOT = REPO_ROOT / "services" / "graph_api"
+GRAPH_SERVICE_DOCKERFILE = GRAPH_SERVICE_ROOT / "Dockerfile"
 
 FORBIDDEN_IMPORT_PREFIXES = (
     "src.application.services.kernel",
@@ -16,6 +19,21 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "src.models.database.kernel",
 )
 FORBIDDEN_SERVICE_IMPORT_PREFIX = "services.graph_api"
+FORBIDDEN_GRAPH_SERVICE_AI_IMPORT_PREFIXES = (
+    "artana",
+    "openai",
+    "src.infrastructure.embeddings",
+    "src.infrastructure.llm",
+    "src.application.services.kernel.hybrid_graph_errors",
+    "src.application.services.kernel.kernel_entity_similarity_service",
+    "src.application.services.kernel.kernel_relation_suggestion_service",
+)
+FORBIDDEN_GRAPH_SERVICE_DOCKERFILE_SNIPPETS = (
+    "COPY pyproject.toml",
+    "COPY artana.toml",
+    "pip install .",
+    "pip install -e .",
+)
 
 ALLOWED_PREFIXES = (
     "services/graph_api/",
@@ -85,11 +103,16 @@ def _is_allowed_file(relative_path: str) -> bool:
     )
 
 
-def _find_violations() -> list[BoundaryViolation]:
+def _scan_tree_for_violations(
+    *,
+    root: Path,
+    is_allowed_file: Callable[[str], bool],
+    forbidden_import_prefixes: tuple[str, ...],
+) -> list[BoundaryViolation]:
     violations: list[BoundaryViolation] = []
-    for file_path in SRC_ROOT.rglob("*.py"):
+    for file_path in root.rglob("*.py"):
         relative_path = str(file_path.relative_to(REPO_ROOT))
-        if _is_allowed_file(relative_path):
+        if is_allowed_file(relative_path):
             continue
 
         try:
@@ -113,17 +136,32 @@ def _find_violations() -> list[BoundaryViolation]:
                     imported_module=module_name,
                 )
                 for module_name in _extract_import_modules(node)
-                if module_name.startswith(FORBIDDEN_IMPORT_PREFIXES)
+                if module_name.startswith(forbidden_import_prefixes)
             )
-            violations.extend(
-                BoundaryViolation(
-                    file_path=relative_path,
-                    line_number=getattr(node, "lineno", 0),
-                    imported_module=module_name,
-                )
-                for module_name in _extract_import_modules(node)
-                if module_name.startswith(FORBIDDEN_SERVICE_IMPORT_PREFIX)
-            )
+    return violations
+
+
+def _find_violations() -> list[BoundaryViolation]:
+    violations = _scan_tree_for_violations(
+        root=SRC_ROOT,
+        is_allowed_file=_is_allowed_file,
+        forbidden_import_prefixes=FORBIDDEN_IMPORT_PREFIXES,
+    )
+    violations.extend(
+        _scan_tree_for_violations(
+            root=SRC_ROOT,
+            is_allowed_file=lambda _: False,
+            forbidden_import_prefixes=(FORBIDDEN_SERVICE_IMPORT_PREFIX,),
+        ),
+    )
+    violations.extend(
+        _scan_tree_for_violations(
+            root=GRAPH_SERVICE_ROOT,
+            is_allowed_file=lambda _: False,
+            forbidden_import_prefixes=FORBIDDEN_GRAPH_SERVICE_AI_IMPORT_PREFIXES,
+        ),
+    )
+    violations.extend(_find_dockerfile_violations())
     return sorted(
         violations,
         key=lambda violation: (
@@ -132,6 +170,31 @@ def _find_violations() -> list[BoundaryViolation]:
             violation.imported_module,
         ),
     )
+
+
+def _find_dockerfile_violations() -> list[BoundaryViolation]:
+    if not GRAPH_SERVICE_DOCKERFILE.exists():
+        return []
+
+    violations: list[BoundaryViolation] = []
+    for line_number, line in enumerate(
+        GRAPH_SERVICE_DOCKERFILE.read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        for snippet in FORBIDDEN_GRAPH_SERVICE_DOCKERFILE_SNIPPETS:
+            if snippet in line:
+                violations.extend(
+                    [
+                        BoundaryViolation(
+                            file_path=str(
+                                GRAPH_SERVICE_DOCKERFILE.relative_to(REPO_ROOT),
+                            ),
+                            line_number=line_number,
+                            imported_module=snippet,
+                        ),
+                    ],
+                )
+    return violations
 
 
 def main() -> int:
@@ -143,6 +206,10 @@ def main() -> int:
     print("graph_boundary: error")
     print("Direct graph-internal imports are only allowed in the standalone service")
     print("and the explicit legacy allowlist while extraction is still in progress.")
+    print("The standalone graph service also cannot import Artana/OpenAI/LLM")
+    print("runtime modules after the harness extraction boundary.")
+    print("Graph-service container packaging must stay on service-local")
+    print("requirements instead of installing the shared root package.")
     for violation in violations:
         print(
             f"{violation.file_path}:{violation.line_number}: error: "

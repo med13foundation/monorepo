@@ -38,7 +38,7 @@ from src.infrastructure.extraction import (
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
 )
-from src.infrastructure.graph_service.pipeline import (
+from src.infrastructure.graph_harness.pipeline import (
     build_graph_connection_seed_runner_for_service,
 )
 from src.infrastructure.llm.adapters.pubmed_relevance_agent_adapter import (

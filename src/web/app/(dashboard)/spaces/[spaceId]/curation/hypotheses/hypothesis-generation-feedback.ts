@@ -13,7 +13,7 @@ function summarizeErrorCode(code: string): string {
     return 'No seed entities were available for graph exploration.'
   }
   if (code === 'no_candidates_discovered') {
-    return 'Graph exploration returned no candidate relations.'
+    return 'Graph exploration returned no candidate hypotheses.'
   }
   if (code === 'all_candidates_below_threshold') {
     return 'Candidates were found but all scored below the acceptance threshold.'
@@ -58,7 +58,7 @@ export function buildHypothesisGenerationFeedback(
 ): GenerationFeedback {
   if (response.created_count > 0) {
     return {
-      summary: `Generated ${response.created_count} hypotheses (deduped ${response.deduped_count}).`,
+      summary: `Staged ${response.created_count} candidate hypotheses for review.`,
       details: [],
       tone: 'success',
     }
@@ -69,7 +69,7 @@ export function buildHypothesisGenerationFeedback(
     derivedDetails.push('No seeds were resolved for this space.')
   }
   if (response.used_seed_count > 0 && response.candidates_seen === 0) {
-    derivedDetails.push('No graph relation candidates were returned for the selected seeds.')
+    derivedDetails.push('No candidate hypotheses were returned for the selected seeds.')
   }
   if (response.deduped_count > 0) {
     derivedDetails.push(`All eligible candidates were deduped (${response.deduped_count}).`)
@@ -77,7 +77,7 @@ export function buildHypothesisGenerationFeedback(
 
   const errorDetails = response.errors.map(summarizeErrorCode)
   const details = dedupeStrings([...derivedDetails, ...errorDetails]).slice(0, 4)
-  const summary = 'Generation completed but produced no new hypotheses.'
+  const summary = 'Exploration completed but produced no candidate hypotheses.'
   return {
     summary,
     details,

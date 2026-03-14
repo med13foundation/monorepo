@@ -8,7 +8,6 @@ from uuid import uuid4
 
 import httpx
 
-from src.domain.agents.contracts.graph_connection import ProposedRelation
 from src.infrastructure.graph_service import (
     GraphServiceClient,
     GraphServiceClientConfig,
@@ -27,7 +26,6 @@ from src.type_definitions.graph_api_schemas.concept_schemas import (
 )
 from src.type_definitions.graph_api_schemas.hypothesis_schemas import (
     CreateManualHypothesisRequest,
-    GenerateHypothesesRequest,
 )
 from src.type_definitions.graph_api_schemas.kernel_graph_view_schemas import (
     KernelClaimMechanismChainResponse,
@@ -35,11 +33,11 @@ from src.type_definitions.graph_api_schemas.kernel_graph_view_schemas import (
 )
 from src.type_definitions.graph_api_schemas.kernel_schemas import (
     KernelEntityCreateRequest,
-    KernelEntityEmbeddingRefreshRequest,
     KernelEntityUpdateRequest,
     KernelGraphDocumentRequest,
     KernelGraphSubgraphRequest,
     KernelObservationCreateRequest,
+    KernelRelationClaimCreateRequest,
     KernelRelationClaimTriageRequest,
     KernelRelationCreateRequest,
     KernelRelationCurationUpdateRequest,
@@ -111,6 +109,77 @@ def test_graph_service_client_lists_relations_with_auth_header() -> None:
 
     assert response.total == 1
     assert response.relations[0].id == relation_id
+    http_client.close()
+
+
+def test_graph_service_client_posts_relation_suggestion_request() -> None:
+    space_id = uuid4()
+    source_entity_id = uuid4()
+    target_entity_id = uuid4()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == f"/v1/spaces/{space_id}/relations/suggestions"
+        assert request.headers["Authorization"] == "Bearer test-token"
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["source_entity_ids"] == [str(source_entity_id)]
+        assert payload["limit_per_source"] == 3
+        assert payload["min_score"] == 0.75
+        assert payload["exclude_existing_relations"] is True
+        return httpx.Response(
+            status_code=200,
+            json={
+                "suggestions": [
+                    {
+                        "source_entity_id": str(source_entity_id),
+                        "target_entity_id": str(target_entity_id),
+                        "relation_type": "SUGGESTS",
+                        "final_score": 0.86,
+                        "score_breakdown": {
+                            "vector_score": 0.84,
+                            "graph_overlap_score": 0.78,
+                            "relation_prior_score": 0.65,
+                        },
+                        "constraint_check": {
+                            "passed": True,
+                            "source_entity_type": "GENE",
+                            "relation_type": "SUGGESTS",
+                            "target_entity_type": "GENE",
+                        },
+                    },
+                ],
+                "total": 1,
+                "limit_per_source": 3,
+                "min_score": 0.75,
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.Client(
+        base_url="https://graph-service.test",
+        transport=transport,
+    )
+    client = GraphServiceClient(
+        GraphServiceClientConfig(
+            base_url="https://graph-service.test",
+            default_headers={"Authorization": "Bearer test-token"},
+        ),
+        client=http_client,
+    )
+
+    response = client.suggest_relations(
+        space_id=space_id,
+        request=KernelRelationSuggestionRequest(
+            source_entity_ids=[source_entity_id],
+            limit_per_source=3,
+            min_score=0.75,
+            exclude_existing_relations=True,
+        ),
+    )
+
+    assert response.total == 1
+    assert response.suggestions[0].source_entity_id == source_entity_id
+    assert response.suggestions[0].target_entity_id == target_entity_id
     http_client.close()
 
 
@@ -964,45 +1033,77 @@ def test_graph_service_client_supports_claim_workflows() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == f"/v1/spaces/{space_id}/claims":
-            assert request.method == "GET"
-            assert request.url.params["claim_status"] == "OPEN"
-            assert request.url.params["validation_state"] == "ALLOWED"
-            assert request.url.params["persistability"] == "PERSISTABLE"
-            assert request.url.params["polarity"] == "SUPPORT"
-            assert request.url.params["certainty_band"] == "MEDIUM"
+            if request.method == "GET":
+                assert request.url.params["claim_status"] == "OPEN"
+                assert request.url.params["validation_state"] == "ALLOWED"
+                assert request.url.params["persistability"] == "PERSISTABLE"
+                assert request.url.params["polarity"] == "SUPPORT"
+                assert request.url.params["certainty_band"] == "MEDIUM"
+                return httpx.Response(
+                    status_code=200,
+                    json={
+                        "claims": [
+                            {
+                                "id": str(claim_id),
+                                "research_space_id": str(space_id),
+                                "source_document_id": None,
+                                "agent_run_id": None,
+                                "source_type": "GENE",
+                                "relation_type": "ASSOCIATED_WITH",
+                                "target_type": "PHENOTYPE",
+                                "source_label": "MED13",
+                                "target_label": "Developmental delay",
+                                "confidence": 0.77,
+                                "validation_state": "ALLOWED",
+                                "validation_reason": None,
+                                "persistability": "PERSISTABLE",
+                                "claim_status": "OPEN",
+                                "polarity": "SUPPORT",
+                                "claim_text": "Claim text",
+                                "claim_section": None,
+                                "linked_relation_id": None,
+                                "metadata": {},
+                                "triaged_by": None,
+                                "triaged_at": None,
+                                "created_at": timestamp,
+                                "updated_at": timestamp,
+                            },
+                        ],
+                        "total": 1,
+                        "offset": 0,
+                        "limit": 25,
+                    },
+                )
+            payload = json.loads(request.content.decode("utf-8"))
+            assert request.method == "POST"
+            assert payload["relation_type"] == "SUGGESTS"
             return httpx.Response(
-                status_code=200,
+                status_code=201,
                 json={
-                    "claims": [
-                        {
-                            "id": str(claim_id),
-                            "research_space_id": str(space_id),
-                            "source_document_id": None,
-                            "agent_run_id": None,
-                            "source_type": "GENE",
-                            "relation_type": "ASSOCIATED_WITH",
-                            "target_type": "PHENOTYPE",
-                            "source_label": "MED13",
-                            "target_label": "Developmental delay",
-                            "confidence": 0.77,
-                            "validation_state": "ALLOWED",
-                            "validation_reason": None,
-                            "persistability": "PERSISTABLE",
-                            "claim_status": "OPEN",
-                            "polarity": "SUPPORT",
-                            "claim_text": "Claim text",
-                            "claim_section": None,
-                            "linked_relation_id": None,
-                            "metadata": {},
-                            "triaged_by": None,
-                            "triaged_at": None,
-                            "created_at": timestamp,
-                            "updated_at": timestamp,
-                        },
-                    ],
-                    "total": 1,
-                    "offset": 0,
-                    "limit": 25,
+                    "id": str(claim_id),
+                    "research_space_id": str(space_id),
+                    "source_document_id": None,
+                    "source_document_ref": "harness_proposal:test",
+                    "agent_run_id": "graph_connection:test-run",
+                    "source_type": "GENE",
+                    "relation_type": "SUGGESTS",
+                    "target_type": "GENE",
+                    "source_label": "MED13",
+                    "target_label": "Cyclin C",
+                    "confidence": 0.73,
+                    "validation_state": "ALLOWED",
+                    "validation_reason": "created_via_claim_api",
+                    "persistability": "PERSISTABLE",
+                    "claim_status": "OPEN",
+                    "polarity": "SUPPORT",
+                    "claim_text": "Synthetic promoted claim",
+                    "claim_section": None,
+                    "linked_relation_id": None,
+                    "metadata": {"proposal_id": "proposal-1"},
+                    "triaged_by": None,
+                    "triaged_at": None,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
                 },
             )
         if path == f"/v1/spaces/{space_id}/claims/by-entity/{claim_id}":
@@ -1194,6 +1295,20 @@ def test_graph_service_client_supports_claim_workflows() -> None:
         offset=0,
         limit=25,
     )
+    created_claim = client.create_claim(
+        space_id=space_id,
+        request=KernelRelationClaimCreateRequest(
+            source_entity_id=uuid4(),
+            target_entity_id=uuid4(),
+            relation_type="SUGGESTS",
+            confidence=0.73,
+            claim_text="Synthetic promoted claim",
+            evidence_summary="Synthetic hypothesis evidence",
+            source_document_ref="harness_proposal:test",
+            agent_run_id="graph_connection:test-run",
+            metadata={"proposal_id": "proposal-1"},
+        ),
+    )
     claims_by_entity = client.list_claims_by_entity(
         space_id=space_id,
         entity_id=claim_id,
@@ -1238,6 +1353,8 @@ def test_graph_service_client_supports_claim_workflows() -> None:
     )
 
     assert claims.total == 1
+    assert created_claim.claim_status == "OPEN"
+    assert created_claim.relation_type == "SUGGESTS"
     assert claims_by_entity.total == 0
     assert participants.total == 0
     assert evidence.total == 0
@@ -1488,88 +1605,6 @@ def test_graph_service_client_manages_entities_and_observations() -> None:
     http_client.close()
 
 
-def test_graph_service_client_manages_entity_embedding_endpoints() -> None:
-    space_id = uuid4()
-    entity_id = uuid4()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            assert (
-                request.url.path
-                == f"/v1/spaces/{space_id}/entities/{entity_id}/similar"
-            )
-            assert request.url.params.get_list("target_entity_types") == [
-                "GENE",
-                "PHENOTYPE",
-            ]
-            return httpx.Response(
-                status_code=200,
-                json={
-                    "source_entity_id": str(entity_id),
-                    "results": [
-                        {
-                            "entity_id": str(uuid4()),
-                            "entity_type": "GENE",
-                            "display_label": "MED13-like gene",
-                            "similarity_score": 0.89,
-                            "score_breakdown": {
-                                "vector_score": 0.93,
-                                "graph_overlap_score": 0.54,
-                            },
-                        },
-                    ],
-                    "total": 1,
-                    "limit": 10,
-                    "min_similarity": 0.7,
-                },
-            )
-
-        payload = json.loads(request.content.decode("utf-8"))
-        assert request.url.path == f"/v1/spaces/{space_id}/entities/embeddings/refresh"
-        assert payload["embedding_version"] == 2
-        return httpx.Response(
-            status_code=200,
-            json={
-                "requested": 1,
-                "processed": 1,
-                "refreshed": 1,
-                "unchanged": 0,
-                "missing_entities": [],
-            },
-        )
-
-    transport = httpx.MockTransport(handler)
-    http_client = httpx.Client(
-        base_url="https://graph-service.test",
-        transport=transport,
-    )
-    client = GraphServiceClient(
-        GraphServiceClientConfig(base_url="https://graph-service.test"),
-        client=http_client,
-    )
-
-    similar = client.list_similar_entities(
-        space_id=space_id,
-        entity_id=entity_id,
-        limit=10,
-        min_similarity=0.7,
-        target_entity_types=["GENE", "PHENOTYPE"],
-    )
-    refreshed = client.refresh_entity_embeddings(
-        space_id=space_id,
-        request=KernelEntityEmbeddingRefreshRequest(
-            entity_ids=[entity_id],
-            limit=20,
-            model_name="test-model",
-            embedding_version=2,
-        ),
-    )
-
-    assert similar.total == 1
-    assert refreshed.refreshed == 1
-    http_client.close()
-
-
 def test_graph_service_client_fetches_graph_export_and_document() -> None:
     space_id = uuid4()
     source_id = uuid4()
@@ -1762,292 +1797,6 @@ def test_graph_service_client_fetches_graph_export_and_document() -> None:
     assert len(export_response.edges) == 1
     assert document_response.meta.counts.claim_nodes == 1
     assert any(node.kind == "CLAIM" for node in document_response.nodes)
-    http_client.close()
-
-
-def test_graph_service_client_posts_relation_suggestions() -> None:
-    space_id = uuid4()
-    source_id = uuid4()
-    target_id = uuid4()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "POST"
-        assert request.url.path == f"/v1/spaces/{space_id}/graph/relation-suggestions"
-        assert request.headers["Content-Type"] == "application/json"
-        payload = json.loads(request.content.decode("utf-8"))
-        assert payload == {
-            "source_entity_ids": [str(source_id)],
-            "limit_per_source": 5,
-            "min_score": 0.7,
-            "allowed_relation_types": ["ASSOCIATED_WITH"],
-            "target_entity_types": ["PHENOTYPE"],
-            "exclude_existing_relations": True,
-        }
-        return httpx.Response(
-            status_code=200,
-            json={
-                "suggestions": [
-                    {
-                        "source_entity_id": str(source_id),
-                        "target_entity_id": str(target_id),
-                        "relation_type": "ASSOCIATED_WITH",
-                        "final_score": 0.91,
-                        "score_breakdown": {
-                            "vector_score": 0.87,
-                            "graph_overlap_score": 0.54,
-                            "relation_prior_score": 0.72,
-                        },
-                        "constraint_check": {
-                            "passed": True,
-                            "source_entity_type": "GENE",
-                            "relation_type": "ASSOCIATED_WITH",
-                            "target_entity_type": "PHENOTYPE",
-                        },
-                    },
-                ],
-                "total": 1,
-                "limit_per_source": 5,
-                "min_score": 0.7,
-            },
-        )
-
-    transport = httpx.MockTransport(handler)
-    http_client = httpx.Client(
-        base_url="https://graph-service.test",
-        transport=transport,
-    )
-    client = GraphServiceClient(
-        GraphServiceClientConfig(base_url="https://graph-service.test"),
-        client=http_client,
-    )
-
-    response = client.suggest_relations(
-        space_id=space_id,
-        request=KernelRelationSuggestionRequest(
-            source_entity_ids=[source_id],
-            limit_per_source=5,
-            min_score=0.7,
-            allowed_relation_types=["ASSOCIATED_WITH"],
-            target_entity_types=["PHENOTYPE"],
-            exclude_existing_relations=True,
-        ),
-    )
-
-    assert response.total == 1
-    assert response.suggestions[0].source_entity_id == source_id
-    assert response.suggestions[0].target_entity_id == target_id
-    http_client.close()
-
-
-def test_graph_service_client_executes_graph_search() -> None:
-    space_id = uuid4()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "POST"
-        assert request.url.path == f"/v1/spaces/{space_id}/graph/search"
-        payload = json.loads(request.content.decode("utf-8"))
-        assert payload == {
-            "question": "MED13",
-            "model_id": "model-1",
-            "max_depth": 2,
-            "top_k": 5,
-            "curation_statuses": ["ACCEPTED"],
-            "include_evidence_chains": True,
-            "force_agent": False,
-        }
-        return httpx.Response(
-            status_code=200,
-            json={
-                "confidence_score": 0.87,
-                "rationale": "Deterministic graph search completed with ranked results.",
-                "evidence": [],
-                "decision": "generated",
-                "research_space_id": str(space_id),
-                "original_query": "MED13",
-                "interpreted_intent": "MED13",
-                "query_plan_summary": "Deterministic plan",
-                "total_results": 1,
-                "results": [
-                    {
-                        "entity_id": "entity-1",
-                        "entity_type": "GENE",
-                        "display_label": "MED13",
-                        "relevance_score": 0.91,
-                        "matching_observation_ids": [],
-                        "matching_relation_ids": ["relation-1"],
-                        "evidence_chain": [],
-                        "explanation": "Result explanation",
-                        "support_summary": "Support summary",
-                    },
-                ],
-                "executed_path": "deterministic",
-                "warnings": [],
-                "agent_run_id": None,
-            },
-        )
-
-    transport = httpx.MockTransport(handler)
-    http_client = httpx.Client(
-        base_url="https://graph-service.test",
-        transport=transport,
-    )
-    client = GraphServiceClient(
-        GraphServiceClientConfig(base_url="https://graph-service.test"),
-        client=http_client,
-    )
-
-    response = client.search_graph(
-        space_id=space_id,
-        question="MED13",
-        model_id="model-1",
-        top_k=5,
-        curation_statuses=["ACCEPTED"],
-    )
-
-    assert response.executed_path == "deterministic"
-    assert response.total_results == 1
-    assert response.results[0].matching_relation_ids == ["relation-1"]
-    http_client.close()
-
-
-def test_graph_service_client_discovers_graph_connections() -> None:
-    space_id = uuid4()
-    source_id = uuid4()
-    target_id = uuid4()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(request.content.decode("utf-8"))
-        if request.url.path == f"/v1/spaces/{space_id}/graph/connections/discover":
-            assert request.method == "POST"
-            assert payload == {
-                "seed_entity_ids": [str(source_id), str(target_id)],
-                "source_type": "pubmed",
-                "source_id": "source-123",
-                "model_id": None,
-                "relation_types": None,
-                "max_depth": 3,
-                "shadow_mode": True,
-                "pipeline_run_id": "pipeline-run-001",
-                "fallback_relations": [
-                    {
-                        "source_id": str(source_id),
-                        "relation_type": "ASSOCIATED_WITH",
-                        "target_id": str(target_id),
-                        "confidence": 0.55,
-                        "evidence_summary": "Fallback relation",
-                        "evidence_tier": "COMPUTATIONAL",
-                        "supporting_provenance_ids": [],
-                        "supporting_document_count": 0,
-                        "reasoning": "Fallback reasoning",
-                    },
-                ],
-            }
-            return httpx.Response(
-                status_code=200,
-                json={
-                    "requested": 2,
-                    "processed": 2,
-                    "discovered": 1,
-                    "failed": 1,
-                    "review_required": 1,
-                    "shadow_runs": 1,
-                    "proposed_relations_count": 3,
-                    "persisted_relations_count": 1,
-                    "rejected_candidates_count": 2,
-                    "errors": ["fallback"],
-                    "outcomes": [
-                        {
-                            "seed_entity_id": str(source_id),
-                            "research_space_id": str(space_id),
-                            "status": "discovered",
-                            "reason": "processed",
-                            "review_required": False,
-                            "shadow_mode": True,
-                            "wrote_to_graph": True,
-                            "run_id": "run-1",
-                            "proposed_relations_count": 2,
-                            "persisted_relations_count": 1,
-                            "rejected_candidates_count": 1,
-                            "errors": [],
-                        },
-                    ],
-                },
-            )
-
-        assert request.method == "POST"
-        assert (
-            request.url.path
-            == f"/v1/spaces/{space_id}/entities/{source_id}/connections"
-        )
-        assert payload == {
-            "source_type": None,
-            "source_id": "source-123",
-            "model_id": None,
-            "relation_types": None,
-            "max_depth": 2,
-            "shadow_mode": None,
-            "pipeline_run_id": "pipeline-run-002",
-            "fallback_relations": None,
-        }
-        return httpx.Response(
-            status_code=200,
-            json={
-                "seed_entity_id": str(source_id),
-                "research_space_id": str(space_id),
-                "status": "discovered",
-                "reason": "processed",
-                "review_required": False,
-                "shadow_mode": False,
-                "wrote_to_graph": True,
-                "run_id": "run-2",
-                "proposed_relations_count": 2,
-                "persisted_relations_count": 1,
-                "rejected_candidates_count": 1,
-                "errors": [],
-            },
-        )
-
-    transport = httpx.MockTransport(handler)
-    http_client = httpx.Client(
-        base_url="https://graph-service.test",
-        transport=transport,
-    )
-    client = GraphServiceClient(
-        GraphServiceClientConfig(base_url="https://graph-service.test"),
-        client=http_client,
-    )
-
-    batch_response = client.discover_graph_connections(
-        space_id=space_id,
-        seed_entity_ids=[str(source_id), str(target_id)],
-        source_type="pubmed",
-        source_id="source-123",
-        max_depth=3,
-        shadow_mode=True,
-        pipeline_run_id="pipeline-run-001",
-        fallback_relations=[
-            ProposedRelation(
-                source_id=str(source_id),
-                relation_type="ASSOCIATED_WITH",
-                target_id=str(target_id),
-                confidence=0.55,
-                evidence_summary="Fallback relation",
-                supporting_provenance_ids=[],
-                supporting_document_count=0,
-                reasoning="Fallback reasoning",
-            ),
-        ],
-    )
-    single_response = client.discover_entity_connections(
-        space_id=space_id,
-        entity_id=source_id,
-        source_id="source-123",
-        pipeline_run_id="pipeline-run-002",
-    )
-
-    assert batch_response.requested == 2
-    assert batch_response.outcomes[0].run_id == "run-1"
-    assert single_response.run_id == "run-2"
     http_client.close()
 
 
@@ -2490,22 +2239,7 @@ def test_graph_service_client_hypothesis_workflows() -> None:
                     "metadata": {},
                 },
             )
-        assert request.url.path == f"/v1/spaces/{space_id}/hypotheses/generate"
-        payload = json.loads(request.content.decode("utf-8"))
-        assert payload["seed_entity_ids"] == ["seed-1"]
-        return httpx.Response(
-            status_code=200,
-            json={
-                "run_id": "run-123",
-                "requested_seed_count": 1,
-                "used_seed_count": 1,
-                "candidates_seen": 3,
-                "created_count": 1,
-                "deduped_count": 0,
-                "errors": [],
-                "hypotheses": [],
-            },
-        )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
     transport = httpx.MockTransport(handler)
     http_client = httpx.Client(
@@ -2525,17 +2259,8 @@ def test_graph_service_client_hypothesis_workflows() -> None:
             rationale="Needs validation",
         ),
     )
-    generated_response = client.generate_hypotheses(
-        space_id=space_id,
-        request=GenerateHypothesesRequest(
-            seed_entity_ids=["seed-1"],
-            max_hypotheses=5,
-        ),
-    )
-
     assert list_response.total == 0
     assert list_response.offset == 3
     assert list_response.limit == 7
     assert manual_response.claim_id == hypothesis_id
-    assert generated_response.created_count == 1
     http_client.close()
