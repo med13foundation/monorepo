@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
 from src.infrastructure.repositories.kernel.kernel_relation_claim_repository import (
@@ -56,6 +56,11 @@ def _create_linked_relation(
     research_space_id: str,
     relation_type: str,
 ) -> str:
+    normalized_space_id = (
+        UUID(research_space_id)
+        if isinstance(research_space_id, str)
+        else research_space_id
+    )
     ensure_relation_constraint(
         db_session,
         source_type="GENE",
@@ -68,14 +73,14 @@ def _create_linked_relation(
         [
             EntityModel(
                 id=source_id,
-                research_space_id=research_space_id,
+                research_space_id=normalized_space_id,
                 entity_type="GENE",
                 display_label="MED13",
                 metadata_payload={},
             ),
             EntityModel(
                 id=target_id,
-                research_space_id=research_space_id,
+                research_space_id=normalized_space_id,
                 entity_type="DISEASE",
                 display_label="Cardiomyopathy",
                 metadata_payload={},

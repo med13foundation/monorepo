@@ -29,3 +29,9 @@ src/web
 apps/frontdoor
 *.log
 .DS_Store
+!tests/
+!tests/**
+!docs/
+!docs/**
+!src/web/types/
+!src/web/types/**
