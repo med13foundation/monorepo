@@ -35,11 +35,8 @@ the public contract.
 ### Service-local governance and persistence helpers
 
 - `services/graph_api/governance.py`
-- `services/graph_api/dictionary_repository.py`
-- `services/graph_api/_dictionary_repository_constraints_merge_mixin.py`
-- `services/graph_api/_dictionary_repository_transform_mixin.py`
-- `services/graph_api/concept_repository.py`
-- `services/graph_api/dictionary_search.py`
+- `services/graph_api/dictionary_repository.py` (compatibility re-export)
+- `services/graph_api/concept_repository.py` (compatibility re-export)
 
 ### Service-local graph read/write helpers
 
@@ -281,6 +278,7 @@ The platform app no longer publishes graph routes under the
 ### Graph performance
 
 - `tests/performance/test_graph_query_performance.py`
+- `docs/graph/reference/read-model-benchmarks.md`
 
 ### Boundary enforcement
 

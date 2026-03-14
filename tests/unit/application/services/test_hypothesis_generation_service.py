@@ -14,6 +14,9 @@ from src.application.agents.services.hypothesis_generation_service import (
     HypothesisGenerationServiceDependencies,
 )
 from src.application.services.claim_first_metrics import reset_metric_counters_for_tests
+from src.application.services.kernel._kernel_reasoning_path_support import (
+    KernelMechanismPathCandidate,
+)
 from src.application.services.kernel.kernel_reasoning_path_service import (
     KernelReasoningPathDetail,
     ReasoningPathListResult,
@@ -280,7 +283,7 @@ class StubDictionaryService:
 
 @dataclass
 class StubReasoningPathService:
-    paths_by_start_entity: dict[str, list[KernelReasoningPath]]
+    candidates_by_start_entity: dict[str, list[KernelMechanismPathCandidate]]
     details_by_id: dict[str, KernelReasoningPathDetail]
 
     def list_paths(  # noqa: PLR0913
@@ -294,14 +297,30 @@ class StubReasoningPathService:
         limit: int = 50,
         offset: int = 0,
     ) -> ReasoningPathListResult:
-        del research_space_id, end_entity_id, status, path_kind, offset
-        paths = list(self.paths_by_start_entity.get(start_entity_id or "", []))
+        del start_entity_id, end_entity_id, status, path_kind, offset
+        paths = [
+            detail.path
+            for detail in self.details_by_id.values()
+            if str(detail.path.research_space_id) == research_space_id
+        ]
         return ReasoningPathListResult(
             paths=tuple(paths[:limit]),
             total=len(paths),
             offset=0,
             limit=limit,
         )
+
+    def list_mechanism_candidates(
+        self,
+        *,
+        research_space_id: str,
+        start_entity_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[KernelMechanismPathCandidate, ...]:
+        del research_space_id, offset
+        candidates = list(self.candidates_by_start_entity.get(start_entity_id, []))
+        return tuple(candidates[:limit])
 
     def get_path(
         self,
@@ -1064,7 +1083,26 @@ async def test_generate_hypotheses_prefers_active_reasoning_paths() -> None:
             ),
             dictionary_service=StubDictionaryService(allow_all=True),
             reasoning_path_service=StubReasoningPathService(
-                paths_by_start_entity={str(start_entity_id): [path]},
+                candidates_by_start_entity={
+                    str(start_entity_id): [
+                        KernelMechanismPathCandidate(
+                            reasoning_path_id=str(path_id),
+                            start_entity_id=str(start_entity_id),
+                            end_entity_id=str(end_entity_id),
+                            source_type=start_entity.entity_type,
+                            target_type=end_entity.entity_type,
+                            relation_type="ASSOCIATED_WITH",
+                            source_label=start_entity.display_label,
+                            target_label=end_entity.display_label,
+                            confidence=float(path.confidence),
+                            path_length=int(path.path_length),
+                            supporting_claim_ids=(
+                                str(root_claim_id),
+                                str(final_claim_id),
+                            ),
+                        ),
+                    ],
+                },
                 details_by_id={str(path_id): path_detail},
             ),
         ),
@@ -1278,7 +1316,26 @@ async def test_generate_hypotheses_creates_transfer_backed_hypothesis() -> None:
             ),
             dictionary_service=StubDictionaryService(allow_all=True),
             reasoning_path_service=StubReasoningPathService(
-                paths_by_start_entity={str(start_entity_id): [path]},
+                candidates_by_start_entity={
+                    str(start_entity_id): [
+                        KernelMechanismPathCandidate(
+                            reasoning_path_id=str(path_id),
+                            start_entity_id=str(start_entity_id),
+                            end_entity_id=str(end_entity_id),
+                            source_type=start_entity.entity_type,
+                            target_type=end_entity.entity_type,
+                            relation_type="ASSOCIATED_WITH",
+                            source_label=start_entity.display_label,
+                            target_label=end_entity.display_label,
+                            confidence=float(path.confidence),
+                            path_length=int(path.path_length),
+                            supporting_claim_ids=(
+                                str(root_claim_id),
+                                str(final_claim_id),
+                            ),
+                        ),
+                    ],
+                },
                 details_by_id={str(path_id): path_detail},
             ),
         ),
@@ -1506,7 +1563,26 @@ async def test_generate_hypotheses_blocks_transfer_when_contradictions_dominate(
             ),
             dictionary_service=StubDictionaryService(allow_all=True),
             reasoning_path_service=StubReasoningPathService(
-                paths_by_start_entity={str(start_entity_id): [path]},
+                candidates_by_start_entity={
+                    str(start_entity_id): [
+                        KernelMechanismPathCandidate(
+                            reasoning_path_id=str(path_id),
+                            start_entity_id=str(start_entity_id),
+                            end_entity_id=str(end_entity_id),
+                            source_type=start_entity.entity_type,
+                            target_type=end_entity.entity_type,
+                            relation_type="ASSOCIATED_WITH",
+                            source_label=start_entity.display_label,
+                            target_label=end_entity.display_label,
+                            confidence=float(path.confidence),
+                            path_length=int(path.path_length),
+                            supporting_claim_ids=(
+                                str(root_claim_id),
+                                str(final_claim_id),
+                            ),
+                        ),
+                    ],
+                },
                 details_by_id={str(path_id): path_detail},
             ),
         ),

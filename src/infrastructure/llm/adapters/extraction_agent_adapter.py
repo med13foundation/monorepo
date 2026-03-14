@@ -47,10 +47,10 @@ if TYPE_CHECKING:
     from artana.store import PostgresStore
 
     from src.domain.agents.contexts.extraction_context import ExtractionContext
+    from src.graph.core.extraction_payload import ExtractionPayloadConfig
+    from src.graph.core.extraction_prompt import ExtractionPromptConfig
 
 logger = logging.getLogger(__name__)
-
-_SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
 _ARTANA_IMPORT_ERROR: Exception | None = None
 
 try:
@@ -67,10 +67,12 @@ _OpenAIChatModelPort = OpenAIJSONSchemaModelPort
 class ArtanaExtractionAdapter(ExtractionAgentPort):
     """Adapter that executes extraction workflows through Artana."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         model: str | None = None,
         *,
+        prompt_config: ExtractionPromptConfig,
+        payload_config: ExtractionPayloadConfig,
         use_governance: bool = True,
         dictionary_service: object | None = None,
         artana_store: PostgresStore | None = None,
@@ -83,6 +85,8 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
             raise RuntimeError(msg) from _ARTANA_IMPORT_ERROR
 
         self._default_model = model
+        self._prompt_config = prompt_config
+        self._payload_config = payload_config
         self._use_governance = use_governance
         self._dictionary_service = dictionary_service
         self._governance = GovernanceConfig.from_environment()
@@ -102,7 +106,7 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
     ) -> ExtractionContract:
         self._last_run_id = None
         source_type = context.source_type.strip().lower()
-        if source_type not in _SUPPORTED_SOURCE_TYPES:
+        if source_type not in self._prompt_config.supported_source_types():
             return self._unsupported_source_contract(context)
 
         if not self._has_openai_key():
@@ -280,9 +284,11 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
             budget_usd_limit=budget_usd_limit,
         )
 
-    @staticmethod
-    def _get_system_prompt(source_type: str) -> str:
-        return get_extraction_system_prompt(source_type)
+    def _get_system_prompt(self, source_type: str) -> str:
+        return get_extraction_system_prompt(
+            source_type,
+            prompt_config=self._prompt_config,
+        )
 
     def _build_prompt(
         self,
@@ -295,6 +301,8 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
             source_type=source_type,
             context=context,
             relation_governance_mode=relation_governance_mode,
+            prompt_config=self._prompt_config,
+            payload_config=self._payload_config,
         )
 
     @classmethod
@@ -344,7 +352,10 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
         return "HUMAN_IN_LOOP"
 
     def _build_input_text(self, context: ExtractionContext) -> str:
-        return build_extraction_input_text(context)
+        return build_extraction_input_text(
+            context,
+            payload_config=self._payload_config,
+        )
 
     @classmethod
     def _sanitize_json_value(cls, value: object) -> object:
@@ -354,9 +365,14 @@ class ArtanaExtractionAdapter(ExtractionAgentPort):
     def _sanitize_text_value(value: str) -> str:
         return sanitize_text_value(value)
 
-    @staticmethod
-    def _build_compact_raw_record(context: ExtractionContext) -> dict[str, object]:
-        return build_compact_raw_record(context)
+    def _build_compact_raw_record(
+        self,
+        context: ExtractionContext,
+    ) -> dict[str, object]:
+        return build_compact_raw_record(
+            context,
+            payload_config=self._payload_config,
+        )
 
     @classmethod
     def _normalize_temporal_context(

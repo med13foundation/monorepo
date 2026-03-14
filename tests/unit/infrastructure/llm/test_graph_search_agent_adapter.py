@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from src.domain.agents.contexts.graph_search_context import GraphSearchContext
 from src.domain.agents.contracts.graph_search import GraphSearchContract
 from src.domain.agents.models import ModelCapability, ModelSpec
+from src.graph.core.search_extension import GraphSearchConfig
 from src.infrastructure.llm.adapters.graph_search_agent_adapter import (
     ArtanaGraphSearchAdapter,
     _OpenAIChatModelPort,
@@ -93,7 +94,10 @@ def _build_adapter(*, with_graph_service: bool = True):
             create=True,
         ),
     ):
-        yield ArtanaGraphSearchAdapter(graph_query_service=graph_query_service), client
+        yield ArtanaGraphSearchAdapter(
+            search_extension=GraphSearchConfig(system_prompt="Test search prompt"),
+            graph_query_service=graph_query_service,
+        ), client
 
 
 @pytest.mark.asyncio
@@ -151,6 +155,18 @@ async def test_search_calls_artana_and_normalizes_contract() -> None:
     assert contract.agent_run_id is not None
     assert contract.agent_run_id.startswith("graph_search:")
     client.step.assert_awaited_once()
+
+
+def test_build_prompt_uses_search_extension_system_prompt() -> None:
+    with _build_adapter(with_graph_service=True) as (adapter, _client):
+        context = GraphSearchContext(
+            question="Find entities related to MED13",
+            research_space_id="space-3",
+        )
+
+        prompt = adapter._build_prompt(context)  # noqa: SLF001
+
+    assert prompt.startswith("Test search prompt")
 
 
 @pytest.mark.asyncio

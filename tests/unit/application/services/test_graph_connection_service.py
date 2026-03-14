@@ -25,6 +25,9 @@ from src.domain.agents.contracts.graph_connection import (
     RejectedCandidate,
 )
 from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
+from src.graph.domain_biomedical.graph_connection_prompt import (
+    BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
+)
 
 if TYPE_CHECKING:
     from src.domain.agents.contexts.graph_connection_context import (
@@ -413,6 +416,7 @@ async def test_discover_connections_for_seed_writes_relations() -> None:
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             **projection_dependencies,
@@ -431,6 +435,36 @@ async def test_discover_connections_for_seed_writes_relations() -> None:
     assert outcome.wrote_to_graph is True
     assert outcome.persisted_relations_count == 1
     assert len(relation_repository.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_connections_for_seed_uses_pack_default_source_type() -> None:
+    contract = _build_contract()
+    relation_repository = StubRelationRepository()
+    agent = StubGraphConnectionAgent(contract)
+    projection_dependencies = _build_claim_backed_projection_dependencies(
+        contract,
+        relation_repository=relation_repository,
+    )
+    service = GraphConnectionService(
+        dependencies=GraphConnectionServiceDependencies(
+            graph_connection_agent=agent,
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
+            relation_repository=relation_repository,
+            governance_service=_build_governance_service(),
+            **projection_dependencies,
+        ),
+    )
+
+    outcome = await service.discover_connections_for_seed(
+        research_space_id=contract.research_space_id,
+        seed_entity_id=contract.seed_entity_id,
+        research_space_settings={},
+        shadow_mode=False,
+    )
+
+    assert outcome.status == "discovered"
+    assert agent.calls[-1].source_type == "clinvar"
 
 
 @pytest.mark.asyncio
@@ -459,6 +493,7 @@ async def test_discover_connections_for_seed_records_claim_backed_projection() -
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             entity_repository=entity_repository,
             relation_claim_repository=relation_claim_repository,
@@ -526,6 +561,7 @@ async def test_discover_connections_for_seed_rolls_back_on_projection_failure() 
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             entity_repository=entity_repository,
             relation_claim_repository=relation_claim_repository,
@@ -571,6 +607,7 @@ async def test_discover_connections_for_seed_maps_integrity_errors_to_codes() ->
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             **projection_dependencies,
@@ -598,6 +635,7 @@ async def test_discover_connections_for_seed_respects_shadow_mode() -> None:
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
         ),
@@ -630,6 +668,7 @@ async def test_discover_connections_for_seed_requires_review_on_low_confidence()
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             **projection_dependencies,
@@ -662,6 +701,7 @@ async def test_discover_connections_for_seed_uses_relation_type_thresholds() -> 
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             **projection_dependencies,
@@ -705,6 +745,7 @@ async def test_discover_connections_for_seed_uses_space_settings_port() -> None:
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             space_settings_port=space_settings_port,
@@ -748,6 +789,7 @@ async def test_discover_connections_for_seed_enqueues_review_item() -> None:
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             review_queue_submitter=submit_review_item,
@@ -824,6 +866,7 @@ async def test_discover_connections_for_seed_promotes_rejected_candidates() -> N
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             review_queue_submitter=submit_review_item,
@@ -913,6 +956,7 @@ async def test_discover_connections_for_seed_uses_neighbourhood_fallback() -> No
     service = GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=StubGraphConnectionAgent(contract),
+            graph_connection_prompt=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             relation_repository=relation_repository,
             governance_service=_build_governance_service(),
             review_queue_submitter=submit_review_item,

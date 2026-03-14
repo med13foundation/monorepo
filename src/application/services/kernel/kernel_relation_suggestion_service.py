@@ -32,6 +32,9 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
+    from src.graph.core.relation_suggestion_extension import (
+        GraphRelationSuggestionExtension,
+    )
 
 
 class KernelRelationSuggestionService:
@@ -44,11 +47,13 @@ class KernelRelationSuggestionService:
         relation_repo: KernelRelationRepository,
         dictionary_repo: DictionaryRepository,
         embedding_repo: EntityEmbeddingRepository,
+        relation_suggestion_extension: GraphRelationSuggestionExtension,
     ) -> None:
         self._entities = entity_repo
         self._relations = relation_repo
         self._dictionary = dictionary_repo
         self._embeddings = embedding_repo
+        self._relation_suggestion_extension = relation_suggestion_extension
 
     def suggest_relations(  # noqa: C901, PLR0913
         self,
@@ -132,8 +137,8 @@ class KernelRelationSuggestionService:
                 vector_candidates = self._embeddings.find_similar_entities(
                     research_space_id=research_space_id,
                     entity_id=source_id,
-                    limit=100,
-                    min_similarity=0.0,
+                    limit=self._relation_suggestion_extension.vector_candidate_limit,
+                    min_similarity=self._relation_suggestion_extension.min_vector_similarity,
                     target_entity_types=[target_type],
                 )
                 for candidate in vector_candidates:

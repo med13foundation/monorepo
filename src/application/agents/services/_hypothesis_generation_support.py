@@ -12,13 +12,13 @@ from src.domain.value_objects.relation_types import normalize_relation_type
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
 
+    from src.application.services.kernel._kernel_reasoning_path_support import (
+        KernelMechanismPathCandidate,
+    )
     from src.application.services.kernel.kernel_reasoning_path_service import (
-        KernelReasoningPathDetail,
         KernelReasoningPathService,
     )
     from src.domain.entities.kernel.claim_participants import KernelClaimParticipant
-    from src.domain.entities.kernel.entities import KernelEntity
-    from src.domain.entities.kernel.reasoning_paths import KernelReasoningPath
     from src.domain.entities.kernel.relation_claims import KernelRelationClaim
 
 _GRAPH_SCORE_WEIGHT_CONFIDENCE = 0.50
@@ -312,7 +312,6 @@ def score_candidates(candidates: list[RawCandidate]) -> list[ScoredCandidate]:
 def load_reasoning_path_candidates(
     *,
     reasoning_path_service: KernelReasoningPathService | None,
-    entity_lookup: Callable[[str], KernelEntity | None],
     research_space_id: str,
     seed_entity_ids: list[str],
     max_hypotheses: int,
@@ -323,38 +322,19 @@ def load_reasoning_path_candidates(
     errors: list[str] = []
     seen_path_ids: set[str] = set()
     for seed_entity_id in seed_entity_ids:
-        path_list = reasoning_path_service.list_paths(
+        path_candidates = reasoning_path_service.list_mechanism_candidates(
             research_space_id=research_space_id,
             start_entity_id=seed_entity_id,
-            status="ACTIVE",
-            path_kind="MECHANISM",
             limit=max(5, max_hypotheses * 3),
             offset=0,
         )
-        for path in path_list.paths:
-            path_id = str(path.id)
+        for mechanism_candidate in path_candidates:
+            path_id = mechanism_candidate.reasoning_path_id
             if path_id in seen_path_ids:
                 continue
             seen_path_ids.add(path_id)
-            path_detail = reasoning_path_service.get_path(
-                path_id,
-                research_space_id,
-            )
-            if path_detail is None:
-                errors.append(f"path_missing:{path_id}")
-                continue
-            start_entity = entity_lookup(str(path.start_entity_id))
-            end_entity = entity_lookup(str(path.end_entity_id))
-            if start_entity is None or end_entity is None:
-                errors.append(f"path_endpoint_unresolved:{path_id}")
-                continue
             candidates.append(
-                _build_path_candidate(
-                    path=path,
-                    path_detail=path_detail,
-                    start_entity=start_entity,
-                    end_entity=end_entity,
-                ),
+                _build_path_candidate(mechanism_candidate),
             )
     candidates.sort(
         key=lambda item: (
@@ -367,35 +347,20 @@ def load_reasoning_path_candidates(
 
 
 def _build_path_candidate(
-    *,
-    path: KernelReasoningPath,
-    path_detail: KernelReasoningPathDetail,
-    start_entity: KernelEntity,
-    end_entity: KernelEntity,
+    mechanism_candidate: KernelMechanismPathCandidate,
 ) -> PathCandidate:
-    metadata_payload = path.metadata_payload
-    terminal_relation_type = normalize_metadata_relation_type(
-        metadata_payload.get("terminal_relation_type"),
-    )
-    if not terminal_relation_type:
-        terminal_relation_type = "ASSOCIATED_WITH"
-    supporting_claim_ids = normalize_metadata_string_tuple(
-        metadata_payload.get("supporting_claim_ids"),
-    )
-    if not supporting_claim_ids:
-        supporting_claim_ids = tuple(str(claim.id) for claim in path_detail.claims)
     return PathCandidate(
-        reasoning_path_id=str(path.id),
-        start_entity_id=str(path.start_entity_id),
-        end_entity_id=str(path.end_entity_id),
-        source_type=start_entity.entity_type.strip().upper(),
-        target_type=end_entity.entity_type.strip().upper(),
-        relation_type=terminal_relation_type,
-        source_label=normalize_optional_text(start_entity.display_label),
-        target_label=normalize_optional_text(end_entity.display_label),
-        confidence=max(0.0, min(1.0, float(path.confidence))),
-        path_length=int(path.path_length),
-        supporting_claim_ids=supporting_claim_ids,
+        reasoning_path_id=mechanism_candidate.reasoning_path_id,
+        start_entity_id=mechanism_candidate.start_entity_id,
+        end_entity_id=mechanism_candidate.end_entity_id,
+        source_type=mechanism_candidate.source_type,
+        target_type=mechanism_candidate.target_type,
+        relation_type=mechanism_candidate.relation_type,
+        source_label=normalize_optional_text(mechanism_candidate.source_label),
+        target_label=normalize_optional_text(mechanism_candidate.target_label),
+        confidence=max(0.0, min(1.0, float(mechanism_candidate.confidence))),
+        path_length=int(mechanism_candidate.path_length),
+        supporting_claim_ids=mechanism_candidate.supporting_claim_ids,
     )
 
 

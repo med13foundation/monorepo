@@ -12,6 +12,8 @@ from src.domain.entities import (
     user_data_source,
 )
 from src.domain.services.domain_context_resolver import DomainContextResolver
+from src.graph.core.domain_context import default_graph_domain_context_for_source_type
+from src.graph.runtime import create_graph_domain_context_policy
 from src.type_definitions.json_utils import to_json_value
 
 from .session_methods import SessionManagementMixin
@@ -52,9 +54,16 @@ class QuerySourceConfigurationMixin(SessionManagementMixin):
         query = self._pubmed_query_builder.build_query(parameters)
         if query == "ALL[All Fields]":
             query = "MED13"
+        domain_context_policy = create_graph_domain_context_policy()
         config = data_source_configs.pubmed.PubMedQueryConfig(
             query=query,
-            domain_context=DomainContextResolver.PUBMED_DEFAULT_DOMAIN,
+            domain_context=(
+                default_graph_domain_context_for_source_type(
+                    "pubmed",
+                    domain_context_policy=domain_context_policy,
+                )
+                or DomainContextResolver.GENERAL_DEFAULT_DOMAIN
+            ),
             date_from=self._format_pubmed_date(parameters.date_from),
             date_to=self._format_pubmed_date(parameters.date_to),
             publication_types=(parameters.publication_types or None),

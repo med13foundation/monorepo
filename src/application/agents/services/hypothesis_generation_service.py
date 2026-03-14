@@ -152,7 +152,6 @@ class HypothesisGenerationService:
         if self._reasoning_paths is not None:
             path_candidates, path_errors = load_reasoning_path_candidates(
                 reasoning_path_service=self._reasoning_paths,
-                entity_lookup=self._entities.get_by_id,
                 research_space_id=research_space_id,
                 seed_entity_ids=resolved_seed_ids,
                 max_hypotheses=max_hypotheses,

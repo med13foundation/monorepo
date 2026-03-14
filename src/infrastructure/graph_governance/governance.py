@@ -33,11 +33,21 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.dictionary_repository import (
         DictionaryRepository,
     )
+    from src.graph.core.dictionary_loading_extension import (
+        GraphDictionaryLoadingExtension,
+    )
 
 
-def build_dictionary_repository(session: Session) -> DictionaryRepository:
+def build_dictionary_repository(
+    session: Session,
+    *,
+    dictionary_loading_extension: GraphDictionaryLoadingExtension,
+) -> DictionaryRepository:
     """Build the graph-service dictionary repository adapter."""
-    return GraphDictionaryRepository(session)
+    return GraphDictionaryRepository(
+        session,
+        builtin_domain_contexts=dictionary_loading_extension.builtin_domain_contexts,
+    )
 
 
 def build_concept_repository(session: Session) -> ConceptRepository:
@@ -48,11 +58,15 @@ def build_concept_repository(session: Session) -> ConceptRepository:
 def build_dictionary_service(
     session: Session,
     *,
+    dictionary_loading_extension: GraphDictionaryLoadingExtension,
     embedding_provider: HybridTextEmbeddingProvider | None = None,
 ) -> DictionaryPort:
     """Build the graph-service dictionary service from local governance adapters."""
     active_embedding_provider = embedding_provider or HybridTextEmbeddingProvider()
-    dictionary_repo = build_dictionary_repository(session)
+    dictionary_repo = build_dictionary_repository(
+        session,
+        dictionary_loading_extension=dictionary_loading_extension,
+    )
     search_harness = create_dictionary_search_harness(
         dictionary_repo=dictionary_repo,
         embedding_provider=active_embedding_provider,

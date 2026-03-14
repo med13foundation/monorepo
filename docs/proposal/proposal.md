@@ -437,7 +437,7 @@ Applies to `/research-spaces/{space_id}/curation` in the Next.js curation surfac
 1. Keep one hypotheses card with unified data source: `relation_claims` filtered by `polarity='HYPOTHESIS'`.
 2. Expose two actions with clear semantics:
    - `Log hypothesis` (manual create)
-   - `Auto-generate from graph` (agent generation), gated by `MED13_ENABLE_HYPOTHESIS_GENERATION`
+   - `Auto-generate from graph` (agent generation), gated by `GRAPH_ENABLE_HYPOTHESIS_GENERATION`
 3. Inputs:
    - `Hypothesis statement` (required for manual)
    - `Rationale` (required for manual)
@@ -562,7 +562,7 @@ Each phase is gated. The next phase does not start until the current gate passes
    - `PATCH /research-spaces/{space_id}/claim-relations/{relation_id}`
    - auth/membership denial cases for all new routes
 4. Frontend tests:
-   - hypotheses card button visibility under `MED13_ENABLE_HYPOTHESIS_GENERATION`
+   - hypotheses card button visibility under `GRAPH_ENABLE_HYPOTHESIS_GENERATION`
    - loading, success, no-op, and error states for manual and auto-generate actions
    - filter behavior (`origin`, `status`, `certainty`) and triage quick actions
    - user-visible diagnostic messages for each zero-result error code
@@ -608,7 +608,7 @@ Each phase is gated. The next phase does not start until the current gate passes
 5. Claim-to-claim edges carry provenance, confidence, and review status fields at creation.
 6. All new route examples and docs consistently use `/research-spaces/{space_id}/...`.
 7. Hypotheses card actions always return visible user feedback, including zero-result auto-generation reasons.
-8. Auto-generate button visibility is correctly gated by `MED13_ENABLE_HYPOTHESIS_GENERATION`.
+8. Auto-generate button visibility is correctly gated by `GRAPH_ENABLE_HYPOTHESIS_GENERATION`.
 9. Curators can triage hypothesis claims from the card using existing claim status transitions.
 10. Graph view supports both `Canonical Graph` and `Claim Overlay` without implicit canonical writes.
 11. Progressive rollout gates (A through D in Section 12.1) are satisfied in order.

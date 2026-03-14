@@ -78,11 +78,7 @@ def _resolve_graph_service_bearer_token(args: argparse.Namespace) -> str:
     if env_token is not None and env_token.strip():
         return env_token.strip()
 
-    secret = (
-        os.getenv("GRAPH_JWT_SECRET")
-        or os.getenv("MED13_DEV_JWT_SECRET")
-        or _DEFAULT_GRAPH_SERVICE_JWT_SECRET
-    )
+    secret = os.getenv("GRAPH_JWT_SECRET") or _DEFAULT_GRAPH_SERVICE_JWT_SECRET
     user_id_value = os.getenv("GRAPH_SERVICE_SCRIPT_USER_ID")
     user_id = (
         UUID(user_id_value)

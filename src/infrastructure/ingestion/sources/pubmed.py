@@ -8,6 +8,11 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from src.domain.services.domain_context_resolver import DomainContextResolver
+from src.graph.core.domain_context import (
+    default_graph_domain_context_for_source_type,
+    resolve_graph_domain_context,
+)
+from src.graph.runtime import create_graph_domain_context_policy
 from src.infrastructure.ingestion.types import RawRecord
 
 if TYPE_CHECKING:
@@ -31,13 +36,24 @@ class PubMedAdapter:
         """
         Convert legacy PubMed records (dicts) to RawRecord dataclasses.
         """
-        normalized_domain_context = DomainContextResolver.resolve(
+        domain_context_policy = create_graph_domain_context_policy()
+        normalized_domain_context = resolve_graph_domain_context(
+            domain_context_policy=domain_context_policy,
             explicit_domain_context=domain_context,
             source_type="pubmed",
-            fallback=DomainContextResolver.PUBMED_DEFAULT_DOMAIN,
+            fallback=default_graph_domain_context_for_source_type(
+                "pubmed",
+                domain_context_policy=domain_context_policy,
+            ),
         )
         if normalized_domain_context is None:
-            normalized_domain_context = DomainContextResolver.PUBMED_DEFAULT_DOMAIN
+            normalized_domain_context = (
+                default_graph_domain_context_for_source_type(
+                    "pubmed",
+                    domain_context_policy=domain_context_policy,
+                )
+                or DomainContextResolver.GENERAL_DEFAULT_DOMAIN
+            )
         raw_records = []
         for record in records:
             # Generate a unique record ID if not present, but use PMID if available for stability

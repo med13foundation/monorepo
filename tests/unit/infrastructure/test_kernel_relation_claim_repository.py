@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
 from src.infrastructure.repositories.kernel.kernel_relation_claim_repository import (
     SqlAlchemyKernelRelationClaimRepository,
 )
@@ -14,6 +15,13 @@ from src.models.database.kernel.entities import EntityModel
 from src.models.database.research_space import ResearchSpaceModel
 from src.models.database.user import UserModel
 from tests.graph_seed_helpers import ensure_relation_constraint
+
+
+def _build_relation_repository(db_session) -> SqlAlchemyKernelRelationRepository:
+    return SqlAlchemyKernelRelationRepository(
+        db_session,
+        auto_promotion_policy=AutoPromotionPolicy(),
+    )
 
 
 def _create_space_and_user(db_session):
@@ -75,7 +83,7 @@ def _create_linked_relation(
         ],
     )
     db_session.flush()
-    relation = SqlAlchemyKernelRelationRepository(db_session).upsert_relation(
+    relation = _build_relation_repository(db_session).upsert_relation(
         research_space_id=research_space_id,
         source_id=str(source_id),
         relation_type=relation_type,

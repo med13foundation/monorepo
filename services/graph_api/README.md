@@ -25,8 +25,8 @@ Current scope:
 - graph-service Cloud Run runtime sync now exists under `scripts/deploy/sync_graph_cloud_run_runtime_config.sh`
 - graph-service promotion now has a dedicated GitHub Actions workflow in `.github/workflows/graph-service-deploy.yml`
 - service-local composition for graph, dictionary, and concept services
-- service-local governance adapters/builders now own dictionary and concept service composition under `services/graph_api/governance.py`
-- service-local governance persistence now lives under `services/graph_api/dictionary_repository.py` and `services/graph_api/concept_repository.py`
+- service-local governance adapters/builders now expose shared dictionary and concept service composition under `services/graph_api/governance.py`
+- `services/graph_api/dictionary_repository.py` and `services/graph_api/concept_repository.py` are compatibility re-exports over the shared graph-governance persistence layer
 - service-local OpenAPI export now lives under `scripts/export_graph_openapi.py`, with the current artifact at `services/graph_api/openapi.json`
 - service-local quality gates now run under `make graph-service-checks`
 - graph-owned schema no longer carries foreign keys to platform `users` or `source_documents`
@@ -85,15 +85,24 @@ Required runtime environment:
 
 - `GRAPH_DATABASE_URL`
 - optional `GRAPH_DB_SCHEMA`
-- `GRAPH_JWT_SECRET` or `MED13_DEV_JWT_SECRET`
+- `GRAPH_JWT_SECRET`
+- optional `GRAPH_ALLOW_TEST_AUTH_HEADERS`
 - optional `GRAPH_DB_POOL_SIZE`
 - optional `GRAPH_DB_MAX_OVERFLOW`
 - optional `GRAPH_DB_POOL_TIMEOUT_SECONDS`
 - optional `GRAPH_DB_POOL_RECYCLE_SECONDS`
 - optional `GRAPH_DB_POOL_USE_LIFO`
+- optional `GRAPH_DOMAIN_PACK`
 - optional `GRAPH_SERVICE_HOST`
 - optional `GRAPH_SERVICE_PORT`
 - optional `GRAPH_SERVICE_RELOAD`
+
+Pack lifecycle reference:
+
+- `docs/graph/reference/domain-pack-lifecycle.md`
+  Documents how built-in packs are registered at startup, how
+  `GRAPH_DOMAIN_PACK` selects the active pack, and where runtime composition is
+  expected to consume pack-owned extensions.
 
 Deployment/runtime notes:
 

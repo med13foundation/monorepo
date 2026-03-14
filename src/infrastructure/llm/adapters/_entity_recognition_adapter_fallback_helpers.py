@@ -16,22 +16,10 @@ if TYPE_CHECKING:
     from src.domain.agents.contexts.entity_recognition_context import (
         EntityRecognitionContext,
     )
+    from src.graph.core.entity_recognition_fallback import (
+        EntityRecognitionHeuristicFieldMap,
+    )
     from src.type_definitions.common import JSONObject
-
-_HEURISTIC_FIELD_MAP: dict[str, dict[str, tuple[str, ...]]] = {
-    "clinvar": {
-        "variant": ("clinvar_id", "variation_id", "accession", "hgvs"),
-        "gene": ("gene_symbol", "gene", "hgnc_id"),
-        "phenotype": ("condition", "disease_name", "phenotype"),
-        "publication": ("title", "pubmed_id", "doi"),
-    },
-    "pubmed": {
-        "variant": ("hgvs", "variant"),
-        "gene": ("gene_symbol", "gene", "hgnc_id"),
-        "phenotype": ("condition", "disease", "phenotype"),
-        "publication": ("title", "pubmed_id", "pmid", "doi"),
-    },
-}
 
 
 def is_heuristic_entity_recognition_contract(
@@ -65,6 +53,7 @@ def _entity_signal_score(contract: EntityRecognitionContract) -> tuple[int, floa
 def build_heuristic_entity_recognition_contract(
     context: EntityRecognitionContext,
     *,
+    fallback_config: EntityRecognitionHeuristicFieldMap,
     agent_run_id: str | None,
     decision: Literal["generated", "fallback", "escalate"],
 ) -> EntityRecognitionContract:
@@ -79,7 +68,7 @@ def build_heuristic_entity_recognition_contract(
     entities: list[RecognizedEntityCandidate] = []
     variant_label = _extract_scalar(
         raw_record,
-        _field_keys_for_source(source_type, "variant"),
+        fallback_config.field_keys_for(source_type, "variant"),
     )
     if variant_label:
         entities.append(
@@ -93,7 +82,7 @@ def build_heuristic_entity_recognition_contract(
 
     gene_label = _extract_scalar(
         raw_record,
-        _field_keys_for_source(source_type, "gene"),
+        fallback_config.field_keys_for(source_type, "gene"),
     )
     if gene_label:
         entities.append(
@@ -107,7 +96,7 @@ def build_heuristic_entity_recognition_contract(
 
     phenotype_label = _extract_scalar(
         raw_record,
-        _field_keys_for_source(source_type, "phenotype"),
+        fallback_config.field_keys_for(source_type, "phenotype"),
     )
     if phenotype_label:
         entities.append(
@@ -121,7 +110,7 @@ def build_heuristic_entity_recognition_contract(
 
     publication_label = _extract_scalar(
         raw_record,
-        _field_keys_for_source(source_type, "publication"),
+        fallback_config.field_keys_for(source_type, "publication"),
     )
     if publication_label:
         entities.append(
@@ -173,7 +162,7 @@ def build_heuristic_entity_recognition_contract(
         primary_entity_type=(
             entities[0].entity_type
             if entities
-            else ("PUBLICATION" if source_type == "pubmed" else "VARIANT")
+            else fallback_config.primary_entity_type_for(source_type)
         ),
         field_candidates=field_candidates,
         recognized_entities=entities,
@@ -194,11 +183,3 @@ def _extract_scalar(raw_record: JSONObject, keys: tuple[str, ...]) -> str | None
         if isinstance(value, int | float):
             return str(value)
     return None
-
-
-def _field_keys_for_source(source_type: str, field: str) -> tuple[str, ...]:
-    source_mapping = _HEURISTIC_FIELD_MAP.get(
-        source_type,
-        _HEURISTIC_FIELD_MAP["clinvar"],
-    )
-    return source_mapping.get(field, ())

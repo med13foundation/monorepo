@@ -25,7 +25,8 @@ The important distinction is:
 1. [../overview/what-this-service-does.md](../overview/what-this-service-does.md)
 2. [../reference/endpoints.md](../reference/endpoints.md)
 3. [../reference/architecture.md](../reference/architecture.md)
-4. [../reference/service-inventory.md](../reference/service-inventory.md)
+4. [../reference/domain-pack-lifecycle.md](../reference/domain-pack-lifecycle.md)
+5. [../reference/service-inventory.md](../reference/service-inventory.md)
 
 Use [../history/service-migration-plan.md](../history/service-migration-plan.md)
 only when you need extraction history or rationale for why the boundary looks
@@ -75,7 +76,8 @@ These cover:
 Required runtime env:
 
 - `GRAPH_DATABASE_URL`
-- `GRAPH_JWT_SECRET` or `MED13_DEV_JWT_SECRET`
+- `GRAPH_JWT_SECRET`
+- optional `GRAPH_ALLOW_TEST_AUTH_HEADERS`
 
 Common optional env:
 
@@ -88,6 +90,13 @@ Common optional env:
 - `GRAPH_SERVICE_HOST`
 - `GRAPH_SERVICE_PORT`
 - `GRAPH_SERVICE_RELOAD`
+- optional `GRAPH_DOMAIN_PACK`
+  Defaults to `biomedical` today and controls pack-provided runtime defaults
+
+Pack lifecycle reference:
+
+- [../reference/domain-pack-lifecycle.md](../reference/domain-pack-lifecycle.md)
+  Documents how packs are registered, selected, and consumed by runtime code
 
 Cross-service caller env:
 
@@ -124,13 +133,13 @@ levels when the backing store uses RLS-aware paths.
 
 ## Feature Flags And Optional Behavior
 
-- `MED13_ENABLE_ENTITY_EMBEDDINGS`
+- `GRAPH_ENABLE_ENTITY_EMBEDDINGS`
   Enables entity similarity and embedding refresh
-- `MED13_ENABLE_RELATION_SUGGESTIONS`
+- `GRAPH_ENABLE_RELATION_SUGGESTIONS`
   Enables constrained relation suggestions
-- `MED13_ENABLE_HYPOTHESIS_GENERATION`
+- `GRAPH_ENABLE_HYPOTHESIS_GENERATION`
   Enables auto-generated hypotheses
-- `MED13_ENABLE_GRAPH_SEARCH_AGENT`
+- `GRAPH_ENABLE_SEARCH_AGENT`
   Enables optional agent-assisted graph-search execution
 
 Important nuance:
@@ -155,6 +164,8 @@ Useful runtime files:
 - `services/graph_api/database.py`
 - `services/graph_api/dependencies.py`
 - `services/graph_api/composition.py`
+- `src/graph/pack_registry.py`
+- `src/graph/runtime.py`
 
 ## Where To Find Things
 
@@ -173,8 +184,8 @@ Useful runtime files:
 ### Service-Local Helpers
 
 - `services/graph_api/governance.py`
-- `services/graph_api/dictionary_repository.py`
-- `services/graph_api/concept_repository.py`
+- `services/graph_api/dictionary_repository.py` (compatibility re-export)
+- `services/graph_api/concept_repository.py` (compatibility re-export)
 - `services/graph_api/graph_document_builder.py`
 - `services/graph_api/operation_runs.py`
 

@@ -24,7 +24,9 @@ from src.application.services.research_space_management_service import (
 from src.database.session import get_session, set_session_rls_context
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import UserRole
-from src.infrastructure.graph_service import GraphServiceSpaceLifecycleSync
+from src.infrastructure.graph_service.space_lifecycle_sync import (
+    GraphServiceSpaceLifecycleSync,
+)
 from src.infrastructure.repositories import (
     SqlAlchemyDataSourceActivationRepository,
     SqlAlchemyResearchSpaceRepository,

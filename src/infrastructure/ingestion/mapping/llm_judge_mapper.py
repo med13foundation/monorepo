@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 
 from src.domain.agents.contexts.mapping_judge_context import MappingJudgeContext
 from src.domain.agents.contracts.mapping_judge import MappingJudgeCandidate
-from src.domain.services.domain_context_resolver import DomainContextResolver
+from src.graph.core.domain_context import resolve_graph_domain_context
+from src.graph.runtime import create_graph_domain_context_policy
 from src.infrastructure.ingestion.types import MappedObservation, RawRecord
 
 if TYPE_CHECKING:
@@ -213,7 +214,8 @@ class LLMJudgeMapper:
         return f"{rendered[:_VALUE_PREVIEW_LIMIT - 3]}..."
 
     def _extract_domain_context(self, record: RawRecord) -> str | None:
-        return DomainContextResolver.resolve(
+        return resolve_graph_domain_context(
+            domain_context_policy=create_graph_domain_context_policy(),
             metadata=record.metadata,
             source_type=self._extract_source_type(record),
             fallback=None,

@@ -6,6 +6,9 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from src.domain.ports.dictionary_port import DictionaryPort
+    from src.graph.core.entity_recognition_bootstrap import (
+        EntityRecognitionBootstrapConfig,
+    )
     from src.type_definitions.common import JSONValue, ResearchSpaceSettings
 
 
@@ -14,6 +17,7 @@ class _EntityRecognitionBootstrapContext(Protocol):
 
     _dictionary: DictionaryPort
     _agent_created_by: str
+    _entity_recognition_bootstrap: EntityRecognitionBootstrapConfig
 
     @staticmethod
     def _infer_domain_context(source_type: str) -> str: ...
@@ -32,8 +36,10 @@ class _EntityRecognitionBootstrapContext(Protocol):
     @staticmethod
     def _is_domain_bootstrap_enabled(settings: ResearchSpaceSettings) -> bool: ...
 
-    @staticmethod
-    def _bootstrap_entity_types_for_domain(domain_context: str) -> tuple[str, ...]: ...
+    def _bootstrap_entity_types_for_domain(
+        self,
+        domain_context: str,
+    ) -> tuple[str, ...]: ...
 
     @staticmethod
     def _bootstrap_review_settings(
@@ -60,7 +66,7 @@ class _EntityRecognitionBootstrapContext(Protocol):
         requires_evidence: bool = True,
     ) -> None: ...
 
-    def _ensure_pubmed_publication_baseline(
+    def _ensure_publication_baseline(
         self,
         *,
         domain_context: str,
@@ -68,7 +74,7 @@ class _EntityRecognitionBootstrapContext(Protocol):
         research_space_settings: ResearchSpaceSettings,
     ) -> tuple[int, int]: ...
 
-    def _ensure_pubmed_metadata_variable(  # noqa: PLR0913
+    def _ensure_publication_metadata_variable(  # noqa: PLR0913
         self,
         *,
         variable_id: str,

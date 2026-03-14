@@ -18,6 +18,11 @@ from services.graph_api.dependencies import (
 )
 from src.application.agents.services.graph_connection_service import (
     GraphConnectionOutcome,
+    GraphConnectionService,
+    GraphConnectionServiceDependencies,
+)
+from src.application.services.kernel.kernel_entity_neighbors_projector import (
+    KernelEntityNeighborsProjector,
 )
 from src.application.services.kernel.kernel_entity_similarity_service import (
     EntityEmbeddingRefreshSummary,
@@ -32,6 +37,11 @@ from src.database.seeds.seeder import (
     seed_entity_resolution_policies,
     seed_relation_constraints,
 )
+from src.domain.agents.contracts.base import EvidenceItem
+from src.domain.agents.contracts.graph_connection import (
+    GraphConnectionContract,
+    ProposedRelation,
+)
 from src.domain.entities.kernel.embeddings import (
     KernelEntitySimilarityResult,
     KernelEntitySimilarityScoreBreakdown,
@@ -40,6 +50,11 @@ from src.domain.entities.kernel.embeddings import (
     KernelRelationSuggestionScoreBreakdown,
 )
 from src.domain.entities.user import UserRole
+from src.graph.core.read_model import NullGraphReadModelUpdateDispatcher
+from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
+from src.graph.domain_sports.pack import SPORTS_GRAPH_CONNECTION_PROMPT_CONFIG
+from src.graph.pack_registry import resolve_graph_domain_pack
+from src.graph.product_contract import GRAPH_SERVICE_VERSION
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyDictionaryRepository,
     SqlAlchemyKernelClaimEvidenceRepository,
@@ -57,6 +72,7 @@ from src.models.database.kernel.dictionary import (
 )
 from src.models.database.kernel.entities import EntityModel
 from src.models.database.kernel.provenance import ProvenanceModel
+from src.models.database.kernel.read_models import EntityNeighborModel
 from src.models.database.kernel.space_memberships import (
     GraphSpaceMembershipModel,
     GraphSpaceMembershipRoleEnum,
@@ -109,7 +125,7 @@ def _build_projection_materializer(
     session,
 ) -> KernelRelationProjectionMaterializationService:
     return KernelRelationProjectionMaterializationService(
-        relation_repo=SqlAlchemyKernelRelationRepository(session),
+        relation_repo=_build_relation_repository(session),
         relation_claim_repo=SqlAlchemyKernelRelationClaimRepository(session),
         claim_participant_repo=SqlAlchemyKernelClaimParticipantRepository(session),
         claim_evidence_repo=SqlAlchemyKernelClaimEvidenceRepository(session),
@@ -118,10 +134,21 @@ def _build_projection_materializer(
             phi_encryption_service=None,
             enable_phi_encryption=False,
         ),
-        dictionary_repo=SqlAlchemyDictionaryRepository(session),
+        dictionary_repo=SqlAlchemyDictionaryRepository(
+            session,
+            builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+        ),
         relation_projection_repo=SqlAlchemyKernelRelationProjectionSourceRepository(
             session,
         ),
+        read_model_update_dispatcher=NullGraphReadModelUpdateDispatcher(),
+    )
+
+
+def _build_relation_repository(session) -> SqlAlchemyKernelRelationRepository:
+    return SqlAlchemyKernelRelationRepository(
+        session,
+        auto_promotion_policy=AutoPromotionPolicy(),
     )
 
 
@@ -211,7 +238,10 @@ def _create_claim_backed_projection(
 
 
 def _ensure_test_variable_definition(session) -> None:
-    dictionary_repository = SqlAlchemyDictionaryRepository(session)
+    dictionary_repository = SqlAlchemyDictionaryRepository(
+        session,
+        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+    )
     if session.get(DictionaryDomainContextModel, "general") is None:
         session.add(
             DictionaryDomainContextModel(
@@ -361,6 +391,14 @@ def _create_graph_space_registry_entry(
     )
 
 
+def _rebuild_entity_neighbors_read_model(*, space_id: UUID) -> int:
+    with graph_database.SessionLocal() as session:
+        projector = KernelEntityNeighborsProjector(session)
+        rebuilt_rows = projector.rebuild(space_id=str(space_id))
+        session.commit()
+        return rebuilt_rows
+
+
 def _create_claim(
     session,
     *,
@@ -488,6 +526,7 @@ def _create_hypothesis_claim(
 ):
     claim_service = KernelRelationClaimService(
         relation_claim_repo=SqlAlchemyKernelRelationClaimRepository(session),
+        read_model_update_dispatcher=NullGraphReadModelUpdateDispatcher(),
     )
     claim = claim_service.create_hypothesis_claim(
         research_space_id=str(space_id),
@@ -571,6 +610,64 @@ class _StubGraphConnectionService:
 
     async def close(self) -> None:
         return None
+
+
+class _StubGraphConnectionAgent:
+    def __init__(self, contract: GraphConnectionContract) -> None:
+        self.contract = contract
+        self.calls: list[object] = []
+
+    async def discover(
+        self,
+        context: object,
+        *,
+        model_id: str | None = None,
+    ) -> GraphConnectionContract:
+        del model_id
+        self.calls.append(context)
+        return self.contract
+
+    async def close(self) -> None:
+        return None
+
+
+def _build_graph_connection_contract(
+    *,
+    research_space_id: UUID,
+    seed_entity_id: UUID,
+    target_entity_id: UUID,
+) -> GraphConnectionContract:
+    return GraphConnectionContract(
+        decision="generated",
+        confidence_score=0.91,
+        rationale="Sports-pack runtime proof contract",
+        evidence=[
+            EvidenceItem(
+                source_type="db",
+                locator=f"relation:{uuid4()}",
+                excerpt="Grounded graph evidence",
+                relevance=0.91,
+            ),
+        ],
+        source_type="match_report",
+        research_space_id=str(research_space_id),
+        seed_entity_id=str(seed_entity_id),
+        proposed_relations=[
+            ProposedRelation(
+                source_id=str(seed_entity_id),
+                relation_type="ASSOCIATED_WITH",
+                target_id=str(target_entity_id),
+                confidence=0.87,
+                evidence_summary="Shared graph-space proof relation",
+                evidence_tier="COMPUTATIONAL",
+                supporting_provenance_ids=[str(uuid4())],
+                supporting_document_count=2,
+                reasoning="Used to verify sports-pack default source selection.",
+            ),
+        ],
+        rejected_candidates=[],
+        shadow_mode=False,
+    )
 
 
 class _StubKernelRelationSuggestionService:
@@ -890,7 +987,159 @@ def test_graph_service_health_endpoint(graph_client: TestClient) -> None:
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["status"] == "ok"
-    assert payload["version"] == "0.1.0"
+    assert payload["version"] == GRAPH_SERVICE_VERSION
+
+
+def test_graph_service_uses_biomedical_pack_http_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPH_DOMAIN_PACK", "biomedical")
+    reset_database(graph_database.engine, Base.metadata)
+
+    try:
+        with TestClient(create_app()) as client:
+            admin_headers = _create_admin_headers()
+            suffix = uuid4().hex[:12].upper()
+            entity_type_id = f"ET_CLINICAL_{suffix}"
+
+            create_response = client.post(
+                "/v1/dictionary/entity-types",
+                headers=admin_headers,
+                json={
+                    "id": entity_type_id,
+                    "display_name": f"Clinical Entity {suffix}",
+                    "description": "Proof that the biomedical pack seeds clinical domain contexts.",
+                    "domain_context": "clinical",
+                    "expected_properties": {},
+                    "source_ref": "graph-phase2-biomedical-pack-check",
+                },
+            )
+            assert create_response.status_code == 201, create_response.text
+
+            by_domain_response = client.get(
+                "/v1/dictionary/search/by-domain/clinical",
+                headers=admin_headers,
+                params={"limit": 25},
+            )
+            assert by_domain_response.status_code == 200, by_domain_response.text
+            clinical_entry_ids = {
+                entry["entry_id"] for entry in by_domain_response.json()["results"]
+            }
+            assert entity_type_id in clinical_entry_ids
+
+            fixture = _seed_space_with_projection()
+            graph_view_response = client.get(
+                f"/v1/spaces/{fixture['space_id']}/graph/views/gene/{fixture['source_id']}",
+                headers=fixture["headers"],
+            )
+            assert graph_view_response.status_code == 200, graph_view_response.text
+            graph_view_payload = graph_view_response.json()
+            assert graph_view_payload["view_type"] == "gene"
+            assert graph_view_payload["entity"]["id"] == str(fixture["source_id"])
+    finally:
+        reset_database(graph_database.engine, Base.metadata)
+
+
+def test_graph_service_uses_sports_pack_http_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPH_DOMAIN_PACK", "sports")
+    reset_database(graph_database.engine, Base.metadata)
+
+    try:
+        with TestClient(create_app()) as client:
+            admin_headers = _create_admin_headers()
+            suffix = uuid4().hex[:12].upper()
+            entity_type_id = f"ET_COMPETITION_{suffix}"
+
+            create_response = client.post(
+                "/v1/dictionary/entity-types",
+                headers=admin_headers,
+                json={
+                    "id": entity_type_id,
+                    "display_name": f"Competition Entity {suffix}",
+                    "description": "Proof that the sports pack seeds competition domain contexts.",
+                    "domain_context": "competition",
+                    "expected_properties": {},
+                    "source_ref": "graph-phase7-sports-pack-check",
+                },
+            )
+            assert create_response.status_code == 201, create_response.text
+
+            by_domain_response = client.get(
+                "/v1/dictionary/search/by-domain/competition",
+                headers=admin_headers,
+                params={"limit": 25},
+            )
+            assert by_domain_response.status_code == 200, by_domain_response.text
+            competition_entry_ids = {
+                entry["entry_id"] for entry in by_domain_response.json()["results"]
+            }
+            assert entity_type_id in competition_entry_ids
+
+            fixture = _seed_space_with_projection()
+            session = graph_database.SessionLocal()
+            agent = _StubGraphConnectionAgent(
+                _build_graph_connection_contract(
+                    research_space_id=fixture["space_id"],
+                    seed_entity_id=fixture["source_id"],
+                    target_entity_id=fixture["target_id"],
+                ),
+            )
+            service = GraphConnectionService(
+                dependencies=GraphConnectionServiceDependencies(
+                    graph_connection_agent=agent,
+                    graph_connection_prompt=SPORTS_GRAPH_CONNECTION_PROMPT_CONFIG,
+                    relation_repository=_build_relation_repository(session),
+                    entity_repository=SqlAlchemyKernelEntityRepository(
+                        session,
+                        phi_encryption_service=None,
+                        enable_phi_encryption=False,
+                    ),
+                    relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
+                        session,
+                    ),
+                    claim_participant_repository=(
+                        SqlAlchemyKernelClaimParticipantRepository(session)
+                    ),
+                    claim_evidence_repository=SqlAlchemyKernelClaimEvidenceRepository(
+                        session,
+                    ),
+                    relation_projection_source_repository=(
+                        SqlAlchemyKernelRelationProjectionSourceRepository(session)
+                    ),
+                    relation_projection_materialization_service=(
+                        _build_projection_materializer(session)
+                    ),
+                ),
+            )
+            client.app.dependency_overrides[get_graph_connection_service] = (
+                lambda: service
+            )
+            try:
+                connection_response = client.post(
+                    f"/v1/spaces/{fixture['space_id']}/entities/{fixture['source_id']}/connections",
+                    headers=fixture["headers"],
+                    json={
+                        "source_id": str(uuid4()),
+                        "max_depth": 2,
+                        "pipeline_run_id": "sports-pack-runtime-proof",
+                    },
+                )
+                assert connection_response.status_code == 200, connection_response.text
+                payload = connection_response.json()
+                assert payload["seed_entity_id"] == str(fixture["source_id"])
+            finally:
+                client.app.dependency_overrides.pop(
+                    get_graph_connection_service,
+                    None,
+                )
+                session.close()
+
+            assert len(agent.calls) == 1
+            assert agent.calls[0].source_type == "match_report"
+    finally:
+        reset_database(graph_database.engine, Base.metadata)
 
 
 def test_graph_service_admin_space_registry_routes(graph_client: TestClient) -> None:
@@ -972,6 +1221,35 @@ def test_graph_service_admin_routes_require_graph_admin_claim(
     assert response.json()["detail"] == (
         "Graph service admin access is required for this operation"
     )
+
+
+def test_graph_service_admin_routes_require_graph_admin_claim_under_sports_pack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPH_DOMAIN_PACK", "sports")
+    reset_database(graph_database.engine, Base.metadata)
+
+    try:
+        with TestClient(create_app()) as client:
+            user_id = uuid4()
+            user_email = f"sports-platform-admin-only-{uuid4().hex[:12]}@example.com"
+
+            response = client.get(
+                "/v1/admin/spaces",
+                headers=_auth_headers(
+                    user_id=user_id,
+                    email=user_email,
+                    role=UserRole.ADMIN,
+                    graph_admin=False,
+                ),
+            )
+
+            assert response.status_code == 403, response.text
+            assert response.json()["detail"] == (
+                "Graph service admin access is required for this operation"
+            )
+    finally:
+        reset_database(graph_database.engine, Base.metadata)
 
 
 def test_graph_service_admin_space_membership_routes(
@@ -1173,6 +1451,76 @@ def test_graph_service_relation_reads(graph_client: TestClient) -> None:
     assert any(
         edge["kind"] == "CANONICAL_RELATION" for edge in document_payload["edges"]
     )
+
+
+def test_graph_service_uses_biomedical_pack_entity_neighbors_read_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPH_DOMAIN_PACK", "biomedical")
+    reset_database(graph_database.engine, Base.metadata)
+
+    try:
+        fixture = _seed_space_with_projection()
+        rebuilt_rows = _rebuild_entity_neighbors_read_model(
+            space_id=fixture["space_id"],
+        )
+        assert rebuilt_rows >= 2
+
+        with graph_database.SessionLocal() as session:
+            indexed_rows = list(
+                session.query(EntityNeighborModel)
+                .filter(EntityNeighborModel.entity_id == fixture["source_id"])
+                .all(),
+            )
+        assert indexed_rows
+
+        with TestClient(create_app()) as client:
+            neighborhood_response = client.get(
+                f"/v1/spaces/{fixture['space_id']}/graph/neighborhood/{fixture['source_id']}",
+                headers=fixture["headers"],
+                params={"depth": 1},
+            )
+            assert neighborhood_response.status_code == 200, neighborhood_response.text
+            neighborhood_payload = neighborhood_response.json()
+            assert len(neighborhood_payload["nodes"]) == 2
+            assert len(neighborhood_payload["edges"]) == 1
+    finally:
+        reset_database(graph_database.engine, Base.metadata)
+
+
+def test_graph_service_uses_sports_pack_entity_neighbors_read_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPH_DOMAIN_PACK", "sports")
+    reset_database(graph_database.engine, Base.metadata)
+
+    try:
+        fixture = _seed_space_with_projection()
+        rebuilt_rows = _rebuild_entity_neighbors_read_model(
+            space_id=fixture["space_id"],
+        )
+        assert rebuilt_rows >= 2
+
+        with graph_database.SessionLocal() as session:
+            indexed_rows = list(
+                session.query(EntityNeighborModel)
+                .filter(EntityNeighborModel.entity_id == fixture["source_id"])
+                .all(),
+            )
+        assert indexed_rows
+
+        with TestClient(create_app()) as client:
+            neighborhood_response = client.get(
+                f"/v1/spaces/{fixture['space_id']}/graph/neighborhood/{fixture['source_id']}",
+                headers=fixture["headers"],
+                params={"depth": 1},
+            )
+            assert neighborhood_response.status_code == 200, neighborhood_response.text
+            neighborhood_payload = neighborhood_response.json()
+            assert len(neighborhood_payload["nodes"]) == 2
+            assert len(neighborhood_payload["edges"]) == 1
+    finally:
+        reset_database(graph_database.engine, Base.metadata)
 
 
 def test_graph_service_relation_reads_support_external_document_refs(
@@ -1428,7 +1776,7 @@ def test_graph_service_relation_suggestions(
     space_id = fixture["space_id"]
     source_id = fixture["source_id"]
     service = _StubKernelRelationSuggestionService()
-    monkeypatch.setenv("MED13_ENABLE_RELATION_SUGGESTIONS", "1")
+    monkeypatch.setenv("GRAPH_ENABLE_RELATION_SUGGESTIONS", "1")
     graph_client.app.dependency_overrides[get_kernel_relation_suggestion_service] = (
         lambda: service
     )
@@ -1580,7 +1928,7 @@ def test_graph_service_entity_similarity_and_refresh(
     space_id = fixture["space_id"]
     source_id = fixture["source_id"]
     service = _StubKernelEntitySimilarityService()
-    monkeypatch.setenv("MED13_ENABLE_ENTITY_EMBEDDINGS", "1")
+    monkeypatch.setenv("GRAPH_ENABLE_ENTITY_EMBEDDINGS", "1")
     graph_client.app.dependency_overrides[get_kernel_entity_similarity_service] = (
         lambda: service
     )
@@ -2130,7 +2478,7 @@ def test_graph_service_generate_hypotheses_with_override(
     graph_client.app.dependency_overrides[
         get_hypothesis_generation_service_provider
     ] = lambda: (lambda: _FakeHypothesisGenerationService())
-    monkeypatch.setenv("MED13_ENABLE_HYPOTHESIS_GENERATION", "1")
+    monkeypatch.setenv("GRAPH_ENABLE_HYPOTHESIS_GENERATION", "1")
 
     try:
         response = graph_client.post(
@@ -2175,6 +2523,31 @@ def test_graph_service_enforces_space_membership(
     assert response.status_code == 403, response.text
 
 
+def test_graph_service_enforces_space_membership_under_sports_pack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPH_DOMAIN_PACK", "sports")
+    reset_database(graph_database.engine, Base.metadata)
+
+    try:
+        with TestClient(create_app()) as client:
+            fixture = _seed_space_with_projection()
+            outsider_id = uuid4()
+            outsider_email = f"sports-outsider-{uuid4().hex[:12]}@example.com"
+
+            response = client.get(
+                f"/v1/spaces/{fixture['space_id']}/relations",
+                headers=_auth_headers(
+                    user_id=outsider_id,
+                    email=outsider_email,
+                    role=UserRole.RESEARCHER,
+                ),
+            )
+            assert response.status_code == 403, response.text
+    finally:
+        reset_database(graph_database.engine, Base.metadata)
+
+
 def test_graph_service_enforces_member_role_hierarchy(
     graph_client: TestClient,
 ) -> None:
@@ -2201,6 +2574,41 @@ def test_graph_service_enforces_member_role_hierarchy(
         },
     )
     assert write_response.status_code == 403, write_response.text
+
+
+def test_graph_service_enforces_member_role_hierarchy_under_sports_pack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPH_DOMAIN_PACK", "sports")
+    reset_database(graph_database.engine, Base.metadata)
+
+    try:
+        with TestClient(create_app()) as client:
+            fixture = _seed_space_with_projection()
+            viewer_member = _add_space_member(
+                space_id=fixture["space_id"],
+                role=GraphSpaceMembershipRoleEnum.VIEWER,
+            )
+
+            read_response = client.get(
+                f"/v1/spaces/{fixture['space_id']}/relations",
+                headers=viewer_member["headers"],
+            )
+            assert read_response.status_code == 200, read_response.text
+
+            write_response = client.post(
+                f"/v1/spaces/{fixture['space_id']}/entities",
+                headers=viewer_member["headers"],
+                json={
+                    "entity_type": "TEAM",
+                    "display_label": "VIEWER SHOULD FAIL",
+                    "metadata": {"source": "graph-service-test"},
+                    "identifiers": {"team_id": f"TEAM:{uuid4().hex[:8]}"},
+                },
+            )
+            assert write_response.status_code == 403, write_response.text
+    finally:
+        reset_database(graph_database.engine, Base.metadata)
 
 
 def test_graph_service_dictionary_governance_routes(

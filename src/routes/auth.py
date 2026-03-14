@@ -5,7 +5,6 @@ Provides REST API endpoints for user authentication, session management,
 and user registration.
 """
 
-import os
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -42,6 +41,7 @@ from src.infrastructure.dependency_injection.container import container
 from src.infrastructure.dependency_injection.dependencies import (
     get_authentication_service_dependency,
 )
+from src.infrastructure.security.runtime_env import allow_auth_test_headers
 
 # Create router
 auth_router = APIRouter(
@@ -102,10 +102,7 @@ async def get_current_user(
     # Test bypass: allow injecting a user via headers in non-production
     # contexts to keep integration tests lightweight (no real JWT).
     # ------------------------------------------------------------------
-    allow_test_headers = (
-        os.getenv("TESTING") == "true"
-        or os.getenv("MED13_BYPASS_TEST_AUTH_HEADERS") == "1"
-    )
+    allow_test_headers = allow_auth_test_headers()
     test_user_id = request.headers.get("X-TEST-USER-ID")
     test_user_email = request.headers.get("X-TEST-USER-EMAIL")
     test_user_role = request.headers.get("X-TEST-USER-ROLE")

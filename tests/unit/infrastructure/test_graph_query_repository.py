@@ -8,8 +8,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from src.application.services.kernel.kernel_entity_neighbors_projector import (
+    KernelEntityNeighborsProjector,
+)
 from src.domain.entities.kernel.relations import RelationEvidenceWrite
 from src.domain.entities.user import UserRole, UserStatus
+from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
 from src.infrastructure.repositories.kernel.graph_query_repository import (
     SqlAlchemyGraphQueryRepository,
 )
@@ -36,6 +40,24 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.graph
+
+
+def _build_relation_repository(
+    db_session: Session,
+) -> SqlAlchemyKernelRelationRepository:
+    return SqlAlchemyKernelRelationRepository(
+        db_session,
+        auto_promotion_policy=AutoPromotionPolicy(),
+    )
+
+
+def _build_graph_query_repository(
+    db_session: Session,
+) -> SqlAlchemyGraphQueryRepository:
+    return SqlAlchemyGraphQueryRepository(
+        db_session,
+        relation_repository=_build_relation_repository(db_session),
+    )
 
 
 def _seed_dictionary_primitives(db_session: Session) -> None:
@@ -239,7 +261,7 @@ def _seed_claim_backed_relation(
     source_id: UUID,
     target_id: UUID,
 ):
-    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
+    relation_repo = _build_relation_repository(db_session)
     projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
     relation = relation_repo.upsert_relation(
         research_space_id=str(research_space_id),
@@ -332,8 +354,9 @@ def test_graph_query_neighbourhood_scopes_to_research_space(
         db_session,
         research_space_id=other_space,
     )
+    assert KernelEntityNeighborsProjector(db_session).rebuild() >= 2
 
-    repository = SqlAlchemyGraphQueryRepository(db_session)
+    repository = _build_graph_query_repository(db_session)
     relations = repository.graph_query_neighbourhood(
         research_space_id=str(primary_space),
         entity_id=str(entity_a),
@@ -356,7 +379,7 @@ def test_graph_query_shared_subjects_returns_overlap_entity(
         research_space_id=research_space,
     )
 
-    repository = SqlAlchemyGraphQueryRepository(db_session)
+    repository = _build_graph_query_repository(db_session)
     shared_subjects = repository.graph_query_shared_subjects(
         research_space_id=str(research_space),
         entity_id_a=str(entity_a),
@@ -377,7 +400,7 @@ def test_graph_query_observations_filters_by_variable(db_session: Session) -> No
         research_space_id=research_space,
     )
 
-    repository = SqlAlchemyGraphQueryRepository(db_session)
+    repository = _build_graph_query_repository(db_session)
     observations = repository.graph_query_observations(
         research_space_id=str(research_space),
         entity_id=str(shared_entity),
@@ -396,7 +419,7 @@ def test_graph_query_relation_evidence_returns_rows(db_session: Session) -> None
         research_space_id=research_space,
     )
 
-    repository = SqlAlchemyGraphQueryRepository(db_session)
+    repository = _build_graph_query_repository(db_session)
     evidences = repository.graph_query_relation_evidence(
         research_space_id=str(research_space),
         relation_id=str(relation_id),
@@ -419,7 +442,7 @@ def test_graph_query_entities_filters_by_type_and_query(db_session: Session) -> 
         research_space_id=research_space,
     )
 
-    repository = SqlAlchemyGraphQueryRepository(db_session)
+    repository = _build_graph_query_repository(db_session)
     entities = repository.graph_query_entities(
         research_space_id=str(research_space),
         entity_type="GENE",
@@ -438,7 +461,7 @@ def test_graph_query_relations_applies_direction_filter(db_session: Session) -> 
         research_space_id=research_space,
     )
 
-    repository = SqlAlchemyGraphQueryRepository(db_session)
+    repository = _build_graph_query_repository(db_session)
     outgoing = repository.graph_query_relations(
         research_space_id=str(research_space),
         entity_id=str(entity_a),
@@ -464,7 +487,7 @@ def test_graph_query_by_observation_and_aggregate(db_session: Session) -> None:
         research_space_id=research_space,
     )
 
-    repository = SqlAlchemyGraphQueryRepository(db_session)
+    repository = _build_graph_query_repository(db_session)
     entities = repository.graph_query_by_observation(
         research_space_id=str(research_space),
         variable_id="VAR_A",

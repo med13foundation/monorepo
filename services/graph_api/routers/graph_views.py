@@ -10,40 +10,25 @@ from sqlalchemy.orm import Session
 from services.graph_api.auth import get_current_active_user
 from services.graph_api.database import get_session
 from services.graph_api.dependencies import (
+    get_graph_view_extension,
     get_kernel_graph_view_service,
     get_space_access_port,
     verify_space_membership,
 )
 from src.application.services.kernel.kernel_graph_view_service import (
-    GraphDomainViewType,
     KernelGraphViewNotFoundError,
     KernelGraphViewService,
     KernelGraphViewValidationError,
 )
 from src.domain.entities.user import User
 from src.domain.ports.space_access_port import SpaceAccessPort
+from src.graph.core.view_config import GraphViewExtension
 from src.type_definitions.graph_service_contracts import (
     KernelClaimMechanismChainResponse,
     KernelGraphDomainViewResponse,
 )
 
 router = APIRouter(prefix="/v1/spaces", tags=["graph-views"])
-
-
-def _normalize_view_type(value: str) -> GraphDomainViewType:
-    normalized = value.strip().lower()
-    if normalized == "gene":
-        return "gene"
-    if normalized == "variant":
-        return "variant"
-    if normalized == "phenotype":
-        return "phenotype"
-    if normalized == "paper":
-        return "paper"
-    if normalized == "claim":
-        return "claim"
-    msg = f"Unsupported graph view type '{value}'"
-    raise ValueError(msg)
 
 
 @router.get(
@@ -60,6 +45,7 @@ def get_graph_domain_view(
     relation_limit: int = Query(default=50, ge=1, le=200),
     current_user: User = Depends(get_current_active_user),
     space_access: SpaceAccessPort = Depends(get_space_access_port),
+    graph_view_extension: GraphViewExtension = Depends(get_graph_view_extension),
     graph_view_service: KernelGraphViewService = Depends(get_kernel_graph_view_service),
     session: Session = Depends(get_session),
 ) -> KernelGraphDomainViewResponse:
@@ -70,7 +56,7 @@ def get_graph_domain_view(
         session=session,
     )
     try:
-        normalized_view_type = _normalize_view_type(view_type)
+        normalized_view_type = graph_view_extension.normalize_view_type(view_type)
         domain_view = graph_view_service.build_domain_view(
             research_space_id=str(space_id),
             view_type=normalized_view_type,

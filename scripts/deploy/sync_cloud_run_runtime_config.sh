@@ -186,8 +186,8 @@ declare -a backend_secret_pairs=()
 if [[ -n "${DATABASE_URL_SECRET_NAME:-}" ]]; then
   backend_secret_pairs+=("DATABASE_URL=${DATABASE_URL_SECRET_NAME}:latest")
 fi
-if [[ -n "${MED13_DEV_JWT_SECRET_NAME:-}" ]]; then
-  backend_secret_pairs+=("MED13_DEV_JWT_SECRET=${MED13_DEV_JWT_SECRET_NAME}:latest")
+if [[ -n "${AUTH_JWT_SECRET_NAME:-}" ]]; then
+  backend_secret_pairs+=("AUTH_JWT_SECRET=${AUTH_JWT_SECRET_NAME}:latest")
 fi
 if [[ -n "${ADMIN_API_KEY_SECRET_NAME:-}" ]]; then
   backend_secret_pairs+=("ADMIN_API_KEY=${ADMIN_API_KEY_SECRET_NAME}:latest")

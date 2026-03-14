@@ -22,14 +22,6 @@ from src.infrastructure.llm.config import (
     get_model_registry,
     load_runtime_policy,
 )
-from src.infrastructure.llm.prompts.graph_connection.clinvar import (
-    CLINVAR_GRAPH_CONNECTION_DISCOVERY_SYSTEM_PROMPT,
-    CLINVAR_GRAPH_CONNECTION_SYNTHESIS_SYSTEM_PROMPT,
-)
-from src.infrastructure.llm.prompts.graph_connection.pubmed import (
-    PUBMED_GRAPH_CONNECTION_DISCOVERY_SYSTEM_PROMPT,
-    PUBMED_GRAPH_CONNECTION_SYNTHESIS_SYSTEM_PROMPT,
-)
 from src.infrastructure.llm.state.shared_postgres_store import (
     create_artana_postgres_store,
 )
@@ -40,8 +32,8 @@ if TYPE_CHECKING:
     from src.domain.agents.contexts.graph_connection_context import (
         GraphConnectionContext,
     )
+    from src.graph.core.graph_connection_prompt import GraphConnectorExtension
 
-_SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
 _ARTANA_IMPORT_ERROR: Exception | None = None
 
 try:
@@ -62,6 +54,7 @@ class ArtanaGraphConnectionAdapter(GraphConnectionPort):
         self,
         model: str | None = None,
         *,
+        prompt_config: GraphConnectorExtension,
         use_governance: bool = True,
         dictionary_service: object | None = None,
         graph_query_service: object | None = None,
@@ -76,6 +69,7 @@ class ArtanaGraphConnectionAdapter(GraphConnectionPort):
             raise RuntimeError(msg) from _ARTANA_IMPORT_ERROR
 
         self._default_model = model
+        self._prompt_config = prompt_config
         self._use_governance = use_governance
         self._dictionary_service = dictionary_service
         self._graph_query_service = graph_query_service
@@ -94,7 +88,7 @@ class ArtanaGraphConnectionAdapter(GraphConnectionPort):
     ) -> GraphConnectionContract:
         self._last_run_id = None
         source_type = context.source_type.strip().lower()
-        if source_type not in _SUPPORTED_SOURCE_TYPES:
+        if source_type not in self._prompt_config.supported_source_types():
             return self._unsupported_source_contract(context)
 
         if not self._has_openai_key():
@@ -135,7 +129,7 @@ class ArtanaGraphConnectionAdapter(GraphConnectionPort):
                 model=effective_model,
                 prompt=self._build_prompt(source_type=source_type, context=context),
                 output_schema=GraphConnectionContract,
-                step_key=f"graph.connection.{source_type}.v1",
+                step_key=self._prompt_config.step_key_for(source_type),
                 replay_policy=self._runtime_policy.replay_policy,
                 context_version=self._runtime_policy.to_context_version(),
             )
@@ -269,17 +263,12 @@ class ArtanaGraphConnectionAdapter(GraphConnectionPort):
             f"RESEARCH SPACE SETTINGS JSON:\n{settings_payload}"
         )
 
-    @staticmethod
-    def _get_system_prompt(source_type: str) -> str:
-        if source_type == "pubmed":
-            return (
-                f"{PUBMED_GRAPH_CONNECTION_DISCOVERY_SYSTEM_PROMPT}\n\n"
-                f"{PUBMED_GRAPH_CONNECTION_SYNTHESIS_SYSTEM_PROMPT}"
-            )
-        return (
-            f"{CLINVAR_GRAPH_CONNECTION_DISCOVERY_SYSTEM_PROMPT}\n\n"
-            f"{CLINVAR_GRAPH_CONNECTION_SYNTHESIS_SYSTEM_PROMPT}"
-        )
+    def _get_system_prompt(self, source_type: str) -> str:
+        prompt = self._prompt_config.system_prompt_for(source_type)
+        if prompt is None:
+            msg = f"Unsupported graph-connection source type: {source_type}"
+            raise ValueError(msg)
+        return prompt
 
     def _build_prompt(
         self,

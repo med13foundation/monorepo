@@ -10,6 +10,8 @@ from uuid import UUID
 
 from src.domain.entities.source_document import DocumentExtractionStatus
 from src.domain.services.domain_context_resolver import DomainContextResolver
+from src.graph.core.domain_context import default_graph_domain_context_for_source_type
+from src.graph.runtime import create_graph_domain_context_policy
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
@@ -227,7 +229,10 @@ class _EntityRecognitionRuntimeHelpers:
 
     @staticmethod
     def _infer_domain_context(source_type: str) -> str:
-        resolved = DomainContextResolver.default_for_source_type(source_type)
+        resolved = default_graph_domain_context_for_source_type(
+            source_type,
+            domain_context_policy=create_graph_domain_context_policy(),
+        )
         if resolved is None:
             return DomainContextResolver.GENERAL_DEFAULT_DOMAIN
         return resolved

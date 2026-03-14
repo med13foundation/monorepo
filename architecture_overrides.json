@@ -275,6 +275,12 @@
             "max_lines": 1600,
             "reason": "Shared graph governance repository intentionally mirrors the full standalone governance surface while the extracted package settles; split by capability remains follow-up work.",
             "expires_on": "2026-12-31"
+        },
+        {
+            "path": "src/application/services/kernel/kernel_relation_projection_materialization_service.py",
+            "max_lines": 700,
+            "reason": "Projection materialization remains centralized while read-model dispatch, freshness, and rebuild orchestration settle; split by rebuild/write concern is planned.",
+            "expires_on": "2026-12-31"
         }
     ],
     "class_size": [
@@ -384,14 +390,26 @@
         },
         {
             "path": "src/infrastructure/dependency_injection/graph_runtime_factories.py",
-            "max_imports": 60,
-            "reason": "Neutral shared graph runtime builders temporarily centralize legacy and standalone graph composition while the extracted runtime split is stabilized.",
+            "max_imports": 61,
+            "reason": "Neutral shared graph runtime builders temporarily centralize legacy and standalone graph composition while the extracted runtime split is stabilized, including the new reasoning-index projector wiring.",
             "expires_on": "2026-12-31"
         },
         {
             "path": "src/routes/research_spaces/workflow_monitor_stream_dependencies.py",
             "max_imports": 20,
             "reason": "Workflow SSE dependency wiring remains centralized while stream/session dependency boundaries stabilize.",
+            "expires_on": "2026-12-31"
+        },
+        {
+            "path": "src/graph/domain_biomedical/pack.py",
+            "max_imports": 20,
+            "reason": "Biomedical pack intentionally centralizes its pack wiring while pack-owned config modules stabilize; follow-up extraction would be mechanical rather than architectural.",
+            "expires_on": "2026-12-31"
+        },
+        {
+            "path": "src/graph/domain_sports/pack.py",
+            "max_imports": 21,
+            "reason": "Sports pack intentionally mirrors the full pack wiring surface as the first non-biomedical proof pack; import consolidation is low-value until a second iteration of pack examples exists.",
             "expires_on": "2026-12-31"
         }
     ]

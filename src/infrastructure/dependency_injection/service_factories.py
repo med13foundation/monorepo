@@ -23,6 +23,7 @@ from src.application.services.pipeline_run_trace_service import (
     PipelineRunTraceService,
 )
 from src.domain.agents.models import ModelCapability
+from src.graph.runtime import create_graph_domain_pack
 from src.infrastructure.dependency_injection import (
     analysis_service_factories,
     curation_service_factories,
@@ -74,6 +75,7 @@ if TYPE_CHECKING:
         EvidenceSentenceHarnessPort,
     )
     from src.domain.services import storage_metrics, storage_providers
+    from src.graph.core.domain_pack import GraphDomainPack
 
 
 class ApplicationServiceFactoryMixin(
@@ -89,6 +91,7 @@ class ApplicationServiceFactoryMixin(
         _storage_metrics_recorder: storage_metrics.StorageMetricsRecorder
         _entity_recognition_agent: EntityRecognitionPort | None
         _extraction_agent: ExtractionAgentPort | None
+        _graph_domain_pack: GraphDomainPack | None
         _mapping_judge_agent: MappingJudgePort | None
         _graph_connection_agent: GraphConnectionPort | None
         _query_agent: QueryAgentPort | None
@@ -160,14 +163,24 @@ class ApplicationServiceFactoryMixin(
     def _is_stage_enabled(flag_name: str) -> bool:
         return os.getenv(flag_name, "1").strip() == "1"
 
+    def _get_graph_domain_pack(self) -> GraphDomainPack:
+        graph_domain_pack = getattr(self, "_graph_domain_pack", None)
+        if graph_domain_pack is None:
+            graph_domain_pack = create_graph_domain_pack()
+            self._graph_domain_pack = graph_domain_pack
+        return graph_domain_pack
+
     def get_entity_recognition_agent(self) -> EntityRecognitionPort:
         if self._entity_recognition_agent is None:
             registry = get_model_registry()
             model_spec = registry.get_default_model(
                 ModelCapability.EVIDENCE_EXTRACTION,
             )
+            graph_domain_pack = self._get_graph_domain_pack()
             self._entity_recognition_agent = ArtanaEntityRecognitionAdapter(
                 model=model_spec.model_id,
+                prompt_config=graph_domain_pack.entity_recognition_prompt,
+                payload_config=graph_domain_pack.entity_recognition_payload,
             )
         return self._entity_recognition_agent
 
@@ -177,8 +190,11 @@ class ApplicationServiceFactoryMixin(
             model_spec = registry.get_default_model(
                 ModelCapability.EVIDENCE_EXTRACTION,
             )
+            graph_domain_pack = self._get_graph_domain_pack()
             self._extraction_agent = ArtanaExtractionAdapter(
                 model=model_spec.model_id,
+                prompt_config=graph_domain_pack.extraction_prompt,
+                payload_config=graph_domain_pack.extraction_payload,
             )
         return self._extraction_agent
 
@@ -222,12 +238,17 @@ class ApplicationServiceFactoryMixin(
         model_spec = registry.get_default_model(
             ModelCapability.EVIDENCE_EXTRACTION,
         )
+        graph_domain_pack = self._get_graph_domain_pack()
         entity_recognition_agent = ArtanaEntityRecognitionAdapter(
             model=model_spec.model_id,
+            prompt_config=graph_domain_pack.entity_recognition_prompt,
+            payload_config=graph_domain_pack.entity_recognition_payload,
             dictionary_service=dictionary_service,
         )
         extraction_agent = ArtanaExtractionAdapter(
             model=model_spec.model_id,
+            prompt_config=graph_domain_pack.extraction_prompt,
+            payload_config=graph_domain_pack.extraction_payload,
             dictionary_service=dictionary_service,
         )
         extraction_policy_agent = ArtanaExtractionPolicyAdapter(
@@ -277,6 +298,9 @@ class ApplicationServiceFactoryMixin(
                 source_document_repository=SqlAlchemySourceDocumentRepository(session),
                 ingestion_pipeline=ingestion_pipeline,
                 dictionary_service=dictionary_service,
+                entity_recognition_bootstrap=(
+                    graph_domain_pack.entity_recognition_bootstrap
+                ),
                 extraction_service=extraction_service,
                 governance_service=governance_service,
                 research_space_repository=SqlAlchemyResearchSpaceRepository(session),
@@ -295,8 +319,11 @@ class ApplicationServiceFactoryMixin(
         model_spec = registry.get_default_model(
             ModelCapability.EVIDENCE_EXTRACTION,
         )
+        graph_domain_pack = self._get_graph_domain_pack()
         extraction_agent = ArtanaExtractionAdapter(
             model=model_spec.model_id,
+            prompt_config=graph_domain_pack.extraction_prompt,
+            payload_config=graph_domain_pack.extraction_payload,
             dictionary_service=dictionary_service,
         )
         extraction_policy_agent = ArtanaExtractionPolicyAdapter(

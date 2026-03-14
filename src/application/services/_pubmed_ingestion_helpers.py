@@ -19,6 +19,11 @@ from src.domain.entities.source_record_ledger import SourceRecordLedgerEntry
 from src.domain.services import pubmed_ingestion
 from src.domain.services.domain_context_resolver import DomainContextResolver
 from src.domain.services.ingestion import IngestionExtractionTarget
+from src.graph.core.domain_context import (
+    default_graph_domain_context_for_source_type,
+    resolve_graph_domain_context,
+)
+from src.graph.runtime import create_graph_domain_context_policy
 from src.type_definitions.ingestion import RawRecord as IngestionRawRecord
 from src.type_definitions.storage import StorageUseCase
 
@@ -346,13 +351,24 @@ class PubMedIngestionServiceHelpers:
         original_source_id: str,
         domain_context: str,
     ) -> list[IngestionRawRecord]:
-        normalized_domain_context = DomainContextResolver.resolve(
+        domain_context_policy = create_graph_domain_context_policy()
+        normalized_domain_context = resolve_graph_domain_context(
+            domain_context_policy=domain_context_policy,
             explicit_domain_context=domain_context,
             source_type="pubmed",
-            fallback=DomainContextResolver.PUBMED_DEFAULT_DOMAIN,
+            fallback=default_graph_domain_context_for_source_type(
+                "pubmed",
+                domain_context_policy=domain_context_policy,
+            ),
         )
         if normalized_domain_context is None:
-            normalized_domain_context = DomainContextResolver.PUBMED_DEFAULT_DOMAIN
+            normalized_domain_context = (
+                default_graph_domain_context_for_source_type(
+                    "pubmed",
+                    domain_context_policy=domain_context_policy,
+                )
+                or DomainContextResolver.GENERAL_DEFAULT_DOMAIN
+            )
         raw_records: list[IngestionRawRecord] = []
         for record in records:
             pmid = record.get("pmid")

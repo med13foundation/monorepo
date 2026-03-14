@@ -80,7 +80,8 @@ Check the required runtime contract:
 
 - `GRAPH_DATABASE_URL`
 - optional `GRAPH_DB_SCHEMA`
-- `GRAPH_JWT_SECRET` or `MED13_DEV_JWT_SECRET`
+- `GRAPH_JWT_SECRET`
+- optional `GRAPH_ALLOW_TEST_AUTH_HEADERS`
 - graph DB pool env vars when explicitly configured
 - `GRAPH_SERVICE_URL` in backend/runtime callers
 - `INTERNAL_GRAPH_API_URL` or `GRAPH_API_BASE_URL`
@@ -94,6 +95,7 @@ For deployment and promotion checks, use:
 
 Reference:
 [../reference/deployment-topology.md](../reference/deployment-topology.md)
+[../reference/runtime-alias-policy.md](../reference/runtime-alias-policy.md)
 
 ## 3. Reconcile Graph Spaces
 

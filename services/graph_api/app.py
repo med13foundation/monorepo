@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from src.graph.pack_registry import bootstrap_default_graph_domain_packs
+from src.graph.product_contract import GRAPH_OPENAPI_URL, GRAPH_SERVICE_VERSION
+
 from .config import get_settings
 from .routers.claims import router as claims_router
 from .routers.concepts import router as concepts_router
@@ -26,12 +29,13 @@ from .routers.spaces import router as spaces_router
 
 def create_app() -> FastAPI:
     """Create the standalone graph API application."""
+    bootstrap_default_graph_domain_packs()
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,
-        version="0.1.0",
+        version=GRAPH_SERVICE_VERSION,
         docs_url="/docs",
-        openapi_url="/openapi.json",
+        openapi_url=GRAPH_OPENAPI_URL,
     )
     app.include_router(health_router)
     app.include_router(claims_router)

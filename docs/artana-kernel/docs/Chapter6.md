@@ -222,10 +222,13 @@ Artana now has an explicit harness substrate:
 
 * `HarnessContext` and `BaseHarness`
 * `IncrementalTaskHarness` with typed `TaskUnit`
+* `StrongModelHarness` for persisted `WorkspaceState` + `HarnessOutcome`
+* `StrongModelAgentHarness` for `AutonomousAgent` + `ContextBuilder` + optional `AcceptanceSpec`
+* domain templates: `ResearchHarness`, `CurationHarness`, `CodingHarness`, `SupportHarness`, `DataHarness`, `ActionHarness`, `ReviewHarness`
 * `SupervisorHarness` for composition
 * `TestDrivenHarness` for verify-before-done task progression
 * `run_draft_model(...)` and `run_verify_model(...)` wrappers on `BaseHarness`
-* built-in artifact helpers (`set_artifact`, `get_artifact`)
+* built-in artifact/workspace/outcome helpers (`set_artifact`, `get_artifact`, `set_workspace_state`, `set_harness_outcome`)
 * `DraftVerifyLoopConfig` and `AcceptanceSpec` for deterministic autonomous completion
 
 Example artifact usage:
@@ -248,7 +251,7 @@ class MyTDDHarness(TestDrivenHarness):
         # update files first...
         await self.verify_and_commit(
             task_id=task.id,
-            test_command="pytest -q",
+            test_command="uv run pytest -q",
         )
 ```
 
@@ -282,15 +285,15 @@ from artana.agent import AutonomousAgent, DraftVerifyLoopConfig
 agent = AutonomousAgent(
     kernel=kernel,
     loop=DraftVerifyLoopConfig(
-        draft_model="gpt-5.3-codex-spark",
-        verify_model="gpt-5.3-codex",
+        draft_model="gpt-5-mini",
+        verify_model="gpt-5.4",
     ),
 )
 
 result = await agent.run(
     run_id="repair_run",
     tenant=tenant,
-    model="openai/gpt-5.3-codex",
+    model="openai/gpt-5.4",
     prompt="Fix flaky tests and stop only when validated.",
     output_schema=FinalDecision,
     acceptance=AcceptanceSpec(

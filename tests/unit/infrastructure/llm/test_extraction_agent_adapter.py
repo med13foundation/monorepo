@@ -12,6 +12,12 @@ import pytest
 from src.domain.agents.contexts.extraction_context import ExtractionContext
 from src.domain.agents.contracts.extraction import ExtractionContract
 from src.domain.agents.models import ModelCapability, ModelSpec
+from src.graph.domain_biomedical.extraction_payload import (
+    BIOMEDICAL_EXTRACTION_PAYLOAD_CONFIG,
+)
+from src.graph.domain_biomedical.extraction_prompt import (
+    BIOMEDICAL_EXTRACTION_PROMPT_CONFIG,
+)
 from src.infrastructure.llm.adapters.extraction_agent_adapter import (
     ArtanaExtractionAdapter,
 )
@@ -88,7 +94,15 @@ def _build_adapter(
             create=True,
         ),
     ):
-        yield ArtanaExtractionAdapter(), client, kernel, model_port
+        yield (
+            ArtanaExtractionAdapter(
+                prompt_config=BIOMEDICAL_EXTRACTION_PROMPT_CONFIG,
+                payload_config=BIOMEDICAL_EXTRACTION_PAYLOAD_CONFIG,
+            ),
+            client,
+            kernel,
+            model_port,
+        )
 
 
 @pytest.mark.asyncio
@@ -165,3 +179,91 @@ async def test_close_is_noop() -> None:
         await adapter.close()
     kernel.close.assert_not_awaited()
     model_port.aclose.assert_not_awaited()
+
+
+def test_get_system_prompt_uses_pack_prompt_dispatch() -> None:
+    with _build_adapter() as (adapter, _client, _kernel, _model_port):
+        prompt = adapter._get_system_prompt("clinvar")
+
+    assert "ClinVar records" in prompt
+
+
+def test_get_system_prompt_rejects_unsupported_source() -> None:
+    with (
+        _build_adapter() as (adapter, _client, _kernel, _model_port),
+        pytest.raises(
+            ValueError,
+            match="Unsupported extraction source type: unsupported",
+        ),
+    ):
+        adapter._get_system_prompt("unsupported")
+
+
+def test_build_compact_raw_record_uses_pack_pubmed_rules() -> None:
+    context = ExtractionContext(
+        document_id="doc-compact-pubmed",
+        source_type="pubmed",
+        raw_record={
+            "pubmed_id": "12345",
+            "title": "MED13 impacts transcription",
+            "abstract": "Abstract content",
+            "ignored_field": "ignored",
+        },
+    )
+
+    with _build_adapter() as (adapter, _client, _kernel, _model_port):
+        compact = adapter._build_compact_raw_record(context)
+
+    assert compact == {
+        "pubmed_id": "12345",
+        "title": "MED13 impacts transcription",
+        "abstract": "Abstract content",
+    }
+
+
+def test_build_compact_raw_record_uses_pack_pubmed_chunk_rules() -> None:
+    context = ExtractionContext(
+        document_id="doc-compact-pubmed-chunk",
+        source_type="pubmed",
+        raw_record={
+            "pubmed_id": "12345",
+            "title": "MED13 impacts transcription",
+            "full_text": "Chunk text",
+            "full_text_chunk_index": 1,
+            "full_text_chunk_total": 3,
+            "journal": "Ignored in chunk mode",
+        },
+    )
+
+    with _build_adapter() as (adapter, _client, _kernel, _model_port):
+        compact = adapter._build_compact_raw_record(context)
+
+    assert compact == {
+        "pubmed_id": "12345",
+        "title": "MED13 impacts transcription",
+        "full_text": "Chunk text",
+        "full_text_chunk_index": 1,
+        "full_text_chunk_total": 3,
+    }
+
+
+def test_build_compact_raw_record_uses_pack_clinvar_rules() -> None:
+    context = ExtractionContext(
+        document_id="doc-compact-clinvar",
+        source_type="clinvar",
+        raw_record={
+            "variation_id": "1234",
+            "gene_symbol": "MED13",
+            "clinical_significance": "pathogenic",
+            "ignored_field": "ignored",
+        },
+    )
+
+    with _build_adapter() as (adapter, _client, _kernel, _model_port):
+        compact = adapter._build_compact_raw_record(context)
+
+    assert compact == {
+        "variation_id": "1234",
+        "gene_symbol": "MED13",
+        "clinical_significance": "pathogenic",
+    }

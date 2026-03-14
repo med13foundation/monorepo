@@ -10,22 +10,22 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
-
-from ._kernel_relation_repository_shared import (
-    _DEFAULT_EVIDENCE_TIER,
-    _PROMOTABLE_CURATION_STATUSES,
-    _SPACE_POLICY_CUSTOM_PREFIX,
-    _SPACE_POLICY_SETTINGS_KEY,
+from src.graph.core.relation_autopromotion_policy import (
+    DEFAULT_RELATION_AUTOPROMOTION_EVIDENCE_TIER,
+    PROMOTABLE_RELATION_CURATION_STATUSES,
+    RELATION_AUTOPROMOTION_SPACE_POLICY_CUSTOM_PREFIX,
+    RELATION_AUTOPROMOTION_SPACE_POLICY_SETTINGS_KEY,
     AutoPromotionDecision,
     AutoPromotionPolicy,
-    _normalize_evidence_tier,
-    _normalize_tier_setting,
-    _parse_bool_setting,
-    _parse_float_setting,
-    _parse_int_setting,
-    _tier_rank,
+    normalize_relation_autopromotion_tier,
+    normalize_relation_evidence_tier,
+    parse_relation_autopromotion_bool,
+    parse_relation_autopromotion_float,
+    parse_relation_autopromotion_int,
+    relation_evidence_tier_rank,
 )
+from src.models.database.kernel.relations import RelationEvidenceModel, RelationModel
+
 from .kernel_space_registry_repository import SqlAlchemyKernelSpaceRegistryRepository
 
 if TYPE_CHECKING:
@@ -88,45 +88,45 @@ class _KernelRelationAutoPromotionMixin:
             return default_policy
 
         return AutoPromotionPolicy(
-            enabled=_parse_bool_setting(
+            enabled=parse_relation_autopromotion_bool(
                 settings_payload.get("enabled"),
                 default=default_policy.enabled,
             ),
-            min_distinct_sources=_parse_int_setting(
+            min_distinct_sources=parse_relation_autopromotion_int(
                 settings_payload.get("min_distinct_sources"),
                 default=default_policy.min_distinct_sources,
                 minimum=1,
             ),
-            min_aggregate_confidence=_parse_float_setting(
+            min_aggregate_confidence=parse_relation_autopromotion_float(
                 settings_payload.get("min_aggregate_confidence"),
                 default=default_policy.min_aggregate_confidence,
             ),
-            require_distinct_documents=_parse_bool_setting(
+            require_distinct_documents=parse_relation_autopromotion_bool(
                 settings_payload.get("require_distinct_documents"),
                 default=default_policy.require_distinct_documents,
             ),
-            require_distinct_runs=_parse_bool_setting(
+            require_distinct_runs=parse_relation_autopromotion_bool(
                 settings_payload.get("require_distinct_runs"),
                 default=default_policy.require_distinct_runs,
             ),
-            block_if_conflicting_evidence=_parse_bool_setting(
+            block_if_conflicting_evidence=parse_relation_autopromotion_bool(
                 settings_payload.get("block_if_conflicting_evidence"),
                 default=default_policy.block_if_conflicting_evidence,
             ),
-            min_evidence_tier=_normalize_tier_setting(
+            min_evidence_tier=normalize_relation_autopromotion_tier(
                 settings_payload.get("min_evidence_tier"),
                 default=default_policy.min_evidence_tier,
             ),
-            computational_min_distinct_sources=_parse_int_setting(
+            computational_min_distinct_sources=parse_relation_autopromotion_int(
                 settings_payload.get("computational_min_distinct_sources"),
                 default=default_policy.computational_min_distinct_sources,
                 minimum=1,
             ),
-            computational_min_aggregate_confidence=_parse_float_setting(
+            computational_min_aggregate_confidence=parse_relation_autopromotion_float(
                 settings_payload.get("computational_min_aggregate_confidence"),
                 default=default_policy.computational_min_aggregate_confidence,
             ),
-            conflicting_confidence_threshold=_parse_float_setting(
+            conflicting_confidence_threshold=parse_relation_autopromotion_float(
                 settings_payload.get("conflicting_confidence_threshold"),
                 default=default_policy.conflicting_confidence_threshold,
             ),
@@ -144,7 +144,9 @@ class _KernelRelationAutoPromotionMixin:
             return {}
 
         settings_payload: dict[str, object] = {}
-        raw_policy = space.settings.get(_SPACE_POLICY_SETTINGS_KEY)
+        raw_policy = space.settings.get(
+            RELATION_AUTOPROMOTION_SPACE_POLICY_SETTINGS_KEY,
+        )
         if isinstance(raw_policy, dict):
             for key, value in raw_policy.items():
                 settings_payload[str(key)] = value
@@ -152,9 +154,13 @@ class _KernelRelationAutoPromotionMixin:
         custom_settings = space.settings.get("custom")
         if isinstance(custom_settings, dict):
             for key, value in custom_settings.items():
-                if not key.startswith(_SPACE_POLICY_CUSTOM_PREFIX):
+                if not key.startswith(
+                    RELATION_AUTOPROMOTION_SPACE_POLICY_CUSTOM_PREFIX,
+                ):
                     continue
-                normalized_key = key.removeprefix(_SPACE_POLICY_CUSTOM_PREFIX)
+                normalized_key = key.removeprefix(
+                    RELATION_AUTOPROMOTION_SPACE_POLICY_CUSTOM_PREFIX,
+                )
                 if normalized_key:
                     settings_payload[normalized_key] = value
 
@@ -203,7 +209,7 @@ class _KernelRelationAutoPromotionMixin:
             )
 
         normalized_status = relation_model.curation_status.strip().upper()
-        if normalized_status not in _PROMOTABLE_CURATION_STATUSES:
+        if normalized_status not in PROMOTABLE_RELATION_CURATION_STATUSES:
             return AutoPromotionDecision(
                 outcome="kept",
                 reason="status_not_promotable",
@@ -254,9 +260,9 @@ class _KernelRelationAutoPromotionMixin:
         distinct_document_count = self._count_distinct_documents(evidences)
         distinct_run_count = self._count_distinct_runs(evidences)
 
-        if not all_computational and _tier_rank(
+        if not all_computational and relation_evidence_tier_rank(
             relation_model.highest_evidence_tier,
-        ) < _tier_rank(policy.min_evidence_tier):
+        ) < relation_evidence_tier_rank(policy.min_evidence_tier):
             return AutoPromotionDecision(
                 outcome="kept",
                 reason="tier_below_threshold",
@@ -424,7 +430,8 @@ class _KernelRelationAutoPromotionMixin:
         if not evidences:
             return False
         return all(
-            _normalize_evidence_tier(evidence.evidence_tier) == _DEFAULT_EVIDENCE_TIER
+            normalize_relation_evidence_tier(evidence.evidence_tier)
+            == DEFAULT_RELATION_AUTOPROMOTION_EVIDENCE_TIER
             for evidence in evidences
         )
 

@@ -10,7 +10,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, inspect, text
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-CURRENT_HEAD_REVISION = "010_graph_kernel_schema"
+CURRENT_HEAD_REVISION = "014_entity_mechanism_paths"
 _ALEMBIC_SUBPROCESS_TEMPLATE = """
 import os
 import sys
@@ -75,6 +75,9 @@ def test_upgrade_head_creates_current_baseline_schema(tmp_path: Path) -> None:
         "graph_space_memberships",
         "graph_operation_runs",
         "entity_embeddings",
+        "entity_relation_summary",
+        "entity_claim_summary",
+        "entity_neighbors",
         "pipeline_run_events",
     }.issubset(table_names)
 

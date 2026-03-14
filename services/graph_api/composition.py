@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 
 from sqlalchemy.orm import Session
 
@@ -56,6 +55,15 @@ from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
 from src.domain.agents.ports.graph_search_port import GraphSearchPort
 from src.domain.repositories.kernel.entity_repository import KernelEntityRepository
+from src.domain.repositories.kernel.relation_repository import KernelRelationRepository
+from src.graph.core.domain_pack import GraphDomainPack
+from src.graph.core.feature_flags import is_flag_enabled
+from src.graph.runtime import create_graph_domain_pack
+from src.infrastructure.dependency_injection.graph_runtime_factories import (
+    build_graph_query_repository,
+    build_graph_read_model_update_dispatcher,
+    build_relation_repository,
+)
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 from src.infrastructure.llm.adapters.graph_connection_agent_adapter import (
     ArtanaGraphConnectionAdapter,
@@ -94,9 +102,6 @@ from src.infrastructure.repositories.kernel.kernel_relation_claim_repository imp
 from src.infrastructure.repositories.kernel.kernel_relation_projection_source_repository import (
     SqlAlchemyKernelRelationProjectionSourceRepository,
 )
-from src.infrastructure.repositories.kernel.kernel_relation_repository import (
-    SqlAlchemyKernelRelationRepository,
-)
 from src.infrastructure.repositories.kernel.kernel_space_registry_repository import (
     SqlAlchemyKernelSpaceRegistryRepository,
 )
@@ -113,8 +118,6 @@ from .governance import (
     build_dictionary_repository,
     build_dictionary_service,
 )
-
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 class _UnavailableGraphConnectionAgent(GraphConnectionPort):
@@ -182,9 +185,9 @@ def build_entity_similarity_service(
 def _build_graph_search_agent(
     *,
     graph_query_service: object,
+    graph_domain_pack: GraphDomainPack,
 ) -> GraphSearchPort | None:
-    raw_value = os.getenv("MED13_ENABLE_GRAPH_SEARCH_AGENT", "1")
-    if raw_value.strip().lower() not in _TRUE_VALUES:
+    if not is_flag_enabled(graph_domain_pack.feature_flags.search_agent):
         return None
     if importlib.util.find_spec("artana") is None:
         return None
@@ -194,6 +197,7 @@ def _build_graph_search_agent(
     try:
         return ArtanaGraphSearchAdapter(
             model=model_spec.model_id,
+            search_extension=graph_domain_pack.search_extension,
             graph_query_service=graph_query_service,
         )
     except Exception:  # noqa: BLE001 - preserve API availability
@@ -202,8 +206,12 @@ def _build_graph_search_agent(
 
 def build_graph_search_service(session: Session) -> GraphSearchService:
     """Build the graph-service graph-search orchestration service."""
-    dictionary_service = build_dictionary_service(session)
-    graph_query_service = SqlAlchemyGraphQueryRepository(session)
+    graph_domain_pack = create_graph_domain_pack()
+    dictionary_service = build_dictionary_service(
+        session,
+        dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
+    )
+    graph_query_service = build_graph_query_repository(session)
     return GraphSearchService(
         dependencies=GraphSearchServiceDependencies(
             research_query_service=ResearchQueryService(
@@ -212,6 +220,7 @@ def build_graph_search_service(session: Session) -> GraphSearchService:
             graph_query_service=graph_query_service,
             graph_search_agent=_build_graph_search_agent(
                 graph_query_service=graph_query_service,
+                graph_domain_pack=graph_domain_pack,
             ),
             governance_service=GovernanceService(),
         ),
@@ -222,13 +231,15 @@ def _build_graph_connection_agent(
     *,
     dictionary_service: object,
     graph_query_service: SqlAlchemyGraphQueryRepository,
-    relation_repository: SqlAlchemyKernelRelationRepository,
+    relation_repository: KernelRelationRepository,
+    graph_domain_pack: GraphDomainPack,
 ) -> GraphConnectionPort:
     registry = get_model_registry()
     model_spec = registry.get_default_model(ModelCapability.EVIDENCE_EXTRACTION)
     try:
         return ArtanaGraphConnectionAdapter(
             model=model_spec.model_id,
+            prompt_config=graph_domain_pack.graph_connection_prompt,
             dictionary_service=dictionary_service,
             graph_query_service=graph_query_service,
             relation_repository=relation_repository,
@@ -239,20 +250,24 @@ def _build_graph_connection_agent(
 
 def build_graph_connection_service(session: Session) -> GraphConnectionService:
     """Build the graph-service graph-connection orchestration service."""
-    dictionary_service = build_dictionary_service(session)
-    relation_repository = SqlAlchemyKernelRelationRepository(
+    graph_domain_pack = create_graph_domain_pack()
+    dictionary_service = build_dictionary_service(
         session,
+        dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
     )
-    graph_query_service = SqlAlchemyGraphQueryRepository(session)
+    relation_repository = build_relation_repository(session)
+    graph_query_service = build_graph_query_repository(session)
     graph_connection_agent = _build_graph_connection_agent(
         dictionary_service=dictionary_service,
         graph_query_service=graph_query_service,
         relation_repository=relation_repository,
+        graph_domain_pack=graph_domain_pack,
     )
 
     return GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=graph_connection_agent,
+            graph_connection_prompt=graph_domain_pack.graph_connection_prompt,
             relation_repository=relation_repository,
             entity_repository=build_entity_repository(session),
             relation_claim_repository=SqlAlchemyKernelRelationClaimRepository(
@@ -286,11 +301,19 @@ def build_graph_connection_service(session: Session) -> GraphConnectionService:
                         )
                     ),
                     entity_repo=build_entity_repository(session),
-                    dictionary_repo=build_dictionary_repository(session),
+                    dictionary_repo=build_dictionary_repository(
+                        session,
+                        dictionary_loading_extension=(
+                            graph_domain_pack.dictionary_loading_extension
+                        ),
+                    ),
                     relation_projection_repo=(
                         SqlAlchemyKernelRelationProjectionSourceRepository(
                             session,
                         )
+                    ),
+                    read_model_update_dispatcher=(
+                        build_graph_read_model_update_dispatcher(session)
                     ),
                 )
             ),
@@ -305,16 +328,22 @@ def build_hypothesis_generation_service(
     session: Session,
 ) -> HypothesisGenerationService:
     """Build the graph-service hypothesis orchestration service locally."""
-    dictionary_service = build_dictionary_service(session)
-    relation_repository = SqlAlchemyKernelRelationRepository(session)
-    graph_query_service = SqlAlchemyGraphQueryRepository(session)
+    graph_domain_pack = create_graph_domain_pack()
+    dictionary_service = build_dictionary_service(
+        session,
+        dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
+    )
+    relation_repository = build_relation_repository(session)
+    graph_query_service = build_graph_query_repository(session)
     graph_connection_agent = _build_graph_connection_agent(
         dictionary_service=dictionary_service,
         graph_query_service=graph_query_service,
         relation_repository=relation_repository,
+        graph_domain_pack=graph_domain_pack,
     )
     relation_claim_service = KernelRelationClaimService(
         relation_claim_repo=SqlAlchemyKernelRelationClaimRepository(session),
+        read_model_update_dispatcher=build_graph_read_model_update_dispatcher(session),
     )
     claim_participant_service = KernelClaimParticipantService(
         claim_participant_repo=SqlAlchemyKernelClaimParticipantRepository(session),
@@ -336,6 +365,7 @@ def build_hypothesis_generation_service(
         claim_evidence_service=claim_evidence_service,
         claim_relation_service=claim_relation_service,
         relation_service=relation_service,
+        read_model_update_dispatcher=build_graph_read_model_update_dispatcher(session),
         session=session,
         space_registry_port=SqlAlchemyKernelSpaceRegistryRepository(session),
     )
@@ -357,12 +387,16 @@ def build_observation_service(
     session: Session,
 ) -> KernelObservationService:
     """Build the graph-service observation service."""
+    graph_domain_pack = create_graph_domain_pack()
     return KernelObservationService(
         observation_repo=SqlAlchemyKernelObservationRepository(
             session,
         ),
         entity_repo=build_entity_repository(session),
-        dictionary_repo=build_dictionary_service(session),
+        dictionary_repo=build_dictionary_service(
+            session,
+            dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
+        ),
     )
 
 
@@ -370,11 +404,16 @@ def build_relation_suggestion_service(
     session: Session,
 ) -> KernelRelationSuggestionService:
     """Build the graph-service hybrid relation suggestion service."""
+    graph_domain_pack = create_graph_domain_pack()
     return KernelRelationSuggestionService(
         entity_repo=build_entity_repository(session),
-        relation_repo=SqlAlchemyKernelRelationRepository(session),
-        dictionary_repo=build_dictionary_repository(session),
+        relation_repo=build_relation_repository(session),
+        dictionary_repo=build_dictionary_repository(
+            session,
+            dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
+        ),
         embedding_repo=SqlAlchemyEntityEmbeddingRepository(session),
+        relation_suggestion_extension=graph_domain_pack.relation_suggestion_extension,
     )
 
 
@@ -388,5 +427,6 @@ __all__ = [
     "build_entity_repository",
     "build_entity_similarity_service",
     "build_observation_service",
+    "build_relation_repository",
     "build_relation_suggestion_service",
 ]

@@ -10,9 +10,6 @@ from sqlalchemy import and_, func, or_, select
 from src.domain.entities.kernel.entities import KernelEntity
 from src.domain.entities.kernel.observations import KernelObservation
 from src.domain.ports.graph_query_port import GraphQueryPort
-from src.infrastructure.repositories.kernel.kernel_relation_repository import (
-    SqlAlchemyKernelRelationRepository,
-)
 from src.models.database.kernel.entities import EntityModel
 from src.models.database.kernel.observations import ObservationModel
 
@@ -25,6 +22,9 @@ if TYPE_CHECKING:
         KernelRelation,
         KernelRelationEvidence,
     )
+    from src.domain.repositories.kernel.relation_repository import (
+        KernelRelationRepository,
+    )
     from src.type_definitions.common import JSONObject, JSONValue
 
 
@@ -35,9 +35,14 @@ def _as_uuid(value: str | UUID) -> UUID:
 class SqlAlchemyGraphQueryRepository(GraphQueryPort):
     """Graph-query repository used by graph-layer reasoning agents."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        relation_repository: KernelRelationRepository,
+    ) -> None:
         self._session = session
-        self._relations = SqlAlchemyKernelRelationRepository(session)
+        self._relations = relation_repository
 
     def graph_query_entities(
         self,

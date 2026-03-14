@@ -26,7 +26,6 @@ from ._kernel_relation_auto_promotion_mixin import _KernelRelationAutoPromotionM
 from ._kernel_relation_curation_mixin import _KernelRelationCurationMixin
 from ._kernel_relation_query_mixin import _KernelRelationQueryMixin
 from ._kernel_relation_repository_shared import (
-    AutoPromotionPolicy,
     _as_uuid,
     _clamp_confidence,
     _normalize_evidence_tier,
@@ -34,6 +33,8 @@ from ._kernel_relation_repository_shared import (
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+    from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +51,10 @@ class SqlAlchemyKernelRelationRepository(
         self,
         session: Session,
         *,
-        auto_promotion_policy: AutoPromotionPolicy | None = None,
+        auto_promotion_policy: AutoPromotionPolicy,
     ) -> None:
         self._session = session
-        self._auto_promotion_policy = (
-            auto_promotion_policy or AutoPromotionPolicy.from_environment()
-        )
+        self._auto_promotion_policy = auto_promotion_policy
 
     def upsert_relation(  # noqa: PLR0913
         self,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,6 +11,7 @@ from services.graph_api.auth import get_current_active_user
 from services.graph_api.database import get_session
 from services.graph_api.dependencies import (
     get_kernel_relation_suggestion_service,
+    get_relation_suggestions_flag,
     get_space_access_port,
     require_space_role,
 )
@@ -25,6 +25,7 @@ from src.application.services.kernel.kernel_relation_suggestion_service import (
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import User
 from src.domain.ports.space_access_port import SpaceAccessPort
+from src.graph.core.feature_flags import FeatureFlagDefinition, is_flag_enabled
 from src.type_definitions.graph_service_contracts import (
     KernelRelationSuggestionConstraintCheckResponse,
     KernelRelationSuggestionListResponse,
@@ -35,14 +36,6 @@ from src.type_definitions.graph_service_contracts import (
 
 router = APIRouter(prefix="/v1/spaces", tags=["graph-relation-suggestions"])
 
-_RELATION_SUGGESTIONS_ENABLED_ENV = "MED13_ENABLE_RELATION_SUGGESTIONS"
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-
-
-def _is_relation_suggestions_enabled() -> bool:
-    raw_value = os.getenv(_RELATION_SUGGESTIONS_ENABLED_ENV, "0")
-    return raw_value.strip().lower() in _TRUE_VALUES
-
 
 def _feature_disabled_error(flag_name: str) -> HTTPException:
     return HTTPException(
@@ -51,7 +44,7 @@ def _feature_disabled_error(flag_name: str) -> HTTPException:
             "code": "FEATURE_DISABLED",
             "message": (
                 "This endpoint is disabled. "
-                f"Enable {flag_name}=1 to use constrained relation suggestions."
+                f"Enable {flag_name} to use constrained relation suggestions."
             ),
         },
     )
@@ -68,6 +61,9 @@ def suggest_graph_relations(
     *,
     current_user: User = Depends(get_current_active_user),
     space_access: SpaceAccessPort = Depends(get_space_access_port),
+    relation_suggestions_flag: FeatureFlagDefinition = Depends(
+        get_relation_suggestions_flag,
+    ),
     relation_suggestion_service: KernelRelationSuggestionService = Depends(
         get_kernel_relation_suggestion_service,
     ),
@@ -82,8 +78,8 @@ def suggest_graph_relations(
         required_role=MembershipRole.RESEARCHER,
     )
 
-    if not _is_relation_suggestions_enabled():
-        raise _feature_disabled_error(_RELATION_SUGGESTIONS_ENABLED_ENV)
+    if not is_flag_enabled(relation_suggestions_flag):
+        raise _feature_disabled_error(relation_suggestions_flag.env_display_name)
 
     try:
         suggestions = relation_suggestion_service.suggest_relations(

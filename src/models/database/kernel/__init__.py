@@ -40,6 +40,12 @@ from .operation_runs import (
     GraphOperationRunTypeEnum,
 )
 from .provenance import ProvenanceModel
+from .read_models import (
+    EntityClaimSummaryModel,
+    EntityMechanismPathModel,
+    EntityNeighborModel,
+    EntityRelationSummaryModel,
+)
 from .reasoning_paths import ReasoningPathModel, ReasoningPathStepModel
 from .relation_claims import RelationClaimModel
 from .relation_projection_sources import RelationProjectionSourceModel
@@ -90,6 +96,10 @@ __all__ = [
     "RelationProjectionSourceModel",
     "RelationModel",
     "ProvenanceModel",
+    "EntityClaimSummaryModel",
+    "EntityMechanismPathModel",
+    "EntityNeighborModel",
+    "EntityRelationSummaryModel",
     "ReasoningPathModel",
     "ReasoningPathStepModel",
     "GraphSpaceMembershipModel",

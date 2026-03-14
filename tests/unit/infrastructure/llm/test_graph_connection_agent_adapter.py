@@ -12,6 +12,9 @@ import pytest
 from src.domain.agents.contexts.graph_connection_context import GraphConnectionContext
 from src.domain.agents.contracts.graph_connection import GraphConnectionContract
 from src.domain.agents.models import ModelCapability, ModelSpec
+from src.graph.domain_biomedical.graph_connection_prompt import (
+    BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
+)
 from src.infrastructure.llm.adapters.graph_connection_agent_adapter import (
     ArtanaGraphConnectionAdapter,
 )
@@ -98,6 +101,7 @@ def _build_adapter(
         ),
     ):
         yield ArtanaGraphConnectionAdapter(
+            prompt_config=BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG,
             dictionary_service=dictionary_service,
             graph_query_service=graph_query_service,
             relation_repository=relation_repository,
@@ -179,3 +183,28 @@ async def test_discover_calls_artana_and_normalizes_contract() -> None:
     assert contract.agent_run_id is not None
     assert contract.agent_run_id.startswith("graph_connection:pubmed:")
     client.step.assert_awaited_once()
+
+
+def test_get_system_prompt_uses_pack_prompt_dispatch() -> None:
+    with _build_adapter() as (adapter, _client):
+        prompt = adapter._get_system_prompt("pubmed")
+
+    assert "PubMed-backed research spaces" in prompt
+
+
+def test_connector_extension_exposes_step_key_dispatch() -> None:
+    assert (
+        BIOMEDICAL_GRAPH_CONNECTION_PROMPT_CONFIG.step_key_for("pubmed")
+        == "graph.connection.pubmed.v1"
+    )
+
+
+def test_get_system_prompt_rejects_unsupported_source() -> None:
+    with (
+        _build_adapter() as (adapter, _client),
+        pytest.raises(
+            ValueError,
+            match="Unsupported graph-connection source type: unsupported",
+        ),
+    ):
+        adapter._get_system_prompt("unsupported")

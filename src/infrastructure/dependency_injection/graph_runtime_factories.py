@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 from typing import TYPE_CHECKING
 
 from src.application.agents.services import (
@@ -38,6 +37,15 @@ from src.application.services.kernel.kernel_claim_projection_readiness_service i
 )
 from src.application.services.kernel.kernel_claim_relation_service import (
     KernelClaimRelationService,
+)
+from src.application.services.kernel.kernel_entity_claim_summary_projector import (
+    KernelEntityClaimSummaryProjector,
+)
+from src.application.services.kernel.kernel_entity_neighbors_projector import (
+    KernelEntityNeighborsProjector,
+)
+from src.application.services.kernel.kernel_entity_relation_summary_projector import (
+    KernelEntityRelationSummaryProjector,
 )
 from src.application.services.kernel.kernel_entity_service import KernelEntityService
 from src.application.services.kernel.kernel_entity_similarity_service import (
@@ -73,6 +81,13 @@ from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.graph_connection import GraphConnectionContract
 from src.domain.agents.models import ModelCapability
 from src.domain.agents.ports.graph_connection_port import GraphConnectionPort
+from src.graph.core.feature_flags import is_flag_enabled
+from src.graph.core.read_model import ProjectorBackedGraphReadModelUpdateDispatcher
+from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
+from src.graph.runtime import (
+    create_graph_domain_pack,
+    create_relation_autopromotion_defaults,
+)
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 from src.infrastructure.graph_governance.governance import (
     build_concept_repository as build_graph_concept_repository,
@@ -167,8 +182,7 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
-
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+    from src.graph.core.domain_pack import GraphDomainPack
 
 
 class _UnavailableGraphConnectionAgent(GraphConnectionPort):
@@ -210,7 +224,11 @@ class _UnavailableGraphConnectionAgent(GraphConnectionPort):
 
 
 def build_dictionary_repository(session: Session):
-    return build_graph_dictionary_repository(session)
+    graph_domain_pack = create_graph_domain_pack()
+    return build_graph_dictionary_repository(
+        session,
+        dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
+    )
 
 
 def build_concept_repository(session: Session):
@@ -222,7 +240,10 @@ def build_provenance_repository(session: Session):
 
 
 def build_graph_query_repository(session: Session):
-    return SqlAlchemyGraphQueryRepository(session)
+    return SqlAlchemyGraphQueryRepository(
+        session,
+        relation_repository=build_relation_repository(session),
+    )
 
 
 def build_entity_repository(session: Session) -> KernelEntityRepository:
@@ -249,10 +270,20 @@ def build_observation_repository(
     return SqlAlchemyKernelObservationRepository(session)
 
 
+def build_relation_autopromotion_policy() -> AutoPromotionPolicy:
+    """Resolve relation auto-promotion policy at composition time."""
+    return AutoPromotionPolicy.from_environment(
+        defaults=create_relation_autopromotion_defaults(),
+    )
+
+
 def build_relation_repository(
     session: Session,
 ) -> KernelRelationRepository:
-    return SqlAlchemyKernelRelationRepository(session)
+    return SqlAlchemyKernelRelationRepository(
+        session,
+        auto_promotion_policy=build_relation_autopromotion_policy(),
+    )
 
 
 def build_relation_claim_repository(session: Session):
@@ -297,9 +328,11 @@ def build_dictionary_service(
     dictionary_search_harness: DictionarySearchHarnessPort | None = None,
     embedding_provider: HybridTextEmbeddingProvider | None = None,
 ) -> DictionaryPort:
+    graph_domain_pack = create_graph_domain_pack()
     if dictionary_search_harness is None:
         return build_graph_dictionary_service(
             session,
+            dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
             embedding_provider=embedding_provider,
         )
 
@@ -355,11 +388,13 @@ def create_kernel_relation_service(session: Session) -> KernelRelationService:
 def create_kernel_relation_suggestion_service(
     session: Session,
 ) -> KernelRelationSuggestionService:
+    graph_domain_pack = create_graph_domain_pack()
     return KernelRelationSuggestionService(
         entity_repo=build_entity_repository(session),
         relation_repo=build_relation_repository(session),
         dictionary_repo=build_dictionary_repository(session),
         embedding_repo=build_entity_embedding_repository(session),
+        relation_suggestion_extension=graph_domain_pack.relation_suggestion_extension,
     )
 
 
@@ -377,9 +412,9 @@ def create_concept_management_service(session: Session) -> ConceptPort:
 def _build_graph_search_agent(
     *,
     graph_query_service: object,
+    graph_domain_pack: GraphDomainPack,
 ) -> GraphSearchPort | None:
-    raw_value = os.getenv("MED13_ENABLE_GRAPH_SEARCH_AGENT", "1")
-    if raw_value.strip().lower() not in _TRUE_VALUES:
+    if not is_flag_enabled(graph_domain_pack.feature_flags.search_agent):
         return None
     if importlib.util.find_spec("artana") is None:
         return None
@@ -389,6 +424,7 @@ def _build_graph_search_agent(
     try:
         return ArtanaGraphSearchAdapter(
             model=model_spec.model_id,
+            search_extension=graph_domain_pack.search_extension,
             graph_query_service=graph_query_service,
         )
     except Exception:  # noqa: BLE001 - preserve API availability
@@ -400,12 +436,14 @@ def _build_graph_connection_agent(
     dictionary_service: DictionaryPort,
     graph_query_service: SqlAlchemyGraphQueryRepository,
     relation_repository: KernelRelationRepository,
+    graph_domain_pack: GraphDomainPack,
 ) -> GraphConnectionPort:
     registry = get_model_registry()
     model_spec = registry.get_default_model(ModelCapability.EVIDENCE_EXTRACTION)
     try:
         return ArtanaGraphConnectionAdapter(
             model=model_spec.model_id,
+            prompt_config=graph_domain_pack.graph_connection_prompt,
             dictionary_service=dictionary_service,
             graph_query_service=graph_query_service,
             relation_repository=relation_repository,
@@ -416,6 +454,7 @@ def _build_graph_connection_agent(
 
 def build_graph_search_service(session: Session) -> GraphSearchService:
     """Build graph-search orchestration from shared graph runtime factories."""
+    graph_domain_pack = create_graph_domain_pack()
     dictionary_service = build_dictionary_service(session)
     graph_query_service = build_graph_query_repository(session)
     return GraphSearchService(
@@ -426,6 +465,7 @@ def build_graph_search_service(session: Session) -> GraphSearchService:
             graph_query_service=graph_query_service,
             graph_search_agent=_build_graph_search_agent(
                 graph_query_service=graph_query_service,
+                graph_domain_pack=graph_domain_pack,
             ),
             governance_service=GovernanceService(),
         ),
@@ -434,6 +474,7 @@ def build_graph_search_service(session: Session) -> GraphSearchService:
 
 def build_graph_connection_service(session: Session) -> GraphConnectionService:
     """Build graph-connection orchestration from shared graph runtime factories."""
+    graph_domain_pack = create_graph_domain_pack()
     dictionary_service = build_dictionary_service(session)
     relation_repository = build_relation_repository(session)
     graph_query_service = build_graph_query_repository(session)
@@ -441,11 +482,13 @@ def build_graph_connection_service(session: Session) -> GraphConnectionService:
         dictionary_service=dictionary_service,
         graph_query_service=graph_query_service,
         relation_repository=relation_repository,
+        graph_domain_pack=graph_domain_pack,
     )
 
     return GraphConnectionService(
         dependencies=GraphConnectionServiceDependencies(
             graph_connection_agent=graph_connection_agent,
+            graph_connection_prompt=graph_domain_pack.graph_connection_prompt,
             relation_repository=relation_repository,
             entity_repository=build_entity_repository(session),
             relation_claim_repository=build_relation_claim_repository(session),
@@ -464,6 +507,9 @@ def build_graph_connection_service(session: Session) -> GraphConnectionService:
                     dictionary_repo=build_dictionary_repository(session),
                     relation_projection_repo=build_relation_projection_source_repository(
                         session,
+                    ),
+                    read_model_update_dispatcher=(
+                        build_graph_read_model_update_dispatcher(session)
                     ),
                 )
             ),
@@ -486,6 +532,7 @@ def create_kernel_relation_claim_service(
 ) -> KernelRelationClaimService:
     return KernelRelationClaimService(
         relation_claim_repo=core_factory._build_relation_claim_repository(session),  # type: ignore[attr-defined]  # noqa: SLF001
+        read_model_update_dispatcher=build_graph_read_model_update_dispatcher(session),
     )
 
 
@@ -523,6 +570,35 @@ def create_kernel_relation_projection_materialization_service(
         entity_repo=core_factory._build_entity_repository(session),  # type: ignore[attr-defined]  # noqa: SLF001
         dictionary_repo=core_factory._build_dictionary_repository(session),  # type: ignore[attr-defined]  # noqa: SLF001
         relation_projection_repo=core_factory._build_relation_projection_source_repository(session),  # type: ignore[attr-defined]  # noqa: SLF001
+        read_model_update_dispatcher=build_graph_read_model_update_dispatcher(session),
+    )
+
+
+def build_graph_read_model_update_dispatcher(
+    session: Session,
+) -> ProjectorBackedGraphReadModelUpdateDispatcher:
+    """Build the current read-model dispatcher runtime adapter."""
+    from src.application.services.kernel.kernel_entity_mechanism_paths_projector import (
+        KernelEntityMechanismPathsProjector,
+    )
+
+    entity_claim_summary_projector = KernelEntityClaimSummaryProjector(session)
+    entity_mechanism_paths_projector = KernelEntityMechanismPathsProjector(session)
+    entity_neighbors_projector = KernelEntityNeighborsProjector(session)
+    entity_relation_summary_projector = KernelEntityRelationSummaryProjector(session)
+    return ProjectorBackedGraphReadModelUpdateDispatcher(
+        projectors={
+            entity_claim_summary_projector.definition.name: (
+                entity_claim_summary_projector
+            ),
+            entity_mechanism_paths_projector.definition.name: (
+                entity_mechanism_paths_projector
+            ),
+            entity_neighbors_projector.definition.name: entity_neighbors_projector,
+            entity_relation_summary_projector.definition.name: (
+                entity_relation_summary_projector
+            ),
+        },
     )
 
 
@@ -558,6 +634,7 @@ def create_kernel_graph_view_service(
     projection_factory: object,
     session: Session,
 ) -> KernelGraphViewService:
+    graph_domain_pack = create_graph_domain_pack()
     return KernelGraphViewService(
         KernelGraphViewServiceDependencies(
             entity_service=core_factory.create_kernel_entity_service(session),  # type: ignore[attr-defined]
@@ -567,6 +644,7 @@ def create_kernel_graph_view_service(
             claim_relation_service=projection_factory.create_kernel_claim_relation_service(session),  # type: ignore[attr-defined]
             claim_evidence_service=projection_factory.create_kernel_claim_evidence_service(session),  # type: ignore[attr-defined]
             source_document_lookup=core_factory._build_source_document_reference_repository(session),  # type: ignore[attr-defined]  # noqa: SLF001
+            view_extension=graph_domain_pack.view_extension,
         ),
     )
 
@@ -583,6 +661,7 @@ def create_kernel_reasoning_path_service(
         claim_evidence_service=projection_factory.create_kernel_claim_evidence_service(session),  # type: ignore[attr-defined]
         claim_relation_service=projection_factory.create_kernel_claim_relation_service(session),  # type: ignore[attr-defined]
         relation_service=core_factory.create_kernel_relation_service(session),  # type: ignore[attr-defined]
+        read_model_update_dispatcher=build_graph_read_model_update_dispatcher(session),
         session=session,
         space_registry_port=core_factory._build_space_registry_repository(session),  # type: ignore[attr-defined]  # noqa: SLF001
     )
@@ -625,6 +704,7 @@ def create_hypothesis_generation_service(
     session: Session,
 ) -> HypothesisGenerationService:
     dictionary_service = core_factory.create_dictionary_management_service(session)  # type: ignore[attr-defined]
+    graph_domain_pack = create_graph_domain_pack()
     relation_repository = core_factory._build_relation_repository(session)  # type: ignore[attr-defined]  # noqa: SLF001
     graph_query_service = core_factory._build_graph_query_repository(session)  # type: ignore[attr-defined]  # noqa: SLF001
     model_spec = get_model_registry().get_default_model(
@@ -632,6 +712,7 @@ def create_hypothesis_generation_service(
     )
     graph_connection_agent = ArtanaGraphConnectionAdapter(
         model=model_spec.model_id,
+        prompt_config=graph_domain_pack.graph_connection_prompt,
         dictionary_service=dictionary_service,
         graph_query_service=graph_query_service,
         relation_repository=relation_repository,
@@ -663,10 +744,12 @@ __all__ = [
     "build_dictionary_service",
     "build_entity_embedding_repository",
     "build_entity_repository",
+    "build_graph_read_model_update_dispatcher",
     "build_graph_query_repository",
     "build_observation_repository",
     "build_provenance_repository",
     "build_reasoning_path_repository",
+    "build_relation_autopromotion_policy",
     "build_relation_claim_repository",
     "build_relation_projection_source_repository",
     "build_relation_repository",

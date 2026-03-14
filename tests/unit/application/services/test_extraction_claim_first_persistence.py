@@ -50,6 +50,9 @@ from src.domain.entities.user import UserRole, UserStatus
 from src.domain.entities.user_data_source import SourceType
 from src.domain.ports.dictionary_search_harness_port import DictionarySearchHarnessPort
 from src.domain.ports.evidence_sentence_harness_port import EvidenceSentenceHarnessPort
+from src.graph.core.read_model import NullGraphReadModelUpdateDispatcher
+from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
+from src.graph.pack_registry import resolve_graph_domain_pack
 from src.infrastructure.llm.adapters.concept_decision_harness_adapter import (
     DeterministicConceptDecisionHarnessAdapter,
 )
@@ -110,6 +113,15 @@ class _DeterministicHarness(DictionarySearchHarnessPort):
         )
 
 
+def _build_relation_repository(
+    db_session: Session,
+) -> SqlAlchemyKernelRelationRepository:
+    return SqlAlchemyKernelRelationRepository(
+        db_session,
+        auto_promotion_policy=AutoPromotionPolicy(),
+    )
+
+
 def _build_relation_projection_materializer(
     *,
     db_session: Session,
@@ -130,6 +142,7 @@ def _build_relation_projection_materializer(
         relation_projection_repo=SqlAlchemyKernelRelationProjectionSourceRepository(
             db_session,
         ),
+        read_model_update_dispatcher=NullGraphReadModelUpdateDispatcher(),
     )
 
 
@@ -347,7 +360,10 @@ def _build_optional_missing_span_harness_fixture(
     db_session.add(source)
     db_session.flush()
 
-    dictionary_repo = SqlAlchemyDictionaryRepository(db_session)
+    dictionary_repo = SqlAlchemyDictionaryRepository(
+        db_session,
+        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+    )
     dictionary_service = DictionaryManagementService(
         dictionary_repo=dictionary_repo,
         dictionary_search_harness=_DeterministicHarness(dictionary_repo),
@@ -388,7 +404,7 @@ def _build_optional_missing_span_harness_fixture(
     )
 
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
-    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
+    relation_repo = _build_relation_repository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
     claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(db_session)
     claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
@@ -529,7 +545,10 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
     db_session.add(source)
     db_session.flush()
 
-    dictionary_repo = SqlAlchemyDictionaryRepository(db_session)
+    dictionary_repo = SqlAlchemyDictionaryRepository(
+        db_session,
+        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+    )
     dictionary_service = DictionaryManagementService(
         dictionary_repo=dictionary_repo,
         dictionary_search_harness=_DeterministicHarness(dictionary_repo),
@@ -592,7 +611,7 @@ async def test_claim_first_extraction_persists_all_states(  # noqa: PLR0915
     )
 
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
-    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
+    relation_repo = _build_relation_repository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
     claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(db_session)
     claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
@@ -869,7 +888,10 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
     db_session.add(source)
     db_session.flush()
 
-    dictionary_repo = SqlAlchemyDictionaryRepository(db_session)
+    dictionary_repo = SqlAlchemyDictionaryRepository(
+        db_session,
+        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+    )
     dictionary_service = DictionaryManagementService(
         dictionary_repo=dictionary_repo,
         dictionary_search_harness=_DeterministicHarness(dictionary_repo),
@@ -897,7 +919,7 @@ async def test_human_in_loop_canonicalizes_relation_type_from_policy_mapping(
     )
 
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
-    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
+    relation_repo = _build_relation_repository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
     claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(db_session)
     claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
@@ -1310,7 +1332,10 @@ async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0
     db_session.add(source)
     db_session.flush()
 
-    dictionary_repo = SqlAlchemyDictionaryRepository(db_session)
+    dictionary_repo = SqlAlchemyDictionaryRepository(
+        db_session,
+        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+    )
     dictionary_service = DictionaryManagementService(
         dictionary_repo=dictionary_repo,
         dictionary_search_harness=_DeterministicHarness(dictionary_repo),
@@ -1351,7 +1376,7 @@ async def test_required_evidence_span_blocks_relation_persistence(  # noqa: PLR0
     )
 
     entity_repo = SqlAlchemyKernelEntityRepository(db_session)
-    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
+    relation_repo = _build_relation_repository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
     claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(db_session)
     claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)

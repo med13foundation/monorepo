@@ -36,6 +36,8 @@ from src.domain.entities.source_document import (
 from src.domain.entities.user import UserRole
 from src.domain.entities.user_data_source import SourceType
 from src.domain.ports.dictionary_search_harness_port import DictionarySearchHarnessPort
+from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
+from src.graph.pack_registry import resolve_graph_domain_pack
 from src.infrastructure.data_sources.pubmed_gateway import PubMedSourceGateway
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyDictionaryRepository,
@@ -62,6 +64,13 @@ if TYPE_CHECKING:
 
 _NON_ALNUM_PATTERN = re.compile(r"[^A-Za-z0-9]+")
 _MAX_EVIDENCE_EXCERPT_CHARS = 480
+
+
+def _build_relation_repository(session) -> SqlAlchemyKernelRelationRepository:
+    return SqlAlchemyKernelRelationRepository(
+        session,
+        auto_promotion_policy=AutoPromotionPolicy(),
+    )
 
 
 def _resolve_record_pmid(record: dict[str, object]) -> str | None:
@@ -146,7 +155,7 @@ def _live_pubmed_enabled() -> bool:
 
 def _auth_headers(user: UserModel) -> dict[str, str]:
     secret = os.getenv(
-        "MED13_DEV_JWT_SECRET",
+        "AUTH_JWT_SECRET",
         "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz",
     )
     provider = JWTProvider(secret_key=secret)
@@ -277,14 +286,17 @@ async def test_claim_first_live_pubmed_three_pmids_end_to_end(  # noqa: PLR0915
         session.add(source)
         session.flush()
 
-        dictionary_repo = SqlAlchemyDictionaryRepository(session)
+        dictionary_repo = SqlAlchemyDictionaryRepository(
+            session,
+            builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+        )
         dictionary_service = DictionaryManagementService(
             dictionary_repo=dictionary_repo,
             dictionary_search_harness=_DirectHarness(dictionary_repo),
             embedding_provider=None,
         )
         entity_repo = SqlAlchemyKernelEntityRepository(session)
-        relation_repo = SqlAlchemyKernelRelationRepository(session)
+        relation_repo = _build_relation_repository(session)
         claim_repo = SqlAlchemyKernelRelationClaimRepository(session)
         claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(
             session,

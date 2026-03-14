@@ -220,6 +220,178 @@ class TestArchitecturalCompliance:
             f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
         )
 
+    def test_graph_phase2_boundary_validation(self) -> None:
+        """
+        Verify graph-core stays independent from the biomedical domain pack.
+
+        This protects the target phase-2 import direction before behavior is
+        migrated into the new package boundaries.
+        """
+        validator_script = (
+            PROJECT_ROOT / "scripts" / "validate_graph_phase2_boundary.py"
+        )
+
+        assert (
+            validator_script.exists()
+        ), f"Graph phase-2 boundary validation script not found at {validator_script}"
+
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, str(validator_script)],
+            check=False,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, (
+            "Found graph phase-2 boundary violations:\n"
+            f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+
+    def test_graph_phase3_invariant_validation(self) -> None:
+        """
+        Verify domain packs cannot override projection or invariant owners.
+
+        Projection materialization, readiness, and reasoning-path logic should
+        remain graph-core owned and must not start importing pack/runtime
+        resolution or expose override hooks on GraphDomainPack.
+        """
+        validator_script = (
+            PROJECT_ROOT / "scripts" / "validate_graph_phase3_invariants.py"
+        )
+
+        assert (
+            validator_script.exists()
+        ), f"Graph phase-3 invariant validation script not found at {validator_script}"
+
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, str(validator_script)],
+            check=False,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, (
+            "Found graph phase-3 invariant violations:\n"
+            f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+
+    def test_graph_phase4_read_model_validation(self) -> None:
+        """
+        Verify graph-core owns the generic query read-model framework.
+
+        Generic read models must remain graph-core owned, rebuildable, and
+        derived from authoritative stores rather than becoming pack-owned or
+        truth-bearing surfaces.
+        """
+        validator_script = (
+            PROJECT_ROOT / "scripts" / "validate_graph_phase4_read_models.py"
+        )
+
+        assert (
+            validator_script.exists()
+        ), f"Graph phase-4 read-model validation script not found at {validator_script}"
+
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, str(validator_script)],
+            check=False,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, (
+            "Found graph phase-4 read-model violations:\n"
+            f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+
+    def test_graph_phase6_release_contract_validation(self) -> None:
+        """
+        Verify the graph-service release boundary is explicit and aligned.
+
+        Runtime version metadata, OpenAPI artifacts, generated client artifacts,
+        and required release docs should stay aligned so the standalone graph
+        service behaves like a versioned product boundary.
+        """
+        validator_script = (
+            PROJECT_ROOT / "scripts" / "validate_graph_phase6_release_contract.py"
+        )
+
+        assert (
+            validator_script.exists()
+        ), f"Graph phase-6 release validation script not found at {validator_script}"
+
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, str(validator_script)],
+            check=False,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, (
+            "Found graph phase-6 release-boundary violations:\n"
+            f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+
+    def test_graph_phase1_alias_policy_validation(self) -> None:
+        """
+        Verify the remaining MED13 graph aliases are explicitly controlled.
+
+        Legacy graph aliases must stay on a documented allowlist with a
+        concrete removal target so runtime neutralization can be finished
+        without silent drift.
+        """
+        validator_script = (
+            PROJECT_ROOT / "scripts" / "validate_graph_phase1_alias_policy.py"
+        )
+
+        assert (
+            validator_script.exists()
+        ), f"Graph phase-1 alias policy validation script not found at {validator_script}"
+
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, str(validator_script)],
+            check=False,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, (
+            "Found graph phase-1 alias policy violations:\n"
+            f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+
+    def test_graph_phase7_cross_domain_validation(self) -> None:
+        """
+        Verify built-in graph domain packs share one runtime validation boundary.
+
+        Biomedical and sports should both resolve through the same registry,
+        runtime identity model, and recorded cross-domain validation matrix.
+        """
+        validator_script = (
+            PROJECT_ROOT / "scripts" / "validate_graph_phase7_cross_domain.py"
+        )
+
+        assert (
+            validator_script.exists()
+        ), f"Graph phase-7 cross-domain validation script not found at {validator_script}"
+
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, str(validator_script)],
+            check=False,
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, (
+            "Found graph phase-7 cross-domain violations:\n"
+            f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+
     def test_no_monolithic_files(self) -> None:
         """
         Verify that no files exceed the maximum size threshold.

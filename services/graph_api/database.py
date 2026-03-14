@@ -13,6 +13,7 @@ from src.database.graph_schema import (
     graph_postgres_search_path,
     graph_schema_name,
 )
+from src.graph.core.tenancy import GraphRlsSessionContext
 
 from .config import get_settings
 
@@ -170,6 +171,21 @@ def set_session_rls_context(
     )
 
 
+def set_graph_rls_session_context(
+    session: Session,
+    *,
+    context: GraphRlsSessionContext,
+) -> None:
+    """Apply one graph-core RLS session context to the SQLAlchemy session."""
+    set_session_rls_context(
+        session,
+        current_user_id=context.current_user_id,
+        has_phi_access=context.has_phi_access,
+        is_admin=context.is_admin,
+        bypass_rls=context.bypass_rls,
+    )
+
+
 def get_session() -> Iterator[Session]:
     """Provide a request-scoped SQLAlchemy session."""
     db = SessionLocal()
@@ -180,4 +196,10 @@ def get_session() -> Iterator[Session]:
         db.close()
 
 
-__all__ = ["SessionLocal", "engine", "get_session", "set_session_rls_context"]
+__all__ = [
+    "SessionLocal",
+    "engine",
+    "get_session",
+    "set_graph_rls_session_context",
+    "set_session_rls_context",
+]

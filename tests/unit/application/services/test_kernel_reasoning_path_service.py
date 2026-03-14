@@ -27,6 +27,7 @@ from src.domain.repositories.kernel.reasoning_path_repository import (
     ReasoningPathWrite,
     ReasoningPathWriteBundle,
 )
+from src.graph.core.read_model import GraphReadModelUpdate
 
 pytestmark = pytest.mark.graph
 
@@ -348,6 +349,19 @@ class StubReasoningPathRepository:
 
 
 @dataclass
+class StubReadModelUpdateDispatcher:
+    updates: list[GraphReadModelUpdate] = field(default_factory=list)
+
+    def dispatch(self, update: GraphReadModelUpdate) -> int:
+        self.updates.append(update)
+        return 1
+
+    def dispatch_many(self, updates: tuple[GraphReadModelUpdate, ...]) -> int:
+        self.updates.extend(updates)
+        return len(updates)
+
+
+@dataclass
 class StubRelationClaimService:
     claims: list[KernelRelationClaim]
 
@@ -515,6 +529,7 @@ def test_rebuild_creates_grounded_paths_and_detail() -> None:
         relation_type="ASSOCIATED_WITH",
     )
     repo = StubReasoningPathRepository()
+    dispatcher = StubReadModelUpdateDispatcher()
     service = KernelReasoningPathService(
         reasoning_path_repo=repo,
         relation_claim_service=StubRelationClaimService([claim_a, claim_b]),
@@ -579,6 +594,7 @@ def test_rebuild_creates_grounded_paths_and_detail() -> None:
                 ),
             },
         ),
+        read_model_update_dispatcher=dispatcher,
     )
 
     summary = service.rebuild_for_space(
@@ -590,6 +606,8 @@ def test_rebuild_creates_grounded_paths_and_detail() -> None:
     assert summary.eligible_claims == 2
     assert summary.accepted_claim_relations == 1
     assert summary.rebuilt_paths == 1
+    assert dispatcher.updates[-1].model_name == "entity_mechanism_paths"
+    assert dispatcher.updates[-1].trigger == "full_rebuild"
 
     list_result = service.list_paths(research_space_id=str(space_id))
     assert list_result.total == 1
@@ -628,6 +646,7 @@ def test_rebuild_excludes_claims_missing_evidence_and_marks_paths_stale() -> Non
         relation_type="ASSOCIATED_WITH",
     )
     repo = StubReasoningPathRepository()
+    dispatcher = StubReadModelUpdateDispatcher()
     service = KernelReasoningPathService(
         reasoning_path_repo=repo,
         relation_claim_service=StubRelationClaimService([claim_a, claim_b]),
@@ -684,6 +703,7 @@ def test_rebuild_excludes_claims_missing_evidence_and_marks_paths_stale() -> Non
             ],
         ),
         relation_service=StubRelationService({}),
+        read_model_update_dispatcher=dispatcher,
     )
 
     summary = service.rebuild_for_space(str(space_id), replace_existing=True)
@@ -726,6 +746,8 @@ def test_rebuild_excludes_claims_missing_evidence_and_marks_paths_stale() -> Non
         str(space_id),
     )
     assert stale_count == 1
+    assert dispatcher.updates[-1].model_name == "entity_mechanism_paths"
+    assert dispatcher.updates[-1].trigger == "projection_change"
 
     listed = service.list_paths(research_space_id=str(space_id), status="STALE")
     assert listed.total == 1
@@ -735,16 +757,21 @@ def test_rebuild_excludes_claims_missing_evidence_and_marks_paths_stale() -> Non
         str(space_id),
     )
     assert stale_by_claim_count == 1
+    assert dispatcher.updates[-1].model_name == "entity_mechanism_paths"
+    assert dispatcher.updates[-1].trigger == "claim_change"
 
     evidence_by_claim = service._evidence.evidence_by_claim
     evidence_by_claim[str(claim_b_id)] = [_build_evidence(claim_id=claim_b_id)]
     rebuild_summary = service.rebuild_for_space(str(space_id), replace_existing=True)
     assert rebuild_summary.rebuilt_paths == 1
+    assert dispatcher.updates[-1].model_name == "entity_mechanism_paths"
+    assert dispatcher.updates[-1].trigger == "full_rebuild"
 
 
 def test_rebuild_global_uses_space_registry_port() -> None:
     first_space_id = uuid4()
     second_space_id = uuid4()
+    dispatcher = StubReadModelUpdateDispatcher()
     service = KernelReasoningPathService(
         reasoning_path_repo=StubReasoningPathRepository(),
         relation_claim_service=StubRelationClaimService([]),
@@ -752,6 +779,7 @@ def test_rebuild_global_uses_space_registry_port() -> None:
         claim_evidence_service=StubClaimEvidenceService({}),
         claim_relation_service=StubClaimRelationService([]),
         relation_service=StubRelationService({}),
+        read_model_update_dispatcher=dispatcher,
         space_registry_port=StubSpaceRegistryPort([first_space_id, second_space_id]),
     )
 

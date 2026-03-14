@@ -7,11 +7,12 @@ import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from src.infrastructure.llm.prompts import extraction as extraction_prompts
 from src.type_definitions.json_utils import to_json_value
 
 if TYPE_CHECKING:
     from src.domain.agents.contexts.extraction_context import ExtractionContext
+    from src.graph.core.extraction_payload import ExtractionPayloadConfig
+    from src.graph.core.extraction_prompt import ExtractionPromptConfig
 
 DEFAULT_EXTRACTION_USAGE_MAX_TOKENS = 65536
 ENV_EXTRACTION_USAGE_MAX_TOKENS = "MED13_EXTRACTION_USAGE_MAX_TOKENS"
@@ -33,16 +34,16 @@ _MAX_CONTEXT_OBSERVATION_CANDIDATES = 12
 _ESCAPED_NULL_SEQUENCE_PATTERN = re.compile(r"\\+(?:u0000|x00)", re.IGNORECASE)
 
 
-def get_extraction_system_prompt(source_type: str) -> str:
-    if source_type == "pubmed":
-        return (
-            f"{extraction_prompts.PUBMED_EXTRACTION_DISCOVERY_SYSTEM_PROMPT}\n\n"
-            f"{extraction_prompts.PUBMED_EXTRACTION_SYNTHESIS_SYSTEM_PROMPT}"
-        )
-    return (
-        f"{extraction_prompts.CLINVAR_EXTRACTION_DISCOVERY_SYSTEM_PROMPT}\n\n"
-        f"{extraction_prompts.CLINVAR_EXTRACTION_SYNTHESIS_SYSTEM_PROMPT}"
-    )
+def get_extraction_system_prompt(
+    source_type: str,
+    *,
+    prompt_config: ExtractionPromptConfig,
+) -> str:
+    prompt = prompt_config.system_prompt_for(source_type)
+    if prompt is None:
+        msg = f"Unsupported extraction source type: {source_type}"
+        raise ValueError(msg)
+    return prompt
 
 
 def build_extraction_prompt(
@@ -50,18 +51,24 @@ def build_extraction_prompt(
     source_type: str,
     context: ExtractionContext,
     relation_governance_mode: str,
+    prompt_config: ExtractionPromptConfig,
+    payload_config: ExtractionPayloadConfig,
 ) -> str:
     return (
-        f"{get_extraction_system_prompt(source_type)}\n\n"
+        f"{get_extraction_system_prompt(source_type, prompt_config=prompt_config)}\n\n"
         "---\n"
         "REQUEST CONTEXT\n"
         "---\n"
         f"RELATION GOVERNANCE MODE: {relation_governance_mode}\n"
-        f"{build_extraction_input_text(context)}"
+        f"{build_extraction_input_text(context, payload_config=payload_config)}"
     )
 
 
-def build_extraction_input_text(context: ExtractionContext) -> str:
+def build_extraction_input_text(
+    context: ExtractionContext,
+    *,
+    payload_config: ExtractionPayloadConfig,
+) -> str:
     entity_candidates = sorted(
         context.recognized_entities,
         key=lambda candidate: candidate.confidence,
@@ -72,7 +79,9 @@ def build_extraction_input_text(context: ExtractionContext) -> str:
         key=lambda candidate: candidate.confidence,
         reverse=True,
     )[:_MAX_CONTEXT_OBSERVATION_CANDIDATES]
-    compact_raw_record = sanitize_json_value(build_compact_raw_record(context))
+    compact_raw_record = sanitize_json_value(
+        build_compact_raw_record(context, payload_config=payload_config),
+    )
     entity_payloads = [
         sanitize_json_value(entity.model_dump(mode="json"))
         for entity in entity_candidates
@@ -110,69 +119,33 @@ def sanitize_text_value(value: str) -> str:
     return _ESCAPED_NULL_SEQUENCE_PATTERN.sub("", without_raw_null)
 
 
-def build_compact_raw_record(context: ExtractionContext) -> dict[str, object]:
+def build_compact_raw_record(
+    context: ExtractionContext,
+    *,
+    payload_config: ExtractionPayloadConfig,
+) -> dict[str, object]:
     raw_record = context.raw_record
     source_type = context.source_type.strip().lower()
-    if source_type == "pubmed":
-        is_chunk_scope = raw_record.get("full_text_chunk_index") is not None
-        allowed_fields: tuple[str, ...] = (
-            (
-                "pubmed_id",
-                "title",
-                "doi",
-                "source",
-                "full_text",
-                "full_text_source",
-                "full_text_chunk_index",
-                "full_text_chunk_total",
-                "full_text_chunk_start_char",
-                "full_text_chunk_end_char",
-            )
-            if is_chunk_scope
-            else (
-                "pubmed_id",
-                "title",
-                "abstract",
-                "full_text",
-                "keywords",
-                "journal",
-                "publication_date",
-                "publication_types",
-                "doi",
-                "source",
-                "full_text_source",
-                "full_text_chunk_index",
-                "full_text_chunk_total",
-                "full_text_chunk_start_char",
-                "full_text_chunk_end_char",
-            )
+    compact_rule = payload_config.compact_record_rule_for(source_type)
+    if compact_rule is not None:
+        is_chunk_scope = (
+            compact_rule.chunk_indicator_field is not None
+            and raw_record.get(compact_rule.chunk_indicator_field) is not None
         )
         compact: dict[str, object] = {}
-        for field in allowed_fields:
+        for field in compact_rule.fields_for_chunk_scope(is_chunk_scope=is_chunk_scope):
             value = raw_record.get(field)
             if value is None:
                 continue
             compact[field] = to_json_value(value)
-        if "full_text" not in compact and isinstance(raw_record.get("text"), str):
-            compact["text"] = raw_record["text"]
-        return compact
-    if source_type == "clinvar":
-        clinvar_fields: tuple[str, ...] = (
-            "variation_id",
-            "gene_symbol",
-            "variant_name",
-            "clinical_significance",
-            "condition_name",
-            "review_status",
-            "submission_count",
-            "source",
-        )
-        compact = {}
-        for field in clinvar_fields:
-            value = raw_record.get(field)
-            if value is None:
-                continue
-            compact[field] = to_json_value(value)
+        if (
+            compact_rule.fallback_text_field is not None
+            and "full_text" not in compact
+            and isinstance(raw_record.get(compact_rule.fallback_text_field), str)
+        ):
+            compact[compact_rule.fallback_text_field] = raw_record[
+                compact_rule.fallback_text_field
+            ]
         return compact
     return {str(key): to_json_value(value) for key, value in raw_record.items()}
 

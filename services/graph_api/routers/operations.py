@@ -12,9 +12,13 @@ from sqlalchemy.orm import Session
 
 from services.graph_api.auth import (
     get_current_active_user,
-    is_graph_service_admin,
+    to_graph_principal,
+    to_graph_rls_session_context,
 )
-from services.graph_api.database import get_session, set_session_rls_context
+from services.graph_api.database import (
+    get_session,
+    set_graph_rls_session_context,
+)
 from services.graph_api.dependencies import (
     get_kernel_claim_participant_backfill_service,
     get_kernel_claim_projection_readiness_service,
@@ -42,6 +46,7 @@ from src.application.services.kernel.kernel_reasoning_path_service import (
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import User
 from src.domain.ports.space_access_port import SpaceAccessPort
+from src.graph.core.access import evaluate_graph_admin_access
 from src.models.database.kernel.operation_runs import (
     GraphOperationRunModel,
     GraphOperationRunStatusEnum,
@@ -187,17 +192,14 @@ class GraphOperationRunListResponse(BaseModel):
 
 
 def _require_graph_admin(*, current_user: User, session: Session) -> None:
-    if not is_graph_service_admin(current_user):
+    if not evaluate_graph_admin_access(to_graph_principal(current_user)).allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Graph service admin access is required for this operation",
         )
-    set_session_rls_context(
+    set_graph_rls_session_context(
         session,
-        current_user_id=current_user.id,
-        has_phi_access=True,
-        is_admin=True,
-        bypass_rls=True,
+        context=to_graph_rls_session_context(current_user, bypass_rls=True),
     )
 
 

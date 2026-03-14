@@ -61,6 +61,23 @@ class KernelReasoningPathDetail:
     evidence: tuple[KernelClaimEvidence, ...]
 
 
+@dataclass(frozen=True)
+class KernelMechanismPathCandidate:
+    """Compact candidate row for seed-entity mechanism reasoning reads."""
+
+    reasoning_path_id: str
+    start_entity_id: str
+    end_entity_id: str
+    source_type: str
+    target_type: str
+    relation_type: str
+    source_label: str | None
+    target_label: str | None
+    confidence: float
+    path_length: int
+    supporting_claim_ids: tuple[str, ...]
+
+
 def build_adjacency(
     accepted_relations: list[KernelClaimRelation],
 ) -> dict[str, list[KernelClaimRelation]]:
@@ -274,6 +291,22 @@ def resolve_ordered_canonical_relation_ids(
         seen.add(relation_id)
         ordered.append(relation_id)
     return ordered
+
+
+__all__ = [
+    "KernelMechanismPathCandidate",
+    "KernelReasoningPathDetail",
+    "ReasoningPathListResult",
+    "ReasoningPathRebuildSummary",
+    "build_adjacency",
+    "build_bundle",
+    "build_signature_hash",
+    "collect_paths_from_root",
+    "resolve_ordered_canonical_relation_ids",
+    "resolve_ordered_claim_ids",
+    "resolve_participant_anchor_entities",
+    "resolve_step_canonical_relation_id",
+]
 
 
 __all__ = [

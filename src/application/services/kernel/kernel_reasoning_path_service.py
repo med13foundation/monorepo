@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import aliased
 
 from src.application.services.kernel._kernel_reasoning_path_support import (
+    KernelMechanismPathCandidate,
     KernelReasoningPathDetail,
     ReasoningPathListResult,
     ReasoningPathRebuildSummary,
@@ -14,6 +19,13 @@ from src.application.services.kernel._kernel_reasoning_path_support import (
     resolve_ordered_claim_ids,
     resolve_participant_anchor_entities,
 )
+from src.graph.core.read_model import (
+    GraphReadModelTrigger,
+    GraphReadModelUpdate,
+    GraphReadModelUpdateDispatcher,
+)
+from src.models.database.kernel.entities import EntityModel
+from src.models.database.kernel.read_models import EntityMechanismPathModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -70,6 +82,7 @@ class KernelReasoningPathService:
         claim_evidence_service: KernelClaimEvidenceService,
         claim_relation_service: KernelClaimRelationService,
         relation_service: KernelRelationService,
+        read_model_update_dispatcher: GraphReadModelUpdateDispatcher,
         session: Session | None = None,
         space_registry_port: SpaceRegistryPort | None = None,
     ) -> None:
@@ -79,6 +92,7 @@ class KernelReasoningPathService:
         self._evidence = claim_evidence_service
         self._claim_relations = claim_relation_service
         self._relations = relation_service
+        self._read_model_update_dispatcher = read_model_update_dispatcher
         self._session = session
         self._space_registry = space_registry_port
 
@@ -139,6 +153,13 @@ class KernelReasoningPathService:
             research_space_id=research_space_id,
             bundles=list(bundles_by_signature.values()),
             replace_existing=replace_existing,
+        )
+        self._read_model_update_dispatcher.dispatch(
+            GraphReadModelUpdate(
+                model_name="entity_mechanism_paths",
+                trigger=GraphReadModelTrigger.FULL_REBUILD,
+                space_id=research_space_id,
+            ),
         )
         return ReasoningPathRebuildSummary(
             research_space_id=research_space_id,
@@ -271,25 +292,114 @@ class KernelReasoningPathService:
             evidence=evidence,
         )
 
+    def list_mechanism_candidates(
+        self,
+        *,
+        research_space_id: str,
+        start_entity_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[KernelMechanismPathCandidate, ...]:
+        if self._session is None:
+            msg = "Session-backed mechanism candidate reads are unavailable"
+            raise ValueError(msg)
+
+        normalized_limit = max(1, min(200, int(limit)))
+        normalized_offset = max(0, int(offset))
+        start_entity_alias = aliased(EntityModel)
+        end_entity_alias = aliased(EntityModel)
+        stmt = (
+            select(
+                EntityMechanismPathModel,
+                start_entity_alias,
+                end_entity_alias,
+            )
+            .join(
+                start_entity_alias,
+                start_entity_alias.id == EntityMechanismPathModel.seed_entity_id,
+            )
+            .join(
+                end_entity_alias,
+                end_entity_alias.id == EntityMechanismPathModel.end_entity_id,
+            )
+            .where(
+                EntityMechanismPathModel.research_space_id == UUID(research_space_id),
+                EntityMechanismPathModel.seed_entity_id == UUID(start_entity_id),
+                start_entity_alias.research_space_id == UUID(research_space_id),
+                end_entity_alias.research_space_id == UUID(research_space_id),
+            )
+            .order_by(
+                EntityMechanismPathModel.confidence.desc(),
+                EntityMechanismPathModel.path_length.asc(),
+                EntityMechanismPathModel.path_updated_at.desc(),
+                EntityMechanismPathModel.path_id.asc(),
+            )
+            .offset(normalized_offset)
+            .limit(normalized_limit)
+        )
+        rows = self._session.execute(stmt).all()
+        return tuple(
+            KernelMechanismPathCandidate(
+                reasoning_path_id=str(index_row.path_id),
+                start_entity_id=str(index_row.seed_entity_id),
+                end_entity_id=str(index_row.end_entity_id),
+                source_type=start_entity.entity_type.strip().upper(),
+                target_type=end_entity.entity_type.strip().upper(),
+                relation_type=str(index_row.relation_type),
+                source_label=start_entity.display_label,
+                target_label=end_entity.display_label,
+                confidence=float(index_row.confidence),
+                path_length=int(index_row.path_length),
+                supporting_claim_ids=(
+                    tuple(
+                        value
+                        for value in index_row.supporting_claim_ids
+                        if isinstance(value, str)
+                    )
+                    if isinstance(index_row.supporting_claim_ids, list)
+                    else ()
+                ),
+            )
+            for index_row, start_entity, end_entity in rows
+        )
+
     def mark_stale_for_claim_ids(
         self,
         claim_ids: list[str],
         research_space_id: str,
     ) -> int:
-        return self._paths.mark_stale_for_claim_ids(
+        stale_count = self._paths.mark_stale_for_claim_ids(
             research_space_id=research_space_id,
             claim_ids=claim_ids,
         )
+        self._read_model_update_dispatcher.dispatch(
+            GraphReadModelUpdate(
+                model_name="entity_mechanism_paths",
+                trigger=GraphReadModelTrigger.CLAIM_CHANGE,
+                claim_ids=tuple(claim_ids),
+                space_id=research_space_id,
+            ),
+        )
+        return stale_count
 
     def mark_stale_for_claim_relation_ids(
         self,
         relation_ids: list[str],
         research_space_id: str,
     ) -> int:
-        return self._paths.mark_stale_for_claim_relation_ids(
+        stale_count = self._paths.mark_stale_for_claim_relation_ids(
             research_space_id=research_space_id,
             relation_ids=relation_ids,
         )
+        self._read_model_update_dispatcher.dispatch(
+            GraphReadModelUpdate(
+                model_name="entity_mechanism_paths",
+                trigger=GraphReadModelTrigger.PROJECTION_CHANGE,
+                relation_ids=tuple(relation_ids),
+                space_id=research_space_id,
+            ),
+        )
+        return stale_count
 
 
 __all__ = [

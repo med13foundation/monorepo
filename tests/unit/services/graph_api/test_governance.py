@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from sqlalchemy.orm import Session
 
 from services.graph_api.governance import (
@@ -20,6 +21,8 @@ from src.application.services.kernel.concept_management_service import (
 from src.application.services.kernel.dictionary_management_service import (
     DictionaryManagementService,
 )
+from src.graph.core.dictionary_loading_extension import GraphDictionaryLoadingConfig
+from src.graph.pack_registry import resolve_graph_domain_pack
 from src.infrastructure.graph_governance.concept_repository import (
     GraphConceptRepository,
 )
@@ -32,12 +35,19 @@ from src.infrastructure.graph_governance.governance import (
     build_dictionary_repository,
     build_dictionary_service,
 )
+from src.models.database.kernel.dictionary import DictionaryDomainContextModel
 
 
 def test_build_governance_repositories_use_service_local_persistence(
     db_session: Session,
 ) -> None:
-    dictionary_repo = build_dictionary_repository(db_session)
+    dictionary_loading_extension = GraphDictionaryLoadingConfig(
+        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+    )
+    dictionary_repo = build_dictionary_repository(
+        db_session,
+        dictionary_loading_extension=dictionary_loading_extension,
+    )
     concept_repo = build_concept_repository(db_session)
 
     assert isinstance(dictionary_repo, GraphDictionaryRepository)
@@ -51,7 +61,10 @@ def test_build_governance_repositories_use_service_local_persistence(
         == "src.infrastructure.graph_governance.concept_repository"
     )
     assert (
-        build_service_dictionary_repository(db_session).__class__
+        build_service_dictionary_repository(
+            db_session,
+            dictionary_loading_extension=dictionary_loading_extension,
+        ).__class__
         is dictionary_repo.__class__
     )
     assert (
@@ -62,9 +75,18 @@ def test_build_governance_repositories_use_service_local_persistence(
 def test_build_governance_services_use_service_local_repositories(
     db_session: Session,
 ) -> None:
-    dictionary_service = build_dictionary_service(db_session)
+    dictionary_loading_extension = GraphDictionaryLoadingConfig(
+        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+    )
+    dictionary_service = build_dictionary_service(
+        db_session,
+        dictionary_loading_extension=dictionary_loading_extension,
+    )
     concept_service = build_concept_service(db_session)
-    service_dictionary_service = build_service_dictionary_service(db_session)
+    service_dictionary_service = build_service_dictionary_service(
+        db_session,
+        dictionary_loading_extension=dictionary_loading_extension,
+    )
     service_concept_service = build_service_concept_service(db_session)
 
     assert isinstance(dictionary_service, DictionaryManagementService)
@@ -86,3 +108,25 @@ def test_build_governance_services_use_service_local_repositories(
         service_concept_service._concepts.__class__  # noqa: SLF001
         is concept_service._concepts.__class__  # noqa: SLF001
     )
+
+
+def test_graph_governance_repository_seeds_pack_domain_contexts(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPH_DOMAIN_PACK", "biomedical")
+    repository = build_dictionary_repository(
+        db_session,
+        dictionary_loading_extension=GraphDictionaryLoadingConfig(
+            builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+        ),
+    )
+
+    repository._ensure_domain_context_reference("clinical")  # noqa: SLF001
+
+    clinical = repository._session.get(
+        DictionaryDomainContextModel,
+        "clinical",
+    )  # noqa: SLF001
+    assert clinical is not None
+    assert clinical.description == "Clinical and biomedical literature domain context."

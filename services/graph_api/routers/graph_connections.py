@@ -34,7 +34,7 @@ class GraphConnectionDiscoverRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
     seed_entity_ids: list[str] = Field(..., min_length=1, max_length=200)
-    source_type: str = Field(default="clinvar", min_length=1, max_length=64)
+    source_type: str | None = Field(default=None, min_length=1, max_length=64)
     source_id: str | None = Field(default=None, min_length=1, max_length=64)
     model_id: str | None = Field(default=None, min_length=1, max_length=128)
     relation_types: list[str] | None = None
@@ -49,7 +49,7 @@ class GraphConnectionSingleRequest(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
-    source_type: str = Field(default="clinvar", min_length=1, max_length=64)
+    source_type: str | None = Field(default=None, min_length=1, max_length=64)
     source_id: str | None = Field(default=None, min_length=1, max_length=64)
     model_id: str | None = Field(default=None, min_length=1, max_length=128)
     relation_types: list[str] | None = None

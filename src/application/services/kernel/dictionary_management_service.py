@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Literal
 
 from src.domain.ports.dictionary_port import DictionaryPort
 from src.domain.services.domain_context_resolver import DomainContextResolver
+from src.graph.core.domain_context import resolve_graph_domain_context
+from src.graph.runtime import create_graph_domain_context_policy
 from src.type_definitions.dictionary import (
     normalize_dictionary_data_type,
     validate_constraints_for_data_type,
@@ -182,7 +184,8 @@ class DictionaryManagementService(DictionaryPort):
         source_type: str | None = None,
         fallback: str | None = None,
     ) -> str | None:
-        return DomainContextResolver.resolve(
+        return resolve_graph_domain_context(
+            domain_context_policy=create_graph_domain_context_policy(),
             explicit_domain_context=explicit_domain_context,
             source_type=source_type,
             fallback=fallback,

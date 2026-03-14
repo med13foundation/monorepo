@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from src.domain.entities.kernel.relations import RelationEvidenceWrite
 from src.domain.entities.user import UserRole, UserStatus
+from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
 from src.infrastructure.repositories.kernel.kernel_relation_repository import (
     SqlAlchemyKernelRelationRepository,
 )
@@ -23,6 +24,15 @@ from tests.graph_seed_helpers import ensure_relation_constraint, ensure_relation
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+def _build_relation_repository(
+    db_session: Session,
+) -> SqlAlchemyKernelRelationRepository:
+    return SqlAlchemyKernelRelationRepository(
+        db_session,
+        auto_promotion_policy=AutoPromotionPolicy(),
+    )
 
 
 def _as_optional_uuid(value: str | None) -> UUID | None:
@@ -247,7 +257,7 @@ def test_create_deduplicates_canonical_relation_and_aggregates_evidence(
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     first = repository.create(
         research_space_id=str(research_space_id),
@@ -292,7 +302,7 @@ def test_create_clamps_confidence_and_defaults_evidence_tier(
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -333,7 +343,7 @@ def test_create_skips_duplicate_evidence_rows(
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     source_document_id = str(uuid4())
     first = repository.create(
@@ -375,7 +385,7 @@ def test_create_dedupe_does_not_collapse_distinct_source_documents(
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     first = repository.create(
         research_space_id=str(research_space_id),
@@ -416,7 +426,7 @@ def test_create_dedupe_includes_evidence_sentence(
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
     source_document_id = str(uuid4())
 
     first = repository.create(
@@ -469,7 +479,7 @@ def test_create_dedupe_includes_evidence_sentence_provenance_fields(
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
     source_document_id = str(uuid4())
 
     first = repository.create(
@@ -531,7 +541,7 @@ def test_create_persists_non_uuid_agent_run_id(db_session: Session) -> None:
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -558,7 +568,7 @@ def test_create_auto_promotes_when_default_thresholds_are_met(
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -601,7 +611,7 @@ def test_create_applies_stricter_threshold_for_computational_only_evidence(
         research_space_id=research_space_id,
         count=5,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -664,7 +674,7 @@ def test_create_logs_non_promotion_decision_reason(
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     with caplog.at_level("INFO"):
         repository.create(
@@ -698,7 +708,7 @@ def test_create_logs_promotion_decision_reason(
     research_space_id, source_entity_id, target_entity_id = _seed_space_and_entities(
         db_session,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     with caplog.at_level("INFO"):
         repository.create(
@@ -755,7 +765,7 @@ def test_create_uses_research_space_policy_override_for_auto_promotion(
             },
         },
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -789,7 +799,7 @@ def test_create_space_policy_override_can_block_default_auto_promotion(
         research_space_id=research_space_id,
         count=3,
     )
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
 
     relation = repository.create(
         research_space_id=str(research_space_id),
@@ -851,7 +861,7 @@ def test_find_by_research_space_filters_by_node_ids(
     )
     db_session.flush()
 
-    repository = SqlAlchemyKernelRelationRepository(db_session)
+    repository = _build_relation_repository(db_session)
     expected_relation = repository.create(
         research_space_id=str(research_space_id),
         source_id=str(source_entity_id),

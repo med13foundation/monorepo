@@ -38,7 +38,7 @@ export default async function SpaceCurationPage({ params, searchParams }: SpaceC
   const session = await getServerSession(authOptions)
   const token = session?.user?.access_token
   const hypothesisGenerationEnabled = ['1', 'true', 'yes', 'on'].includes(
-    (process.env.MED13_ENABLE_HYPOTHESIS_GENERATION ?? '0').toLowerCase(),
+    (process.env.GRAPH_ENABLE_HYPOTHESIS_GENERATION ?? '0').toLowerCase(),
   )
 
   if (!session || !token) {

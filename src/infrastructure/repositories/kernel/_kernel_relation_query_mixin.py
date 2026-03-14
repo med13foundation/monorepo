@@ -11,6 +11,7 @@ from sqlalchemy.orm import aliased
 
 from src.domain.entities.kernel.relations import KernelRelation
 from src.models.database.kernel.entities import EntityModel
+from src.models.database.kernel.read_models import EntityNeighborModel
 from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.kernel.relation_projection_sources import (
     RelationProjectionSourceModel,
@@ -135,6 +136,15 @@ class _KernelRelationQueryMixin:
         For depth=1, returns all relations where the entity is source or target.
         For depth>1, iteratively expands the frontier.
         """
+        if depth == 1 and claim_backed_only:
+            indexed_relations = self._find_neighborhood_from_read_model(
+                entity_id=entity_id,
+                relation_types=relation_types,
+                limit=limit,
+            )
+            if indexed_relations:
+                return indexed_relations
+
         visited_ids: set[UUID] = set()
         frontier: set[UUID] = {_as_uuid(entity_id)}
         all_relations: list[RelationModel] = []
@@ -179,6 +189,32 @@ class _KernelRelationQueryMixin:
         if limit is not None:
             unique = unique[: max(limit, 1)]
         return [KernelRelation.model_validate(model) for model in unique]
+
+    def _find_neighborhood_from_read_model(
+        self: SqlAlchemyKernelRelationRepository,
+        *,
+        entity_id: str,
+        relation_types: list[str] | None,
+        limit: int | None,
+    ) -> list[KernelRelation]:
+        stmt = (
+            select(RelationModel)
+            .join(
+                EntityNeighborModel,
+                EntityNeighborModel.relation_id == RelationModel.id,
+            )
+            .where(EntityNeighborModel.entity_id == _as_uuid(entity_id))
+            .order_by(
+                EntityNeighborModel.relation_updated_at.desc(),
+                RelationModel.id.desc(),
+            )
+        )
+        if relation_types:
+            stmt = stmt.where(EntityNeighborModel.relation_type.in_(relation_types))
+        if limit is not None:
+            stmt = stmt.limit(max(limit, 1))
+        models = list(self._session.scalars(stmt).all())
+        return [KernelRelation.model_validate(model) for model in models]
 
     def find_by_research_space(  # noqa: C901, PLR0913 - query builder needs discrete optional filters
         self: SqlAlchemyKernelRelationRepository,

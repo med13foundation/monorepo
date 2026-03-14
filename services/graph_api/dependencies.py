@@ -64,6 +64,14 @@ from src.domain.entities.user import User
 from src.domain.ports import ConceptPort, DictionaryPort
 from src.domain.ports.space_access_port import SpaceAccessPort
 from src.domain.ports.space_registry_port import SpaceRegistryPort
+from src.graph.core.domain_pack import GraphDomainPack
+from src.graph.core.feature_flags import FeatureFlagDefinition
+from src.graph.core.tenancy import evaluate_graph_tenant_access
+from src.graph.core.view_config import GraphViewExtension
+from src.graph.runtime import create_graph_domain_pack
+from src.infrastructure.dependency_injection.graph_runtime_factories import (
+    build_graph_read_model_update_dispatcher,
+)
 from src.infrastructure.repositories.kernel.kernel_claim_evidence_repository import (
     SqlAlchemyKernelClaimEvidenceRepository,
 )
@@ -85,9 +93,6 @@ from src.infrastructure.repositories.kernel.kernel_relation_claim_repository imp
 from src.infrastructure.repositories.kernel.kernel_relation_projection_source_repository import (
     SqlAlchemyKernelRelationProjectionSourceRepository,
 )
-from src.infrastructure.repositories.kernel.kernel_relation_repository import (
-    SqlAlchemyKernelRelationRepository,
-)
 from src.infrastructure.repositories.kernel.kernel_source_document_reference_repository import (
     SqlAlchemyKernelSourceDocumentReferenceRepository,
 )
@@ -101,7 +106,12 @@ from src.infrastructure.repositories.kernel.kernel_space_registry_repository imp
     SqlAlchemyKernelSpaceRegistryRepository,
 )
 
-from .auth import is_graph_service_admin
+from .auth import (
+    to_graph_access_role,
+    to_graph_principal,
+    to_graph_rls_session_context,
+    to_graph_tenant_membership,
+)
 from .composition import (
     build_concept_service,
     build_dictionary_repository,
@@ -112,17 +122,10 @@ from .composition import (
     build_graph_search_service,
     build_hypothesis_generation_service,
     build_observation_service,
+    build_relation_repository,
     build_relation_suggestion_service,
 )
-from .database import get_session, set_session_rls_context
-
-_ROLE_HIERARCHY = {
-    MembershipRole.VIEWER: 1,
-    MembershipRole.RESEARCHER: 2,
-    MembershipRole.CURATOR: 3,
-    MembershipRole.ADMIN: 4,
-    MembershipRole.OWNER: 5,
-}
+from .database import get_session, set_graph_rls_session_context
 
 
 def get_space_registry_port(
@@ -130,6 +133,39 @@ def get_space_registry_port(
 ) -> SpaceRegistryPort:
     """Return the graph-local space registry adapter."""
     return SqlAlchemyKernelSpaceRegistryRepository(session)
+
+
+def get_graph_domain_pack() -> GraphDomainPack:
+    """Return the active graph domain pack for the standalone service."""
+    return create_graph_domain_pack()
+
+
+def get_graph_view_extension(
+    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
+) -> GraphViewExtension:
+    """Return the active graph view extension."""
+    return graph_domain_pack.view_extension
+
+
+def get_entity_embeddings_flag(
+    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
+) -> FeatureFlagDefinition:
+    """Return the active entity-embeddings feature flag."""
+    return graph_domain_pack.feature_flags.entity_embeddings
+
+
+def get_relation_suggestions_flag(
+    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
+) -> FeatureFlagDefinition:
+    """Return the active relation-suggestions feature flag."""
+    return graph_domain_pack.feature_flags.relation_suggestions
+
+
+def get_hypothesis_generation_flag(
+    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
+) -> FeatureFlagDefinition:
+    """Return the active hypothesis-generation feature flag."""
+    return graph_domain_pack.feature_flags.hypothesis_generation
 
 
 def get_space_membership_repository(
@@ -158,19 +194,24 @@ def verify_space_membership(
     session: Session,
 ) -> None:
     """Verify that the caller can access one graph space."""
-    is_admin_user = is_graph_service_admin(current_user)
-    set_session_rls_context(
+    principal = to_graph_principal(current_user)
+    set_graph_rls_session_context(
         session,
-        current_user_id=current_user.id,
-        has_phi_access=is_admin_user,
-        is_admin=is_admin_user,
-        bypass_rls=False,
+        context=to_graph_rls_session_context(current_user),
     )
 
-    if is_admin_user:
+    if principal.is_platform_admin:
         return
 
-    if space_access.get_effective_role(space_id, current_user.id) is not None:
+    membership_role = space_access.get_effective_role(space_id, current_user.id)
+    decision = evaluate_graph_tenant_access(
+        principal=principal,
+        tenant_membership=to_graph_tenant_membership(
+            space_id=space_id,
+            membership_role=membership_role,
+        ),
+    )
+    if decision.allowed:
         return
 
     raise HTTPException(
@@ -188,16 +229,13 @@ def require_space_role(
     required_role: MembershipRole,
 ) -> None:
     """Require one membership role or higher for a graph space."""
-    is_admin_user = is_graph_service_admin(current_user)
-    set_session_rls_context(
+    principal = to_graph_principal(current_user)
+    set_graph_rls_session_context(
         session,
-        current_user_id=current_user.id,
-        has_phi_access=is_admin_user,
-        is_admin=is_admin_user,
-        bypass_rls=False,
+        context=to_graph_rls_session_context(current_user),
     )
 
-    if is_admin_user:
+    if principal.is_platform_admin:
         return
 
     membership_role = space_access.get_effective_role(space_id, current_user.id)
@@ -207,7 +245,15 @@ def require_space_role(
             detail="User does not have access to this graph space",
         )
 
-    if _ROLE_HIERARCHY[membership_role] < _ROLE_HIERARCHY[required_role]:
+    decision = evaluate_graph_tenant_access(
+        principal=principal,
+        tenant_membership=to_graph_tenant_membership(
+            space_id=space_id,
+            membership_role=membership_role,
+        ),
+        required_role=to_graph_access_role(required_role),
+    )
+    if not decision.allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User lacks permission for this operation",
@@ -216,11 +262,15 @@ def require_space_role(
 
 def get_kernel_entity_service(
     session: Session = Depends(get_session),
+    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
 ) -> KernelEntityService:
     """Return kernel entity service bound to the graph service session."""
     return KernelEntityService(
         entity_repo=build_entity_repository(session),
-        dictionary_repo=build_dictionary_repository(session),
+        dictionary_repo=build_dictionary_repository(
+            session,
+            dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
+        ),
     )
 
 
@@ -236,7 +286,7 @@ def get_kernel_relation_service(
 ) -> KernelRelationService:
     """Return kernel relation service bound to the graph service session."""
     return KernelRelationService(
-        SqlAlchemyKernelRelationRepository(session),
+        build_relation_repository(session),
         build_entity_repository(session),
     )
 
@@ -247,6 +297,7 @@ def get_kernel_relation_claim_service(
     """Return kernel relation-claim service."""
     return KernelRelationClaimService(
         relation_claim_repo=SqlAlchemyKernelRelationClaimRepository(session),
+        read_model_update_dispatcher=build_graph_read_model_update_dispatcher(session),
     )
 
 
@@ -299,6 +350,7 @@ def get_kernel_reasoning_path_service(
         claim_evidence_service=get_kernel_claim_evidence_service(session),
         claim_relation_service=get_kernel_claim_relation_service(session),
         relation_service=get_kernel_relation_service(session),
+        read_model_update_dispatcher=build_graph_read_model_update_dispatcher(session),
         session=session,
         space_registry_port=SqlAlchemyKernelSpaceRegistryRepository(session),
     )
@@ -306,9 +358,13 @@ def get_kernel_reasoning_path_service(
 
 def get_dictionary_service(
     session: Session = Depends(get_session),
+    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
 ) -> DictionaryPort:
     """Return dictionary service bound to the graph service session."""
-    return build_dictionary_service(session)
+    return build_dictionary_service(
+        session,
+        dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
+    )
 
 
 def get_kernel_observation_service(
@@ -357,23 +413,30 @@ def get_kernel_relation_suggestion_service(
 
 def get_kernel_relation_projection_materialization_service(
     session: Session = Depends(get_session),
+    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
 ) -> KernelRelationProjectionMaterializationService:
     """Return projection materialization service bound to the graph session."""
     return KernelRelationProjectionMaterializationService(
-        relation_repo=SqlAlchemyKernelRelationRepository(session),
+        relation_repo=build_relation_repository(session),
         relation_claim_repo=SqlAlchemyKernelRelationClaimRepository(session),
         claim_participant_repo=SqlAlchemyKernelClaimParticipantRepository(session),
         claim_evidence_repo=SqlAlchemyKernelClaimEvidenceRepository(session),
         entity_repo=build_entity_repository(session),
-        dictionary_repo=build_dictionary_repository(session),
+        dictionary_repo=build_dictionary_repository(
+            session,
+            dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
+        ),
         relation_projection_repo=SqlAlchemyKernelRelationProjectionSourceRepository(
             session,
         ),
+        read_model_update_dispatcher=build_graph_read_model_update_dispatcher(session),
     )
 
 
 def get_kernel_graph_view_service(
     session: Session = Depends(get_session),
+    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
+    graph_view_extension: GraphViewExtension = Depends(get_graph_view_extension),
 ) -> KernelGraphViewService:
     """Return graph-view service bound to the graph service session."""
     from src.application.services.kernel._kernel_graph_view_support import (
@@ -382,7 +445,10 @@ def get_kernel_graph_view_service(
 
     return KernelGraphViewService(
         KernelGraphViewServiceDependencies(
-            entity_service=get_kernel_entity_service(session),
+            entity_service=get_kernel_entity_service(
+                session,
+                graph_domain_pack=graph_domain_pack,
+            ),
             relation_service=get_kernel_relation_service(session),
             relation_claim_service=get_kernel_relation_claim_service(session),
             claim_participant_service=get_kernel_claim_participant_service(session),
@@ -391,6 +457,7 @@ def get_kernel_graph_view_service(
             source_document_lookup=(
                 SqlAlchemyKernelSourceDocumentReferenceRepository(session)
             ),
+            view_extension=graph_view_extension,
         ),
     )
 
@@ -411,6 +478,7 @@ def get_kernel_claim_participant_backfill_service(
 
 def get_kernel_claim_projection_readiness_service(
     session: Session = Depends(get_session),
+    graph_domain_pack: GraphDomainPack = Depends(get_graph_domain_pack),
 ) -> KernelClaimProjectionReadinessService:
     """Return projection readiness service bound to the graph session."""
     from src.application.services.kernel.kernel_relation_projection_invariant_service import (
@@ -425,7 +493,10 @@ def get_kernel_claim_projection_readiness_service(
             ),
         ),
         relation_projection_materialization_service=(
-            get_kernel_relation_projection_materialization_service(session)
+            get_kernel_relation_projection_materialization_service(
+                session,
+                graph_domain_pack=graph_domain_pack,
+            )
         ),
         claim_participant_backfill_service=(
             get_kernel_claim_participant_backfill_service(session)
@@ -448,8 +519,12 @@ __all__ = [
     "get_concept_service",
     "get_dictionary_service",
     "get_graph_connection_service",
+    "get_graph_domain_pack",
     "get_graph_search_service",
+    "get_graph_view_extension",
+    "get_entity_embeddings_flag",
     "get_hypothesis_generation_service_provider",
+    "get_hypothesis_generation_flag",
     "get_kernel_claim_evidence_service",
     "get_kernel_claim_participant_backfill_service",
     "get_kernel_claim_participant_service",
@@ -465,6 +540,7 @@ __all__ = [
     "get_kernel_relation_projection_source_service",
     "get_kernel_relation_suggestion_service",
     "get_kernel_relation_service",
+    "get_relation_suggestions_flag",
     "get_space_access_port",
     "get_provenance_service",
     "require_space_role",

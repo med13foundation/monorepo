@@ -133,8 +133,8 @@ Set these in staging/prod (prefer Secret Manager):
 - `MED13_RATE_LIMIT_REDIS_URL`
 - `MED13_ENV=staging` or `MED13_ENV=production`
 - `DATABASE_URL` and `ASYNC_DATABASE_URL` (Postgres with TLS)
-- `MED13_ENABLE_ENTITY_EMBEDDINGS=0|1` (keep `0` until embeddings are refreshed)
-- `MED13_ENABLE_RELATION_SUGGESTIONS=0|1` (keep `0` until similarity is validated)
+- `GRAPH_ENABLE_ENTITY_EMBEDDINGS=0|1` (keep `0` until embeddings are refreshed)
+- `GRAPH_ENABLE_RELATION_SUGGESTIONS=0|1` (keep `0` until similarity is validated)
 
 For local only, `MED13_ALLOW_MISSING_API_KEYS=1` may be used during development.
 
@@ -346,7 +346,7 @@ Configure GitHub **Environment Variables** per environment suffix
 
 - `CLOUDSQL_CONNECTION_NAME_<ENV>`
 - `DATABASE_URL_SECRET_NAME_<ENV>`
-- `MED13_DEV_JWT_SECRET_NAME_<ENV>`
+- `AUTH_JWT_SECRET_NAME_<ENV>`
 - `ADMIN_API_KEY_SECRET_NAME_<ENV>`
 - `WRITE_API_KEY_SECRET_NAME_<ENV>`
 - `READ_API_KEY_SECRET_NAME_<ENV>`

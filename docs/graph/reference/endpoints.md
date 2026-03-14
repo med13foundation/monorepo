@@ -25,13 +25,13 @@ grouping.
 
 Feature-flagged routes:
 
-- `MED13_ENABLE_ENTITY_EMBEDDINGS`
+- `GRAPH_ENABLE_ENTITY_EMBEDDINGS`
   Required for entity similarity and embedding refresh.
-- `MED13_ENABLE_RELATION_SUGGESTIONS`
+- `GRAPH_ENABLE_RELATION_SUGGESTIONS`
   Required for constrained relation suggestions.
-- `MED13_ENABLE_HYPOTHESIS_GENERATION`
+- `GRAPH_ENABLE_HYPOTHESIS_GENERATION`
   Required for automatic hypothesis generation.
-- `MED13_ENABLE_GRAPH_SEARCH_AGENT`
+- `GRAPH_ENABLE_SEARCH_AGENT`
   Enables optional agent-assisted graph search. The route itself remains
   available even when the flag is off.
 
@@ -50,8 +50,8 @@ Feature-flagged routes:
 | `GET` | `/v1/spaces/{space_id}/entities/{entity_id}` | `member` | Fetch one entity. |
 | `PUT` | `/v1/spaces/{space_id}/entities/{entity_id}` | `researcher+` | Update one entity. |
 | `DELETE` | `/v1/spaces/{space_id}/entities/{entity_id}` | `researcher+` | Delete one entity. |
-| `GET` | `/v1/spaces/{space_id}/entities/{entity_id}/similar` | `member` | Find similar entities using hybrid graph plus embeddings. Requires `MED13_ENABLE_ENTITY_EMBEDDINGS=1`. |
-| `POST` | `/v1/spaces/{space_id}/entities/embeddings/refresh` | `researcher+` | Refresh entity embeddings in a space or for a supplied entity subset. Requires `MED13_ENABLE_ENTITY_EMBEDDINGS=1`. |
+| `GET` | `/v1/spaces/{space_id}/entities/{entity_id}/similar` | `member` | Find similar entities using hybrid graph plus embeddings. Requires `GRAPH_ENABLE_ENTITY_EMBEDDINGS=1`. |
+| `POST` | `/v1/spaces/{space_id}/entities/embeddings/refresh` | `researcher+` | Refresh entity embeddings in a space or for a supplied entity subset. Requires `GRAPH_ENABLE_ENTITY_EMBEDDINGS=1`. |
 
 ## Observations And Provenance
 
@@ -95,15 +95,15 @@ Feature-flagged routes:
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| `POST` | `/v1/spaces/{space_id}/graph/search` | `member` | Run natural-language graph search. Agent augmentation is optional and controlled by `MED13_ENABLE_GRAPH_SEARCH_AGENT`. |
+| `POST` | `/v1/spaces/{space_id}/graph/search` | `member` | Run natural-language graph search. Agent augmentation is optional and controlled by `GRAPH_ENABLE_SEARCH_AGENT`. |
 | `POST` | `/v1/spaces/{space_id}/graph/connections/discover` | `member` | Discover graph connections for one or more seed entities. |
 | `POST` | `/v1/spaces/{space_id}/entities/{entity_id}/connections` | `member` | Discover graph connections for a single seed entity. |
-| `POST` | `/v1/spaces/{space_id}/graph/relation-suggestions` | `researcher+` | Suggest constrained missing relations using hybrid graph plus embeddings. Requires `MED13_ENABLE_RELATION_SUGGESTIONS=1`. |
+| `POST` | `/v1/spaces/{space_id}/graph/relation-suggestions` | `researcher+` | Suggest constrained missing relations using hybrid graph plus embeddings. Requires `GRAPH_ENABLE_RELATION_SUGGESTIONS=1`. |
 | `GET` | `/v1/spaces/{space_id}/reasoning-paths` | `member` | List persisted reasoning paths in a graph space. |
 | `GET` | `/v1/spaces/{space_id}/reasoning-paths/{path_id}` | `member` | Retrieve one expanded reasoning path with linked claims and evidence. |
 | `GET` | `/v1/spaces/{space_id}/hypotheses` | `member` | List hypothesis claims in a graph space. |
 | `POST` | `/v1/spaces/{space_id}/hypotheses/manual` | `researcher+` | Create one manual hypothesis claim. |
-| `POST` | `/v1/spaces/{space_id}/hypotheses/generate` | `researcher+` | Auto-generate reviewable hypotheses from graph exploration. Requires `MED13_ENABLE_HYPOTHESIS_GENERATION=1`. |
+| `POST` | `/v1/spaces/{space_id}/hypotheses/generate` | `researcher+` | Auto-generate reviewable hypotheses from graph exploration. Requires `GRAPH_ENABLE_HYPOTHESIS_GENERATION=1`. |
 
 ## Concept Governance
 

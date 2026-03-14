@@ -1980,7 +1980,7 @@ def test_graph_service_client_discovers_graph_connections() -> None:
             == f"/v1/spaces/{space_id}/entities/{source_id}/connections"
         )
         assert payload == {
-            "source_type": "clinvar",
+            "source_type": None,
             "source_id": "source-123",
             "model_id": None,
             "relation_types": None,

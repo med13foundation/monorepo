@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from uuid import UUID
 
@@ -13,6 +12,7 @@ from services.graph_api.auth import get_current_active_user
 from services.graph_api.database import get_session
 from services.graph_api.dependencies import (
     get_concept_service,
+    get_hypothesis_generation_flag,
     get_hypothesis_generation_service_provider,
     get_kernel_claim_participant_service,
     get_kernel_entity_service,
@@ -36,6 +36,7 @@ from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import User
 from src.domain.ports import ConceptPort
 from src.domain.ports.space_access_port import SpaceAccessPort
+from src.graph.core.feature_flags import FeatureFlagDefinition, is_flag_enabled
 from src.type_definitions.common import JSONObject
 from src.type_definitions.graph_service_contracts import (
     CreateManualHypothesisRequest,
@@ -46,14 +47,6 @@ from src.type_definitions.graph_service_contracts import (
 )
 
 router = APIRouter(prefix="/v1/spaces", tags=["hypotheses"])
-
-_HYPOTHESIS_GENERATION_ENABLED_ENV = "MED13_ENABLE_HYPOTHESIS_GENERATION"
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-
-
-def _is_hypothesis_generation_enabled() -> bool:
-    raw_value = os.getenv(_HYPOTHESIS_GENERATION_ENABLED_ENV, "0")
-    return raw_value.strip().lower() in _TRUE_VALUES
 
 
 @router.get(
@@ -280,20 +273,24 @@ async def generate_hypotheses(
     *,
     current_user: User = Depends(get_current_active_user),
     space_access: SpaceAccessPort = Depends(get_space_access_port),
+    hypothesis_generation_flag: FeatureFlagDefinition = Depends(
+        get_hypothesis_generation_flag,
+    ),
     hypothesis_generation_service_provider: Callable[
         [],
         HypothesisGenerationService,
     ] = Depends(get_hypothesis_generation_service_provider),
     session: Session = Depends(get_session),
 ) -> GenerateHypothesesResponse:
-    if not _is_hypothesis_generation_enabled():
+    if not is_flag_enabled(hypothesis_generation_flag):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "code": "FEATURE_DISABLED",
                 "message": (
                     "Hypothesis generation is disabled. Enable "
-                    f"{_HYPOTHESIS_GENERATION_ENABLED_ENV}=1 to use this endpoint."
+                    f"{hypothesis_generation_flag.env_display_name} to use this "
+                    "endpoint."
                 ),
             },
         )

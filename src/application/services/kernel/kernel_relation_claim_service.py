@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from src.graph.core.read_model import (
+    GraphReadModelTrigger,
+    GraphReadModelUpdate,
+)
+
 if TYPE_CHECKING:
     from src.domain.entities.kernel.relation_claims import (
         KernelRelationClaim,
@@ -17,14 +22,21 @@ if TYPE_CHECKING:
         CertaintyBand,
         KernelRelationClaimRepository,
     )
+    from src.graph.core.read_model import GraphReadModelUpdateDispatcher
     from src.type_definitions.common import JSONObject
 
 
 class KernelRelationClaimService:
     """Application service for relation-claim curation workflows."""
 
-    def __init__(self, relation_claim_repo: KernelRelationClaimRepository) -> None:
+    def __init__(
+        self,
+        relation_claim_repo: KernelRelationClaimRepository,
+        *,
+        read_model_update_dispatcher: GraphReadModelUpdateDispatcher,
+    ) -> None:
         self._claims = relation_claim_repo
+        self._read_model_updates = read_model_update_dispatcher
 
     def get_claim(self, claim_id: str) -> KernelRelationClaim | None:
         """Fetch one relation claim by ID."""
@@ -128,11 +140,13 @@ class KernelRelationClaimService:
         triaged_by: str,
     ) -> KernelRelationClaim:
         """Update one relation-claim triage status."""
-        return self._claims.update_triage_status(
+        claim = self._claims.update_triage_status(
             claim_id,
             claim_status=claim_status,
             triaged_by=triaged_by,
         )
+        self._dispatch_claim_change(claim)
+        return claim
 
     def link_claim_to_relation(
         self,
@@ -141,17 +155,21 @@ class KernelRelationClaimService:
         linked_relation_id: str,
     ) -> KernelRelationClaim:
         """Attach one claim to a canonical relation."""
-        return self._claims.link_relation(
+        claim = self._claims.link_relation(
             claim_id,
             linked_relation_id=linked_relation_id,
         )
+        self._dispatch_claim_change(claim)
+        return claim
 
     def clear_claim_relation_link(
         self,
         claim_id: str,
     ) -> KernelRelationClaim:
         """Clear the linked canonical relation pointer for one claim."""
-        return self._claims.clear_relation_link(claim_id)
+        claim = self._claims.clear_relation_link(claim_id)
+        self._dispatch_claim_change(claim)
+        return claim
 
     def set_system_status(
         self,
@@ -160,10 +178,12 @@ class KernelRelationClaimService:
         claim_status: RelationClaimStatus,
     ) -> KernelRelationClaim:
         """Set claim status via automated pipeline action."""
-        return self._claims.set_system_status(
+        claim = self._claims.set_system_status(
             claim_id,
             claim_status=claim_status,
         )
+        self._dispatch_claim_change(claim)
+        return claim
 
     def create_claim(  # noqa: PLR0913
         self,
@@ -189,7 +209,7 @@ class KernelRelationClaimService:
         metadata: JSONObject | None = None,
     ) -> KernelRelationClaim:
         """Create one generic relation claim row."""
-        return self._claims.create(
+        claim = self._claims.create(
             research_space_id=research_space_id,
             source_document_id=source_document_id,
             source_document_ref=source_document_ref,
@@ -210,6 +230,8 @@ class KernelRelationClaimService:
             linked_relation_id=linked_relation_id,
             metadata=metadata,
         )
+        self._dispatch_claim_change(claim)
+        return claim
 
     def create_hypothesis_claim(  # noqa: PLR0913
         self,
@@ -232,7 +254,7 @@ class KernelRelationClaimService:
         claim_status: RelationClaimStatus = "OPEN",
     ) -> KernelRelationClaim:
         """Create one hypothesis claim in the relation-claim ledger."""
-        return self._claims.create(
+        claim = self._claims.create(
             research_space_id=research_space_id,
             source_document_id=source_document_id,
             source_document_ref=source_document_ref,
@@ -252,6 +274,23 @@ class KernelRelationClaimService:
             claim_section=None,
             linked_relation_id=None,
             metadata=metadata,
+        )
+        self._dispatch_claim_change(claim)
+        return claim
+
+    def _dispatch_claim_change(self, claim: KernelRelationClaim) -> None:
+        self._read_model_updates.dispatch(
+            GraphReadModelUpdate(
+                model_name="entity_claim_summary",
+                trigger=GraphReadModelTrigger.CLAIM_CHANGE,
+                claim_ids=(str(claim.id),),
+                relation_ids=(
+                    (str(claim.linked_relation_id),)
+                    if claim.linked_relation_id is not None
+                    else ()
+                ),
+                space_id=str(claim.research_space_id),
+            ),
         )
 
     @staticmethod

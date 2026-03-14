@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -12,6 +11,7 @@ from sqlalchemy.orm import Session
 from services.graph_api.auth import get_current_active_user
 from services.graph_api.database import get_session
 from services.graph_api.dependencies import (
+    get_entity_embeddings_flag,
     get_kernel_entity_service,
     get_kernel_entity_similarity_service,
     get_space_access_port,
@@ -26,6 +26,7 @@ from src.application.services.kernel.kernel_entity_similarity_service import (
 from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import User
 from src.domain.ports.space_access_port import SpaceAccessPort
+from src.graph.core.feature_flags import FeatureFlagDefinition, is_flag_enabled
 from src.type_definitions.graph_service_contracts import (
     KernelEntityCreateRequest,
     KernelEntityEmbeddingRefreshRequest,
@@ -41,14 +42,6 @@ from src.type_definitions.graph_service_contracts import (
 
 router = APIRouter(prefix="/v1/spaces", tags=["entities"])
 
-_ENTITY_EMBEDDINGS_ENABLED_ENV = "MED13_ENABLE_ENTITY_EMBEDDINGS"
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-
-
-def _is_entity_embeddings_enabled() -> bool:
-    raw_value = os.getenv(_ENTITY_EMBEDDINGS_ENABLED_ENV, "0")
-    return raw_value.strip().lower() in _TRUE_VALUES
-
 
 def _feature_disabled_error(flag_name: str) -> HTTPException:
     return HTTPException(
@@ -57,7 +50,7 @@ def _feature_disabled_error(flag_name: str) -> HTTPException:
             "code": "FEATURE_DISABLED",
             "message": (
                 "This endpoint is disabled. "
-                f"Enable {flag_name}=1 to use hybrid graph embeddings."
+                f"Enable {flag_name} to use hybrid graph embeddings."
             ),
         },
     )
@@ -378,6 +371,9 @@ def list_similar_entities(
     target_entity_types: list[str] | None = Query(default=None),
     current_user: User = Depends(get_current_active_user),
     space_access: SpaceAccessPort = Depends(get_space_access_port),
+    entity_embeddings_flag: FeatureFlagDefinition = Depends(
+        get_entity_embeddings_flag,
+    ),
     similarity_service: KernelEntitySimilarityService = Depends(
         get_kernel_entity_similarity_service,
     ),
@@ -391,8 +387,8 @@ def list_similar_entities(
         session=session,
     )
 
-    if not _is_entity_embeddings_enabled():
-        raise _feature_disabled_error(_ENTITY_EMBEDDINGS_ENABLED_ENV)
+    if not is_flag_enabled(entity_embeddings_flag):
+        raise _feature_disabled_error(entity_embeddings_flag.env_display_name)
 
     try:
         similar_entities = similarity_service.get_similar_entities(
@@ -446,6 +442,9 @@ def refresh_entity_embeddings(
     *,
     current_user: User = Depends(get_current_active_user),
     space_access: SpaceAccessPort = Depends(get_space_access_port),
+    entity_embeddings_flag: FeatureFlagDefinition = Depends(
+        get_entity_embeddings_flag,
+    ),
     similarity_service: KernelEntitySimilarityService = Depends(
         get_kernel_entity_similarity_service,
     ),
@@ -460,8 +459,8 @@ def refresh_entity_embeddings(
         required_role=MembershipRole.RESEARCHER,
     )
 
-    if not _is_entity_embeddings_enabled():
-        raise _feature_disabled_error(_ENTITY_EMBEDDINGS_ENABLED_ENV)
+    if not is_flag_enabled(entity_embeddings_flag):
+        raise _feature_disabled_error(entity_embeddings_flag.env_display_name)
 
     try:
         summary = similarity_service.refresh_embeddings(

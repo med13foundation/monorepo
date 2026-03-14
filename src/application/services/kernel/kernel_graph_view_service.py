@@ -6,8 +6,6 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from src.application.services.kernel._kernel_graph_view_support import (
-    ENTITY_VIEW_TYPES,
-    MECHANISM_RELATION_TYPES,
     ClaimBundle,
     GraphDomainViewType,
     KernelClaimMechanismChain,
@@ -40,6 +38,7 @@ class KernelGraphViewService:
         self._claim_relations = dependencies.claim_relation_service
         self._claim_evidence = dependencies.claim_evidence_service
         self._source_document_lookup = dependencies.source_document_lookup
+        self._view_extension = dependencies.view_extension
 
     def build_domain_view(
         self,
@@ -51,7 +50,7 @@ class KernelGraphViewService:
         relation_limit: int = 50,
     ) -> KernelGraphDomainView:
         """Build a graph view for one entity, claim, or source document."""
-        if view_type in ENTITY_VIEW_TYPES:
+        if self._view_extension.is_entity_view(view_type):
             return self._build_entity_view(
                 research_space_id=research_space_id,
                 view_type=view_type,
@@ -59,12 +58,12 @@ class KernelGraphViewService:
                 claim_limit=claim_limit,
                 relation_limit=relation_limit,
             )
-        if view_type == "claim":
+        if self._view_extension.is_claim_view(view_type):
             return self._build_claim_view(
                 research_space_id=research_space_id,
                 claim_id=resource_id,
             )
-        if view_type == "paper":
+        if self._view_extension.is_document_view(view_type):
             return self._build_paper_view(
                 research_space_id=research_space_id,
                 source_document_id=resource_id,
@@ -136,8 +135,8 @@ class KernelGraphViewService:
             )
         return visited_claim_ids, claim_relations
 
-    @staticmethod
     def _expand_mechanism_frontier(
+        self,
         *,
         step_relations: list[KernelClaimRelation],
         visited_claim_ids: set[str],
@@ -148,7 +147,10 @@ class KernelGraphViewService:
         for relation in step_relations:
             if relation.review_status == "REJECTED":
                 continue
-            if relation.relation_type not in MECHANISM_RELATION_TYPES:
+            if (
+                relation.relation_type
+                not in self._view_extension.mechanism_relation_types
+            ):
                 continue
             relation_id = str(relation.id)
             if relation_id not in seen_relation_ids:
@@ -178,7 +180,7 @@ class KernelGraphViewService:
         if entity is None or str(entity.research_space_id) != research_space_id:
             msg = f"Entity {entity_id} not found in research space {research_space_id}"
             raise KernelGraphViewNotFoundError(msg)
-        expected_entity_type = ENTITY_VIEW_TYPES[view_type]
+        expected_entity_type = self._view_extension.entity_view_types[view_type]
         if entity.entity_type != expected_entity_type:
             msg = (
                 f"Graph view '{view_type}' requires entity_type "

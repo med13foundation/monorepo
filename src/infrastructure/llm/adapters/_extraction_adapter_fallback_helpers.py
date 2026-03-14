@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from src.domain.agents.contexts.extraction_context import ExtractionContext
     from src.domain.ports.dictionary_port import DictionaryPort
+    from src.graph.core.extraction_fallback import ExtractionHeuristicConfig
 
 
 def is_heuristic_extraction_contract(contract: ExtractionContract) -> bool:
@@ -67,6 +68,7 @@ def _extraction_signal_score(contract: ExtractionContract) -> tuple[int, float]:
 def build_heuristic_extraction_contract(
     context: ExtractionContext,
     *,
+    fallback_config: ExtractionHeuristicConfig,
     dictionary_service: DictionaryPort | None,
     agent_run_id: str | None,
     decision: Literal["generated", "fallback", "escalate"],
@@ -135,21 +137,25 @@ def build_heuristic_extraction_contract(
         ),
         None,
     )
-    claim_text = _best_claim_text_from_record(context.raw_record)
+    claim_text = _best_claim_text_from_record(
+        context.raw_record,
+        fallback_config=fallback_config,
+    )
     if variant_entity and phenotype_entity:
+        heuristic_relation = fallback_config.relation_when_variant_and_phenotype_present
         relation_allowed = _is_relation_allowed(
-            source_type="VARIANT",
-            relation_type="ASSOCIATED_WITH",
-            target_type="PHENOTYPE",
+            source_type=heuristic_relation.source_type,
+            relation_type=heuristic_relation.relation_type,
+            target_type=heuristic_relation.target_type,
             dictionary_service=dictionary_service,
         )
         if relation_allowed:
             relations.append(
                 ExtractedRelation(
-                    source_type="VARIANT",
-                    relation_type="ASSOCIATED_WITH",
-                    target_type="PHENOTYPE",
-                    polarity="UNCERTAIN",
+                    source_type=heuristic_relation.source_type,
+                    relation_type=heuristic_relation.relation_type,
+                    target_type=heuristic_relation.target_type,
+                    polarity=heuristic_relation.polarity,
                     claim_text=claim_text,
                     claim_section=None,
                     source_label=variant_entity.display_label,
@@ -166,9 +172,9 @@ def build_heuristic_extraction_contract(
                     fact_type="relation",
                     reason="Relation triple not allowed by dictionary constraints",
                     payload={
-                        "source_type": "VARIANT",
-                        "relation_type": "ASSOCIATED_WITH",
-                        "target_type": "PHENOTYPE",
+                        "source_type": heuristic_relation.source_type,
+                        "relation_type": heuristic_relation.relation_type,
+                        "target_type": heuristic_relation.target_type,
                     },
                 ),
             )
@@ -225,8 +231,12 @@ def _resolve_variable_id(
     return resolved.id
 
 
-def _best_claim_text_from_record(raw_record: Mapping[str, object]) -> str | None:
-    for field_name in ("abstract", "text", "full_text", "title"):
+def _best_claim_text_from_record(
+    raw_record: Mapping[str, object],
+    *,
+    fallback_config: ExtractionHeuristicConfig,
+) -> str | None:
+    for field_name in fallback_config.claim_text_fields:
         value = raw_record.get(field_name)
         if not isinstance(value, str):
             continue

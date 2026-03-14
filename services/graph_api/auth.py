@@ -7,12 +7,28 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from src.domain.entities.research_space_membership import MembershipRole
 from src.domain.entities.user import User, UserRole, UserStatus
+from src.graph.core.access import GraphAccessRole, GraphPrincipal
+from src.graph.core.tenancy import (
+    GraphRlsSessionContext,
+    GraphTenant,
+    GraphTenantMembership,
+    create_graph_rls_session_context,
+)
 from src.infrastructure.security.jwt_provider import JWTProvider
 
 from .config import get_settings
 
 security = HTTPBearer(auto_error=False)
+
+_GRAPH_ACCESS_ROLE_BY_MEMBERSHIP_ROLE = {
+    MembershipRole.VIEWER: GraphAccessRole.VIEWER,
+    MembershipRole.RESEARCHER: GraphAccessRole.RESEARCHER,
+    MembershipRole.CURATOR: GraphAccessRole.CURATOR,
+    MembershipRole.ADMIN: GraphAccessRole.ADMIN,
+    MembershipRole.OWNER: GraphAccessRole.OWNER,
+}
 
 
 class GraphServiceUser(User):
@@ -139,10 +155,61 @@ def is_graph_service_admin(current_user: User) -> bool:
     return isinstance(current_user, GraphServiceUser) and current_user.is_graph_admin
 
 
+def to_graph_principal(current_user: User) -> GraphPrincipal:
+    """Map one authenticated caller onto the graph-core principal abstraction."""
+    return GraphPrincipal(
+        subject_id=str(current_user.id),
+        is_platform_admin=is_graph_service_admin(current_user),
+    )
+
+
+def to_graph_access_role(membership_role: MembershipRole) -> GraphAccessRole:
+    """Map one application membership role onto graph-core access semantics."""
+    return _GRAPH_ACCESS_ROLE_BY_MEMBERSHIP_ROLE[membership_role]
+
+
+def to_graph_tenant(space_id: UUID) -> GraphTenant:
+    """Map one graph-space identifier onto the graph-core tenant abstraction."""
+    return GraphTenant(tenant_id=str(space_id))
+
+
+def to_graph_tenant_membership(
+    *,
+    space_id: UUID,
+    membership_role: MembershipRole | None,
+) -> GraphTenantMembership:
+    """Map one graph-space membership onto graph-core tenancy abstractions."""
+    return GraphTenantMembership(
+        tenant=to_graph_tenant(space_id),
+        membership_role=(
+            to_graph_access_role(membership_role)
+            if membership_role is not None
+            else None
+        ),
+    )
+
+
+def to_graph_rls_session_context(
+    current_user: User,
+    *,
+    bypass_rls: bool = False,
+) -> GraphRlsSessionContext:
+    """Map one authenticated caller onto graph-core RLS session settings."""
+    return create_graph_rls_session_context(
+        principal=to_graph_principal(current_user),
+        bypass_rls=bypass_rls,
+    )
+
+
 __all__ = [
     "GraphServiceUser",
     "get_current_active_user",
     "get_current_user",
     "is_graph_service_admin",
     "security",
+    "to_graph_access_role",
+    "to_graph_principal",
+    "to_graph_rls_session_context",
+    "to_graph_tenant",
+    "to_graph_tenant_membership",
 ]

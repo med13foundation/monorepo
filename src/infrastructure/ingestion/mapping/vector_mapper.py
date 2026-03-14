@@ -8,7 +8,8 @@ import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from src.domain.services.domain_context_resolver import DomainContextResolver
+from src.graph.core.domain_context import resolve_graph_domain_context
+from src.graph.runtime import create_graph_domain_context_policy
 from src.infrastructure.ingestion.types import MappedObservation, RawRecord
 
 if TYPE_CHECKING:
@@ -251,7 +252,8 @@ class VectorMapper:
     def _extract_domain_context(self, record: RawRecord) -> str | None:
         raw_source_type = record.metadata.get("type")
         source_type = raw_source_type if isinstance(raw_source_type, str) else None
-        return DomainContextResolver.resolve(
+        return resolve_graph_domain_context(
+            domain_context_policy=create_graph_domain_context_policy(),
             metadata=record.metadata,
             source_type=source_type,
             fallback=None,

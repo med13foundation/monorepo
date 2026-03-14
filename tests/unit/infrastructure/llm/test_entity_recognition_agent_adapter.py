@@ -14,6 +14,12 @@ from src.domain.agents.contexts.entity_recognition_context import (
 )
 from src.domain.agents.contracts.entity_recognition import EntityRecognitionContract
 from src.domain.agents.models import ModelCapability, ModelSpec
+from src.graph.domain_biomedical.entity_recognition_payload import (
+    BIOMEDICAL_ENTITY_RECOGNITION_PAYLOAD_CONFIG,
+)
+from src.graph.domain_biomedical.entity_recognition_prompt import (
+    BIOMEDICAL_ENTITY_RECOGNITION_PROMPT_CONFIG,
+)
 from src.infrastructure.llm.adapters.entity_recognition_agent_adapter import (
     ArtanaEntityRecognitionAdapter,
 )
@@ -104,7 +110,15 @@ def _build_adapter(
             create=True,
         ),
     ):
-        yield ArtanaEntityRecognitionAdapter(), client, kernel, model_port
+        yield (
+            ArtanaEntityRecognitionAdapter(
+                prompt_config=BIOMEDICAL_ENTITY_RECOGNITION_PROMPT_CONFIG,
+                payload_config=BIOMEDICAL_ENTITY_RECOGNITION_PAYLOAD_CONFIG,
+            ),
+            client,
+            kernel,
+            model_port,
+        )
 
 
 @pytest.mark.asyncio
@@ -184,3 +198,66 @@ async def test_close_is_noop() -> None:
         await adapter.close()
     kernel.close.assert_not_awaited()
     model_port.aclose.assert_not_awaited()
+
+
+def test_build_compact_raw_record_uses_pack_pubmed_payload_rules() -> None:
+    context = EntityRecognitionContext(
+        document_id="doc-compact-pubmed",
+        source_type="pubmed",
+        raw_record={
+            "pubmed_id": "12345",
+            "title": "MED13 impacts transcription",
+            "full_text": "Full text content",
+            "abstract": "Abstract content",
+            "ignored_field": "ignored",
+        },
+    )
+
+    with _build_adapter() as (adapter, _client, _kernel, _model_port):
+        compact = adapter._build_compact_raw_record(context)
+
+    assert compact == {
+        "pubmed_id": "12345",
+        "title": "MED13 impacts transcription",
+        "full_text": "Full text content",
+    }
+
+
+def test_build_compact_raw_record_uses_pack_clinvar_payload_rules() -> None:
+    context = EntityRecognitionContext(
+        document_id="doc-compact-clinvar",
+        source_type="clinvar",
+        raw_record={
+            "variation_id": "1234",
+            "gene_symbol": "MED13",
+            "clinical_significance": "pathogenic",
+            "ignored_field": "ignored",
+        },
+    )
+
+    with _build_adapter() as (adapter, _client, _kernel, _model_port):
+        compact = adapter._build_compact_raw_record(context)
+
+    assert compact == {
+        "variation_id": "1234",
+        "gene_symbol": "MED13",
+        "clinical_significance": "pathogenic",
+    }
+
+
+def test_get_system_prompt_uses_pack_prompt_dispatch() -> None:
+    with _build_adapter() as (adapter, _client, _kernel, _model_port):
+        prompt = adapter._get_system_prompt("pubmed")
+
+    assert "PubMed publications" in prompt
+
+
+def test_get_system_prompt_rejects_unsupported_source() -> None:
+    with (
+        _build_adapter() as (adapter, _client, _kernel, _model_port),
+        pytest.raises(
+            ValueError,
+            match="Unsupported entity-recognition source type: unsupported",
+        ),
+    ):
+        adapter._get_system_prompt("unsupported")

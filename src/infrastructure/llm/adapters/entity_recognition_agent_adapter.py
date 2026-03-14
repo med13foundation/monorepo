@@ -25,12 +25,6 @@ from src.infrastructure.llm.config import (
     get_model_registry,
     load_runtime_policy,
 )
-from src.infrastructure.llm.prompts.entity_recognition import (
-    CLINVAR_ENTITY_RECOGNITION_DISCOVERY_SYSTEM_PROMPT,
-    CLINVAR_ENTITY_RECOGNITION_POLICY_SYSTEM_PROMPT,
-    PUBMED_ENTITY_RECOGNITION_DISCOVERY_SYSTEM_PROMPT,
-    PUBMED_ENTITY_RECOGNITION_POLICY_SYSTEM_PROMPT,
-)
 from src.infrastructure.llm.state.shared_postgres_store import (
     create_artana_postgres_store,
 )
@@ -42,10 +36,12 @@ if TYPE_CHECKING:
     from src.domain.agents.contexts.entity_recognition_context import (
         EntityRecognitionContext,
     )
+    from src.graph.core.entity_recognition_payload import (
+        EntityRecognitionPayloadConfig,
+    )
+    from src.graph.core.entity_recognition_prompt import EntityRecognitionPromptConfig
 
 logger = logging.getLogger(__name__)
-
-_SUPPORTED_SOURCE_TYPES = frozenset({"clinvar", "pubmed"})
 _DEFAULT_ENTITY_RECOGNITION_USAGE_MAX_TOKENS = 65536
 _ENV_ENTITY_RECOGNITION_USAGE_MAX_TOKENS = "MED13_ENTITY_RECOGNITION_USAGE_MAX_TOKENS"
 _MAX_ENTITY_RECOGNITION_RAW_JSON_CHARS = 20000
@@ -66,10 +62,12 @@ _OpenAIChatModelPort = OpenAIJSONSchemaModelPort
 class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
     """Adapter that executes entity-recognition workflows through Artana."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         model: str | None = None,
         *,
+        prompt_config: EntityRecognitionPromptConfig,
+        payload_config: EntityRecognitionPayloadConfig,
         use_governance: bool = True,
         dictionary_service: object | None = None,
         agent_created_by: str = "agent:entity_recognition",
@@ -83,6 +81,8 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
             raise RuntimeError(msg) from _ARTANA_IMPORT_ERROR
 
         self._default_model = model
+        self._prompt_config = prompt_config
+        self._payload_config = payload_config
         self._use_governance = use_governance
         self._dictionary_service = dictionary_service
         normalized_created_by = agent_created_by.strip()
@@ -104,7 +104,7 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
     ) -> EntityRecognitionContract:
         self._last_run_id = None
         source_type = context.source_type.strip().lower()
-        if source_type not in _SUPPORTED_SOURCE_TYPES:
+        if source_type not in self._prompt_config.supported_source_types():
             return self._unsupported_source_contract(context)
 
         if not self._has_openai_key():
@@ -278,17 +278,12 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
             budget_usd_limit=budget_usd_limit,
         )
 
-    @staticmethod
-    def _get_system_prompt(source_type: str) -> str:
-        if source_type == "pubmed":
-            return (
-                f"{PUBMED_ENTITY_RECOGNITION_DISCOVERY_SYSTEM_PROMPT}\n\n"
-                f"{PUBMED_ENTITY_RECOGNITION_POLICY_SYSTEM_PROMPT}"
-            )
-        return (
-            f"{CLINVAR_ENTITY_RECOGNITION_DISCOVERY_SYSTEM_PROMPT}\n\n"
-            f"{CLINVAR_ENTITY_RECOGNITION_POLICY_SYSTEM_PROMPT}"
-        )
+    def _get_system_prompt(self, source_type: str) -> str:
+        prompt = self._prompt_config.system_prompt_for(source_type)
+        if prompt is None:
+            msg = f"Unsupported entity-recognition source type: {source_type}"
+            raise ValueError(msg)
+        return prompt
 
     def _build_prompt(
         self,
@@ -304,9 +299,8 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
             f"{self._build_input_text(context)}"
         )
 
-    @classmethod
-    def _build_input_text(cls, context: EntityRecognitionContext) -> str:
-        compact_raw_record = cls._build_compact_raw_record(context)
+    def _build_input_text(self, context: EntityRecognitionContext) -> str:
+        compact_raw_record = self._build_compact_raw_record(context)
         serialized_payload = json.dumps(compact_raw_record, default=str)
         if len(serialized_payload) > _MAX_ENTITY_RECOGNITION_RAW_JSON_CHARS:
             serialized_payload = serialized_payload[
@@ -320,59 +314,28 @@ class ArtanaEntityRecognitionAdapter(EntityRecognitionPort):
             f"RAW RECORD JSON:\n{serialized_payload}"
         )
 
-    @classmethod
     def _build_compact_raw_record(
-        cls,
+        self,
         context: EntityRecognitionContext,
     ) -> dict[str, object]:
         raw_record = context.raw_record
         source_type = context.source_type.strip().lower()
-        if source_type == "pubmed":
+        compact_rule = self._payload_config.compact_record_rule_for(
+            source_type,
+        )
+        if compact_rule is not None:
             compact: dict[str, object] = {}
-            allowed_fields: tuple[str, ...] = (
-                "pubmed_id",
-                "title",
-                "doi",
-                "source",
-                "full_text_source",
-                "full_text_chunk_index",
-                "full_text_chunk_total",
-                "full_text_chunk_start_char",
-                "full_text_chunk_end_char",
-                "publication_date",
-                "publication_types",
-                "journal",
-                "keywords",
-            )
-            for field in allowed_fields:
+            for field in compact_rule.fields:
                 value = raw_record.get(field)
                 if value is None:
                     continue
                 compact[field] = to_json_value(value)
-            full_text = raw_record.get("full_text")
-            if isinstance(full_text, str) and full_text.strip():
-                compact["full_text"] = full_text[:_MAX_ENTITY_RECOGNITION_TEXT_CHARS]
-            else:
-                abstract = raw_record.get("abstract")
-                if isinstance(abstract, str) and abstract.strip():
-                    compact["abstract"] = abstract[:_MAX_ENTITY_RECOGNITION_TEXT_CHARS]
-            return compact
-        if source_type == "clinvar":
-            compact = {}
-            for field in (
-                "variation_id",
-                "gene_symbol",
-                "variant_name",
-                "clinical_significance",
-                "condition_name",
-                "review_status",
-                "submission_count",
-                "source",
-            ):
-                value = raw_record.get(field)
-                if value is None:
+            for text_field in compact_rule.preferred_text_fields:
+                text_value = raw_record.get(text_field)
+                if not isinstance(text_value, str) or not text_value.strip():
                     continue
-                compact[field] = to_json_value(value)
+                compact[text_field] = text_value[:_MAX_ENTITY_RECOGNITION_TEXT_CHARS]
+                break
             return compact
         return {str(key): to_json_value(value) for key, value in raw_record.items()}
 

@@ -12,6 +12,7 @@ from src.application.services.kernel.dictionary_management_service import (
 )
 from src.domain.ports.dictionary_search_harness_port import DictionarySearchHarnessPort
 from src.domain.ports.text_embedding_port import TextEmbeddingPort
+from src.graph.pack_registry import resolve_graph_domain_pack
 from src.infrastructure.repositories.kernel import SqlAlchemyDictionaryRepository
 from src.models.database.kernel.dictionary import DictionaryDomainContextModel
 from tests.graph_seed_helpers import (
@@ -142,7 +143,10 @@ def test_dictionary_search_returns_high_precision_for_pubmed_title_queries(
     db_session: Session,
 ) -> None:
     """Verify top-1 quality using three real PubMed article titles."""
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = SqlAlchemyDictionaryRepository(
+        db_session,
+        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+    )
     embedding_provider = PubMedKeywordEmbeddingProvider()
     service = DictionaryManagementService(
         dictionary_repo=repository,

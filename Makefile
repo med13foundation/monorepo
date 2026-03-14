@@ -36,7 +36,7 @@ WEB_LOG := logs/web.log
 WEB_PID_FILE_ABS := $(abspath $(WEB_PID_FILE))
 WEB_LOG_ABS := $(abspath $(WEB_LOG))
 NEXT_DEV_ENV := NEXTAUTH_SECRET=med13-resource-library-nextauth-secret-key-for-development-2024-secure-random-string NEXTAUTH_URL=http://localhost:3000 NEXT_PUBLIC_API_URL=http://localhost:8080
-BACKEND_DEV_ENV := MED13_DEV_JWT_SECRET=med13-resource-library-backend-jwt-secret-for-development-2026-01
+BACKEND_DEV_ENV := AUTH_JWT_SECRET=med13-resource-library-backend-jwt-secret-for-development-2026-01
 GRAPH_SERVICE_CLIENT_ENV := GRAPH_SERVICE_URL=$(GRAPH_SERVICE_URL) $(BACKEND_DEV_ENV)
 NEXTAUTH_URL ?= http://localhost:3000
 LOCAL_GRAPH_API_URL ?= http://localhost:8090
@@ -147,7 +147,7 @@ define ensure_frontdoor_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-graph test-graph-fast test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate graph-db-wait graph-db-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres run-graph-service graph-service-lint graph-service-type-check graph-service-test graph-service-openapi graph-service-client-types graph-service-sync-contracts graph-service-contract-check graph-service-checks graph-topology-validate test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod deploy-graph-dev deploy-graph-staging deploy-graph-prod graph-docker-build setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit graph-readiness graph-reasoning-rebuild graph-space-sync
+.PHONY: help venv venv-check install install-dev test test-graph test-graph-fast test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate graph-db-wait graph-db-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres run-graph-service graph-service-lint graph-service-type-check graph-service-test graph-service-openapi graph-service-client-types graph-service-sync-contracts graph-service-contract-check graph-phase1-alias-check graph-phase6-release-check graph-phase7-cross-domain-check graph-service-checks graph-topology-validate graph-phase2-boundary-check graph-phase2-biomedical-pack-check graph-phase3-invariant-check graph-phase4-read-model-check graph-read-model-rebuild graph-read-model-benchmark graph-reasoning-index-benchmark test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod deploy-graph-dev deploy-graph-staging deploy-graph-prod graph-docker-build setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit graph-readiness graph-reasoning-rebuild graph-space-sync
 
 PY_CHECK_PATHS := src tests scripts services/graph_api/alembic
 PY_STRICT_CHECK_PATHS := src
@@ -215,6 +215,12 @@ GRAPH_SERVICE_TEST_PATHS := \
 	tests/unit/services/graph_api \
 	tests/unit/infrastructure/graph_service \
 	tests/integration/graph_service
+GRAPH_PHASE2_BIOMEDICAL_PACK_TEST_PATHS := \
+	tests/unit/graph/test_pack_registry.py \
+	tests/unit/application/services/test_graph_connection_service.py \
+	tests/unit/services/graph_api/test_governance.py \
+	tests/unit/infrastructure/dependency_injection/test_graph_service_factory_delegation.py \
+	tests/integration/graph_service/test_graph_api.py
 GRAPH_ALEMBIC_CONFIG := services/graph_api/alembic.ini
 GRAPH_SERVICE_OPENAPI_OUTPUT := services/graph_api/openapi.json
 GRAPH_SERVICE_TS_TYPES_OUTPUT := src/web/types/graph-service.generated.ts
@@ -288,6 +294,21 @@ graph-service-contract-check: ## Verify graph-service OpenAPI and client contrac
 	$(USE_PYTHON) scripts/export_graph_openapi.py --output $(GRAPH_SERVICE_OPENAPI_OUTPUT) --check
 	$(USE_PYTHON) scripts/generate_ts_types.py --module src.type_definitions.graph_service_contracts --output $(GRAPH_SERVICE_TS_TYPES_OUTPUT) --check
 
+graph-phase1-alias-check: ## Validate graph runtime alias allowlist and removal policy
+	$(call check_venv)
+	$(USE_PYTHON) scripts/validate_graph_phase1_alias_policy.py
+
+graph-phase6-release-check: ## Validate graph-service release-boundary policy, artifacts, and runtime metadata
+	$(call check_venv)
+	$(USE_PYTHON) scripts/validate_graph_phase6_release_contract.py
+
+graph-phase7-cross-domain-check: ## Validate built-in graph domain packs across shared runtime boundaries
+	$(call check_venv)
+	$(USE_PYTHON) scripts/validate_graph_phase7_cross_domain.py
+	GRAPH_DOMAIN_PACK=biomedical $(USE_PYTHON) -m pytest tests/integration/graph_service/test_graph_api.py -q -k "test_graph_service_uses_biomedical_pack_http_boundary or test_graph_service_admin_routes_require_graph_admin_claim or test_graph_service_enforces_space_membership or test_graph_service_enforces_member_role_hierarchy or test_graph_service_uses_biomedical_pack_entity_neighbors_read_model"
+	GRAPH_DOMAIN_PACK=sports $(USE_PYTHON) -m pytest tests/unit/graph/test_pack_registry.py tests/unit/graph/test_service_config.py tests/integration/graph_service/test_graph_api.py -q -k "test_resolve_graph_domain_pack_supports_explicit_sports or test_graph_service_settings_support_sports_runtime_identity or test_graph_service_uses_sports_pack_http_boundary or test_graph_service_admin_routes_require_graph_admin_claim_under_sports_pack or test_graph_service_enforces_space_membership_under_sports_pack or test_graph_service_enforces_member_role_hierarchy_under_sports_pack or test_graph_service_uses_sports_pack_entity_neighbors_read_model"
+	GRAPH_DOMAIN_PACK=sports $(MAKE) -s graph-phase6-release-check
+
 graph-service-lint: ## Run ruff on graph-service-owned Python paths
 	$(call check_venv)
 	$(USE_PYTHON) -m ruff check $(GRAPH_SERVICE_LINT_PATHS)
@@ -306,7 +327,39 @@ graph-service-checks: ## Run graph-service lint, types, contract sync checks, an
 	@$(MAKE) -s graph-service-lint
 	@$(MAKE) -s graph-service-type-check
 	@$(MAKE) -s graph-service-contract-check
+	@$(MAKE) -s graph-phase6-release-check
 	@$(MAKE) -s graph-service-test
+
+graph-phase2-boundary-check: ## Validate graph-core versus biomedical-pack import boundaries
+	$(call check_venv)
+	$(USE_PYTHON) scripts/validate_graph_phase2_boundary.py
+
+graph-phase2-biomedical-pack-check: ## Verify representative MED13 graph-service behavior through the biomedical pack
+	$(call check_venv)
+	GRAPH_DOMAIN_PACK=biomedical $(USE_PYTHON) -m pytest $(GRAPH_PHASE2_BIOMEDICAL_PACK_TEST_PATHS) -q -k "test_resolve_graph_domain_pack_supports_explicit_biomedical or test_discover_connections_for_seed_uses_pack_default_source_type or test_graph_governance_repository_seeds_pack_domain_contexts or test_get_entity_recognition_agent_uses_pack_owned_configs or test_get_extraction_agent_uses_pack_owned_configs or test_graph_service_uses_biomedical_pack_http_boundary"
+
+graph-phase3-invariant-check: ## Validate packs cannot override projection or invariant owners
+	$(call check_venv)
+	$(USE_PYTHON) scripts/validate_graph_phase3_invariants.py
+
+graph-phase4-read-model-check: ## Validate graph-core read-model ownership and truth-source rules
+	$(call check_venv)
+	$(USE_PYTHON) scripts/validate_graph_phase4_read_models.py
+
+graph-read-model-rebuild: ## Rebuild the current graph read models from authoritative graph state
+	$(call check_venv)
+	$(call run_with_postgres_env,$(USE_PYTHON) scripts/rebuild_graph_read_model_entity_neighbors.py)
+	$(call run_with_postgres_env,$(USE_PYTHON) scripts/rebuild_graph_read_model_entity_relation_summary.py)
+	$(call run_with_postgres_env,$(USE_PYTHON) scripts/rebuild_graph_read_model_entity_claim_summary.py)
+	$(call run_with_postgres_env,$(USE_PYTHON) scripts/rebuild_graph_read_model_entity_mechanism_paths.py)
+
+graph-read-model-benchmark: ## Run focused graph read-model performance comparisons
+	$(call check_venv)
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py tests/performance/test_graph_query_performance.py -q -s -k "entity_neighbors_read_model_benchmark_improves_neighborhood_latency or relation_evidence_drilldown_completes_within_budget")
+
+graph-reasoning-index-benchmark: ## Run focused reasoning-index performance comparisons
+	$(call check_venv)
+	$(call run_with_postgres_env,MED13_ENABLE_DISTRIBUTED_RATE_LIMIT=0 $(USE_PYTHON) scripts/run_isolated_postgres_tests.py tests/performance/test_graph_query_performance.py -q -s -k "entity_mechanism_paths_benchmark_improves_reasoning_seed_read_latency")
 
 graph-topology-validate: ## Validate deployed shared-instance graph topology wiring (requires gcloud + deploy env vars)
 	$(call check_venv)

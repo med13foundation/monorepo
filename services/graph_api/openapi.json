@@ -3212,11 +3212,17 @@
             "title": "Source Id"
           },
           "source_type": {
-            "default": "clinvar",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Source Type",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
           }
         },
         "required": [
@@ -3462,11 +3468,17 @@
             "title": "Source Id"
           },
           "source_type": {
-            "default": "clinvar",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Source Type",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
           }
         },
         "title": "GraphConnectionSingleRequest",
@@ -9960,7 +9972,7 @@
     }
   },
   "info": {
-    "title": "MED13 Graph Service",
+    "title": "Biomedical Graph Service",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",

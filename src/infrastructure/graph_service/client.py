@@ -127,7 +127,7 @@ class GraphConnectionDiscoverRequestPayload(BaseModel):
     model_config = ConfigDict(strict=True)
 
     seed_entity_ids: list[str]
-    source_type: str = "clinvar"
+    source_type: str | None = None
     source_id: str | None = None
     model_id: str | None = None
     relation_types: list[str] | None = None
@@ -142,7 +142,7 @@ class GraphConnectionSingleRequestPayload(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
-    source_type: str = "clinvar"
+    source_type: str | None = None
     source_id: str | None = None
     model_id: str | None = None
     relation_types: list[str] | None = None
@@ -1430,7 +1430,7 @@ class GraphServiceClient:
         *,
         space_id: UUID,
         seed_entity_ids: list[str],
-        source_type: str = "clinvar",
+        source_type: str | None = None,
         source_id: str | None = None,
         model_id: str | None = None,
         relation_types: list[str] | None = None,
@@ -1464,7 +1464,7 @@ class GraphServiceClient:
         *,
         space_id: UUID,
         entity_id: UUID,
-        source_type: str = "clinvar",
+        source_type: str | None = None,
         source_id: str | None = None,
         model_id: str | None = None,
         relation_types: list[str] | None = None,

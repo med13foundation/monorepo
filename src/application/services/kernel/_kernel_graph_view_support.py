@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 from uuid import UUID
+
+from src.graph.core.view_config import GraphDomainViewType, GraphViewExtension
 
 if TYPE_CHECKING:
     from src.application.services.kernel.kernel_claim_evidence_service import (
@@ -39,25 +41,6 @@ if TYPE_CHECKING:
     )
 
 
-GraphDomainViewType = Literal["gene", "variant", "phenotype", "paper", "claim"]
-ENTITY_VIEW_TYPES: dict[GraphDomainViewType, str] = {
-    "gene": "GENE",
-    "variant": "VARIANT",
-    "phenotype": "PHENOTYPE",
-}
-MECHANISM_RELATION_TYPES = frozenset(
-    {
-        "CAUSES",
-        "UPSTREAM_OF",
-        "DOWNSTREAM_OF",
-        "REFINES",
-        "SUPPORTS",
-        "GENERALIZES",
-        "INSTANCE_OF",
-    },
-)
-
-
 class KernelGraphViewError(Exception):
     """Base exception for graph view failures."""
 
@@ -81,6 +64,7 @@ class KernelGraphViewServiceDependencies:
     claim_relation_service: KernelClaimRelationService
     claim_evidence_service: KernelClaimEvidenceService
     source_document_lookup: SourceDocumentReferencePort
+    view_extension: GraphViewExtension
 
 
 @dataclass(frozen=True)
@@ -201,15 +185,14 @@ def dedupe_relations(relations: list[KernelRelation]) -> list[KernelRelation]:
 
 __all__ = [
     "ClaimBundle",
-    "ENTITY_VIEW_TYPES",
     "GraphDomainViewType",
+    "GraphViewExtension",
     "KernelClaimMechanismChain",
     "KernelGraphDomainView",
     "KernelGraphViewError",
     "KernelGraphViewNotFoundError",
     "KernelGraphViewServiceDependencies",
     "KernelGraphViewValidationError",
-    "MECHANISM_RELATION_TYPES",
     "dedupe_relations",
     "flatten_evidence",
     "flatten_participants",

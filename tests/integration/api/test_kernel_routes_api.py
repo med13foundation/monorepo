@@ -51,7 +51,7 @@ def _session_for_api(db_session):
 
 def _auth_headers(user: UserModel) -> dict[str, str]:
     secret = os.getenv(
-        "MED13_DEV_JWT_SECRET",
+        "AUTH_JWT_SECRET",
         "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz",
     )
     provider = JWTProvider(secret_key=secret)

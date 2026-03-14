@@ -17,6 +17,7 @@ from src.domain.agents.contracts.mapping_judge import MappingJudgeContract
 from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
 from src.domain.entities.user import UserRole, UserStatus
 from src.domain.ports.dictionary_search_harness_port import DictionarySearchHarnessPort
+from src.graph.pack_registry import resolve_graph_domain_pack
 from src.infrastructure.embeddings import HybridTextEmbeddingProvider
 from src.infrastructure.factories.ingestion_pipeline_factory import (
     create_ingestion_pipeline,
@@ -152,9 +153,15 @@ def test_pipeline_uses_vector_mapper_when_exact_match_is_missing(
         session.flush()
 
         dictionary_service = DictionaryManagementService(
-            dictionary_repo=SqlAlchemyDictionaryRepository(session),
+            dictionary_repo=SqlAlchemyDictionaryRepository(
+                session,
+                builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+            ),
             dictionary_search_harness=StagedDictionarySearchHarness(
-                dictionary_repo=SqlAlchemyDictionaryRepository(session),
+                dictionary_repo=SqlAlchemyDictionaryRepository(
+                    session,
+                    builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+                ),
                 embedding_provider=HybridTextEmbeddingProvider(),
             ),
             embedding_provider=HybridTextEmbeddingProvider(),
@@ -173,7 +180,10 @@ def test_pipeline_uses_vector_mapper_when_exact_match_is_missing(
             session,
             mapping_judge_agent=NoopMappingJudgeAgent(),
             dictionary_search_harness=StagedDictionarySearchHarness(
-                dictionary_repo=SqlAlchemyDictionaryRepository(session),
+                dictionary_repo=SqlAlchemyDictionaryRepository(
+                    session,
+                    builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+                ),
                 embedding_provider=HybridTextEmbeddingProvider(),
             ),
         )

@@ -50,6 +50,9 @@ if TYPE_CHECKING:
     from src.domain.repositories.source_document_repository import (
         SourceDocumentRepository,
     )
+    from src.graph.core.entity_recognition_bootstrap import (
+        EntityRecognitionBootstrapConfig,
+    )
     from src.type_definitions.common import JSONObject, ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
@@ -180,6 +183,7 @@ class EntityRecognitionServiceDependencies:
     source_document_repository: SourceDocumentRepository
     ingestion_pipeline: IngestionPipelinePort
     dictionary_service: DictionaryPort
+    entity_recognition_bootstrap: EntityRecognitionBootstrapConfig
     extraction_service: ExtractionService | None = None
     governance_service: GovernanceService | None = None
     research_space_repository: ResearchSpaceRepository | None = None
@@ -264,6 +268,7 @@ class EntityRecognitionService(
         self._source_documents = dependencies.source_document_repository
         self._ingestion_pipeline = dependencies.ingestion_pipeline
         self._dictionary = dependencies.dictionary_service
+        self._entity_recognition_bootstrap = dependencies.entity_recognition_bootstrap
         self._extraction_service = dependencies.extraction_service
         self._governance = dependencies.governance_service or GovernanceService()
         self._research_spaces = dependencies.research_space_repository

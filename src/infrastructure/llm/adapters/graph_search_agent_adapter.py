@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from artana.store import PostgresStore
 
     from src.domain.agents.contexts.graph_search_context import GraphSearchContext
+    from src.graph.core.search_extension import GraphSearchExtension
 
 _INVALID_OPENAI_KEYS = frozenset({"test", "changeme", "placeholder"})
 _ARTANA_IMPORT_ERROR: Exception | None = None
@@ -46,6 +47,7 @@ class ArtanaGraphSearchAdapter(GraphSearchPort):
         self,
         model: str | None = None,
         *,
+        search_extension: GraphSearchExtension,
         graph_query_service: object | None = None,
         artana_store: PostgresStore | None = None,
     ) -> None:
@@ -57,6 +59,7 @@ class ArtanaGraphSearchAdapter(GraphSearchPort):
             raise RuntimeError(msg) from _ARTANA_IMPORT_ERROR
 
         self._default_model = model
+        self._search_extension = search_extension
         self._graph_query_service = graph_query_service
         self._governance = GovernanceConfig.from_environment()
         self._runtime_policy = load_runtime_policy()
@@ -119,7 +122,7 @@ class ArtanaGraphSearchAdapter(GraphSearchPort):
                 model=effective_model,
                 prompt=self._build_prompt(context),
                 output_schema=GraphSearchContract,
-                step_key="graph.search.v1",
+                step_key=self._search_extension.step_key,
                 replay_policy=self._runtime_policy.replay_policy,
                 context_version=self._runtime_policy.to_context_version(),
             )
@@ -227,12 +230,8 @@ class ArtanaGraphSearchAdapter(GraphSearchPort):
         )
 
     def _build_prompt(self, context: GraphSearchContext) -> str:
-        from src.infrastructure.llm.prompts.graph_search import (
-            GRAPH_SEARCH_SYSTEM_PROMPT,
-        )
-
         return (
-            f"{GRAPH_SEARCH_SYSTEM_PROMPT}\n\n"
+            f"{self._search_extension.system_prompt}\n\n"
             "---\n"
             "REQUEST CONTEXT\n"
             "---\n"

@@ -53,7 +53,7 @@ os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
 os.environ.setdefault("ASYNC_DATABASE_URL", TEST_ASYNC_DATABASE_URL)
 os.environ.setdefault("TESTING", "true")
 os.environ.setdefault(
-    "MED13_DEV_JWT_SECRET",
+    "AUTH_JWT_SECRET",
     "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz",
 )
 os.environ.setdefault(
@@ -145,7 +145,7 @@ def _apply_test_environment(existing_db_url: str) -> None:
         os.environ["GRAPH_DATABASE_URL"] = existing_db_url
 
     os.environ["TESTING"] = "true"
-    os.environ["MED13_DEV_JWT_SECRET"] = (
+    os.environ["AUTH_JWT_SECRET"] = (
         "test-jwt-secret-0123456789abcdefghijklmnopqrstuvwxyz"
     )
     os.environ["GRAPH_JWT_SECRET"] = (
@@ -169,7 +169,7 @@ def _wire_container_dependencies() -> None:
     from src.infrastructure.dependency_injection import container as container_module
     from src.infrastructure.security.jwt_provider import JWTProvider
 
-    test_secret = os.environ["MED13_DEV_JWT_SECRET"]
+    test_secret = os.environ["AUTH_JWT_SECRET"]
     container_module.container.jwt_secret_key = test_secret
     container_module.container.jwt_provider = JWTProvider(
         secret_key=test_secret,

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select
 
 from src.application.services.kernel.dictionary_management_service import (
     DictionaryManagementService,
@@ -20,6 +20,12 @@ from src.application.services.kernel.kernel_relation_projection_materialization_
 from src.domain.entities.kernel.claim_participants import KernelClaimParticipant
 from src.domain.entities.user import UserRole, UserStatus
 from src.domain.ports.dictionary_search_harness_port import DictionarySearchHarnessPort
+from src.graph.core.read_model import (
+    GraphReadModelUpdate,
+    NullGraphReadModelUpdateDispatcher,
+)
+from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
+from src.graph.pack_registry import resolve_graph_domain_pack
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyDictionaryRepository,
     SqlAlchemyKernelClaimEvidenceRepository,
@@ -30,6 +36,7 @@ from src.infrastructure.repositories.kernel import (
     SqlAlchemyKernelRelationRepository,
 )
 from src.models.database.kernel.claim_evidence import ClaimEvidenceModel
+from src.models.database.kernel.claim_participants import ClaimParticipantModel
 from src.models.database.kernel.dictionary import DictionaryDomainContextModel
 from src.models.database.kernel.relation_claims import RelationClaimModel
 from src.models.database.research_space import ResearchSpaceModel
@@ -89,9 +96,32 @@ class _ProjectionFixture:
     participant_repo: SqlAlchemyKernelClaimParticipantRepository
     claim_evidence_repo: SqlAlchemyKernelClaimEvidenceRepository
     projection_repo: SqlAlchemyKernelRelationProjectionSourceRepository
+    dispatcher: _RecordingReadModelDispatcher
     research_space_id: str
     source_entity_id: str
     target_entity_id: str
+
+
+@dataclass
+class _RecordingReadModelDispatcher(NullGraphReadModelUpdateDispatcher):
+    updates: list[GraphReadModelUpdate]
+
+    def dispatch(self, update: GraphReadModelUpdate) -> int:
+        self.updates.append(update)
+        return 1
+
+    def dispatch_many(self, updates: tuple[GraphReadModelUpdate, ...]) -> int:
+        self.updates.extend(updates)
+        return len(updates)
+
+
+def _build_relation_repository(
+    db_session: Session,
+) -> SqlAlchemyKernelRelationRepository:
+    return SqlAlchemyKernelRelationRepository(
+        db_session,
+        auto_promotion_policy=AutoPromotionPolicy(),
+    )
 
 
 def _build_fixture(db_session: Session) -> _ProjectionFixture:
@@ -127,7 +157,10 @@ def _build_fixture(db_session: Session) -> _ProjectionFixture:
     db_session.add(space)
     db_session.flush()
 
-    dictionary_repo = SqlAlchemyDictionaryRepository(db_session)
+    dictionary_repo = SqlAlchemyDictionaryRepository(
+        db_session,
+        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+    )
     dictionary_service = DictionaryManagementService(
         dictionary_repo=dictionary_repo,
         dictionary_search_harness=_DeterministicHarness(dictionary_repo),
@@ -181,11 +214,12 @@ def _build_fixture(db_session: Session) -> _ProjectionFixture:
         metadata={},
     )
 
-    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
+    relation_repo = _build_relation_repository(db_session)
     claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
     participant_repo = SqlAlchemyKernelClaimParticipantRepository(db_session)
     claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
     projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
+    dispatcher = _RecordingReadModelDispatcher(updates=[])
     service = KernelRelationProjectionMaterializationService(
         relation_repo=relation_repo,
         relation_claim_repo=claim_repo,
@@ -194,6 +228,7 @@ def _build_fixture(db_session: Session) -> _ProjectionFixture:
         entity_repo=entity_repo,
         dictionary_repo=dictionary_repo,
         relation_projection_repo=projection_repo,
+        read_model_update_dispatcher=dispatcher,
     )
     return _ProjectionFixture(
         service=service,
@@ -202,6 +237,7 @@ def _build_fixture(db_session: Session) -> _ProjectionFixture:
         participant_repo=participant_repo,
         claim_evidence_repo=claim_evidence_repo,
         projection_repo=projection_repo,
+        dispatcher=dispatcher,
         research_space_id=str(space.id),
         source_entity_id=str(source_entity.id),
         target_entity_id=str(target_entity.id),
@@ -341,6 +377,45 @@ def test_materialize_support_claim_creates_claim_backed_relation_and_derived_evi
     assert evidence_rows[0].evidence_sentence == (
         "MED13 variants were associated with cardiomyopathy in cohort A."
     )
+
+
+@pytest.mark.database
+def test_materialize_support_claim_dispatches_projection_read_model_updates(
+    db_session: Session,
+) -> None:
+    fixture = _build_fixture(db_session)
+    claim_id = _create_claim(
+        fixture,
+        evidence_seeds=[
+            _EvidenceSeed(
+                summary="Dispatcher evidence.",
+                confidence=0.88,
+                tier="LITERATURE",
+                sentence="MED13 has dispatcher-backed projection updates.",
+            ),
+        ],
+    )
+
+    fixture.service.materialize_support_claim(
+        claim_id=claim_id,
+        research_space_id=fixture.research_space_id,
+        projection_origin="CLAIM_RESOLUTION",
+    )
+
+    assert [update.model_name for update in fixture.dispatcher.updates] == [
+        "entity_neighbors",
+        "entity_relation_summary",
+        "entity_claim_summary",
+    ]
+    assert all(
+        update.trigger == "projection_change" for update in fixture.dispatcher.updates
+    )
+    assert all(update.claim_ids == (claim_id,) for update in fixture.dispatcher.updates)
+    assert all(
+        update.space_id == fixture.research_space_id
+        for update in fixture.dispatcher.updates
+    )
+    assert all(update.entity_ids for update in fixture.dispatcher.updates)
 
 
 @pytest.mark.database
@@ -653,35 +728,22 @@ def test_materialize_support_claim_rejects_unresolved_endpoint_entities(
         ],
     )
 
-    missing_entity_id = str(uuid4())
-    is_postgres = (
-        db_session.bind is not None and db_session.bind.dialect.name == "postgresql"
-    )
-    if is_postgres:
-        db_session.execute(text("SET session_replication_role = replica"))
-    try:
-        db_session.execute(
-            text(
-                """
-                UPDATE claim_participants
-                SET entity_id = :entity_id
-                WHERE claim_id = :claim_id
-                  AND role = 'SUBJECT'
-                """,
-            ),
-            {
-                "entity_id": missing_entity_id,
-                "claim_id": claim_id,
-            },
-        )
-    finally:
-        if is_postgres:
-            db_session.execute(text("SET session_replication_role = DEFAULT"))
+    subject_participant = db_session.scalars(
+        select(ClaimParticipantModel).where(
+            ClaimParticipantModel.claim_id == UUID(claim_id),
+            ClaimParticipantModel.role == "SUBJECT",
+        ),
+    ).one()
+    subject_participant.entity_id = None
     db_session.flush()
+    db_session.expire_all()
 
     with pytest.raises(
         RelationProjectionMaterializationError,
-        match="Claim participant endpoint entities must exist before projection",
+        match=(
+            "Claim-backed materialization requires SUBJECT/OBJECT participants "
+            "with entity anchors"
+        ),
     ):
         fixture.service.materialize_support_claim(
             claim_id=claim_id,

@@ -9,6 +9,11 @@ from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Literal
 
 from src.domain.services.domain_context_resolver import DomainContextResolver
+from src.graph.core.domain_context import (
+    default_graph_domain_context_for_source_type,
+    resolve_graph_domain_context,
+)
+from src.graph.runtime import create_graph_domain_context_policy
 
 if TYPE_CHECKING:
     from src.domain.agents.ports.mapping_judge_port import MappingJudgePort
@@ -73,8 +78,9 @@ def _normalize_domain_context(raw_value: str | None) -> str:
     normalized = DomainContextResolver.normalize(raw_value)
     if normalized is not None:
         return normalized
-    fallback = DomainContextResolver.default_for_source_type(
+    fallback = default_graph_domain_context_for_source_type(
         None,
+        domain_context_policy=create_graph_domain_context_policy(),
         fallback=DomainContextResolver.GENERAL_DEFAULT_DOMAIN,
     )
     return fallback or DomainContextResolver.GENERAL_DEFAULT_DOMAIN
@@ -91,7 +97,8 @@ def _build_concept_set_slug(domain_context: str) -> str:
 
 
 def _resolve_document_domain_context(document: SourceDocument) -> str:
-    resolved = DomainContextResolver.resolve(
+    resolved = resolve_graph_domain_context(
+        domain_context_policy=create_graph_domain_context_policy(),
         metadata=document.metadata,
         source_type=document.source_type.value,
         fallback=DomainContextResolver.GENERAL_DEFAULT_DOMAIN,

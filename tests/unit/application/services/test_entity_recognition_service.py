@@ -37,6 +37,9 @@ from src.domain.entities.source_document import (
 from src.domain.entities.user_data_source import SourceType
 from src.domain.repositories.source_document_repository import SourceDocumentRepository
 from src.domain.services.ingestion import IngestionProgressUpdate
+from src.graph.domain_biomedical.entity_recognition_bootstrap import (
+    BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
+)
 from src.type_definitions.ingestion import IngestResult, RawRecord
 from src.type_definitions.json_utils import to_json_value
 
@@ -675,6 +678,7 @@ async def test_process_document_writes_to_dictionary_and_kernel() -> None:
             source_document_repository=repository,
             ingestion_pipeline=ingestion,
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             governance_service=_build_governance_service(),
         ),
         default_shadow_mode=False,
@@ -726,6 +730,7 @@ async def test_process_document_hands_off_to_extraction_service_when_configured(
             source_document_repository=repository,
             ingestion_pipeline=ingestion,
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             extraction_service=cast("ExtractionService", extraction_service),
             governance_service=_build_governance_service(),
         ),
@@ -772,6 +777,7 @@ async def test_process_document_uses_shadow_mode_by_default() -> None:
             source_document_repository=repository,
             ingestion_pipeline=ingestion,
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             governance_service=_build_governance_service(),
         ),
         default_shadow_mode=True,
@@ -805,6 +811,7 @@ async def test_process_document_fails_when_raw_record_missing() -> None:
             source_document_repository=repository,
             ingestion_pipeline=ingestion,
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             governance_service=_build_governance_service(),
         ),
         default_shadow_mode=False,
@@ -851,6 +858,7 @@ async def test_process_document_uses_agent_mutation_reconciliation_when_run_id_p
             source_document_repository=repository,
             ingestion_pipeline=ingestion,
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             governance_service=_build_governance_service(),
         ),
         default_shadow_mode=False,
@@ -889,6 +897,7 @@ async def test_process_document_bootstraps_domain_when_dictionary_is_empty() -> 
             source_document_repository=repository,
             ingestion_pipeline=ingestion,
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             governance_service=_build_governance_service(),
         ),
         default_shadow_mode=False,
@@ -923,6 +932,7 @@ async def test_process_document_fails_when_agent_times_out(
             source_document_repository=repository,
             ingestion_pipeline=ingestion,
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             governance_service=_build_governance_service(),
         ),
         default_shadow_mode=False,
@@ -962,6 +972,7 @@ async def test_process_pending_documents_records_retry_warning_event(
             source_document_repository=repository,
             ingestion_pipeline=ingestion,
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             governance_service=_build_governance_service(),
             pipeline_trace_service=pipeline_trace,
         ),
@@ -1027,6 +1038,7 @@ async def test_process_pending_documents_records_resolver_warning_event() -> Non
             ),
             extraction_service=cast("ExtractionService", extraction_service),
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             governance_service=_build_governance_service(),
             pipeline_trace_service=pipeline_trace,
         ),
@@ -1087,6 +1099,7 @@ async def test_process_document_fails_when_extraction_stage_times_out(
             source_document_repository=repository,
             ingestion_pipeline=ingestion,
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             extraction_service=cast("ExtractionService", extraction_service),
             governance_service=_build_governance_service(),
         ),
@@ -1131,6 +1144,7 @@ async def test_process_pending_documents_recovers_stale_in_progress_documents(
             source_document_repository=repository,
             ingestion_pipeline=ingestion,
             dictionary_service=cast("DictionaryPort", dictionary),
+            entity_recognition_bootstrap=BIOMEDICAL_ENTITY_RECOGNITION_BOOTSTRAP,
             governance_service=_build_governance_service(),
         ),
         default_shadow_mode=False,

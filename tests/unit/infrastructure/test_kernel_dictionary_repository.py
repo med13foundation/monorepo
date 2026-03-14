@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from src.domain.entities.user import UserRole, UserStatus
+from src.graph.pack_registry import resolve_graph_domain_pack
 from src.infrastructure.repositories.kernel.dictionary_search import _cosine_similarity
 from src.infrastructure.repositories.kernel.kernel_dictionary_repository import (
     SqlAlchemyDictionaryRepository,
@@ -21,6 +22,13 @@ from src.models.database.user import UserModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+def _build_repository(session: Session) -> SqlAlchemyDictionaryRepository:
+    return SqlAlchemyDictionaryRepository(
+        session,
+        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+    )
 
 
 def _create_variable(
@@ -173,7 +181,7 @@ def _seed_space_with_entities(
 
 
 def test_find_variables_excludes_inactive_by_default(db_session: Session) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_variable(
         repository,
         variable_id="VAR_REPO_ACTIVE",
@@ -204,7 +212,7 @@ def test_find_variables_excludes_inactive_by_default(db_session: Session) -> Non
 
 
 def test_create_variable_rejects_unknown_domain_context(db_session: Session) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
 
     with pytest.raises(ValueError, match="Unknown domain_context 'unknown_domain'"):
         repository.create_variable(
@@ -221,6 +229,29 @@ def test_create_variable_rejects_unknown_domain_context(db_session: Session) -> 
         )
 
 
+def test_builtin_domain_contexts_seed_from_active_graph_pack(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPH_DOMAIN_PACK", "biomedical")
+    repository = _build_repository(db_session)
+
+    repository._ensure_domain_context_reference("clinical")  # noqa: SLF001
+
+    clinical = repository._session.get(
+        DictionaryDomainContextModel,
+        "clinical",
+    )  # noqa: SLF001
+    genomics = repository._session.get(
+        DictionaryDomainContextModel,
+        "genomics",
+    )  # noqa: SLF001
+    assert clinical is not None
+    assert genomics is not None
+    assert clinical.description == "Clinical and biomedical literature domain context."
+    assert genomics.description == "Genomics and variant interpretation domain context."
+
+
 def test_cosine_similarity_clamps_rounding_error() -> None:
     value = _cosine_similarity([1.0, 1e-12], [1.0, 0.0])
 
@@ -230,7 +261,7 @@ def test_cosine_similarity_clamps_rounding_error() -> None:
 def test_set_variable_review_status_updates_validity_fields(
     db_session: Session,
 ) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_variable(
         repository,
         variable_id="VAR_REPO_REVIEW",
@@ -260,7 +291,7 @@ def test_set_variable_review_status_updates_validity_fields(
 def test_create_synonym_rejects_active_cross_variable_duplicates(
     db_session: Session,
 ) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_variable(
         repository,
         variable_id="VAR_REPO_SYNONYM_A",
@@ -296,7 +327,7 @@ def test_create_synonym_rejects_active_cross_variable_duplicates(
 def test_create_synonym_is_idempotent_for_same_variable_case_variants(
     db_session: Session,
 ) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_variable(
         repository,
         variable_id="VAR_REPO_SYNONYM_SINGLE",
@@ -321,7 +352,7 @@ def test_create_synonym_is_idempotent_for_same_variable_case_variants(
 
 
 def test_merge_variable_definition_sets_versioning_state(db_session: Session) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_variable(
         repository,
         variable_id="VAR_REPO_SOURCE",
@@ -353,7 +384,7 @@ def test_merge_variable_definition_sets_versioning_state(db_session: Session) ->
 
 
 def test_merge_entity_type_sets_versioning_state(db_session: Session) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_entity_type(repository, entity_type="ENTITY_REPO_SOURCE")
     _create_entity_type(repository, entity_type="ENTITY_REPO_TARGET")
 
@@ -395,7 +426,7 @@ def test_merge_entity_type_sets_versioning_state(db_session: Session) -> None:
 def test_merge_entity_type_repoints_existing_entities_before_revoke(
     db_session: Session,
 ) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_entity_type(repository, entity_type="ENTITY_REPO_SRC_REPOINT")
     _create_entity_type(repository, entity_type="ENTITY_REPO_TGT_REPOINT")
 
@@ -427,7 +458,7 @@ def test_merge_entity_type_repoints_existing_entities_before_revoke(
 def test_set_entity_type_review_status_updates_validity_fields(
     db_session: Session,
 ) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_entity_type(repository, entity_type="ENTITY_REPO_REVIEW")
 
     revoked = repository.set_entity_type_review_status(
@@ -451,7 +482,7 @@ def test_set_entity_type_review_status_updates_validity_fields(
 
 
 def test_merge_relation_type_sets_versioning_state(db_session: Session) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_relation_type(repository, relation_type="REL_REPO_SOURCE")
     _create_relation_type(repository, relation_type="REL_REPO_TARGET")
 
@@ -493,7 +524,7 @@ def test_merge_relation_type_sets_versioning_state(db_session: Session) -> None:
 def test_merge_relation_type_repoints_and_merges_relation_evidence(
     db_session: Session,
 ) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_entity_type(repository, entity_type="GENE")
     _create_entity_type(repository, entity_type="PHENOTYPE")
     _create_relation_type(repository, relation_type="REL_REPO_SRC_REL")
@@ -585,7 +616,7 @@ def test_merge_relation_type_repoints_and_merges_relation_evidence(
 def test_create_relation_synonym_rejects_active_cross_relation_duplicates(
     db_session: Session,
 ) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_relation_type(repository, relation_type="REL_REPO_SYNONYM_A")
     _create_relation_type(repository, relation_type="REL_REPO_SYNONYM_B")
 
@@ -614,7 +645,7 @@ def test_create_relation_synonym_rejects_active_cross_relation_duplicates(
 def test_resolve_relation_synonym_returns_canonical_relation_type(
     db_session: Session,
 ) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_relation_type(repository, relation_type="REL_REPO_CANONICAL")
     repository.create_relation_synonym(
         relation_type_id="REL_REPO_CANONICAL",
@@ -631,7 +662,7 @@ def test_resolve_relation_synonym_returns_canonical_relation_type(
 def test_set_relation_synonym_review_status_updates_validity_fields(
     db_session: Session,
 ) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_relation_type(repository, relation_type="REL_REPO_SYNONYM_REVIEW")
     synonym = repository.create_relation_synonym(
         relation_type_id="REL_REPO_SYNONYM_REVIEW",
@@ -663,7 +694,7 @@ def test_set_relation_synonym_review_status_updates_validity_fields(
 def test_set_relation_type_review_status_updates_validity_fields(
     db_session: Session,
 ) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     _create_relation_type(repository, relation_type="REL_REPO_REVIEW")
 
     revoked = repository.set_relation_type_review_status(
@@ -687,7 +718,7 @@ def test_set_relation_type_review_status_updates_validity_fields(
 
 
 def test_transform_production_filter_and_promotion(db_session: Session) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     repository.create_transform(
         transform_id="TR_REPO_PROMOTE",
         input_unit="mg",
@@ -726,7 +757,7 @@ def test_transform_production_filter_and_promotion(db_session: Session) -> None:
 
 
 def test_verify_transform_reports_failure_for_bad_fixture(db_session: Session) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     repository.create_transform(
         transform_id="TR_REPO_BAD_FIXTURE",
         input_unit="kg",
@@ -749,7 +780,7 @@ def test_verify_transform_reports_failure_for_bad_fixture(db_session: Session) -
 
 
 def test_create_transform_persists_phase7_fields(db_session: Session) -> None:
-    repository = SqlAlchemyDictionaryRepository(db_session)
+    repository = _build_repository(db_session)
     created = repository.create_transform(
         transform_id="TR_REPO_CREATE",
         input_unit="mg/dL",

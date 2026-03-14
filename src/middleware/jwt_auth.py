@@ -5,7 +5,6 @@ Provides FastAPI middleware for JWT token validation and user authentication.
 """
 
 import logging
-import os
 from collections.abc import Awaitable, Callable
 
 from fastapi import Request, Response, status
@@ -19,8 +18,12 @@ from src.application.services.authentication_service import (
 )
 from src.infrastructure.dependency_injection.container import container
 from src.infrastructure.security.cors import get_allowed_origins
+from src.infrastructure.security.runtime_env import (
+    allow_auth_test_headers,
+    bypass_jwt_for_tests,
+)
 
-SKIP_JWT_VALIDATION = os.getenv("MED13_BYPASS_JWT_FOR_TESTS") == "1"
+SKIP_JWT_VALIDATION = bypass_jwt_for_tests()
 
 
 class JWTAuthMiddleware(BaseHTTPMiddleware):
@@ -91,10 +94,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _should_bypass_test_headers(request: Request) -> bool:
-        allow_test_headers = (
-            os.getenv("TESTING") == "true"
-            or os.getenv("MED13_BYPASS_TEST_AUTH_HEADERS") == "1"
-        )
+        allow_test_headers = allow_auth_test_headers()
         if not allow_test_headers:
             return False
         return all(

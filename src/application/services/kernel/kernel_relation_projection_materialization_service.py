@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING
 
 from src.domain.entities.kernel.relations import RelationEvidenceWrite
 from src.domain.value_objects.relation_types import normalize_relation_type
+from src.graph.core.read_model import (
+    GraphReadModelTrigger,
+    GraphReadModelUpdate,
+)
 
 from ._kernel_relation_projection_materialization_support import (
     RelationProjectionMaterializationError,
@@ -49,6 +53,7 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
+    from src.graph.core.read_model import GraphReadModelUpdateDispatcher
 
 
 class KernelRelationProjectionMaterializationService:
@@ -64,6 +69,7 @@ class KernelRelationProjectionMaterializationService:
         entity_repo: KernelEntityRepository,
         dictionary_repo: DictionaryRepository,
         relation_projection_repo: KernelRelationProjectionSourceRepository,
+        read_model_update_dispatcher: GraphReadModelUpdateDispatcher,
     ) -> None:
         self._relations = relation_repo
         self._claims = relation_claim_repo
@@ -72,6 +78,7 @@ class KernelRelationProjectionMaterializationService:
         self._entities = entity_repo
         self._dictionary = dictionary_repo
         self._projection_sources = relation_projection_repo
+        self._read_model_updates = read_model_update_dispatcher
 
     def materialize_support_claim(
         self,
@@ -179,7 +186,7 @@ class KernelRelationProjectionMaterializationService:
             derived_evidence_rows=0,
         )
 
-    def rebuild_relation_projection(  # noqa: C901, PLR0912
+    def rebuild_relation_projection(  # noqa: C901, PLR0912, PLR0915
         self,
         relation_id: str,
         research_space_id: str,
@@ -198,12 +205,22 @@ class KernelRelationProjectionMaterializationService:
                     derived_evidence_rows=0,
                 )
             self._relations.delete(relation_id)
-            return RelationProjectionMaterializationResult(
+            result = RelationProjectionMaterializationResult(
                 relation=None,
                 rebuilt_relation_ids=(),
                 deleted_relation_ids=(relation_id,),
                 derived_evidence_rows=0,
             )
+            self._dispatch_projection_change(
+                research_space_id=research_space_id,
+                claim_ids=(),
+                relation_ids=(relation_id,),
+                entity_ids=(
+                    str(current_relation.source_id),
+                    str(current_relation.target_id),
+                ),
+            )
+            return result
 
         claims_by_id = {
             str(claim.id): claim
@@ -264,12 +281,22 @@ class KernelRelationProjectionMaterializationService:
         if not valid_sources:
             if current_relation is not None:
                 self._relations.delete(relation_id)
-                return RelationProjectionMaterializationResult(
+                result = RelationProjectionMaterializationResult(
                     relation=None,
                     rebuilt_relation_ids=(),
                     deleted_relation_ids=(relation_id,),
                     derived_evidence_rows=0,
                 )
+                self._dispatch_projection_change(
+                    research_space_id=research_space_id,
+                    claim_ids=tuple(pruned_claim_ids),
+                    relation_ids=(relation_id,),
+                    entity_ids=(
+                        str(current_relation.source_id),
+                        str(current_relation.target_id),
+                    ),
+                )
+                return result
             return RelationProjectionMaterializationResult(relation=None)
 
         if len(valid_sources) == 1 and not self._claim_evidence.find_by_claim_id(
@@ -336,12 +363,25 @@ class KernelRelationProjectionMaterializationService:
         ):
             self._relations.delete(str(current_relation.id))
             deleted_relation_ids = (str(current_relation.id),)
-        return RelationProjectionMaterializationResult(
+        result = RelationProjectionMaterializationResult(
             relation=relation,
             rebuilt_relation_ids=(str(relation.id),),
             deleted_relation_ids=deleted_relation_ids,
             derived_evidence_rows=len(derived_evidences),
         )
+        self._dispatch_projection_change(
+            research_space_id=research_space_id,
+            claim_ids=tuple(claim_id for claim_id, _claim, _endpoints in valid_sources),
+            relation_ids=(
+                str(relation.id),
+                *deleted_relation_ids,
+            ),
+            entity_ids=(
+                str(relation.source_id),
+                str(relation.target_id),
+            ),
+        )
+        return result
 
     def find_claim_backed_relation_for_claim(
         self,
@@ -458,6 +498,45 @@ class KernelRelationProjectionMaterializationService:
             target_label=target_entity.display_label,
             target_type=target_entity.entity_type,
         )
+
+    def _dispatch_projection_change(
+        self,
+        *,
+        research_space_id: str,
+        claim_ids: tuple[str, ...],
+        relation_ids: tuple[str, ...],
+        entity_ids: tuple[str, ...],
+    ) -> None:
+        normalized_claim_ids = tuple(dict.fromkeys(claim_ids))
+        normalized_relation_ids = tuple(dict.fromkeys(relation_ids))
+        normalized_entity_ids = tuple(dict.fromkeys(entity_ids))
+        updates = (
+            GraphReadModelUpdate(
+                model_name="entity_neighbors",
+                trigger=GraphReadModelTrigger.PROJECTION_CHANGE,
+                claim_ids=normalized_claim_ids,
+                relation_ids=normalized_relation_ids,
+                entity_ids=normalized_entity_ids,
+                space_id=research_space_id,
+            ),
+            GraphReadModelUpdate(
+                model_name="entity_relation_summary",
+                trigger=GraphReadModelTrigger.PROJECTION_CHANGE,
+                claim_ids=normalized_claim_ids,
+                relation_ids=normalized_relation_ids,
+                entity_ids=normalized_entity_ids,
+                space_id=research_space_id,
+            ),
+            GraphReadModelUpdate(
+                model_name="entity_claim_summary",
+                trigger=GraphReadModelTrigger.PROJECTION_CHANGE,
+                claim_ids=normalized_claim_ids,
+                relation_ids=normalized_relation_ids,
+                entity_ids=normalized_entity_ids,
+                space_id=research_space_id,
+            ),
+        )
+        self._read_model_updates.dispatch_many(updates)
 
 
 __all__ = [

@@ -4,15 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.application.agents.services._entity_recognition_bootstrap_constants import (
-    _DEFAULT_BOOTSTRAP_RELATION_TYPE,
-    _DEFAULT_INTERACTION_RELATION_TYPE,
-    _MIN_BOOTSTRAP_ENTITY_TYPES_FOR_RELATION,
-    _PUBMED_METADATA_VARIABLE_SPECS,
-    _PUBMED_PUBLICATION_BASELINE_CONSTRAINTS,
-    _PUBMED_PUBLICATION_BASELINE_ENTITY_TYPES,
-    _PUBMED_PUBLICATION_BASELINE_RELATION_TYPES,
-)
 from src.domain.services.domain_context_resolver import DomainContextResolver
 
 if TYPE_CHECKING:
@@ -38,6 +29,7 @@ class _EntityRecognitionBootstrapHelpers:
         bootstrap_review_settings = self._bootstrap_review_settings(
             research_space_settings,
         )
+        bootstrap_config = self._entity_recognition_bootstrap
         domain_context = self._infer_domain_context(source_type)
         has_existing_entries = bool(
             self._dictionary.dictionary_search_by_domain(
@@ -91,43 +83,44 @@ class _EntityRecognitionBootstrapHelpers:
 
         if not has_existing_entries:
             if (
-                self._dictionary.get_relation_type(_DEFAULT_BOOTSTRAP_RELATION_TYPE)
+                self._dictionary.get_relation_type(
+                    bootstrap_config.default_relation_type,
+                )
                 is None
             ):
                 self._dictionary.create_relation_type(
-                    relation_type=_DEFAULT_BOOTSTRAP_RELATION_TYPE,
-                    display_name="Associated With",
-                    description=(
-                        "Generic bootstrap relation for domain initialization and "
-                        "cross-entity linkage."
-                    ),
+                    relation_type=bootstrap_config.default_relation_type,
+                    display_name=bootstrap_config.default_relation_display_name,
+                    description=bootstrap_config.default_relation_description,
                     domain_context=domain_context,
                     is_directional=True,
-                    inverse_label="ASSOCIATED_WITH",
+                    inverse_label=bootstrap_config.default_relation_inverse_label,
                     created_by=self._agent_created_by,
                     source_ref=source_ref,
                     research_space_settings=bootstrap_review_settings,
                 )
             if (
-                self._dictionary.get_relation_type(_DEFAULT_INTERACTION_RELATION_TYPE)
+                self._dictionary.get_relation_type(
+                    bootstrap_config.interaction_relation_type,
+                )
                 is None
             ):
                 self._dictionary.create_relation_type(
-                    relation_type=_DEFAULT_INTERACTION_RELATION_TYPE,
-                    display_name="Physically Interacts With",
-                    description=(
-                        "Physical interaction relation for molecular entities "
-                        "derived from curated evidence."
-                    ),
+                    relation_type=bootstrap_config.interaction_relation_type,
+                    display_name=bootstrap_config.interaction_relation_display_name,
+                    description=bootstrap_config.interaction_relation_description,
                     domain_context=domain_context,
                     is_directional=False,
-                    inverse_label="PHYSICALLY_INTERACTS_WITH",
+                    inverse_label=bootstrap_config.interaction_relation_inverse_label,
                     created_by=self._agent_created_by,
                     source_ref=source_ref,
                     research_space_settings=bootstrap_review_settings,
                 )
 
-            if len(entity_types) >= _MIN_BOOTSTRAP_ENTITY_TYPES_FOR_RELATION:
+            if (
+                len(entity_types)
+                >= bootstrap_config.min_entity_types_for_default_relation
+            ):
                 self._ensure_relation_constraint(
                     source_type=entity_types[0],
                     target_type=entity_types[1],
@@ -135,7 +128,7 @@ class _EntityRecognitionBootstrapHelpers:
                     research_space_settings=bootstrap_review_settings,
                 )
 
-            for interaction_entity_type in ("GENE", "PROTEIN"):
+            for interaction_entity_type in bootstrap_config.interaction_entity_types:
                 if self._dictionary.get_entity_type(interaction_entity_type) is None:
                     self._dictionary.create_entity_type(
                         entity_type=interaction_entity_type,
@@ -152,14 +145,18 @@ class _EntityRecognitionBootstrapHelpers:
                     created_entity_types += 1
 
             self._ensure_relation_constraint_for_type(
-                relation_triplet=("GENE", _DEFAULT_INTERACTION_RELATION_TYPE, "GENE"),
+                relation_triplet=(
+                    "GENE",
+                    bootstrap_config.interaction_relation_type,
+                    "GENE",
+                ),
                 source_ref=source_ref,
                 research_space_settings=bootstrap_review_settings,
             )
             self._ensure_relation_constraint_for_type(
                 relation_triplet=(
                     "PROTEIN",
-                    _DEFAULT_INTERACTION_RELATION_TYPE,
+                    bootstrap_config.interaction_relation_type,
                     "PROTEIN",
                 ),
                 source_ref=source_ref,
@@ -167,17 +164,21 @@ class _EntityRecognitionBootstrapHelpers:
             )
 
         normalized_source_type = DomainContextResolver.normalize(source_type)
-        if normalized_source_type == "pubmed":
+        if (
+            normalized_source_type is not None
+            and normalized_source_type
+            in bootstrap_config.source_types_with_publication_baseline
+        ):
             (
-                pubmed_entity_types_created,
-                pubmed_variables_created,
-            ) = self._ensure_pubmed_publication_baseline(
+                publication_entity_types_created,
+                publication_variables_created,
+            ) = self._ensure_publication_baseline(
                 domain_context=domain_context,
                 source_ref=source_ref,
                 research_space_settings=bootstrap_review_settings,
             )
-            created_entity_types += pubmed_entity_types_created
-            created_variables += pubmed_variables_created
+            created_entity_types += publication_entity_types_created
+            created_variables += publication_variables_created
 
         return created_variables, created_entity_types
 
@@ -191,12 +192,12 @@ class _EntityRecognitionBootstrapHelpers:
     ) -> None:
         self._activate_bootstrap_entity_type_if_needed(entity_type=source_type)
         self._activate_bootstrap_relation_type_if_needed(
-            relation_type=_DEFAULT_BOOTSTRAP_RELATION_TYPE,
+            relation_type=self._entity_recognition_bootstrap.default_relation_type,
         )
         self._activate_bootstrap_entity_type_if_needed(entity_type=target_type)
         self._dictionary.create_relation_constraint(
             source_type=source_type,
-            relation_type=_DEFAULT_BOOTSTRAP_RELATION_TYPE,
+            relation_type=self._entity_recognition_bootstrap.default_relation_type,
             target_type=target_type,
             is_allowed=True,
             requires_evidence=True,
@@ -228,7 +229,7 @@ class _EntityRecognitionBootstrapHelpers:
             research_space_settings=research_space_settings,
         )
 
-    def _ensure_pubmed_publication_baseline(
+    def _ensure_publication_baseline(
         self: _EntityRecognitionBootstrapContext,
         *,
         domain_context: str,
@@ -237,17 +238,15 @@ class _EntityRecognitionBootstrapHelpers:
     ) -> tuple[int, int]:
         created_entity_types = 0
         created_variables = 0
+        bootstrap_config = self._entity_recognition_bootstrap
 
-        for entity_type_id in _PUBMED_PUBLICATION_BASELINE_ENTITY_TYPES:
+        for entity_type_id in bootstrap_config.publication_baseline_entity_types:
             if self._dictionary.get_entity_type(entity_type_id) is not None:
                 continue
             self._dictionary.create_entity_type(
                 entity_type=entity_type_id,
                 display_name=self._to_display_name(entity_type_id),
-                description=(
-                    "PubMed publication-graph bootstrap entity type used for "
-                    "relation validation."
-                ),
+                description=bootstrap_config.publication_baseline_entity_description,
                 domain_context=domain_context,
                 created_by=self._agent_created_by,
                 source_ref=source_ref,
@@ -255,57 +254,45 @@ class _EntityRecognitionBootstrapHelpers:
             )
             created_entity_types += 1
 
-        for (
-            relation_type_id,
-            display_name,
-            description,
-            is_directional,
-            inverse_label,
-        ) in _PUBMED_PUBLICATION_BASELINE_RELATION_TYPES:
-            if self._dictionary.get_relation_type(relation_type_id) is not None:
+        for relation_definition in bootstrap_config.publication_baseline_relation_types:
+            if (
+                self._dictionary.get_relation_type(relation_definition.relation_type)
+                is not None
+            ):
                 continue
             self._dictionary.create_relation_type(
-                relation_type=relation_type_id,
-                display_name=display_name,
-                description=description,
+                relation_type=relation_definition.relation_type,
+                display_name=relation_definition.display_name,
+                description=relation_definition.description,
                 domain_context=domain_context,
-                is_directional=is_directional,
-                inverse_label=inverse_label,
+                is_directional=relation_definition.is_directional,
+                inverse_label=relation_definition.inverse_label,
                 created_by=self._agent_created_by,
                 source_ref=source_ref,
                 research_space_settings=research_space_settings,
             )
 
-        for (
-            source_type,
-            relation_type,
-            target_type,
-            requires_evidence,
-        ) in _PUBMED_PUBLICATION_BASELINE_CONSTRAINTS:
+        for constraint_definition in bootstrap_config.publication_baseline_constraints:
             self._ensure_relation_constraint_for_type(
-                relation_triplet=(source_type, relation_type, target_type),
-                requires_evidence=requires_evidence,
+                relation_triplet=(
+                    constraint_definition.source_type,
+                    constraint_definition.relation_type,
+                    constraint_definition.target_type,
+                ),
+                requires_evidence=constraint_definition.requires_evidence,
                 source_ref=source_ref,
                 research_space_settings=research_space_settings,
             )
 
-        for (
-            variable_id,
-            canonical_name,
-            display_name,
-            data_type,
-            description,
-            constraints,
-            synonyms,
-        ) in _PUBMED_METADATA_VARIABLE_SPECS:
-            created_variables += self._ensure_pubmed_metadata_variable(
-                variable_id=variable_id,
-                canonical_name=canonical_name,
-                display_name=display_name,
-                data_type=data_type,
-                description=description,
-                constraints=constraints,
-                synonyms=synonyms,
+        for variable_definition in bootstrap_config.publication_metadata_variables:
+            created_variables += self._ensure_publication_metadata_variable(
+                variable_id=variable_definition.variable_id,
+                canonical_name=variable_definition.canonical_name,
+                display_name=variable_definition.display_name,
+                data_type=variable_definition.data_type,
+                description=variable_definition.description,
+                constraints=variable_definition.constraints,
+                synonyms=variable_definition.synonyms,
                 domain_context=domain_context,
                 source_ref=source_ref,
                 research_space_settings=research_space_settings,
@@ -351,7 +338,7 @@ class _EntityRecognitionBootstrapHelpers:
             reviewed_by=self._agent_created_by,
         )
 
-    def _ensure_pubmed_metadata_variable(  # noqa: PLR0913
+    def _ensure_publication_metadata_variable(  # noqa: PLR0913
         self: _EntityRecognitionBootstrapContext,
         *,
         variable_id: str,
@@ -413,20 +400,25 @@ class _EntityRecognitionBootstrapHelpers:
             self._dictionary.create_synonym(
                 variable_id=variable_id,
                 synonym=synonym,
-                source="pubmed",
+                source=self._entity_recognition_bootstrap.publication_baseline_source_label,
                 created_by=self._agent_created_by,
                 source_ref=source_ref,
                 research_space_settings=research_space_settings,
             )
 
-    @staticmethod
-    def _bootstrap_entity_types_for_domain(domain_context: str) -> tuple[str, ...]:
+    def _bootstrap_entity_types_for_domain(
+        self: _EntityRecognitionBootstrapContext,
+        domain_context: str,
+    ) -> tuple[str, ...]:
         normalized = domain_context.strip().lower()
-        if normalized == "genomics":
-            return ("GENE", "PROTEIN", "VARIANT", "PHENOTYPE")
-        if normalized == "clinical":
-            return ("PATIENT", "PHENOTYPE", "PUBLICATION")
-        return ("SUBJECT", "PHENOTYPE")
+        bootstrap_config = self._entity_recognition_bootstrap
+        for definition in bootstrap_config.domain_entity_types:
+            if definition.domain_context == normalized:
+                return definition.entity_types
+        for definition in bootstrap_config.domain_entity_types:
+            if definition.domain_context == "general":
+                return definition.entity_types
+        return ()
 
     def _bootstrap_variable_id(
         self: _EntityRecognitionBootstrapContext,

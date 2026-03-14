@@ -27,6 +27,9 @@ from src.application.services.kernel.kernel_relation_projection_materialization_
 from src.database.seeds.seeder import seed_relation_constraints
 from src.domain.entities.kernel.relations import RelationEvidenceWrite
 from src.domain.ports.concept_port import ConceptPort
+from src.graph.core.read_model import NullGraphReadModelUpdateDispatcher
+from src.graph.core.relation_autopromotion_policy import AutoPromotionPolicy
+from src.graph.pack_registry import resolve_graph_domain_pack
 from src.infrastructure.repositories.kernel import (
     SqlAlchemyDictionaryRepository,
     SqlAlchemyKernelClaimEvidenceRepository,
@@ -116,8 +119,15 @@ def _create_user_and_space(db_session):
     return user, space
 
 
+def _build_relation_repository(db_session) -> SqlAlchemyKernelRelationRepository:
+    return SqlAlchemyKernelRelationRepository(
+        db_session,
+        auto_promotion_policy=AutoPromotionPolicy(),
+    )
+
+
 def _build_services(db_session):
-    relation_repo = SqlAlchemyKernelRelationRepository(db_session)
+    relation_repo = _build_relation_repository(db_session)
     relation_claim_repo = SqlAlchemyKernelRelationClaimRepository(db_session)
     claim_participant_repo = SqlAlchemyKernelClaimParticipantRepository(db_session)
     claim_evidence_repo = SqlAlchemyKernelClaimEvidenceRepository(db_session)
@@ -129,6 +139,7 @@ def _build_services(db_session):
     projection_repo = SqlAlchemyKernelRelationProjectionSourceRepository(db_session)
     relation_claim_service = KernelRelationClaimService(
         relation_claim_repo=relation_claim_repo,
+        read_model_update_dispatcher=NullGraphReadModelUpdateDispatcher(),
     )
     claim_participant_service = KernelClaimParticipantService(
         claim_participant_repo=claim_participant_repo,
@@ -146,8 +157,12 @@ def _build_services(db_session):
         claim_participant_repo=claim_participant_repo,
         claim_evidence_repo=claim_evidence_repo,
         entity_repo=entity_repo,
-        dictionary_repo=SqlAlchemyDictionaryRepository(db_session),
+        dictionary_repo=SqlAlchemyDictionaryRepository(
+            db_session,
+            builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+        ),
         relation_projection_repo=projection_repo,
+        read_model_update_dispatcher=NullGraphReadModelUpdateDispatcher(),
     )
     readiness_service = KernelClaimProjectionReadinessService(
         session=db_session,

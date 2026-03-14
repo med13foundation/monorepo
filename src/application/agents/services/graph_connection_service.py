@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from src.domain.repositories.kernel.relation_repository import (
         KernelRelationRepository,
     )
+    from src.graph.core.graph_connection_prompt import GraphConnectorExtension
     from src.type_definitions.common import ResearchSpaceSettings
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ class GraphConnectionServiceDependencies:
     """Dependencies required by graph-connection orchestration."""
 
     graph_connection_agent: GraphConnectionPort
+    graph_connection_prompt: GraphConnectorExtension
     relation_repository: KernelRelationRepository
     entity_repository: KernelEntityRepository | None = None
     relation_claim_repository: KernelRelationClaimRepository | None = None
@@ -101,6 +103,7 @@ class GraphConnectionService:
 
     def __init__(self, dependencies: GraphConnectionServiceDependencies) -> None:
         self._agent = dependencies.graph_connection_agent
+        self._graph_connection_prompt = dependencies.graph_connection_prompt
         self._relations = dependencies.relation_repository
         self._entities = dependencies.entity_repository
         self._relation_claims = dependencies.relation_claim_repository
@@ -121,7 +124,7 @@ class GraphConnectionService:
         research_space_id: str,
         seed_entity_id: str,
         source_id: str | None = None,
-        source_type: str = "clinvar",
+        source_type: str | None = None,
         research_space_settings: ResearchSpaceSettings | None = None,
         model_id: str | None = None,
         relation_types: list[str] | None = None,
@@ -137,10 +140,13 @@ class GraphConnectionService:
             research_space_id=resolved_research_space_id,
             provided_settings=research_space_settings,
         )
+        resolved_source_type = self._graph_connection_prompt.resolve_source_type(
+            source_type,
+        )
         requested_shadow_mode = shadow_mode if isinstance(shadow_mode, bool) else False
         context = GraphConnectionContext(
             seed_entity_id=resolved_seed_entity_id,
-            source_type=source_type,
+            source_type=resolved_source_type,
             research_space_id=resolved_research_space_id,
             source_id=(
                 source_id.strip()

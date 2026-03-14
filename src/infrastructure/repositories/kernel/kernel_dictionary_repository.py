@@ -61,6 +61,9 @@ from src.type_definitions.dictionary import get_constraint_schema_for_data_type
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from src.graph.core.dictionary_domain_contexts import (
+        DictionaryDomainContextDefinition,
+    )
     from src.type_definitions.common import JSONObject, JSONValue
 
 logger = logging.getLogger(__name__)
@@ -79,20 +82,6 @@ _SENSITIVITY_DESCRIPTIONS: dict[str, str] = {
     "PUBLIC": "Data suitable for broad sharing",
     "INTERNAL": "Internal-only research data",
     "PHI": "Sensitive regulated patient data",
-}
-_BUILTIN_DOMAIN_CONTEXTS: dict[str, tuple[str, str]] = {
-    "general": (
-        "General",
-        "Domain-agnostic defaults for shared dictionary terms.",
-    ),
-    "clinical": (
-        "Clinical",
-        "Clinical and biomedical literature domain context.",
-    ),
-    "genomics": (
-        "Genomics",
-        "Genomics and variant interpretation domain context.",
-    ),
 }
 
 
@@ -162,8 +151,14 @@ class SqlAlchemyDictionaryRepository(
 ):
     """SQLAlchemy implementation of the dictionary repository."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        builtin_domain_contexts: tuple[DictionaryDomainContextDefinition, ...],
+    ) -> None:
         self._session = session
+        self._builtin_domain_contexts = builtin_domain_contexts
 
     def _record_change(  # noqa: PLR0913
         self,
@@ -236,20 +231,23 @@ class SqlAlchemyDictionaryRepository(
         return normalized
 
     def _ensure_builtin_domain_contexts(self) -> None:
-        for (
-            domain_id,
-            (display_name, description),
-        ) in _BUILTIN_DOMAIN_CONTEXTS.items():
-            existing = self._session.get(DictionaryDomainContextModel, domain_id)
-            if existing is not None:
+        for definition in self._builtin_domain_contexts:
+            existing = self._session.get(DictionaryDomainContextModel, definition.id)
+            if existing is None:
+                self._session.add(
+                    DictionaryDomainContextModel(
+                        id=definition.id,
+                        display_name=definition.display_name,
+                        description=definition.description,
+                    ),
+                )
                 continue
-            self._session.add(
-                DictionaryDomainContextModel(
-                    id=domain_id,
-                    display_name=display_name,
-                    description=description,
-                ),
-            )
+
+            existing.display_name = definition.display_name
+            existing.description = definition.description
+            existing.is_active = True
+            existing.valid_to = None
+            existing.superseded_by = None
         self._session.flush()
 
     def _ensure_sensitivity_reference(self, sensitivity: str) -> str:

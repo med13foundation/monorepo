@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
+
+from src.graph.product_contract import GRAPH_SERVICE_VERSION
 
 _SCRIPT_PATH = (
     Path(__file__).resolve().parents[3] / "scripts" / "export_graph_openapi.py"
@@ -23,6 +26,8 @@ def test_export_graph_openapi_writes_and_checks_schema(tmp_path: Path) -> None:
     contents = output_path.read_text(encoding="utf-8")
     assert '"/v1/spaces/{space_id}/relations"' in contents
     assert '"/v1/admin/operations/runs"' in contents
+    document = json.loads(contents)
+    assert document["info"]["version"] == GRAPH_SERVICE_VERSION
 
     check = subprocess.run(
         [sys.executable, str(_SCRIPT_PATH), "--output", str(output_path), "--check"],

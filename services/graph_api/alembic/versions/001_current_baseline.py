@@ -40,7 +40,14 @@ _PROJECTION_DIAGNOSTIC_FUNCTION = "find_orphan_relations_without_projection"
 _PROJECTION_TRIGGER_FUNCTION = "enforce_relation_projection_lineage"
 _PROJECTION_TRIGGER_NAME = "trg_enforce_relation_projection_lineage"
 _EXCLUDED_FROM_BASELINE: frozenset[str] = frozenset(
-    {"reasoning_paths", "reasoning_path_steps"},
+    {
+        "reasoning_paths",
+        "reasoning_path_steps",
+        "entity_relation_summary",
+        "entity_claim_summary",
+        "entity_neighbors",
+        "entity_mechanism_paths",
+    },
 )
 
 _BYPASS_RLS = (

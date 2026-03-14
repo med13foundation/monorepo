@@ -195,7 +195,7 @@ require_value "API Cloud SQL connection" "${api_cloudsql}"
 
 MED13_ALLOWED_ORIGINS="${MED13_ALLOWED_ORIGINS:-$(json_env_value "${api_snapshot}" "MED13_ALLOWED_ORIGINS")}"
 DATABASE_URL_SECRET_NAME="${DATABASE_URL_SECRET_NAME:-$(json_secret_name "${api_snapshot}" "DATABASE_URL")}"
-MED13_DEV_JWT_SECRET_NAME="${MED13_DEV_JWT_SECRET_NAME:-$(json_secret_name "${api_snapshot}" "MED13_DEV_JWT_SECRET")}"
+AUTH_JWT_SECRET_NAME="${AUTH_JWT_SECRET_NAME:-$(json_secret_name "${api_snapshot}" "AUTH_JWT_SECRET")}"
 ADMIN_API_KEY_SECRET_NAME="${ADMIN_API_KEY_SECRET_NAME:-$(json_secret_name "${api_snapshot}" "ADMIN_API_KEY")}"
 WRITE_API_KEY_SECRET_NAME="${WRITE_API_KEY_SECRET_NAME:-$(json_secret_name "${api_snapshot}" "WRITE_API_KEY")}"
 READ_API_KEY_SECRET_NAME="${READ_API_KEY_SECRET_NAME:-$(json_secret_name "${api_snapshot}" "READ_API_KEY")}"
@@ -203,7 +203,7 @@ OPENAI_API_KEY_SECRET_NAME="${OPENAI_API_KEY_SECRET_NAME:-$(json_secret_name "${
 NEXTAUTH_SECRET_SECRET_NAME="${NEXTAUTH_SECRET_SECRET_NAME:-$(json_secret_name "${admin_snapshot}" "NEXTAUTH_SECRET")}"
 
 require_value "DATABASE_URL secret" "${DATABASE_URL_SECRET_NAME}"
-require_value "MED13_DEV_JWT_SECRET secret" "${MED13_DEV_JWT_SECRET_NAME}"
+require_value "AUTH_JWT_SECRET secret" "${AUTH_JWT_SECRET_NAME}"
 require_value "ADMIN_API_KEY secret" "${ADMIN_API_KEY_SECRET_NAME}"
 require_value "WRITE_API_KEY secret" "${WRITE_API_KEY_SECRET_NAME}"
 require_value "READ_API_KEY secret" "${READ_API_KEY_SECRET_NAME}"
@@ -313,7 +313,7 @@ env \
   API_MIN_INSTANCES="${api_min_scale}" \
   ADMIN_MIN_INSTANCES="${admin_min_scale}" \
   DATABASE_URL_SECRET_NAME="${DATABASE_URL_SECRET_NAME}" \
-  MED13_DEV_JWT_SECRET_NAME="${MED13_DEV_JWT_SECRET_NAME}" \
+  AUTH_JWT_SECRET_NAME="${AUTH_JWT_SECRET_NAME}" \
   ADMIN_API_KEY_SECRET_NAME="${ADMIN_API_KEY_SECRET_NAME}" \
   WRITE_API_KEY_SECRET_NAME="${WRITE_API_KEY_SECRET_NAME}" \
   READ_API_KEY_SECRET_NAME="${READ_API_KEY_SECRET_NAME}" \
@@ -363,7 +363,7 @@ scheduler_envs=(
 
 scheduler_secrets=(
   "DATABASE_URL=${DATABASE_URL_SECRET_NAME}:latest"
-  "MED13_DEV_JWT_SECRET=${MED13_DEV_JWT_SECRET_NAME}:latest"
+  "AUTH_JWT_SECRET=${AUTH_JWT_SECRET_NAME}:latest"
   "ADMIN_API_KEY=${ADMIN_API_KEY_SECRET_NAME}:latest"
   "WRITE_API_KEY=${WRITE_API_KEY_SECRET_NAME}:latest"
   "READ_API_KEY=${READ_API_KEY_SECRET_NAME}:latest"

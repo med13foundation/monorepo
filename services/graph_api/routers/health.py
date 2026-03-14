@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
 from services.graph_api.config import get_settings
+from src.graph.product_contract import GRAPH_SERVICE_VERSION
 
 router = APIRouter(tags=["health"])
 
@@ -27,7 +28,7 @@ def health_check() -> GraphHealthResponse:
     return GraphHealthResponse(
         status="ok",
         service=settings.app_name,
-        version="0.1.0",
+        version=GRAPH_SERVICE_VERSION,
     )
 
 
