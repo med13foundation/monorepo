@@ -12,7 +12,10 @@ from services.graph_harness_api.claim_curation_runtime import (
     build_review_plan,
     review_curatable_proposals,
 )
-from services.graph_harness_api.transparency import ensure_run_transparency_seed
+from services.graph_harness_api.transparency import (
+    append_skill_activity,
+    ensure_run_transparency_seed,
+)
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -173,6 +176,17 @@ def execute_claim_curation_run_for_proposals(  # noqa: PLR0913
         )
     finally:
         graph_api_gateway.close()
+
+    append_skill_activity(
+        space_id=space_id,
+        run_id=run.id,
+        skill_names=("graph_harness.claim_validation",),
+        source_run_id=run.id,
+        source_kind="claim_curation",
+        artifact_store=artifact_store,
+        run_registry=run_registry,
+        runtime=runtime,
+    )
 
     if not any(review.eligible_for_approval for review in reviews):
         error_message = (

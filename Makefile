@@ -25,6 +25,7 @@ GRAPH_SERVICE_URL ?= http://127.0.0.1:$(GRAPH_SERVICE_PORT)
 GRAPH_SERVICE_UVICORN_APP := services.graph_api.main:app
 GRAPH_DOCKERFILE := services/graph_api/Dockerfile
 GRAPH_IMAGE_LOCAL := med13-graph-api
+GRAPH_TEST_IMAGE_LOCAL := med13-graph-api-test
 GRAPH_DEPLOY_REGION ?= us-central1
 GRAPH_DEPLOY_PROJECT_ID ?= YOUR_PROJECT_ID
 GRAPH_ARTIFACT_REPOSITORY ?= cloud-run-source-deploy
@@ -147,7 +148,7 @@ define ensure_frontdoor_deps
 	fi
 endef
 
-.PHONY: help venv venv-check install install-dev test test-graph test-graph-fast test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate graph-db-wait graph-db-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres run-graph-service graph-service-lint graph-service-type-check graph-service-test graph-service-openapi graph-service-client-types graph-service-sync-contracts graph-service-contract-check graph-harness-openapi graph-harness-contract-check graph-phase1-alias-check graph-phase6-release-check graph-phase7-cross-domain-check graph-service-checks graph-topology-validate graph-phase2-boundary-check graph-phase2-biomedical-pack-check graph-phase3-invariant-check graph-phase4-read-model-check graph-read-model-rebuild graph-read-model-benchmark graph-reasoning-index-benchmark test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod deploy-graph-dev deploy-graph-staging deploy-graph-prod graph-docker-build setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit graph-readiness graph-reasoning-rebuild graph-space-sync
+.PHONY: help venv venv-check install install-dev test test-graph test-graph-fast test-verbose test-cov test-watch test-architecture test-contract lint lint-strict format format-check black-format type-check type-check-strict type-check-report type-check-full security-audit security-full clean clean-all docker-build docker-run docker-push docker-stop docker-postgres-up docker-postgres-down docker-postgres-destroy docker-postgres-logs docker-postgres-status postgres-disable postgres-migrate graph-db-wait graph-db-migrate init-artana-schema setup-postgres dev-postgres run-local-postgres run-web-postgres run-graph-service graph-service-lint graph-service-type-check graph-service-test graph-service-openapi graph-service-client-types graph-service-sync-contracts graph-service-contract-check graph-harness-openapi graph-harness-contract-check graph-phase1-alias-check graph-phase6-release-check graph-phase7-cross-domain-check graph-service-checks graph-topology-validate graph-phase2-boundary-check graph-phase2-biomedical-pack-check graph-phase3-invariant-check graph-phase4-read-model-check graph-read-model-rebuild graph-read-model-benchmark graph-reasoning-index-benchmark test-postgres postgres-cmd backend-status start-local db-migrate db-create db-reset db-seed deploy-dev deploy-staging deploy-staging-queued-workers deploy-prod deploy-graph-dev deploy-graph-staging deploy-graph-prod graph-docker-build graph-docker-test-build graph-docker-test setup-dev setup-gcp cloud-logs cloud-secrets-list all all-report ci check-env docs-serve backup-db restore-db activate deactivate stop-local stop-web stop-all restart web-install web-build web-clean web-lint web-type-check web-test web-test-architecture web-test-integration web-test-all web-test-coverage web-visual-test web-wait frontdoor-install frontdoor-stop frontdoor-dev frontdoor-build frontdoor-test phi-backfill-dry-run phi-backfill-commit graph-readiness graph-reasoning-rebuild graph-space-sync
 
 PY_CHECK_PATHS := src tests scripts services/graph_api/alembic
 PY_STRICT_CHECK_PATHS := src
@@ -214,7 +215,9 @@ GRAPH_SERVICE_TYPE_PATHS := \
 GRAPH_SERVICE_TEST_PATHS := \
 	tests/unit/services/graph_api \
 	tests/unit/infrastructure/graph_service \
-	tests/integration/graph_service
+	tests/integration/graph_service \
+	tests/e2e/graph_service \
+	tests/security/test_graph_service_schemathesis_contracts.py
 GRAPH_PHASE2_BIOMEDICAL_PACK_TEST_PATHS := \
 	tests/unit/graph/test_pack_registry.py \
 	tests/unit/application/services/test_graph_connection_service.py \
@@ -826,6 +829,12 @@ docker-push: docker-build ## Build and push Docker image to GCR
 
 graph-docker-build: ## Build the standalone graph-service Docker image locally
 	docker build -f $(GRAPH_DOCKERFILE) -t $(GRAPH_IMAGE_LOCAL) .
+
+graph-docker-test-build: ## Build the standalone graph-service test image locally
+	docker build -f $(GRAPH_DOCKERFILE) --target test -t $(GRAPH_TEST_IMAGE_LOCAL) .
+
+graph-docker-test: graph-docker-test-build ## Run the standalone graph-service tests inside the test image
+	docker run --rm $(GRAPH_TEST_IMAGE_LOCAL)
 
 # Dockerized Postgres helpers
 docker-postgres-up: ## Start Postgres dev container (creates .env.postgres if missing)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from services.graph_harness_api.chat_graph_write_models import (
     ChatGraphWriteCandidateRequest,  # noqa: TC001
@@ -86,6 +86,20 @@ class GraphChatResult(BaseModel):
     )
     fresh_literature: GraphChatLiteratureRefresh | None = None
     search: GraphSearchContract
+    _active_skill_names: tuple[str, ...] = PrivateAttr(default=())
+
+    @property
+    def active_skill_names(self) -> tuple[str, ...]:
+        """Return the active runtime skill names for the underlying search run."""
+        return self._active_skill_names
+
+    def with_active_skill_names(
+        self,
+        active_skill_names: tuple[str, ...],
+    ) -> GraphChatResult:
+        """Attach the underlying search run's active skill names."""
+        self._active_skill_names = active_skill_names
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,8 +299,9 @@ class HarnessGraphChatRunner:
 
     async def run(self, request: HarnessGraphChatRequest) -> GraphChatResult:
         """Execute one graph-chat request and synthesize a grounded answer."""
-        search = await self._graph_search_runner.run(
+        search_result = await self._graph_search_runner.run(
             HarnessGraphSearchRequest(
+                harness_id="graph-chat",
                 question=request.question,
                 research_space_id=request.research_space_id,
                 max_depth=request.max_depth,
@@ -296,7 +311,8 @@ class HarnessGraphChatRunner:
                 model_id=request.model_id,
             ),
         )
-        return _answer_from_search(search, request=request)
+        result = _answer_from_search(search_result.contract, request=request)
+        return result.with_active_skill_names(search_result.active_skill_names)
 
 
 __all__ = [

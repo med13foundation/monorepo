@@ -30,6 +30,8 @@ class HarnessTemplateResponse(BaseModel):
     summary: str
     tool_groups: list[str]
     outputs: list[str]
+    preloaded_skill_names: list[str]
+    allowed_skill_names: list[str]
     default_run_budget: JSONObject | None = None
 
     @classmethod
@@ -44,6 +46,8 @@ class HarnessTemplateResponse(BaseModel):
             summary=template.summary,
             tool_groups=list(template.tool_groups),
             outputs=list(template.outputs),
+            preloaded_skill_names=list(template.preloaded_skill_names),
+            allowed_skill_names=list(template.allowed_skill_names),
             default_run_budget=template.default_run_budget,
         )
 

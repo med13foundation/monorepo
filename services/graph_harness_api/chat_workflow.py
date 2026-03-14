@@ -22,7 +22,10 @@ from services.graph_harness_api.graph_chat_runtime import (
     HarnessGraphChatRunner,
 )
 from services.graph_harness_api.tool_runtime import run_pubmed_search
-from services.graph_harness_api.transparency import ensure_run_transparency_seed
+from services.graph_harness_api.transparency import (
+    append_skill_activity,
+    ensure_run_transparency_seed,
+)
 
 if TYPE_CHECKING:
     from services.graph_harness_api.artifact_store import HarnessArtifactStore
@@ -451,6 +454,16 @@ async def execute_graph_chat_message(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 chat_session_store=chat_session_store,
             )
             raise RuntimeError(workflow_error) from exc
+        append_skill_activity(
+            space_id=space_id,
+            run_id=run.id,
+            skill_names=result.active_skill_names,
+            source_run_id=result.search.agent_run_id,
+            source_kind="graph_chat",
+            artifact_store=artifact_store,
+            run_registry=run_registry,
+            runtime=runtime,
+        )
 
         literature_refresh: GraphChatLiteratureRefresh | None = None
         if result.verification.status != "verified":

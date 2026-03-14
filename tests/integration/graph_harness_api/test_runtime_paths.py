@@ -56,7 +56,10 @@ from services.graph_harness_api.sqlalchemy_stores import (
 )
 from services.graph_harness_api.supervisor_runtime import SupervisorExecutionResult
 from services.graph_harness_api.tool_catalog import RunPubMedSearchToolArgs
-from services.graph_harness_api.transparency import append_manual_review_decision
+from services.graph_harness_api.transparency import (
+    append_manual_review_decision,
+    append_skill_activity,
+)
 from services.graph_harness_api.worker import list_queued_worker_runs, run_worker_tick
 from tests.graph_harness_api_support import (
     FakeGraphApiGateway,
@@ -771,6 +774,19 @@ def test_transparency_endpoints_return_capabilities_and_policy_history(
         run_registry=services.run_registry,
         runtime=runtime,
     )
+    append_skill_activity(
+        space_id=UUID(space_id),
+        run_id=run_id,
+        skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.literature_refresh",
+        ),
+        source_run_id="integration:graph-chat-search",
+        source_kind="graph_chat",
+        artifact_store=services.artifact_store,
+        run_registry=services.run_registry,
+        runtime=runtime,
+    )
 
     capabilities_response = client.get(
         f"/v1/spaces/{space_id}/runs/{run_id}/capabilities",
@@ -779,6 +795,14 @@ def test_transparency_endpoints_return_capabilities_and_policy_history(
     assert capabilities_response.status_code == 200
     capabilities_payload = capabilities_response.json()
     assert capabilities_payload["artifact_key"] == "run_capabilities"
+    assert capabilities_payload["preloaded_skill_names"] == [
+        "graph_harness.graph_grounding",
+        "graph_harness.graph_write_review",
+    ]
+    assert capabilities_payload["active_skill_names"] == [
+        "graph_harness.graph_grounding",
+        "graph_harness.literature_refresh",
+    ]
     visible_tool_names = {
         tool["tool_name"] for tool in capabilities_payload["visible_tools"]
     }
@@ -792,9 +816,11 @@ def test_transparency_endpoints_return_capabilities_and_policy_history(
     policy_payload = policy_response.json()
     assert policy_payload["summary"]["tool_record_count"] == 1
     assert policy_payload["summary"]["manual_review_count"] == 1
+    assert policy_payload["summary"]["skill_record_count"] == 2
     assert {record["decision_source"] for record in policy_payload["records"]} == {
         "tool",
         "manual_review",
+        "skill",
     }
 
 

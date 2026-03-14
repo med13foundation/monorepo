@@ -21,7 +21,10 @@ from services.graph_harness_api.graph_search_runtime import (
     HarnessGraphSearchRunner,
 )
 from services.graph_harness_api.routers.runs import HarnessRunResponse
-from services.graph_harness_api.transparency import ensure_run_transparency_seed
+from services.graph_harness_api.transparency import (
+    append_skill_activity,
+    ensure_run_transparency_seed,
+)
 from src.domain.agents.contracts.graph_search import GraphSearchContract  # noqa: TC001
 from src.infrastructure.graph_service.errors import GraphServiceClientError
 
@@ -126,8 +129,9 @@ async def create_graph_search_run(  # noqa: PLR0913
     )
 
     try:
-        result = await graph_search_runner.run(
+        search_result = await graph_search_runner.run(
             HarnessGraphSearchRequest(
+                harness_id="graph-search",
                 question=request.question,
                 research_space_id=str(space_id),
                 max_depth=request.max_depth,
@@ -158,18 +162,28 @@ async def create_graph_search_run(  # noqa: PLR0913
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Graph-search run failed: {exc}",
         ) from exc
+    append_skill_activity(
+        space_id=space_id,
+        run_id=run.id,
+        skill_names=search_result.active_skill_names,
+        source_run_id=search_result.agent_run_id,
+        source_kind="graph_search",
+        artifact_store=artifact_store,
+        run_registry=run_registry,
+        runtime=execution_services.runtime,
+    )
 
     artifact_store.put_artifact(
         space_id=space_id,
         run_id=run.id,
         artifact_key="graph_search_result",
         media_type="application/json",
-        content=result.model_dump(mode="json"),
+        content=search_result.contract.model_dump(mode="json"),
     )
     workspace_patch: JSONObject = {
         "status": "completed",
         "last_graph_search_result_key": "graph_search_result",
-        "graph_search_decision": result.decision,
+        "graph_search_decision": search_result.contract.decision,
     }
     artifact_store.patch_workspace(
         space_id=space_id,
@@ -185,7 +199,7 @@ async def create_graph_search_run(  # noqa: PLR0913
         updated_run = run
     return GraphSearchRunResponse(
         run=HarnessRunResponse.from_record(updated_run),
-        result=result,
+        result=search_result.contract,
     )
 
 

@@ -28,7 +28,10 @@ from services.graph_harness_api.proposal_store import (
 )
 from services.graph_harness_api.ranking import rank_candidate_claim
 from services.graph_harness_api.routers.runs import HarnessRunResponse
-from services.graph_harness_api.transparency import ensure_run_transparency_seed
+from services.graph_harness_api.transparency import (
+    append_skill_activity,
+    ensure_run_transparency_seed,
+)
 from src.infrastructure.graph_service.errors import GraphServiceClientError
 
 if TYPE_CHECKING:
@@ -331,9 +334,11 @@ async def create_hypothesis_run(  # noqa: PLR0913
     )
 
     try:
-        outcomes = [
-            await graph_connection_runner.run(
+        outcome_results = []
+        for seed_entity_id in seed_entity_ids:
+            outcome_result = await graph_connection_runner.run(
                 HarnessGraphConnectionRequest(
+                    harness_id="hypotheses",
                     seed_entity_id=seed_entity_id,
                     research_space_id=str(space_id),
                     source_type=request.source_type,
@@ -346,8 +351,18 @@ async def create_hypothesis_run(  # noqa: PLR0913
                     research_space_settings={},
                 ),
             )
-            for seed_entity_id in seed_entity_ids
-        ]
+            append_skill_activity(
+                space_id=space_id,
+                run_id=run.id,
+                skill_names=outcome_result.active_skill_names,
+                source_run_id=outcome_result.agent_run_id,
+                source_kind="hypothesis_run",
+                artifact_store=artifact_store,
+                run_registry=run_registry,
+                runtime=execution_services.runtime,
+            )
+            outcome_results.append(outcome_result)
+        outcomes = [result.contract for result in outcome_results]
     except Exception as exc:
         run_registry.set_run_status(space_id=space_id, run_id=run.id, status="failed")
         artifact_store.patch_workspace(

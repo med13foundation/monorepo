@@ -36,6 +36,7 @@ from services.graph_harness_api.run_registry import (  # noqa: TC001
 )
 from services.graph_harness_api.supervisor_runtime import is_supervisor_workflow
 from services.graph_harness_api.transparency import (
+    active_skill_names_from_policy_content,
     ensure_run_transparency_seed,
     sync_policy_decisions_artifact,
 )
@@ -234,6 +235,9 @@ class RunCapabilitiesResponse(BaseModel):
     space_id: str
     harness_id: str
     tool_groups: list[str] = Field(default_factory=list)
+    preloaded_skill_names: list[str] = Field(default_factory=list)
+    allowed_skill_names: list[str] = Field(default_factory=list)
+    active_skill_names: list[str] = Field(default_factory=list)
     policy_profile: JSONObject
     artifact_key: str
     created_at: str
@@ -252,6 +256,21 @@ class RunCapabilitiesResponse(BaseModel):
             tool_groups=(
                 [str(item) for item in content.get("tool_groups", [])]
                 if isinstance(content.get("tool_groups"), list)
+                else []
+            ),
+            preloaded_skill_names=(
+                [str(item) for item in content.get("preloaded_skill_names", [])]
+                if isinstance(content.get("preloaded_skill_names"), list)
+                else []
+            ),
+            allowed_skill_names=(
+                [str(item) for item in content.get("allowed_skill_names", [])]
+                if isinstance(content.get("allowed_skill_names"), list)
+                else []
+            ),
+            active_skill_names=(
+                [str(item) for item in content.get("active_skill_names", [])]
+                if isinstance(content.get("active_skill_names"), list)
                 else []
             ),
             policy_profile=(
@@ -540,6 +559,13 @@ def get_run_capabilities(
         run_id=run_id,
         run_registry=run_registry,
     )
+    policy_content = sync_policy_decisions_artifact(
+        space_id=space_id,
+        run_id=run_id,
+        run_registry=run_registry,
+        artifact_store=artifact_store,
+        runtime=execution_services.runtime,
+    )
     ensure_run_transparency_seed(
         run=run,
         artifact_store=artifact_store,
@@ -555,7 +581,13 @@ def get_run_capabilities(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Capability snapshot for run '{run_id}' was not found",
         )
-    return RunCapabilitiesResponse.from_content(artifact.content)
+    content = dict(artifact.content)
+    content["active_skill_names"] = (
+        active_skill_names_from_policy_content(policy_content)
+        if policy_content is not None
+        else []
+    )
+    return RunCapabilitiesResponse.from_content(content)
 
 
 @router.get(

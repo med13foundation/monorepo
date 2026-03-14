@@ -23,7 +23,10 @@ from services.graph_harness_api.tool_runtime import (
     run_list_graph_claims,
     run_list_graph_hypotheses,
 )
-from services.graph_harness_api.transparency import ensure_run_transparency_seed
+from services.graph_harness_api.transparency import (
+    append_skill_activity,
+    ensure_run_transparency_seed,
+)
 from src.infrastructure.graph_service.errors import GraphServiceClientError
 from src.type_definitions.graph_service_contracts import KernelGraphDocumentResponse
 
@@ -675,9 +678,11 @@ async def execute_research_bootstrap_run(  # noqa: PLR0913, PLR0915
             total_steps=_TOTAL_PROGRESS_STEPS,
             metadata={"snapshot_id": graph_snapshot.id},
         )
-        outcomes = [
-            await graph_connection_runner.run(
+        outcome_results = []
+        for seed_entity_id in seed_entity_ids:
+            outcome_result = await graph_connection_runner.run(
                 HarnessGraphConnectionRequest(
+                    harness_id="research-bootstrap",
                     seed_entity_id=seed_entity_id,
                     research_space_id=str(space_id),
                     source_type=source_type,
@@ -690,8 +695,18 @@ async def execute_research_bootstrap_run(  # noqa: PLR0913, PLR0915
                     research_space_settings={},
                 ),
             )
-            for seed_entity_id in seed_entity_ids
-        ]
+            append_skill_activity(
+                space_id=space_id,
+                run_id=run.id,
+                skill_names=outcome_result.active_skill_names,
+                source_run_id=outcome_result.agent_run_id,
+                source_kind="research_bootstrap",
+                artifact_store=artifact_store,
+                run_registry=run_registry,
+                runtime=runtime,
+            )
+            outcome_results.append(outcome_result)
+        outcomes = [result.contract for result in outcome_results]
         candidate_claims, errors = _collect_candidate_claims(
             outcomes,
             max_candidates=max_hypotheses,

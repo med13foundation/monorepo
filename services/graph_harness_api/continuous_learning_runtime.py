@@ -42,7 +42,10 @@ from services.graph_harness_api.tool_runtime import (
     run_list_graph_claims,
     run_list_graph_hypotheses,
 )
-from services.graph_harness_api.transparency import ensure_run_transparency_seed
+from services.graph_harness_api.transparency import (
+    append_skill_activity,
+    ensure_run_transparency_seed,
+)
 from src.infrastructure.graph_service.errors import GraphServiceClientError
 from src.type_definitions.common import JSONObject  # noqa: TC001
 from src.type_definitions.graph_service_contracts import KernelGraphDocumentResponse
@@ -802,8 +805,9 @@ async def execute_continuous_learning_run(  # noqa: C901, PLR0912, PLR0913, PLR0
                 next_tool_calls=1,
                 next_external_queries=1,
             )
-            outcome = await graph_connection_runner.run(
+            outcome_result = await graph_connection_runner.run(
                 HarnessGraphConnectionRequest(
+                    harness_id="continuous-learning",
                     seed_entity_id=seed_entity_id,
                     research_space_id=str(space_id),
                     source_type=source_type,
@@ -816,7 +820,17 @@ async def execute_continuous_learning_run(  # noqa: C901, PLR0912, PLR0913, PLR0
                     research_space_settings={},
                 ),
             )
-            outcomes.append(outcome)
+            append_skill_activity(
+                space_id=space_id,
+                run_id=run.id,
+                skill_names=outcome_result.active_skill_names,
+                source_run_id=outcome_result.agent_run_id,
+                source_kind="continuous_learning",
+                artifact_store=artifact_store,
+                run_registry=run_registry,
+                runtime=runtime,
+            )
+            outcomes.append(outcome_result.contract)
             tool_calls += 1
             external_queries += 1
     except Exception as exc:

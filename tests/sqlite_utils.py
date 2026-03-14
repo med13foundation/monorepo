@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import event
@@ -10,6 +12,23 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
+
+
+def _adapt_sqlite_date(value: date) -> str:
+    """Serialize date objects without relying on deprecated sqlite defaults."""
+    return value.isoformat()
+
+
+def _adapt_sqlite_datetime(value: datetime) -> str:
+    """Serialize datetime objects without relying on deprecated sqlite defaults."""
+    normalized = value.isoformat(sep=" ")
+    if normalized.endswith("+00:00"):
+        return normalized[:-6] + "Z"
+    return normalized
+
+
+sqlite3.register_adapter(date, _adapt_sqlite_date)
+sqlite3.register_adapter(datetime, _adapt_sqlite_datetime)
 
 
 class SQLiteCursor(Protocol):
@@ -58,4 +77,8 @@ def build_sqlite_connect_args(
     return connect_args
 
 
-__all__ = ["build_sqlite_connect_args", "configure_sqlite_engine"]
+__all__ = [
+    "DEFAULT_BUSY_TIMEOUT_MS",
+    "build_sqlite_connect_args",
+    "configure_sqlite_engine",
+]

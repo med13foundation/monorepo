@@ -25,6 +25,7 @@ from services.graph_harness_api.graph_chat_runtime import (
 from services.graph_harness_api.graph_client import GraphApiGateway
 from services.graph_harness_api.graph_connection_runtime import (
     HarnessGraphConnectionRequest,
+    HarnessGraphConnectionResult,
     HarnessGraphConnectionRunner,
 )
 from services.graph_harness_api.graph_snapshot import HarnessGraphSnapshotStore
@@ -264,8 +265,8 @@ class _FakeGraphConnectionRunner(HarnessGraphConnectionRunner):
     async def run(
         self,
         request: HarnessGraphConnectionRequest,
-    ) -> GraphConnectionContract:
-        return GraphConnectionContract(
+    ) -> HarnessGraphConnectionResult:
+        contract = GraphConnectionContract(
             decision="generated",
             confidence_score=0.72,
             rationale="Synthetic worker graph-connection result.",
@@ -294,6 +295,14 @@ class _FakeGraphConnectionRunner(HarnessGraphConnectionRunner):
             rejected_candidates=[],
             shadow_mode=request.shadow_mode,
             agent_run_id="graph_connection:test-worker",
+        )
+        return HarnessGraphConnectionResult(
+            contract=contract,
+            agent_run_id=contract.agent_run_id,
+            active_skill_names=(
+                "graph_harness.graph_grounding",
+                "graph_harness.relation_discovery",
+            ),
         )
 
 

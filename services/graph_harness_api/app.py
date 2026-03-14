@@ -27,10 +27,12 @@ from .routers.research_bootstrap_runs import (
 from .routers.runs import router as runs_router
 from .routers.schedules import router as schedules_router
 from .routers.supervisor_runs import router as supervisor_runs_router
+from .runtime_skill_registry import validate_graph_harness_skill_configuration
 
 
 def create_app() -> FastAPI:
     """Create the standalone harness API application."""
+    validate_graph_harness_skill_configuration()
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,

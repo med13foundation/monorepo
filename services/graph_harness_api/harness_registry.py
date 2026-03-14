@@ -20,6 +20,8 @@ class HarnessTemplate:
     summary: str
     tool_groups: tuple[str, ...]
     outputs: tuple[str, ...]
+    preloaded_skill_names: tuple[str, ...] = ()
+    allowed_skill_names: tuple[str, ...] = ()
     default_run_budget: JSONObject | None = None
 
 
@@ -37,6 +39,8 @@ _HARNESS_TEMPLATES: tuple[HarnessTemplate, ...] = (
             "graph-search-result",
             "evidence-bundle",
         ),
+        preloaded_skill_names=("graph_harness.graph_grounding",),
+        allowed_skill_names=("graph_harness.graph_grounding",),
     ),
     HarnessTemplate(
         id="graph-connections",
@@ -50,6 +54,14 @@ _HARNESS_TEMPLATES: tuple[HarnessTemplate, ...] = (
         outputs=(
             "graph-connection-result",
             "proposed-relations",
+        ),
+        preloaded_skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.relation_discovery",
+        ),
+        allowed_skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.relation_discovery",
         ),
     ),
     HarnessTemplate(
@@ -65,6 +77,15 @@ _HARNESS_TEMPLATES: tuple[HarnessTemplate, ...] = (
         outputs=(
             "hypothesis-candidates",
             "proposal-pack",
+        ),
+        preloaded_skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.relation_discovery",
+        ),
+        allowed_skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.relation_discovery",
+            "graph_harness.hypothesis_staging",
         ),
     ),
     HarnessTemplate(
@@ -86,6 +107,17 @@ _HARNESS_TEMPLATES: tuple[HarnessTemplate, ...] = (
             "source-inventory",
             "candidate-claim-pack",
         ),
+        preloaded_skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.source_inventory",
+        ),
+        allowed_skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.source_inventory",
+            "graph_harness.literature_refresh",
+            "graph_harness.relation_discovery",
+            "graph_harness.hypothesis_staging",
+        ),
     ),
     HarnessTemplate(
         id="graph-chat",
@@ -105,6 +137,16 @@ _HARNESS_TEMPLATES: tuple[HarnessTemplate, ...] = (
             "chat-summary",
             "graph-write-proposals",
         ),
+        preloaded_skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.graph_write_review",
+        ),
+        allowed_skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.graph_write_review",
+            "graph_harness.literature_refresh",
+            "graph_harness.relation_discovery",
+        ),
     ),
     HarnessTemplate(
         id="continuous-learning",
@@ -122,6 +164,17 @@ _HARNESS_TEMPLATES: tuple[HarnessTemplate, ...] = (
             "new-paper-list",
             "candidate-claims",
             "next-question-backlog",
+        ),
+        preloaded_skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.evidence_diffing",
+        ),
+        allowed_skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.evidence_diffing",
+            "graph_harness.literature_refresh",
+            "graph_harness.relation_discovery",
+            "graph_harness.hypothesis_staging",
         ),
         default_run_budget=budget_to_json(default_continuous_learning_run_budget()),
     ),
@@ -141,6 +194,13 @@ _HARNESS_TEMPLATES: tuple[HarnessTemplate, ...] = (
             "mechanism-score-report",
             "candidate-hypothesis-pack",
         ),
+        preloaded_skill_names=("graph_harness.path_analysis",),
+        allowed_skill_names=(
+            "graph_harness.path_analysis",
+            "graph_harness.relation_discovery",
+            "graph_harness.hypothesis_staging",
+            "graph_harness.governed_graph_write",
+        ),
     ),
     HarnessTemplate(
         id="claim-curation",
@@ -158,6 +218,11 @@ _HARNESS_TEMPLATES: tuple[HarnessTemplate, ...] = (
             "approval-intent",
             "curation-summary",
             "curation-actions",
+        ),
+        preloaded_skill_names=("graph_harness.claim_validation",),
+        allowed_skill_names=(
+            "graph_harness.claim_validation",
+            "graph_harness.governed_graph_write",
         ),
     ),
     HarnessTemplate(
@@ -178,6 +243,20 @@ _HARNESS_TEMPLATES: tuple[HarnessTemplate, ...] = (
             "supervisor-plan",
             "supervisor-summary",
             "child-run-links",
+        ),
+        preloaded_skill_names=("graph_harness.supervisor_coordination",),
+        allowed_skill_names=(
+            "graph_harness.supervisor_coordination",
+            "graph_harness.graph_grounding",
+            "graph_harness.source_inventory",
+            "graph_harness.literature_refresh",
+            "graph_harness.relation_discovery",
+            "graph_harness.hypothesis_staging",
+            "graph_harness.graph_write_review",
+            "graph_harness.evidence_diffing",
+            "graph_harness.path_analysis",
+            "graph_harness.claim_validation",
+            "graph_harness.governed_graph_write",
         ),
     ),
 )
