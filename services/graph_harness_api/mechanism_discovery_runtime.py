@@ -18,7 +18,10 @@ from services.graph_harness_api.tool_runtime import (
     run_get_reasoning_path,
     run_list_reasoning_paths,
 )
-from services.graph_harness_api.transparency import ensure_run_transparency_seed
+from services.graph_harness_api.transparency import (
+    append_skill_activity,
+    ensure_run_transparency_seed,
+)
 from src.infrastructure.graph_service.errors import GraphServiceClientError
 
 if TYPE_CHECKING:
@@ -772,6 +775,19 @@ def execute_mechanism_discovery_run(  # noqa: PLR0913
             space_id=space_id,
             run_id=run.id,
             proposals=result.proposal_drafts,
+        )
+        active_skill_names = ["graph_harness.path_analysis"]
+        if proposal_records:
+            active_skill_names.append("graph_harness.hypothesis_staging")
+        append_skill_activity(
+            space_id=space_id,
+            run_id=run.id,
+            skill_names=tuple(active_skill_names),
+            source_run_id=run.id,
+            source_kind="mechanism_discovery",
+            artifact_store=artifact_store,
+            run_registry=run_registry,
+            runtime=runtime,
         )
         artifact_store.put_artifact(
             space_id=space_id,

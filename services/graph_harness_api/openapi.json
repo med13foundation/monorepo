@@ -3638,6 +3638,13 @@
       "HarnessTemplateResponse": {
         "description": "Serialized harness template.",
         "properties": {
+          "allowed_skill_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Skill Names",
+            "type": "array"
+          },
           "default_run_budget": {
             "anyOf": [
               {
@@ -3667,6 +3674,13 @@
             "title": "Outputs",
             "type": "array"
           },
+          "preloaded_skill_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Preloaded Skill Names",
+            "type": "array"
+          },
           "summary": {
             "title": "Summary",
             "type": "string"
@@ -3684,7 +3698,9 @@
           "display_name",
           "summary",
           "tool_groups",
-          "outputs"
+          "outputs",
+          "preloaded_skill_names",
+          "allowed_skill_names"
         ],
         "title": "HarnessTemplateResponse",
         "type": "object"
@@ -4457,6 +4473,20 @@
       "RunCapabilitiesResponse": {
         "description": "Serialized run-level capability snapshot.",
         "properties": {
+          "active_skill_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Active Skill Names",
+            "type": "array"
+          },
+          "allowed_skill_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Skill Names",
+            "type": "array"
+          },
           "artifact_key": {
             "title": "Artifact Key",
             "type": "string"
@@ -4482,6 +4512,13 @@
             },
             "title": "Policy Profile",
             "type": "object"
+          },
+          "preloaded_skill_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Preloaded Skill Names",
+            "type": "array"
           },
           "run_id": {
             "title": "Run Id",

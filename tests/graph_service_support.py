@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-def auth_headers(
+def build_graph_auth_headers(
     *,
     user_id: UUID,
     email: str,
@@ -47,14 +47,43 @@ def auth_headers(
     }
 
 
-def admin_headers() -> dict[str, str]:
-    admin_id = uuid4()
-    return auth_headers(
-        user_id=admin_id,
-        email=f"graph-admin-{admin_id.hex[:8]}@example.org",
-        role=UserRole.ADMIN,
+def auth_headers(
+    *,
+    user_id: UUID,
+    email: str,
+    role: UserRole = UserRole.RESEARCHER,
+    graph_admin: bool = False,
+) -> dict[str, str]:
+    return build_graph_auth_headers(
+        user_id=user_id,
+        email=email,
+        role=role,
+        graph_admin=graph_admin,
+    )
+
+
+def build_graph_admin_headers() -> dict[str, str]:
+    return build_graph_auth_headers(
+        user_id=uuid4(),
+        email=f"graph-admin-{uuid4().hex[:12]}@example.com",
+        role=UserRole.VIEWER,
         graph_admin=True,
     )
+
+
+def admin_headers() -> dict[str, str]:
+    return build_graph_admin_headers()
+
+
+def reset_graph_service_database() -> None:
+    reset_database(graph_database.engine, Base.metadata)
+
+
+def seed_graph_service_dictionary_primitives() -> None:
+    with graph_database.SessionLocal() as session:
+        seed_entity_resolution_policies(session)
+        seed_relation_constraints(session)
+        session.commit()
 
 
 def seed_graph_space(
@@ -110,16 +139,20 @@ def build_seeded_space_fixture(
 
 @pytest.fixture(scope="function")
 def graph_client() -> TestClient:
-    reset_database(graph_database.engine, Base.metadata)
+    reset_graph_service_database()
     with TestClient(create_app()) as client:
         yield client
-    reset_database(graph_database.engine, Base.metadata)
+    reset_graph_service_database()
 
 
 __all__ = [
     "admin_headers",
     "auth_headers",
+    "build_graph_admin_headers",
+    "build_graph_auth_headers",
     "build_seeded_space_fixture",
     "graph_client",
+    "reset_graph_service_database",
+    "seed_graph_service_dictionary_primitives",
     "seed_graph_space",
 ]

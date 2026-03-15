@@ -38,6 +38,7 @@ from services.graph_harness_api.tool_runtime import (
     run_list_claims_by_entity,
     run_list_relation_conflicts,
 )
+from services.graph_harness_api.transparency import append_skill_activity
 from src.type_definitions.common import JSONObject  # noqa: TC001
 
 if TYPE_CHECKING:
@@ -762,6 +763,7 @@ def resume_claim_curation_run(  # noqa: PLR0913
     proposal_store: HarnessProposalStore,
     run_registry: HarnessRunRegistry,
     artifact_store: HarnessArtifactStore,
+    runtime: GraphHarnessKernelRuntime,
     graph_api_gateway: GraphApiGateway,
     resume_reason: str | None,
     resume_metadata: JSONObject,
@@ -953,6 +955,17 @@ def resume_claim_curation_run(  # noqa: PLR0913
         action_results=action_results,
         resume_reason=resume_reason,
     )
+    if curation_summary["promoted_count"] > 0:
+        append_skill_activity(
+            space_id=space_id,
+            run_id=run.id,
+            skill_names=("graph_harness.governed_graph_write",),
+            source_run_id=run.id,
+            source_kind="claim_curation",
+            artifact_store=artifact_store,
+            run_registry=run_registry,
+            runtime=runtime,
+        )
     artifact_store.put_artifact(
         space_id=space_id,
         run_id=run.id,

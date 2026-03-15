@@ -15,18 +15,6 @@ if TYPE_CHECKING:
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 
 
-class SQLiteCursor(Protocol):
-    def execute(self, statement: str) -> object: ...
-
-    def fetchone(self) -> object: ...
-
-    def close(self) -> None: ...
-
-
-class SQLiteConnection(Protocol):
-    def cursor(self) -> SQLiteCursor: ...
-
-
 def _adapt_sqlite_date(value: date) -> str:
     return value.isoformat()
 
@@ -51,6 +39,21 @@ def register_sqlite_datetime_adapters() -> None:
     sqlite3.register_converter("date", _convert_sqlite_date)
     sqlite3.register_converter("datetime", _convert_sqlite_datetime)
     sqlite3.register_converter("timestamp", _convert_sqlite_datetime)
+
+
+register_sqlite_datetime_adapters()
+
+
+class SQLiteCursor(Protocol):
+    def execute(self, statement: str) -> object: ...
+
+    def fetchone(self) -> object: ...
+
+    def close(self) -> None: ...
+
+
+class SQLiteConnection(Protocol):
+    def cursor(self) -> SQLiteCursor: ...
 
 
 def configure_sqlite_engine(
@@ -89,6 +92,7 @@ def build_sqlite_connect_args(
 
 
 __all__ = [
+    "DEFAULT_BUSY_TIMEOUT_MS",
     "build_sqlite_connect_args",
     "configure_sqlite_engine",
     "register_sqlite_datetime_adapters",

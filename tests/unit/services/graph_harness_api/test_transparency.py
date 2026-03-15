@@ -8,7 +8,9 @@ from services.graph_harness_api.artifact_store import HarnessArtifactStore
 from services.graph_harness_api.run_registry import HarnessRunRegistry
 from services.graph_harness_api.tool_catalog import RunPubMedSearchToolArgs
 from services.graph_harness_api.transparency import (
+    active_skill_names_from_policy_content,
     append_manual_review_decision,
+    append_skill_activity,
     build_run_capabilities_snapshot,
     ensure_run_transparency_seed,
     sync_policy_decisions_artifact,
@@ -31,6 +33,16 @@ def test_build_run_capabilities_snapshot_freezes_visible_and_filtered_tools() ->
 
     assert snapshot["artifact_key"] == "run_capabilities"
     assert snapshot["harness_id"] == "graph-chat"
+    assert snapshot["preloaded_skill_names"] == [
+        "graph_harness.graph_grounding",
+        "graph_harness.graph_write_review",
+    ]
+    assert snapshot["allowed_skill_names"] == [
+        "graph_harness.graph_grounding",
+        "graph_harness.graph_write_review",
+        "graph_harness.literature_refresh",
+        "graph_harness.relation_discovery",
+    ]
     visible_tool_names = {
         str(entry["tool_name"])
         for entry in snapshot["visible_tools"]
@@ -85,6 +97,7 @@ def test_policy_decisions_sync_includes_tool_and_manual_review_records() -> None
 
     assert synced is not None
     assert synced["summary"]["tool_record_count"] == 1
+    assert synced["summary"]["skill_record_count"] == 0
     tool_record = synced["records"][0]
     assert tool_record["decision_source"] == "tool"
     assert tool_record["tool_name"] == "run_pubmed_search"
@@ -102,6 +115,19 @@ def test_policy_decisions_sync_includes_tool_and_manual_review_records() -> None
         run_registry=run_registry,
         runtime=runtime,
     )
+    append_skill_activity(
+        space_id=UUID(run.space_id),
+        run_id=run.id,
+        skill_names=(
+            "graph_harness.graph_grounding",
+            "graph_harness.literature_refresh",
+        ),
+        source_run_id="graph_chat:test-search",
+        source_kind="graph_chat",
+        artifact_store=artifact_store,
+        run_registry=run_registry,
+        runtime=runtime,
+    )
 
     updated = artifact_store.get_artifact(
         space_id=run.space_id,
@@ -110,8 +136,13 @@ def test_policy_decisions_sync_includes_tool_and_manual_review_records() -> None
     )
 
     assert updated is not None
-    assert updated.content["summary"]["total_records"] == 2
+    assert updated.content["summary"]["total_records"] == 4
     assert updated.content["summary"]["manual_review_count"] == 1
+    assert updated.content["summary"]["skill_record_count"] == 2
+    assert active_skill_names_from_policy_content(updated.content) == [
+        "graph_harness.graph_grounding",
+        "graph_harness.literature_refresh",
+    ]
     manual_records = [
         record
         for record in updated.content["records"]

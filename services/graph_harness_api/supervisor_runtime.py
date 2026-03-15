@@ -31,7 +31,12 @@ from services.graph_harness_api.research_bootstrap_runtime import (
     ResearchBootstrapExecutionResult,
     execute_research_bootstrap_run,
 )
-from services.graph_harness_api.transparency import ensure_run_transparency_seed
+from services.graph_harness_api.transparency import (
+    active_skill_names_from_policy_content,
+    append_skill_activity,
+    ensure_run_transparency_seed,
+    sync_policy_decisions_artifact,
+)
 
 if TYPE_CHECKING:
     from services.graph_harness_api.approval_store import HarnessApprovalStore
@@ -94,6 +99,37 @@ def _progress_percent(*, completed_steps: int, total_steps: int) -> float:
     if total_steps <= 0:
         return 0.0
     return round(completed_steps / total_steps, 6)
+
+
+def _propagate_child_skill_activity(  # noqa: PLR0913
+    *,
+    space_id: UUID,
+    parent_run_id: str,
+    child_run_id: str,
+    source_kind: str,
+    artifact_store: HarnessArtifactStore,
+    run_registry: HarnessRunRegistry,
+    runtime: GraphHarnessKernelRuntime,
+) -> None:
+    policy_content = sync_policy_decisions_artifact(
+        space_id=space_id,
+        run_id=child_run_id,
+        run_registry=run_registry,
+        artifact_store=artifact_store,
+        runtime=runtime,
+    )
+    if policy_content is None:
+        return
+    append_skill_activity(
+        space_id=space_id,
+        run_id=parent_run_id,
+        skill_names=tuple(active_skill_names_from_policy_content(policy_content)),
+        source_run_id=child_run_id,
+        source_kind=source_kind,
+        artifact_store=artifact_store,
+        run_registry=run_registry,
+        runtime=runtime,
+    )
 
 
 def _json_object_sequence(value: object) -> tuple[JSONObject, ...]:
@@ -563,6 +599,7 @@ def resume_supervisor_run(  # noqa: PLR0913, PLR0915
     proposal_store: HarnessProposalStore,
     run_registry: HarnessRunRegistry,
     artifact_store: HarnessArtifactStore,
+    runtime: GraphHarnessKernelRuntime,
     graph_api_gateway: GraphApiGateway,
     resume_reason: str | None,
     resume_metadata: JSONObject,
@@ -664,6 +701,7 @@ def resume_supervisor_run(  # noqa: PLR0913, PLR0915
             proposal_store=proposal_store,
             run_registry=run_registry,
             artifact_store=artifact_store,
+            runtime=runtime,
             graph_api_gateway=graph_api_gateway,
             resume_reason=resume_reason,
             resume_metadata=resume_metadata,
@@ -677,6 +715,16 @@ def resume_supervisor_run(  # noqa: PLR0913, PLR0915
             f"status '{curation_run.status}'"
         )
         raise RuntimeError(error_message)
+
+    _propagate_child_skill_activity(
+        space_id=space_id,
+        parent_run_id=run.id,
+        child_run_id=completed_curation_run.id,
+        source_kind="claim_curation",
+        artifact_store=artifact_store,
+        run_registry=run_registry,
+        runtime=runtime,
+    )
 
     curation_summary_artifact = artifact_store.get_artifact(
         space_id=space_id,
@@ -938,6 +986,16 @@ async def execute_supervisor_run(  # noqa: C901, PLR0912, PLR0913, PLR0915
             "skipped_steps": [],
         },
     )
+    append_skill_activity(
+        space_id=space_id,
+        run_id=run.id,
+        skill_names=("graph_harness.supervisor_coordination",),
+        source_run_id=run.id,
+        source_kind="supervisor",
+        artifact_store=artifact_store,
+        run_registry=run_registry,
+        runtime=runtime,
+    )
 
     try:
         bootstrap = await execute_research_bootstrap_run(
@@ -1007,6 +1065,15 @@ async def execute_supervisor_run(  # noqa: C901, PLR0912, PLR0913, PLR0915
             "last_graph_snapshot_id": bootstrap.graph_snapshot.id,
             "bootstrap_proposal_count": len(bootstrap.proposal_records),
         },
+    )
+    _propagate_child_skill_activity(
+        space_id=space_id,
+        parent_run_id=run.id,
+        child_run_id=bootstrap.run.id,
+        source_kind="research_bootstrap",
+        artifact_store=artifact_store,
+        run_registry=run_registry,
+        runtime=runtime,
     )
     run_registry.set_progress(
         space_id=space_id,
@@ -1110,6 +1177,15 @@ async def execute_supervisor_run(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 "chat_session_id": chat_execution.session.id,
                 "briefing_question": resolved_briefing_question,
             },
+        )
+        _propagate_child_skill_activity(
+            space_id=space_id,
+            parent_run_id=run.id,
+            child_run_id=chat_execution.run.id,
+            source_kind="graph_chat",
+            artifact_store=artifact_store,
+            run_registry=run_registry,
+            runtime=runtime,
         )
         run_registry.set_progress(
             space_id=space_id,
@@ -1361,6 +1437,15 @@ async def execute_supervisor_run(  # noqa: C901, PLR0912, PLR0913, PLR0915
                         "pending_approvals": curation_execution.pending_approval_count,
                         "curation_status": curation_execution.run.status,
                     },
+                )
+                _propagate_child_skill_activity(
+                    space_id=space_id,
+                    parent_run_id=run.id,
+                    child_run_id=curation_execution.run.id,
+                    source_kind="claim_curation",
+                    artifact_store=artifact_store,
+                    run_registry=run_registry,
+                    runtime=runtime,
                 )
                 run_registry.set_progress(
                     space_id=space_id,

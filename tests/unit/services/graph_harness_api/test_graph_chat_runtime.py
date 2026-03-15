@@ -8,6 +8,7 @@ from services.graph_harness_api.graph_chat_runtime import (
     HarnessGraphChatRequest,
     HarnessGraphChatRunner,
 )
+from services.graph_harness_api.graph_search_runtime import HarnessGraphSearchResult
 from src.domain.agents.contracts.base import EvidenceItem
 from src.domain.agents.contracts.graph_search import (
     GraphSearchContract,
@@ -19,9 +20,13 @@ class _StubGraphSearchRunner:
     def __init__(self, result: GraphSearchContract) -> None:
         self._result = result
 
-    async def run(self, request: object) -> GraphSearchContract:
+    async def run(self, request: object) -> HarnessGraphSearchResult:
         del request
-        return self._result
+        return HarnessGraphSearchResult(
+            contract=self._result,
+            agent_run_id=self._result.agent_run_id,
+            active_skill_names=("graph_harness.graph_grounding",),
+        )
 
 
 def _graph_chat_request() -> HarnessGraphChatRequest:

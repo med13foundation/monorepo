@@ -113,6 +113,12 @@ def build_run_capabilities_snapshot(
         "space_id": run.space_id,
         "harness_id": run.harness_id,
         "tool_groups": list(template.tool_groups) if template is not None else [],
+        "preloaded_skill_names": (
+            list(template.preloaded_skill_names) if template is not None else []
+        ),
+        "allowed_skill_names": (
+            list(template.allowed_skill_names) if template is not None else []
+        ),
         "policy_profile": {
             "kernel_policy": _POLICY_PROFILE_NAME,
             "model": explain.get("model"),
@@ -205,6 +211,7 @@ def ensure_run_transparency_seed(
                     "total_records": 0,
                     "tool_record_count": 0,
                     "manual_review_count": 0,
+                    "skill_record_count": 0,
                     "paused_approval_count": 0,
                     "status_counts": {},
                 },
@@ -353,18 +360,30 @@ def _tool_records_from_events(  # noqa: C901, PLR0912, PLR0915
     return records
 
 
-def _manual_review_records(policy_content: JSONObject) -> list[JSONObject]:
+def _decision_records(
+    policy_content: JSONObject,
+    *,
+    decision_source: str,
+) -> list[JSONObject]:
     records = policy_content.get("records")
     if not isinstance(records, list):
         return []
-    manual_records: list[JSONObject] = []
+    matching_records: list[JSONObject] = []
     for record in records:
         if not isinstance(record, dict):
             continue
-        if record.get("decision_source") != "manual_review":
+        if record.get("decision_source") != decision_source:
             continue
-        manual_records.append(cast("JSONObject", record))
-    return manual_records
+        matching_records.append(cast("JSONObject", record))
+    return matching_records
+
+
+def _manual_review_records(policy_content: JSONObject) -> list[JSONObject]:
+    return _decision_records(policy_content, decision_source="manual_review")
+
+
+def _skill_records(policy_content: JSONObject) -> list[JSONObject]:
+    return _decision_records(policy_content, decision_source="skill")
 
 
 def _sort_records(records: list[JSONObject]) -> list[JSONObject]:
@@ -382,6 +401,7 @@ def _summary_for_records(records: list[JSONObject]) -> JSONObject:
     status_counts: dict[str, int] = {}
     tool_record_count = 0
     manual_review_count = 0
+    skill_record_count = 0
     paused_approval_count = 0
     for record in records:
         status = record.get("status")
@@ -392,12 +412,15 @@ def _summary_for_records(records: list[JSONObject]) -> JSONObject:
             tool_record_count += 1
         elif source == "manual_review":
             manual_review_count += 1
+        elif source == "skill":
+            skill_record_count += 1
         if isinstance(record.get("approval_id"), str):
             paused_approval_count += 1
     return {
         "total_records": len(records),
         "tool_record_count": tool_record_count,
         "manual_review_count": manual_review_count,
+        "skill_record_count": skill_record_count,
         "paused_approval_count": paused_approval_count,
         "status_counts": status_counts,
     }
@@ -437,7 +460,8 @@ def sync_policy_decisions_artifact(
         events=runtime.get_events(run_id=run.id, tenant_id=run.space_id),
     )
     manual_records = _manual_review_records(existing_policy)
-    records = _sort_records([*tool_records, *manual_records])
+    skill_records = _skill_records(existing_policy)
+    records = _sort_records([*tool_records, *manual_records, *skill_records])
     content = {
         "run_id": run.id,
         "space_id": run.space_id,
@@ -469,6 +493,7 @@ def sync_policy_decisions_artifact(
             "policy_decisions_key": _POLICY_DECISIONS_KEY,
             "policy_decision_count": content["summary"]["total_records"],
             "policy_manual_review_count": content["summary"]["manual_review_count"],
+            "policy_skill_count": content["summary"]["skill_record_count"],
         },
     )
     return content
@@ -547,6 +572,7 @@ def append_manual_review_decision(  # noqa: PLR0913
             "policy_manual_review_count": updated_content["summary"][
                 "manual_review_count"
             ],
+            "policy_skill_count": updated_content["summary"]["skill_record_count"],
         },
     )
     run_registry.record_event(
@@ -564,8 +590,124 @@ def append_manual_review_decision(  # noqa: PLR0913
     )
 
 
+def append_skill_activity(  # noqa: PLR0913
+    *,
+    space_id: UUID,
+    run_id: str,
+    skill_names: tuple[str, ...],
+    source_run_id: str | None,
+    source_kind: str,
+    artifact_store: HarnessArtifactStore,
+    run_registry: HarnessRunRegistry,
+    runtime: GraphHarnessKernelRuntime,
+) -> None:
+    """Append skill activation records to the parent run transparency artifact."""
+    if not skill_names:
+        return
+    current = sync_policy_decisions_artifact(
+        space_id=space_id,
+        run_id=run_id,
+        run_registry=run_registry,
+        artifact_store=artifact_store,
+        runtime=runtime,
+    )
+    if current is None:
+        return
+    existing_records = current.get("records")
+    normalized_records = (
+        list(existing_records) if isinstance(existing_records, list) else []
+    )
+    existing_keys = {
+        (
+            record.get("tool_name"),
+            (
+                record.get("metadata", {}).get("source_run_id")
+                if isinstance(record.get("metadata"), dict)
+                else None
+            ),
+        )
+        for record in normalized_records
+        if isinstance(record, dict) and record.get("decision_source") == "skill"
+    }
+    now = _isoformat_now()
+    for skill_name in skill_names:
+        record_key = (skill_name, source_run_id)
+        if record_key in existing_keys:
+            continue
+        normalized_records.append(
+            {
+                "record_id": f"skill:{skill_name}:{source_run_id or run_id}:{now}",
+                "decision_source": "skill",
+                "tool_name": skill_name,
+                "decision": "activated",
+                "reason": "active_runtime_skill",
+                "status": "completed",
+                "event_id": None,
+                "approval_id": None,
+                "artifact_key": None,
+                "started_at": now,
+                "completed_at": now,
+                "metadata": {
+                    "source_run_id": source_run_id,
+                    "source_kind": source_kind,
+                    "skill_name": skill_name,
+                },
+            },
+        )
+    updated_records = _sort_records(
+        [
+            cast("JSONObject", record)
+            for record in normalized_records
+            if isinstance(record, dict)
+        ],
+    )
+    updated_content = {
+        **current,
+        "records": updated_records,
+        "summary": _summary_for_records(updated_records),
+        "updated_at": now,
+    }
+    artifact_store.put_artifact(
+        space_id=space_id,
+        run_id=run_id,
+        artifact_key=_POLICY_DECISIONS_KEY,
+        media_type="application/json",
+        content=updated_content,
+    )
+    artifact_store.patch_workspace(
+        space_id=space_id,
+        run_id=run_id,
+        patch={
+            "policy_decisions_key": _POLICY_DECISIONS_KEY,
+            "policy_decision_count": updated_content["summary"]["total_records"],
+            "policy_manual_review_count": updated_content["summary"][
+                "manual_review_count"
+            ],
+            "policy_skill_count": updated_content["summary"]["skill_record_count"],
+        },
+    )
+
+
+def active_skill_names_from_policy_content(policy_content: JSONObject) -> list[str]:
+    """Derive active skill names from a synced policy-decision artifact."""
+    active_skill_names: list[str] = []
+    seen_names: set[str] = set()
+    for record in _skill_records(policy_content):
+        skill_name = record.get("tool_name")
+        if not isinstance(skill_name, str):
+            continue
+        normalized_name = skill_name.strip()
+        if normalized_name == "" or normalized_name in seen_names:
+            continue
+        seen_names.add(normalized_name)
+        active_skill_names.append(normalized_name)
+    return active_skill_names
+
+
 __all__ = [
     "append_manual_review_decision",
+    "append_skill_activity",
+    "active_skill_names_from_policy_content",
     "build_run_capabilities_snapshot",
     "ensure_run_transparency_seed",
     "sync_policy_decisions_artifact",

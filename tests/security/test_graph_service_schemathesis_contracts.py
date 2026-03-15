@@ -9,7 +9,11 @@ from schemathesis import openapi
 from schemathesis.specs.openapi.checks import ignored_auth
 
 from services.graph_api.app import create_app
-from tests.graph_service_support import build_seeded_space_fixture
+from tests.graph_service_support import (
+    build_graph_admin_headers,
+    build_seeded_space_fixture,
+    reset_graph_service_database,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -51,6 +55,7 @@ def _get_operation(path: str, method: str) -> APIOperation:
 
 HEALTH_OPERATION = _get_operation("/health", "GET")
 ENTITY_CREATE_OPERATION = _get_operation("/v1/spaces/{space_id}/entities", "POST")
+ADMIN_SPACE_LIST_OPERATION = _get_operation("/v1/admin/spaces", "GET")
 
 
 def test_graph_service_health_contract() -> None:
@@ -63,6 +68,23 @@ def test_graph_service_health_contract() -> None:
         with TestClient(create_app()) as client:
             response = _request_case(client, case)
             case.validate_response(response)
+
+
+def test_graph_service_admin_space_list_contract() -> None:
+    reset_graph_service_database()
+    try:
+        with _temporary_graph_testing_env():
+            case = schema.make_case(
+                operation=ADMIN_SPACE_LIST_OPERATION,
+                method=ADMIN_SPACE_LIST_OPERATION.method,
+                path=ADMIN_SPACE_LIST_OPERATION.path,
+                headers=build_graph_admin_headers(),
+            )
+            with TestClient(create_app()) as client:
+                response = _request_case(client, case)
+                case.validate_response(response, excluded_checks=[ignored_auth])
+    finally:
+        reset_graph_service_database()
 
 
 def test_graph_service_entity_create_contract_supports_aliases() -> None:

@@ -21,7 +21,10 @@ from services.graph_harness_api.graph_connection_runtime import (
     HarnessGraphConnectionRunner,
 )
 from services.graph_harness_api.routers.runs import HarnessRunResponse
-from services.graph_harness_api.transparency import ensure_run_transparency_seed
+from services.graph_harness_api.transparency import (
+    append_skill_activity,
+    ensure_run_transparency_seed,
+)
 from src.domain.agents.contracts.graph_connection import (  # noqa: TC001
     GraphConnectionContract,
 )
@@ -155,22 +158,32 @@ async def create_graph_connection_run(  # noqa: PLR0913
     outcomes: list[GraphConnectionContract] = []
     try:
         for seed_entity_id in seed_entity_ids:
-            outcomes.append(  # noqa: PERF401
-                await graph_connection_runner.run(
-                    HarnessGraphConnectionRequest(
-                        seed_entity_id=seed_entity_id,
-                        research_space_id=str(space_id),
-                        source_type=request.source_type,
-                        source_id=request.source_id,
-                        model_id=request.model_id,
-                        relation_types=request.relation_types,
-                        max_depth=request.max_depth,
-                        shadow_mode=request.shadow_mode,
-                        pipeline_run_id=request.pipeline_run_id,
-                        research_space_settings={},
-                    ),
+            outcome_result = await graph_connection_runner.run(
+                HarnessGraphConnectionRequest(
+                    harness_id="graph-connections",
+                    seed_entity_id=seed_entity_id,
+                    research_space_id=str(space_id),
+                    source_type=request.source_type,
+                    source_id=request.source_id,
+                    model_id=request.model_id,
+                    relation_types=request.relation_types,
+                    max_depth=request.max_depth,
+                    shadow_mode=request.shadow_mode,
+                    pipeline_run_id=request.pipeline_run_id,
+                    research_space_settings={},
                 ),
             )
+            append_skill_activity(
+                space_id=space_id,
+                run_id=run.id,
+                skill_names=outcome_result.active_skill_names,
+                source_run_id=outcome_result.agent_run_id,
+                source_kind="graph_connection",
+                artifact_store=artifact_store,
+                run_registry=run_registry,
+                runtime=execution_services.runtime,
+            )
+            outcomes.append(outcome_result.contract)
     except Exception as exc:
         run_registry.set_run_status(space_id=space_id, run_id=run.id, status="failed")
         artifact_store.patch_workspace(

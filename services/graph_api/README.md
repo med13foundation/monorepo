@@ -109,6 +109,11 @@ Pack lifecycle reference:
 Deployment/runtime notes:
 
 - Cloud Run packaging uses `services/graph_api/Dockerfile`
+- the Dockerfile now keeps a dedicated `test` stage for pytest inputs and a
+  separate `runtime` stage so production images do not ship test assets
+- local container flows can build the runtime image with `make graph-docker-build`
+  or the test image with `make graph-docker-test-build`, then execute the test
+  image with `make graph-docker-test`
 - the dedicated deploy workflow is `.github/workflows/graph-service-deploy.yml`
 - platform API/admin deploys now inject graph-service URLs through
   `scripts/deploy/sync_cloud_run_runtime_config.sh` so extracted callers do not

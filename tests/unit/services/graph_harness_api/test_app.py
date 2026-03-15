@@ -50,9 +50,11 @@ from services.graph_harness_api.graph_chat_runtime import (
 )
 from services.graph_harness_api.graph_connection_runtime import (
     HarnessGraphConnectionRequest,
+    HarnessGraphConnectionResult,
 )
 from services.graph_harness_api.graph_search_runtime import (
     HarnessGraphSearchRequest,
+    HarnessGraphSearchResult,
 )
 from services.graph_harness_api.graph_snapshot import HarnessGraphSnapshotStore
 from services.graph_harness_api.harness_runtime import HarnessExecutionServices
@@ -917,8 +919,8 @@ class _FakeGraphSearchRunner:
     async def run(
         self,
         request: HarnessGraphSearchRequest,
-    ) -> GraphSearchContract:
-        return GraphSearchContract(
+    ) -> HarnessGraphSearchResult:
+        contract = GraphSearchContract(
             decision="generated",
             confidence_score=0.81,
             rationale="Synthetic graph-search result for harness tests.",
@@ -940,14 +942,19 @@ class _FakeGraphSearchRunner:
             warnings=[],
             agent_run_id="graph_search:test-run",
         )
+        return HarnessGraphSearchResult(
+            contract=contract,
+            agent_run_id=contract.agent_run_id,
+            active_skill_names=("graph_harness.graph_grounding",),
+        )
 
 
 class _FakeGraphConnectionRunner:
     async def run(
         self,
         request: HarnessGraphConnectionRequest,
-    ) -> GraphConnectionContract:
-        return GraphConnectionContract(
+    ) -> HarnessGraphConnectionResult:
+        contract = GraphConnectionContract(
             decision="generated",
             confidence_score=0.73,
             rationale="Synthetic graph-connection result for harness tests.",
@@ -977,6 +984,14 @@ class _FakeGraphConnectionRunner:
             shadow_mode=request.shadow_mode,
             agent_run_id="graph_connection:test-run",
         )
+        return HarnessGraphConnectionResult(
+            contract=contract,
+            agent_run_id=contract.agent_run_id,
+            active_skill_names=(
+                "graph_harness.graph_grounding",
+                "graph_harness.relation_discovery",
+            ),
+        )
 
 
 class _FakeGraphChatRunner:
@@ -984,7 +999,7 @@ class _FakeGraphChatRunner:
         self,
         request: HarnessGraphChatRequest,
     ) -> GraphChatResult:
-        return GraphChatResult(
+        result = GraphChatResult(
             answer_text=(
                 "Grounded graph answer:\n"
                 "MED13 (gene): Synthetic grounded answer for harness chat tests."
@@ -1044,6 +1059,11 @@ class _FakeGraphChatRunner:
                 agent_run_id="graph_chat:test-search",
             ),
         )
+        result._active_skill_names = (
+            "graph_harness.graph_grounding",
+            "graph_harness.graph_write_review",
+        )
+        return result
 
 
 class _FakeNeedsReviewGraphChatRunner:
@@ -1052,7 +1072,7 @@ class _FakeNeedsReviewGraphChatRunner:
         request: HarnessGraphChatRequest,
     ) -> GraphChatResult:
         del request
-        return GraphChatResult(
+        result = GraphChatResult(
             answer_text="Preliminary graph answer:\nMED13: synthetic low-confidence result.",
             chat_summary="Answered with 1 grounded graph match. Verification: needs_review.",
             evidence_bundle=[
@@ -1109,6 +1129,12 @@ class _FakeNeedsReviewGraphChatRunner:
                 agent_run_id="graph_chat:test-search-needs-review",
             ),
         )
+        result._active_skill_names = (
+            "graph_harness.graph_grounding",
+            "graph_harness.graph_write_review",
+            "graph_harness.literature_refresh",
+        )
+        return result
 
 
 class _FakeMultiEvidenceGraphChatRunner:
@@ -1116,7 +1142,7 @@ class _FakeMultiEvidenceGraphChatRunner:
         self,
         request: HarnessGraphChatRequest,
     ) -> GraphChatResult:
-        return GraphChatResult(
+        result = GraphChatResult(
             answer_text=(
                 "Grounded graph answer:\n"
                 "MED13 (gene): Synthetic grounded answer for harness chat tests.\n"
@@ -1196,6 +1222,12 @@ class _FakeMultiEvidenceGraphChatRunner:
                 agent_run_id="graph_chat:test-search-multi",
             ),
         )
+        result._active_skill_names = (
+            "graph_harness.graph_grounding",
+            "graph_harness.graph_write_review",
+            "graph_harness.relation_discovery",
+        )
+        return result
 
 
 class _FakePubMedDiscoveryService:
@@ -1686,6 +1718,7 @@ async def _execute_test_harness_run(
                 proposal_store=services.proposal_store,
                 run_registry=services.run_registry,
                 artifact_store=services.artifact_store,
+                runtime=services.runtime,
                 graph_api_gateway=services.graph_api_gateway_factory(),
                 resume_reason="test_resume",
                 resume_metadata={},
@@ -1728,6 +1761,7 @@ async def _execute_test_harness_run(
                 proposal_store=services.proposal_store,
                 run_registry=services.run_registry,
                 artifact_store=services.artifact_store,
+                runtime=services.runtime,
                 graph_api_gateway=services.graph_api_gateway_factory(),
                 resume_reason="test_resume",
                 resume_metadata={},
@@ -1892,6 +1926,13 @@ def test_list_harnesses_returns_registry_templates() -> None:
         item for item in payload["harnesses"] if item["id"] == "continuous-learning"
     )
     assert continuous_learning["default_run_budget"]["max_tool_calls"] == 100
+    assert continuous_learning["preloaded_skill_names"] == [
+        "graph_harness.graph_grounding",
+        "graph_harness.evidence_diffing",
+    ]
+    assert (
+        "graph_harness.relation_discovery" in continuous_learning["allowed_skill_names"]
+    )
 
 
 def test_get_harness_returns_one_template() -> None:
@@ -1907,6 +1948,16 @@ def test_get_harness_returns_one_template() -> None:
     payload = response.json()
     assert payload["id"] == "graph-chat"
     assert "graph" in payload["summary"].lower()
+    assert payload["preloaded_skill_names"] == [
+        "graph_harness.graph_grounding",
+        "graph_harness.graph_write_review",
+    ]
+    assert payload["allowed_skill_names"] == [
+        "graph_harness.graph_grounding",
+        "graph_harness.graph_write_review",
+        "graph_harness.literature_refresh",
+        "graph_harness.relation_discovery",
+    ]
 
 
 def test_research_bootstrap_run_persists_research_state_and_snapshot() -> None:
@@ -2081,6 +2132,33 @@ def test_supervisor_run_composes_bootstrap_chat_and_curation() -> None:
     assert workspace_payload["snapshot"]["selected_curation_proposal_ids"] == (
         payload["selected_curation_proposal_ids"]
     )
+
+    capabilities_response = client.get(
+        f"/v1/spaces/{space_id}/runs/{payload['run']['id']}/capabilities",
+        headers=_auth_headers(role="viewer"),
+    )
+    assert capabilities_response.status_code == 200
+    capabilities_payload = capabilities_response.json()
+    assert capabilities_payload["preloaded_skill_names"] == [
+        "graph_harness.supervisor_coordination",
+    ]
+    assert capabilities_payload["active_skill_names"] == [
+        "graph_harness.supervisor_coordination",
+        "graph_harness.graph_grounding",
+        "graph_harness.relation_discovery",
+        "graph_harness.graph_write_review",
+        "graph_harness.claim_validation",
+    ]
+
+    policy_response = client.get(
+        f"/v1/spaces/{space_id}/runs/{payload['run']['id']}/policy-decisions",
+        headers=_auth_headers(role="viewer"),
+    )
+    assert policy_response.status_code == 200
+    policy_payload = policy_response.json()
+    assert policy_payload["summary"]["tool_record_count"] == 0
+    assert policy_payload["summary"]["manual_review_count"] == 0
+    assert policy_payload["summary"]["skill_record_count"] == 6
 
 
 def test_supervisor_run_requires_child_approvals_before_parent_resume() -> None:
@@ -3523,6 +3601,31 @@ def test_supervisor_run_completes_after_child_curation_resume() -> None:
     assert detail_payload["curation_status"] == "completed"
     assert detail_payload["curation_summary"]["promoted_count"] == 1
     assert detail_payload["curation_summary"]["applied_proposal_ids"] == [proposal_id]
+
+    capabilities_response = client.get(
+        f"/v1/spaces/{space_id}/runs/{supervisor_run_id}/capabilities",
+        headers=_auth_headers(role="viewer"),
+    )
+    assert capabilities_response.status_code == 200
+    capabilities_payload = capabilities_response.json()
+    assert capabilities_payload["active_skill_names"] == [
+        "graph_harness.supervisor_coordination",
+        "graph_harness.graph_grounding",
+        "graph_harness.relation_discovery",
+        "graph_harness.graph_write_review",
+        "graph_harness.claim_validation",
+        "graph_harness.governed_graph_write",
+    ]
+
+    policy_response = client.get(
+        f"/v1/spaces/{space_id}/runs/{supervisor_run_id}/policy-decisions",
+        headers=_auth_headers(role="viewer"),
+    )
+    assert policy_response.status_code == 200
+    policy_payload = policy_response.json()
+    assert policy_payload["summary"]["tool_record_count"] == 0
+    assert policy_payload["summary"]["manual_review_count"] == 0
+    assert policy_payload["summary"]["skill_record_count"] == 7
     assert detail_payload["curation_actions"]["action_count"] == 1
     assert (
         detail_payload["curation_actions"]["actions"][0]["proposal_id"] == proposal_id
@@ -3659,6 +3762,21 @@ def test_run_transparency_endpoints_expose_capabilities_and_tool_decisions() -> 
     capabilities_payload = capabilities_response.json()
     assert capabilities_payload["artifact_key"] == "run_capabilities"
     assert capabilities_payload["harness_id"] == "graph-chat"
+    assert capabilities_payload["preloaded_skill_names"] == [
+        "graph_harness.graph_grounding",
+        "graph_harness.graph_write_review",
+    ]
+    assert capabilities_payload["allowed_skill_names"] == [
+        "graph_harness.graph_grounding",
+        "graph_harness.graph_write_review",
+        "graph_harness.literature_refresh",
+        "graph_harness.relation_discovery",
+    ]
+    assert capabilities_payload["active_skill_names"] == [
+        "graph_harness.graph_grounding",
+        "graph_harness.graph_write_review",
+        "graph_harness.literature_refresh",
+    ]
     visible_tool_names = {
         tool["tool_name"] for tool in capabilities_payload["visible_tools"]
     }
@@ -3678,9 +3796,19 @@ def test_run_transparency_endpoints_expose_capabilities_and_tool_decisions() -> 
     assert policy_payload["artifact_key"] == "policy_decisions"
     assert policy_payload["summary"]["tool_record_count"] == 1
     assert policy_payload["summary"]["manual_review_count"] == 0
-    assert policy_payload["records"][0]["decision_source"] == "tool"
-    assert policy_payload["records"][0]["tool_name"] == "run_pubmed_search"
-    assert policy_payload["records"][0]["status"] == "success"
+    assert policy_payload["summary"]["skill_record_count"] == 3
+    assert {record["decision_source"] for record in policy_payload["records"]} == {
+        "skill",
+        "tool",
+    }
+    tool_records = [
+        record
+        for record in policy_payload["records"]
+        if record["decision_source"] == "tool"
+    ]
+    assert len(tool_records) == 1
+    assert tool_records[0]["tool_name"] == "run_pubmed_search"
+    assert tool_records[0]["status"] == "success"
 
 
 def test_create_run_rejects_unknown_harness() -> None:
@@ -5173,6 +5301,17 @@ def test_mechanism_discovery_run_ranks_candidates_and_stages_hypotheses() -> Non
         "rejected": 0,
     }
 
+    capabilities_response = client.get(
+        f"/v1/spaces/{space_id}/runs/{run_payload['id']}/capabilities",
+        headers=_auth_headers(role="viewer"),
+    )
+    assert capabilities_response.status_code == 200
+    capabilities_payload = capabilities_response.json()
+    assert capabilities_payload["active_skill_names"] == [
+        "graph_harness.path_analysis",
+        "graph_harness.hypothesis_staging",
+    ]
+
 
 def test_claim_curation_run_applies_approved_actions_on_resume() -> None:
     """Claim-curation runs should pause for approval and apply decisions on resume."""
@@ -5221,6 +5360,16 @@ def test_claim_curation_run_applies_approved_actions_on_resume() -> None:
         proposal["eligible_for_approval"] is True
         for proposal in curation_payload["proposals"]
     )
+
+    paused_capabilities_response = client.get(
+        f"/v1/spaces/{space_id}/runs/{curation_run_id}/capabilities",
+        headers=_auth_headers(role="viewer"),
+    )
+    assert paused_capabilities_response.status_code == 200
+    paused_capabilities_payload = paused_capabilities_response.json()
+    assert paused_capabilities_payload["active_skill_names"] == [
+        "graph_harness.claim_validation",
+    ]
 
     approvals_response = client.get(
         f"/v1/spaces/{space_id}/runs/{curation_run_id}/approvals",
@@ -5317,6 +5466,17 @@ def test_claim_curation_run_applies_approved_actions_on_resume() -> None:
         "promoted": 1,
         "rejected": 1,
     }
+
+    completed_capabilities_response = client.get(
+        f"/v1/spaces/{space_id}/runs/{curation_run_id}/capabilities",
+        headers=_auth_headers(role="viewer"),
+    )
+    assert completed_capabilities_response.status_code == 200
+    completed_capabilities_payload = completed_capabilities_response.json()
+    assert completed_capabilities_payload["active_skill_names"] == [
+        "graph_harness.claim_validation",
+        "graph_harness.governed_graph_write",
+    ]
 
     events_response = client.get(
         f"/v1/spaces/{space_id}/runs/{curation_run_id}/events",

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 import warnings
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -35,7 +36,6 @@ def test_configure_sqlite_engine_sets_pragmas(tmp_path: Path) -> None:
 
     assert journal_mode.lower() == "wal"
     assert busy_timeout == DEFAULT_BUSY_TIMEOUT_MS
-    # NORMAL synchronous level is 1
     assert synchronous_level == 1
     assert foreign_keys == 1
 
@@ -63,3 +63,26 @@ def test_configure_sqlite_engine_registers_datetime_adapters(tmp_path: Path) -> 
             scalar_value = result.scalar()
 
     assert str(scalar_value) == "2026-03-14 12:30:00+00:00"
+
+
+def test_sqlite_test_helpers_replace_deprecated_date_and_datetime_adapters() -> None:
+    """Ensure test SQLite usage does not trigger Python's deprecated adapters."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute("create table events (event_date text, event_time text)")
+            connection.execute(
+                "insert into events(event_date, event_time) values (?, ?)",
+                (date(2026, 3, 14), datetime(2026, 3, 14, 12, 30, tzinfo=UTC)),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    deprecation_messages = [
+        str(warning.message)
+        for warning in caught
+        if isinstance(warning.message, DeprecationWarning)
+    ]
+    assert deprecation_messages == []
