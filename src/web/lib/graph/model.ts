@@ -18,6 +18,7 @@ export interface GraphNode {
   id: string
   entityType: string
   label: string
+  aliases: string[]
   metadata: JSONObject
   createdAt: string
   updatedAt: string
@@ -124,6 +125,7 @@ function normalizeNode(node: KernelEntityResponse): GraphNode {
     id: node.id,
     entityType: node.entity_type,
     label: node.display_label ?? node.id,
+    aliases: node.aliases,
     metadata: node.metadata,
     createdAt: node.created_at,
     updatedAt: node.updated_at,
@@ -630,6 +632,7 @@ function graphNodesToKernelNodes(nodes: GraphNode[]): KernelEntityResponse[] {
     research_space_id: '',
     entity_type: node.entityType,
     display_label: node.label,
+    aliases: node.aliases,
     metadata: node.metadata,
     created_at: node.createdAt,
     updated_at: node.updatedAt,
@@ -898,6 +901,7 @@ export function mergeGraphModelWithRelationClaims(
           research_space_id: claim.research_space_id,
           entity_type: sourceType,
           display_label: sourceLabel,
+          aliases: [],
           metadata: {},
           created_at: claim.created_at,
           updated_at: claim.updated_at,
@@ -916,6 +920,7 @@ export function mergeGraphModelWithRelationClaims(
           research_space_id: claim.research_space_id,
           entity_type: targetType,
           display_label: targetLabel,
+          aliases: [],
           metadata: {},
           created_at: claim.created_at,
           updated_at: claim.updated_at,
@@ -931,6 +936,7 @@ export function mergeGraphModelWithRelationClaims(
         research_space_id: claim.research_space_id,
         entity_type: 'CLAIM',
         display_label: 'Claim',
+        aliases: [],
         metadata: {
           claim_id: claim.id,
           claim_status: claim.claim_status,
@@ -1010,6 +1016,7 @@ export function mergeGraphModelWithRelationClaims(
           research_space_id: claim.research_space_id,
           entity_type: entityType,
           display_label: label,
+          aliases: [],
           metadata: {},
           created_at: claim.created_at,
           updated_at: claim.updated_at,
@@ -1157,6 +1164,7 @@ export function augmentGraphModelWithClaimEvidence(
           id: evidenceNodeId,
           entityType: sourceSummary.kind === 'dataset' ? 'DATASET' : 'PAPER',
           label: sourceSummary.label,
+          aliases: [],
           metadata: evidenceMetadata,
           createdAt: row.created_at,
           updatedAt: row.created_at,

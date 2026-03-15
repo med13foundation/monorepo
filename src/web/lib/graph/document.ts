@@ -203,6 +203,7 @@ function normalizeDocumentNode(node: KernelGraphDocumentNode): GraphNode {
           ? 'CLAIM'
           : evidenceNodeEntityType(node, metadata),
     label: node.label,
+    aliases: metadataStringArray(metadataRecord, 'aliases'),
     metadata,
     createdAt: node.created_at,
     updatedAt: node.updated_at,
