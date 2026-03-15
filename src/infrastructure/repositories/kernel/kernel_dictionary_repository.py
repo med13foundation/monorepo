@@ -64,6 +64,10 @@ if TYPE_CHECKING:
     from src.graph.core.dictionary_domain_contexts import (
         DictionaryDomainContextDefinition,
     )
+    from src.graph.core.dictionary_loading_extension import (
+        BuiltinRelationSynonymDefinition,
+        BuiltinRelationTypeDefinition,
+    )
     from src.type_definitions.common import JSONObject, JSONValue
 
 logger = logging.getLogger(__name__)
@@ -156,9 +160,13 @@ class SqlAlchemyDictionaryRepository(
         session: Session,
         *,
         builtin_domain_contexts: tuple[DictionaryDomainContextDefinition, ...],
+        builtin_relation_types: tuple[BuiltinRelationTypeDefinition, ...] = (),
+        builtin_relation_synonyms: tuple[BuiltinRelationSynonymDefinition, ...] = (),
     ) -> None:
         self._session = session
         self._builtin_domain_contexts = builtin_domain_contexts
+        self._builtin_relation_types = builtin_relation_types
+        self._builtin_relation_synonyms = builtin_relation_synonyms
 
     def _record_change(  # noqa: PLR0913
         self,
@@ -249,6 +257,65 @@ class SqlAlchemyDictionaryRepository(
             existing.valid_to = None
             existing.superseded_by = None
         self._session.flush()
+
+    def _ensure_builtin_relation_types(self) -> None:
+        self._ensure_builtin_domain_contexts()
+        for definition in self._builtin_relation_types:
+            normalized_relation_type = definition.relation_type.strip().upper()
+            if not normalized_relation_type:
+                continue
+            existing = self._session.get(
+                DictionaryRelationTypeModel,
+                normalized_relation_type,
+            )
+            if existing is not None:
+                continue
+            self._session.add(
+                DictionaryRelationTypeModel(
+                    id=normalized_relation_type,
+                    display_name=definition.display_name,
+                    description=definition.description,
+                    domain_context=self._ensure_domain_context_reference(
+                        definition.domain_context,
+                    ),
+                    is_directional=definition.is_directional,
+                    inverse_label=definition.inverse_label,
+                    created_by="seed",
+                    review_status="ACTIVE",
+                ),
+            )
+        self._session.flush()
+
+    def _ensure_builtin_relation_synonyms(self) -> None:
+        self._ensure_builtin_relation_types()
+        for definition in self._builtin_relation_synonyms:
+            normalized_relation_type = definition.relation_type.strip().upper()
+            normalized_synonym = definition.synonym.strip().upper()
+            if not normalized_relation_type or not normalized_synonym:
+                continue
+            existing = self._session.scalars(
+                select(DictionaryRelationSynonymModel).where(
+                    DictionaryRelationSynonymModel.synonym == normalized_synonym,
+                ),
+            ).first()
+            if existing is not None:
+                continue
+            self._session.add(
+                DictionaryRelationSynonymModel(
+                    relation_type=normalized_relation_type,
+                    synonym=normalized_synonym,
+                    source=definition.source,
+                    created_by="seed",
+                    review_status="ACTIVE",
+                ),
+            )
+        self._session.flush()
+
+    def seed_builtin_dictionary_entries(self) -> None:
+        """Ensure pack-owned dictionary defaults exist in the current session."""
+        self._ensure_builtin_domain_contexts()
+        self._ensure_builtin_relation_types()
+        self._ensure_builtin_relation_synonyms()
 
     def _ensure_sensitivity_reference(self, sensitivity: str) -> str:
         normalized = sensitivity.strip().upper()
@@ -1023,6 +1090,7 @@ class SqlAlchemyDictionaryRepository(
         source_ref: str | None = None,
         review_status: ReviewStatus = "ACTIVE",
     ) -> DictionaryRelationType:
+        self.seed_builtin_dictionary_entries()
         normalized_relation_type = relation_type.strip().upper()
         normalized_domain_context = self._ensure_domain_context_reference(
             domain_context,
@@ -1110,6 +1178,7 @@ class SqlAlchemyDictionaryRepository(
         domain_context: str | None = None,
         include_inactive: bool = False,
     ) -> list[DictionaryRelationType]:
+        self.seed_builtin_dictionary_entries()
         stmt = select(DictionaryRelationTypeModel)
         if not include_inactive:
             stmt = stmt.where(DictionaryRelationTypeModel.is_active.is_(True))
@@ -1127,6 +1196,7 @@ class SqlAlchemyDictionaryRepository(
         *,
         include_inactive: bool = False,
     ) -> DictionaryRelationType | None:
+        self.seed_builtin_dictionary_entries()
         normalized_relation_type = relation_type_id.strip().upper()
         stmt = select(DictionaryRelationTypeModel).where(
             DictionaryRelationTypeModel.id == normalized_relation_type,
@@ -1196,6 +1266,7 @@ class SqlAlchemyDictionaryRepository(
         *,
         include_inactive: bool = False,
     ) -> DictionaryRelationType | None:
+        self.seed_builtin_dictionary_entries()
         normalized_synonym = synonym.strip().upper()
         if not normalized_synonym:
             return None
@@ -1238,6 +1309,7 @@ class SqlAlchemyDictionaryRepository(
         source_ref: str | None = None,
         review_status: ReviewStatus = "ACTIVE",
     ) -> DictionaryRelationSynonym:
+        self.seed_builtin_dictionary_entries()
         normalized_relation_type = relation_type_id.strip().upper()
         if not normalized_relation_type:
             msg = "relation_type_id is required"
@@ -1324,6 +1396,7 @@ class SqlAlchemyDictionaryRepository(
         relation_type_id: str | None = None,
         include_inactive: bool = False,
     ) -> list[DictionaryRelationSynonym]:
+        self.seed_builtin_dictionary_entries()
         stmt = select(DictionaryRelationSynonymModel)
         if relation_type_id is not None:
             normalized_relation_type = relation_type_id.strip().upper()

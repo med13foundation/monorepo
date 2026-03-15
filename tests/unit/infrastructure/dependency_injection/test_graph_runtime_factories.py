@@ -53,6 +53,8 @@ def test_build_dictionary_repository_injects_pack_domain_contexts(
                 description="Custom domain context.",
             ),
         ),
+        builtin_relation_types=(),
+        builtin_relation_synonyms=(),
     )
     monkeypatch.setattr(
         "src.infrastructure.dependency_injection.graph_runtime_factories.create_graph_domain_pack",
@@ -66,6 +68,8 @@ def test_build_dictionary_repository_injects_pack_domain_contexts(
         repository._builtin_domain_contexts
         == expected_extension.builtin_domain_contexts
     )  # noqa: SLF001
+    assert repository._builtin_relation_types == ()  # noqa: SLF001
+    assert repository._builtin_relation_synonyms == ()  # noqa: SLF001
 
 
 def test_create_kernel_relation_suggestion_service_injects_pack_extension(
@@ -79,7 +83,11 @@ def test_create_kernel_relation_suggestion_service_injects_pack_extension(
         "src.infrastructure.dependency_injection.graph_runtime_factories.create_graph_domain_pack",
         lambda: SimpleNamespace(
             relation_suggestion_extension=expected_extension,
-            dictionary_loading_extension=SimpleNamespace(builtin_domain_contexts=()),
+            dictionary_loading_extension=SimpleNamespace(
+                builtin_domain_contexts=(),
+                builtin_relation_types=(),
+                builtin_relation_synonyms=(),
+            ),
         ),
     )
 

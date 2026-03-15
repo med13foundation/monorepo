@@ -6,8 +6,11 @@ from fastapi import FastAPI
 
 from src.graph.pack_registry import bootstrap_default_graph_domain_packs
 from src.graph.product_contract import GRAPH_OPENAPI_URL, GRAPH_SERVICE_VERSION
+from src.graph.runtime import create_graph_domain_pack
 
 from .config import get_settings
+from .database import SessionLocal
+from .governance import seed_builtin_dictionary_entries
 from .routers.claims import router as claims_router
 from .routers.concepts import router as concepts_router
 from .routers.dictionary import router as dictionary_router
@@ -27,6 +30,13 @@ from .routers.spaces import router as spaces_router
 def create_app() -> FastAPI:
     """Create the standalone graph API application."""
     bootstrap_default_graph_domain_packs()
+    graph_domain_pack = create_graph_domain_pack()
+    with SessionLocal() as session:
+        seed_builtin_dictionary_entries(
+            session,
+            dictionary_loading_extension=graph_domain_pack.dictionary_loading_extension,
+        )
+        session.commit()
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,

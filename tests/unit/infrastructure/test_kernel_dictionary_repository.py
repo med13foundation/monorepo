@@ -25,9 +25,12 @@ if TYPE_CHECKING:
 
 
 def _build_repository(session: Session) -> SqlAlchemyDictionaryRepository:
+    pack = resolve_graph_domain_pack()
     return SqlAlchemyDictionaryRepository(
         session,
-        builtin_domain_contexts=resolve_graph_domain_pack().dictionary_domain_contexts,
+        builtin_domain_contexts=pack.dictionary_domain_contexts,
+        builtin_relation_types=pack.dictionary_loading_extension.builtin_relation_types,
+        builtin_relation_synonyms=pack.dictionary_loading_extension.builtin_relation_synonyms,
     )
 
 
@@ -209,6 +212,28 @@ def test_find_variables_excludes_inactive_by_default(db_session: Session) -> Non
     all_ids = {entry.id for entry in all_results}
     assert "VAR_REPO_ACTIVE" in all_ids
     assert "VAR_REPO_INACTIVE" in all_ids
+
+
+def test_find_relation_types_includes_biomedical_builtins(db_session: Session) -> None:
+    repository = _build_repository(db_session)
+
+    relation_types = repository.find_relation_types()
+    relation_type_ids = {relation_type.id for relation_type in relation_types}
+
+    assert "ASSOCIATED_WITH" in relation_type_ids
+    assert "CAUSES" in relation_type_ids
+    assert "PHYSICALLY_INTERACTS_WITH" in relation_type_ids
+
+
+def test_resolve_relation_synonym_uses_biomedical_builtins(
+    db_session: Session,
+) -> None:
+    repository = _build_repository(db_session)
+
+    resolved = repository.resolve_relation_synonym("interacts_with")
+
+    assert resolved is not None
+    assert resolved.id == "PHYSICALLY_INTERACTS_WITH"
 
 
 def test_create_variable_rejects_unknown_domain_context(db_session: Session) -> None:

@@ -49,7 +49,24 @@ def build_dictionary_repository(
     return GraphDictionaryRepository(
         session,
         builtin_domain_contexts=dictionary_loading_extension.builtin_domain_contexts,
+        builtin_relation_types=dictionary_loading_extension.builtin_relation_types,
+        builtin_relation_synonyms=dictionary_loading_extension.builtin_relation_synonyms,
     )
+
+
+def seed_builtin_dictionary_entries(
+    session: Session,
+    *,
+    dictionary_loading_extension: GraphDictionaryLoadingExtension,
+) -> None:
+    """Persist pack-owned dictionary defaults for the active graph runtime."""
+    repository = GraphDictionaryRepository(
+        session,
+        builtin_domain_contexts=dictionary_loading_extension.builtin_domain_contexts,
+        builtin_relation_types=dictionary_loading_extension.builtin_relation_types,
+        builtin_relation_synonyms=dictionary_loading_extension.builtin_relation_synonyms,
+    )
+    repository.seed_builtin_dictionary_entries()
 
 
 def build_concept_repository(session: Session) -> ConceptRepository:
@@ -92,4 +109,5 @@ __all__ = [
     "build_concept_service",
     "build_dictionary_repository",
     "build_dictionary_service",
+    "seed_builtin_dictionary_entries",
 ]

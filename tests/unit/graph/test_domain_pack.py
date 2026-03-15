@@ -22,6 +22,25 @@ def test_biomedical_graph_domain_pack_exposes_view_extension() -> None:
         "clinical",
         "genomics",
     )
+    assert "ASSOCIATED_WITH" in {
+        definition.relation_type
+        for definition in pack.dictionary_loading_extension.builtin_relation_types
+    }
+    assert "CAUSES" in {
+        definition.relation_type
+        for definition in pack.dictionary_loading_extension.builtin_relation_types
+    }
+    assert ("INTERACTS_WITH", "PHYSICALLY_INTERACTS_WITH") in {
+        (definition.synonym, definition.relation_type)
+        for definition in pack.dictionary_loading_extension.builtin_relation_synonyms
+    }
+    categorized_relations = {
+        definition.relation_type: definition.category
+        for definition in pack.dictionary_loading_extension.builtin_relation_types
+    }
+    assert categorized_relations["CAUSES"] == "core_causal"
+    assert categorized_relations["UPSTREAM_OF"] == "extended_scientific"
+    assert categorized_relations["MENTIONS"] == "document_governance"
     assert tuple(context.id for context in pack.dictionary_domain_contexts) == (
         "general",
         "clinical",
