@@ -77,6 +77,12 @@ make graph-db-migrate
 make run-graph-service
 ```
 
+Docs:
+
+- `services/graph_api/docs/README.md`
+- interactive API docs at `/docs`
+- raw OpenAPI at `services/graph_api/openapi.json`
+
 Quality/contract checks:
 
 ```bash

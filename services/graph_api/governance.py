@@ -13,6 +13,7 @@ from src.infrastructure.graph_governance.governance import (
     build_concept_service,
     build_dictionary_repository,
     build_dictionary_service,
+    seed_builtin_dictionary_entries,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "build_concept_service",
     "build_dictionary_repository",
     "build_dictionary_service",
+    "seed_builtin_dictionary_entries",
 ]
